@@ -106,7 +106,7 @@ def test_reject_unsafe_address_blocks_non_public_ranges(address):
 
 
 def test_reject_unsafe_address_allows_public_range():
-    _reject_unsafe_address("93.184.216.34")
+    assert _reject_unsafe_address("93.184.216.34") is None
 
 
 # --- End-to-end over HTTP, with fetch_expected_file monkeypatched (hermetic) ---

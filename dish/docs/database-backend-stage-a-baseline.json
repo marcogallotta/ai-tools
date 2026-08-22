@@ -91,7 +91,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Implementation Action: restrict implementation-action to the dedicated Gate A publication transport projection and add value-free file-ingress diagnostics; no PostgreSQL execution wiring change",
+  "last_rebaseline_reason": "Merge main (PR #212 governed admin CLI source-hash refresh) into Implementation Action Gate A: restrict implementation-action to the dedicated Gate A publication transport projection and add value-free file-ingress diagnostics; no PostgreSQL execution wiring change",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",

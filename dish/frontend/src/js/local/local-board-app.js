@@ -1,7 +1,5 @@
 import { activeRefreshIntervalMs } from "../config.js";
 import { FrontendApiError, FrontendHttpClient } from "../api/http-transport.js";
-import { mapAdminResponse } from "../features/admin/admin-model.js";
-import { renderBoardAdminSummary } from "../features/admin/admin.js";
 import { appendSectionPage, mapBoardResponse, mapSearchResponse, mapSectionPageResponse } from "../features/board/api-board-model.js";
 import { createActiveTitleSearch, renderBoard } from "../features/board/board.js";
 import { mapTaskDetailResponse } from "../features/detail/api-detail-model.js";
@@ -14,11 +12,11 @@ import {
   resetSectionContinuation,
   restoreBoardViewState,
 } from "../features/refresh/reconciliation.js";
-import { BOARD_ROUTE, parsePostgresTaskRoute, postgresSourceSuffix, postgresTaskRoute, writePostgresRoute } from "../features/routing/routes.js";
+import { BOARD_ROUTE, parsePostgresTaskRoute, postgresTaskRoute, writePostgresRoute } from "../features/routing/routes.js";
 import { renderInitialErrorState, renderLoadingState } from "../features/refresh/state-shells.js";
-import { createApplicationFrame } from "../shell/application-shell.js";
 import { LocalBoardRequestState } from "../features/refresh/request-state.js";
 import { refreshFailureNotice } from "../features/refresh/failures.js";
+import { createLocalBoardFrame } from "./local-board-frame.js";
 import { createLocalNoticeState, localAttentionLabels } from "./local-notice-state.js";
 
 export { LocalBoardRequestState } from "../features/refresh/request-state.js";
@@ -34,23 +32,18 @@ export async function renderLocalPostgresqlBoard(root, {
   random = Math.random,
 } = {}) {
   const client = new FrontendHttpClient({ fetchImpl });
-  const { shell, main, noticeHost, utilityHost } = createApplicationFrame({ environmentLabel, navigationSuffix: postgresSourceSuffix() });
-  const searchHost = document.createElement("section");
-  searchHost.className = "board-search";
-  searchHost.setAttribute("aria-label", "Active dish search");
-  const adminHost = document.createElement("div");
-  adminHost.className = "board-admin-host";
-  utilityHost.append(searchHost, adminHost);
-  const live = document.createElement("p");
-  live.className = "sr-only"; live.setAttribute("aria-live", "polite"); shell.append(live);
-  root.replaceChildren(shell); root.dataset.shellState = "local-postgresql-loading";
+  const { main, noticeHost, searchHost, live, refreshAdminSummary } = createLocalBoardFrame({
+    client, root,
+    environmentLabel,
+    onAuthenticationLost,
+    onStop: () => stop(),
+  });
   let board = null; let selectedDetail = null; let selectedOrigin = null;
   let refreshTimer = null; let refreshFailures = 0; let boardRefreshPromise = null; let queuedRefresh = false;
   let stopped = false; let refreshSuspended = false;
   const invalidRequestCursors = new Map(); const blockedInvalidRequestCursors = new Map();
   const requestState = new LocalBoardRequestState();
 
-  const reloadPage = () => window.location.reload();
   const noticeState = createLocalNoticeState({
     noticeHost,
     boardValue: () => board,
@@ -60,21 +53,10 @@ export async function renderLocalPostgresqlBoard(root, {
       void openDetail(taskId, origin, { navigation: selectedDetail ? "replace" : "push", fromBoard: !selectedDetail });
     },
     onRetry: () => { void requestBoardRefresh({ manual: true, forceAfterCurrent: true }); },
-    onReload: reloadPage,
+    onReload: () => window.location.reload(),
   });
   const renderCurrentNotices = noticeState.render; const setRequestNotice = noticeState.set; const clearRequestNotice = noticeState.clear;
   const normalizeBoardRoute = (mode = "replace") => writePostgresRoute(BOARD_ROUTE, mode, {});
-
-  const refreshAdminSummary = async () => {
-    try {
-      renderBoardAdminSummary(adminHost, mapAdminResponse(await client.admin()));
-      const link = adminHost.querySelector(".board-admin-summary__link");
-      if (link) link.href = `/admin${postgresSourceSuffix()}`;
-    } catch (error) {
-      if (onAuthenticationLost(error)) stop();
-      else adminHost.replaceChildren();
-    }
-  };
 
   const closeDetailForRoute = ({ restoreFocus = true } = {}) => {
     requestState.cancelDetail(); selectedDetail = null;

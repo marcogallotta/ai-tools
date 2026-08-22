@@ -767,8 +767,18 @@ class V4Reconciler:
     def reconcile(self, *, force: bool = False) -> dict[str, Any]:
         snapshot = self.store.snapshot_dirty()
         if not snapshot.resources and not force:
-            # Heartbeat/no-change path performs zero authoritative work and zero model turns.
-            return {"dirty": 0, "prepared": 0, "wake_results": [], "model_turns_started": 0}
+            # Heartbeat/no-change performs no authoritative reread. A durable
+            # receipt from an earlier interrupted dispatch may still need its
+            # fenced recovery pass; without one it could remain stranded until
+            # an unrelated webhook arrives.
+            wake_results = self.bridge.dispatch_pending() if self.bridge is not None else []
+            started = sum(1 for value in wake_results if value.get("result") == "accepted")
+            return {
+                "dirty": 0,
+                "prepared": 0,
+                "wake_results": wake_results,
+                "model_turns_started": started,
+            }
         cases = [dict(value) for value in self.authoritative_cases()]
         prepared = self.store.prepare_wakes(cases, active_owners=self.active_owners)
         self.store.compare_and_clear(snapshot)

@@ -12,6 +12,8 @@ GENERATION_SCHEMA = "dish-design-generation:v1"
 EVENT_SCHEMA = "dish-design-generation-event:v1"
 POINTER_SCHEMA = "dish-design-generation-pointer:v1"
 HUMAN_DECISION_SCHEMA = "dish-human-decision-provenance:v1"
+SOURCE_POLICY_SCHEMA = "dish-source-policy-registry:v1"
+DESIGN_PROVENANCE_SCHEMA = "dish-design-provenance:v1"
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -37,6 +39,30 @@ class Disposition(str, Enum):
     NARROWS = "NARROWS"
     REFRAMES = "REFRAMES"
     WITHDRAWS = "WITHDRAWS"
+
+
+class SourceDisposition(str, Enum):
+    ALLOWED = "ALLOWED"
+    CAUTION = "CAUTION"
+    DISALLOWED_AS_PRECEDENT = "DISALLOWED_AS_PRECEDENT"
+
+
+class EnvironmentApplicability(str, Enum):
+    VERIFIED_AVAILABLE = "VERIFIED_AVAILABLE"
+    VERIFIED_UNAVAILABLE = "VERIFIED_UNAVAILABLE"
+    UNKNOWN = "UNKNOWN"
+
+
+class SourceUse(str, Enum):
+    FACTUAL = "FACTUAL"
+    NORMATIVE = "NORMATIVE"
+
+
+class SourceClass(str, Enum):
+    MARCO_DECISION = "MARCO_DECISION"
+    DISH_INCIDENT_EVIDENCE = "DISH_INCIDENT_EVIDENCE"
+    EXTERNAL_PRIMARY_EVIDENCE = "EXTERNAL_PRIMARY_EVIDENCE"
+    DISH_LOCAL_INFERENCE = "DISH_LOCAL_INFERENCE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +256,23 @@ class ReviewDisposition:
 
     def __post_init__(self) -> None:
         _text(self.reviewer, "reviewer")
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePolicyState:
+    source_id: str
+    decision_class: str
+    disposition: SourceDisposition
+    event_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class AffectedClaim:
+    task_gid: str
+    generation_id: str
+    claim_id: str
+    support_id: str
+    has_independent_support: bool
 
 
 def _text(value: str, name: str) -> None:
@@ -753,6 +796,711 @@ def validate_disposition(
         raise ValueError(
             "challenger cannot supply the independent reviewer disposition"
         )
+
+
+def validate_source_policy_registry(
+    registry: Mapping[str, object],
+) -> tuple[Contradiction, ...]:
+    """Validate the small repository-owned source-policy registry.
+
+    The registry governs normative precedent eligibility only. It is not design
+    authority, a credibility ranking, or a source of environment truth.
+    """
+
+    problems: list[Contradiction] = []
+    if registry.get("schema") != SOURCE_POLICY_SCHEMA:
+        problems.append(_c("source-policy-schema", "registry", "unsupported schema"))
+    if registry.get("schema_version") != 1:
+        problems.append(
+            _c("source-policy-version", "registry", "schema_version must be 1")
+        )
+
+    raw_sources = registry.get("sources")
+    sources = _mapping_sequence(raw_sources)
+    if sources is None:
+        problems.append(
+            _c("source-policy-sources", "registry", "sources must be an array")
+        )
+        sources = ()
+
+    source_ids: set[str] = set()
+    for index, source in enumerate(sources):
+        label = f"source[{index}]"
+        source_id = _mapping_text(source, "source_id")
+        organization = _mapping_text(source, "organization")
+        primary = source.get("primary_source")
+        primary_mapping = primary if isinstance(primary, Mapping) else None
+        title = _mapping_text(primary_mapping, "title") if primary_mapping else None
+        uri = _mapping_text(primary_mapping, "uri") if primary_mapping else None
+        version = (
+            _mapping_text(primary_mapping, "version_or_date")
+            if primary_mapping
+            else None
+        )
+        if not source_id:
+            problems.append(_c("source-id-missing", label, "source_id is required"))
+        elif source_id in source_ids:
+            problems.append(_c("source-id-duplicate", label, source_id))
+        else:
+            source_ids.add(source_id)
+        if not organization:
+            problems.append(
+                _c("source-organization-missing", label, "organization is required")
+            )
+        if not all((title, uri, version)):
+            problems.append(
+                _c(
+                    "source-primary-identity-incomplete",
+                    label,
+                    "primary_source requires title, uri, and version_or_date",
+                )
+            )
+
+    raw_events = registry.get("disposition_events")
+    events = _mapping_sequence(raw_events)
+    if events is None:
+        problems.append(
+            _c(
+                "source-policy-events",
+                "registry",
+                "disposition_events must be an array",
+            )
+        )
+        events = ()
+
+    event_ids: set[str] = set()
+    by_scope: dict[tuple[str, str], list[Mapping[str, object]]] = {}
+    for index, event in enumerate(events):
+        label = f"disposition_event[{index}]"
+        event_id = _mapping_text(event, "event_id")
+        source_id = _mapping_text(event, "source_id")
+        decision_class = _mapping_text(event, "decision_class")
+        disposition = event.get("disposition")
+        predecessor = event.get("predecessor_event_id")
+        authority = event.get("authority")
+
+        if not event_id:
+            problems.append(_c("source-policy-event-id", label, "event_id is required"))
+        elif event_id in event_ids:
+            problems.append(_c("source-policy-event-duplicate", label, event_id))
+        else:
+            event_ids.add(event_id)
+
+        if not source_id or source_id not in source_ids:
+            problems.append(
+                _c(
+                    "source-policy-unknown-source",
+                    label,
+                    source_id or "missing source_id",
+                )
+            )
+        if not decision_class:
+            problems.append(
+                _c("source-policy-decision-class", label, "decision_class is required")
+            )
+        try:
+            SourceDisposition(str(disposition))
+        except ValueError:
+            problems.append(
+                _c("source-policy-disposition", label, f"invalid disposition {disposition!r}")
+            )
+        if predecessor is not None and not _nonempty_text(predecessor):
+            problems.append(
+                _c(
+                    "source-policy-predecessor",
+                    label,
+                    "predecessor_event_id must be non-empty text or null",
+                )
+            )
+        problems.extend(_source_policy_authority_problems(authority, label))
+        if source_id and decision_class:
+            by_scope.setdefault((source_id, decision_class), []).append(event)
+
+    for (source_id, decision_class), scoped_events in by_scope.items():
+        problems.extend(
+            _source_policy_chain_problems(source_id, decision_class, scoped_events)
+        )
+    return tuple(problems)
+
+
+def active_source_disposition(
+    registry: Mapping[str, object],
+    source_id: str,
+    decision_class: str,
+) -> SourcePolicyState | None:
+    """Return the current exact-scope disposition, falling back to global scope.
+
+    Absence is deliberately returned as ``None``; it never means ALLOWED.
+    """
+
+    problems = validate_source_policy_registry(registry)
+    if problems:
+        raise ValueError(
+            "invalid source-policy registry: "
+            + "; ".join(f"{item.code}:{item.source}" for item in problems)
+        )
+    events = _mapping_sequence(registry.get("disposition_events")) or ()
+    for scope in (decision_class, "*"):
+        scoped = [
+            event
+            for event in events
+            if event.get("source_id") == source_id
+            and event.get("decision_class") == scope
+        ]
+        if not scoped:
+            continue
+        terminal = _terminal_source_policy_event(scoped)
+        return SourcePolicyState(
+            source_id=source_id,
+            decision_class=scope,
+            disposition=SourceDisposition(str(terminal["disposition"])),
+            event_id=str(terminal["event_id"]),
+        )
+    return None
+
+
+def validate_design_provenance(
+    record: Mapping[str, object],
+    identity: Identity,
+    source_policy: Mapping[str, object],
+) -> tuple[Contradiction, ...]:
+    """Validate claim provenance attached to one exact Review V2 generation."""
+
+    problems: list[Contradiction] = list(validate_source_policy_registry(source_policy))
+    if record.get("schema") != DESIGN_PROVENANCE_SCHEMA:
+        problems.append(_c("design-provenance-schema", "provenance", "unsupported schema"))
+    if _record_identity(record) != identity.tuple():
+        problems.append(
+            _c(
+                "design-provenance-identity-mismatch",
+                "provenance",
+                "claim provenance must bind the exact Review V2 generation identity",
+            )
+        )
+
+    claims = _mapping_sequence(record.get("claims"))
+    if claims is None:
+        return tuple(
+            problems
+            + [_c("design-provenance-claims", "provenance", "claims must be an array")]
+        )
+
+    claim_ids: set[str] = set()
+    for claim_index, claim in enumerate(claims):
+        claim_id = _mapping_text(claim, "claim_id")
+        label = claim_id or f"claim[{claim_index}]"
+        if not claim_id:
+            problems.append(_c("claim-id-missing", label, "claim_id is required"))
+        elif claim_id in claim_ids:
+            problems.append(_c("claim-id-duplicate", label, claim_id))
+        else:
+            claim_ids.add(claim_id)
+
+        for field in (
+            "decision",
+            "problem_outcome",
+            "operator_cost",
+            "failure_mode",
+            "reversibility",
+        ):
+            if not _mapping_text(claim, field):
+                problems.append(_c(f"claim-{field}-missing", label, f"{field} is required"))
+        alternatives = _text_sequence(claim.get("alternatives_considered"))
+        assumptions = _text_sequence(claim.get("assumptions"), allow_empty=True)
+        if alternatives is None or not alternatives:
+            problems.append(
+                _c(
+                    "claim-alternatives-missing",
+                    label,
+                    "alternatives_considered must contain at least one entry",
+                )
+            )
+        if assumptions is None:
+            problems.append(
+                _c("claim-assumptions-invalid", label, "assumptions must be an array of text")
+            )
+
+        supports = _mapping_sequence(claim.get("supports"))
+        if supports is None or not supports:
+            problems.append(
+                _c("claim-supports-missing", label, "supports must contain at least one entry")
+            )
+            supports = ()
+        support_ids: set[str] = set()
+        for support_index, support in enumerate(supports):
+            support_id = _mapping_text(support, "support_id")
+            support_label = f"{label}:{support_id or support_index}"
+            if not support_id:
+                problems.append(
+                    _c("support-id-missing", support_label, "support_id is required")
+                )
+            elif support_id in support_ids:
+                problems.append(_c("support-id-duplicate", support_label, support_id))
+            else:
+                support_ids.add(support_id)
+            problems.extend(
+                _support_provenance_problems(support, support_label, source_policy)
+            )
+
+        mechanisms = _mapping_sequence(claim.get("mechanisms"))
+        if mechanisms is None:
+            problems.append(
+                _c("claim-mechanisms-invalid", label, "mechanisms must be an array")
+            )
+            mechanisms = ()
+        mechanism_ids: set[str] = set()
+        for mechanism_index, mechanism in enumerate(mechanisms):
+            mechanism_id = _mapping_text(mechanism, "mechanism_id")
+            mechanism_label = f"{label}:{mechanism_id or mechanism_index}"
+            if not mechanism_id:
+                problems.append(
+                    _c("mechanism-id-missing", mechanism_label, "mechanism_id is required")
+                )
+            elif mechanism_id in mechanism_ids:
+                problems.append(_c("mechanism-id-duplicate", mechanism_label, mechanism_id))
+            else:
+                mechanism_ids.add(mechanism_id)
+            if not isinstance(mechanism.get("recommended"), bool):
+                problems.append(
+                    _c(
+                        "mechanism-recommended-invalid",
+                        mechanism_label,
+                        "recommended must be boolean",
+                    )
+                )
+            requirements = _mapping_sequence(mechanism.get("requirements"))
+            if requirements is None:
+                problems.append(
+                    _c(
+                        "mechanism-requirements-invalid",
+                        mechanism_label,
+                        "requirements must be an array",
+                    )
+                )
+                continue
+            for requirement_index, requirement in enumerate(requirements):
+                problems.extend(
+                    _environment_requirement_problems(
+                        requirement,
+                        f"{mechanism_label}:requirement[{requirement_index}]",
+                        recommended=mechanism.get("recommended") is True,
+                    )
+                )
+    return tuple(problems)
+
+
+def affected_claims_for_source_policy(
+    records: Sequence[Mapping[str, object]],
+    current_identities: Mapping[str, Identity],
+    *,
+    source_id: str,
+    decision_class: str,
+) -> tuple[AffectedClaim, ...]:
+    """Bounded reverse lookup over supplied provenance records only.
+
+    Search/discovery is not authority: a record is eligible only when its exact
+    Review V2 identity equals the caller-supplied current identity for that task.
+    """
+
+    affected: list[AffectedClaim] = []
+    for record in records:
+        task_gid = _mapping_text(record, "task_gid")
+        if not task_gid:
+            continue
+        current = current_identities.get(task_gid)
+        if current is None or _record_identity(record) != current.tuple():
+            continue
+        claims = _mapping_sequence(record.get("claims")) or ()
+        for claim in claims:
+            claim_id = _mapping_text(claim, "claim_id") or ""
+            supports = _mapping_sequence(claim.get("supports")) or ()
+            matching = [
+                support
+                for support in supports
+                if support.get("source_class") == SourceClass.EXTERNAL_PRIMARY_EVIDENCE.value
+                and support.get("source_use") == SourceUse.NORMATIVE.value
+                and support.get("source_id") == source_id
+                and (
+                    decision_class == "*"
+                    or support.get("decision_class") == decision_class
+                )
+            ]
+            if not matching:
+                continue
+            for support in matching:
+                support_id = _mapping_text(support, "support_id") or ""
+                independent = any(
+                    candidate is not support
+                    and candidate.get("support_id") != support_id
+                    and _mapping_text(candidate, "support_id")
+                    for candidate in supports
+                )
+                affected.append(
+                    AffectedClaim(
+                        task_gid=task_gid,
+                        generation_id=current.generation_id,
+                        claim_id=claim_id,
+                        support_id=support_id,
+                        has_independent_support=independent,
+                    )
+                )
+    return tuple(affected)
+
+
+def _support_provenance_problems(
+    support: Mapping[str, object],
+    label: str,
+    source_policy: Mapping[str, object],
+) -> list[Contradiction]:
+    problems: list[Contradiction] = []
+    source_class_raw = support.get("source_class")
+    try:
+        source_class = SourceClass(str(source_class_raw))
+    except ValueError:
+        problems.append(
+            _c("support-source-class", label, f"invalid source_class {source_class_raw!r}")
+        )
+        return problems
+    refs = _text_sequence(support.get("evidence_refs"), allow_empty=True)
+    if refs is None:
+        problems.append(
+            _c("support-evidence-refs", label, "evidence_refs must be an array of text")
+        )
+
+    if source_class is not SourceClass.EXTERNAL_PRIMARY_EVIDENCE:
+        if support.get("source_id") is not None or support.get("source_use") is not None:
+            problems.append(
+                _c(
+                    "support-external-fields-on-local-source",
+                    label,
+                    "source_id/source_use are only valid for EXTERNAL_PRIMARY_EVIDENCE",
+                )
+            )
+        return problems
+
+    source_id = _mapping_text(support, "source_id")
+    decision_class = _mapping_text(support, "decision_class")
+    source_statement = _mapping_text(support, "source_statement")
+    dish_inference = _mapping_text(support, "dish_inference")
+    use_raw = support.get("source_use")
+    try:
+        source_use = SourceUse(str(use_raw))
+    except ValueError:
+        problems.append(_c("support-source-use", label, f"invalid source_use {use_raw!r}"))
+        return problems
+    source_ids = {
+        item.get("source_id")
+        for item in (_mapping_sequence(source_policy.get("sources")) or ())
+    }
+    if not source_id or source_id not in source_ids:
+        problems.append(
+            _c("support-source-id", label, source_id or "source_id is required")
+        )
+    if not source_statement:
+        problems.append(
+            _c(
+                "support-source-statement",
+                label,
+                "source_statement must state what the primary source actually supports",
+            )
+        )
+    if not dish_inference:
+        problems.append(
+            _c(
+                "support-dish-inference",
+                label,
+                "dish_inference must state the Dish extrapolation, including 'none'",
+            )
+        )
+    if source_use is SourceUse.FACTUAL:
+        return problems
+
+    if not decision_class:
+        problems.append(
+            _c(
+                "support-decision-class",
+                label,
+                "normative external support requires decision_class",
+            )
+        )
+        return problems
+    if not source_id:
+        return problems
+    try:
+        current = active_source_disposition(source_policy, source_id, decision_class)
+    except ValueError:
+        # Registry-level contradictions are already emitted by the enclosing
+        # validator. Do not turn malformed policy evidence into an exception
+        # that hides those exact defects.
+        return problems
+    policy = support.get("source_policy")
+    policy_mapping = policy if isinstance(policy, Mapping) else None
+    observed = (
+        _mapping_text(policy_mapping, "observed_disposition")
+        if policy_mapping
+        else None
+    )
+    observed_event = policy_mapping.get("event_id") if policy_mapping else None
+    expected = current.disposition.value if current else "NO_ACTIVE_DISPOSITION"
+    expected_event = current.event_id if current else None
+    if observed != expected or observed_event != expected_event:
+        problems.append(
+            _c(
+                "source-policy-stale-or-missing",
+                label,
+                f"recorded source policy {observed!r}/{observed_event!r} "
+                f"does not match current {expected!r}/{expected_event!r}",
+            )
+        )
+    if current and current.disposition is SourceDisposition.DISALLOWED_AS_PRECEDENT:
+        problems.append(
+            _c(
+                "disallowed-normative-source",
+                label,
+                "source is disallowed as normative precedent for this decision class",
+            )
+        )
+    if current and current.disposition is SourceDisposition.CAUTION:
+        if not _mapping_text(support, "caution_acknowledgement"):
+            problems.append(
+                _c(
+                    "source-caution-unacknowledged",
+                    label,
+                    "CAUTION disposition must be explicitly addressed",
+                )
+            )
+    return problems
+
+
+def _environment_requirement_problems(
+    requirement: Mapping[str, object],
+    label: str,
+    *,
+    recommended: bool,
+) -> list[Contradiction]:
+    problems: list[Contradiction] = []
+    for field in ("capability", "target_surface", "refresh_trigger"):
+        if not _mapping_text(requirement, field):
+            problems.append(_c(f"environment-{field}", label, f"{field} is required"))
+    if not isinstance(requirement.get("required"), bool):
+        problems.append(
+            _c("environment-required", label, "required must be boolean")
+        )
+    status_raw = requirement.get("status")
+    try:
+        status = EnvironmentApplicability(str(status_raw))
+    except ValueError:
+        problems.append(
+            _c("environment-status", label, f"invalid status {status_raw!r}")
+        )
+        return problems
+    if status is not EnvironmentApplicability.UNKNOWN:
+        if not _mapping_text(requirement, "evidence_ref") or not _mapping_text(
+            requirement, "evidence_as_of"
+        ):
+            problems.append(
+                _c(
+                    "environment-evidence",
+                    label,
+                    "verified environment status requires evidence_ref and evidence_as_of",
+                )
+            )
+    if recommended and requirement.get("required") is True:
+        if status is EnvironmentApplicability.UNKNOWN:
+            problems.append(
+                _c(
+                    "required-environment-unknown",
+                    label,
+                    "required UNKNOWN capability cannot support a recommended mechanism",
+                )
+            )
+        elif status is EnvironmentApplicability.VERIFIED_UNAVAILABLE:
+            problems.append(
+                _c(
+                    "required-environment-unavailable",
+                    label,
+                    "required VERIFIED_UNAVAILABLE capability rejects the mechanism here",
+                )
+            )
+    return problems
+
+
+def _source_policy_authority_problems(
+    authority: object,
+    label: str,
+) -> list[Contradiction]:
+    if not isinstance(authority, Mapping):
+        return [
+            _c(
+                "source-policy-human-authority",
+                label,
+                "durable explicit human authority is required",
+            )
+        ]
+    authority_type = _mapping_text(authority, "authority_type")
+    durable_ref = _mapping_text(authority, "durable_ref")
+    decided_by = _mapping_text(authority, "decided_by")
+    decision = _mapping_text(authority, "decision")
+    decision_sha = _mapping_text(authority, "decision_sha256")
+    effective_at = _mapping_text(authority, "effective_at")
+    problems: list[Contradiction] = []
+    if authority_type not in {"MARCO_EXPLICIT", "AUTHORIZED_HUMAN_EXPLICIT"}:
+        problems.append(
+            _c(
+                "source-policy-human-authority",
+                label,
+                "authenticated account attribution is not source-policy authority",
+            )
+        )
+    if not all((durable_ref, decided_by, decision, effective_at)):
+        problems.append(
+            _c(
+                "source-policy-authority-fields",
+                label,
+                "durable_ref, decided_by, decision, and effective_at are required",
+            )
+        )
+    if decision:
+        expected = digest(decision.encode())
+        if decision_sha != expected:
+            problems.append(
+                _c(
+                    "source-policy-authority-digest",
+                    label,
+                    "decision_sha256 must bind exact durable decision text",
+                )
+            )
+    elif decision_sha:
+        problems.append(
+            _c("source-policy-authority-digest", label, "decision text is missing")
+        )
+    return problems
+
+
+def _source_policy_chain_problems(
+    source_id: str,
+    decision_class: str,
+    events: Sequence[Mapping[str, object]],
+) -> list[Contradiction]:
+    label = f"source-policy:{source_id}:{decision_class}"
+    by_id = {
+        str(event["event_id"]): event
+        for event in events
+        if _mapping_text(event, "event_id")
+    }
+    children: dict[str, list[str]] = {event_id: [] for event_id in by_id}
+    roots: list[str] = []
+    problems: list[Contradiction] = []
+    for event_id, event in by_id.items():
+        predecessor = event.get("predecessor_event_id")
+        if predecessor is None:
+            roots.append(event_id)
+        elif predecessor not in by_id:
+            problems.append(
+                _c(
+                    "source-policy-missing-predecessor",
+                    label,
+                    f"{event_id} references missing predecessor {predecessor}",
+                )
+            )
+        else:
+            children[str(predecessor)].append(event_id)
+    if len(roots) != 1:
+        problems.append(
+            _c(
+                "source-policy-root-count",
+                label,
+                f"expected one disposition-history root, found {len(roots)}",
+            )
+        )
+    if any(len(items) > 1 for items in children.values()):
+        problems.append(
+            _c(
+                "source-policy-history-fork",
+                label,
+                "disposition history must be one explicit supersession chain",
+            )
+        )
+    if roots:
+        seen: set[str] = set()
+        cursor = roots[0]
+        while cursor not in seen:
+            seen.add(cursor)
+            next_items = children.get(cursor, [])
+            if not next_items:
+                break
+            cursor = next_items[0]
+        if cursor in seen and children.get(cursor):
+            problems.append(
+                _c("source-policy-history-cycle", label, "disposition history has a cycle")
+            )
+        if len(seen) != len(by_id):
+            problems.append(
+                _c(
+                    "source-policy-history-disconnected",
+                    label,
+                    "all disposition events must participate in the same chain",
+                )
+            )
+    return problems
+
+
+def _terminal_source_policy_event(
+    events: Sequence[Mapping[str, object]],
+) -> Mapping[str, object]:
+    predecessor_ids = {
+        str(event["predecessor_event_id"])
+        for event in events
+        if event.get("predecessor_event_id") is not None
+    }
+    terminals = [event for event in events if str(event["event_id"]) not in predecessor_ids]
+    if len(terminals) != 1:
+        raise ValueError("source-policy scope has no unique terminal event")
+    return terminals[0]
+
+
+def _record_identity(record: Mapping[str, object]) -> tuple[object, object, object, object]:
+    return (
+        record.get("task_gid"),
+        record.get("generation_id"),
+        record.get("canonical_sha256"),
+        record.get("relevant_repo_baseline"),
+    )
+
+
+def _mapping_sequence(value: object) -> tuple[Mapping[str, object], ...] | None:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return None
+    result: list[Mapping[str, object]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            return None
+        result.append(item)
+    return tuple(result)
+
+
+def _text_sequence(value: object, *, allow_empty: bool = False) -> tuple[str, ...] | None:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return None
+    result: list[str] = []
+    for item in value:
+        if not _nonempty_text(item):
+            return None
+        result.append(str(item))
+    if not result and not allow_empty:
+        return ()
+    return tuple(result)
+
+
+def _mapping_text(mapping: Mapping[str, object] | None, key: str) -> str | None:
+    if mapping is None:
+        return None
+    value = mapping.get(key)
+    return str(value) if _nonempty_text(value) else None
+
+
+def _nonempty_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _c(code: str, source: str, message: str) -> Contradiction:

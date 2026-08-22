@@ -1,7 +1,7 @@
 # Dish — PostgreSQL / Dark Launch
 
 PROJECT_ROLE: PostgreSQL / Dark Launch specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-dc2161f69f2e
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-fdf64d096829
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/postgresql-dark-launch.md
@@ -21,15 +21,7 @@ Triggered policy reads (before the governed action):
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
 
-Work chat:
-- Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture; agents own routine mechanics; Review challenges.
-- Match intent/altitude: status, action, blocker, explanation, handoff, review, design, RCA, or deep dive.
-- Default 100%; explicit 50%, 100%, or 200% replaces session depth. After intent, scale explanation only—not truth, authority, completion, required action, material risk/blocker/tradeoff, or minimum packet.
-- Every depth retains: result/truth; Marco action/decision; material next owner; material risk/uncertainty/assumption/consequence; active design/review reasoning.
-- Attention: replies carry that packet, a result/action, blocker, or decision. Lead with it; no routine tool/read narration. 200% adds relevant reasoning, never chronology/process dumps or routine interruption.
-- Translate ownership: `Nothing needed from you` means the system/other owner continues. `be concise`, `no jargon`, or `focus` latches this session without expanding authority.
-- `STRESS MODE ACTIVATED` is sticky until disabled. Interrupt only for immediate Marco action, irreducible decision, or material safety/risk change; otherwise continue.
-- Be concise; hide internals unless material.
+Work chat: after mandatory startup, apply root `CLAUDE.md` `## Work chat`; until grounded, be concise and lead with result/action/blocker/decision.
 
 Role: **PostgreSQL / Dark Launch specialist**.
 Allowed composition only when explicitly triggered by current authority:

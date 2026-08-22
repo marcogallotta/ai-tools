@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/marcogallotta/ai-tools/ci/schemas/development-workflow-escape-v1.schema.json",
+  "title": "Dish Development Workflow escape record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "escape_id", "observed_at", "affected_change", "observed_failure",
+    "discovery_evidence", "design_named_failure_mode", "marco_approval", "design_review",
+    "code_review_testing", "implementation_vs_reviewed_design", "activation_runtime",
+    "operator_impact", "root_class", "corrective_owner", "owning_boundary", "telemetry_evidence"
+  ],
+  "properties": {
+    "schema": {"const": "dish-development-workflow-escape:v1"},
+    "escape_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "observed_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "affected_change": {
+      "type": "string",
+      "pattern": "^github:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:(pr:[1-9][0-9]*@[0-9a-f]{40}|commit:[0-9a-f]{40})$"
+    },
+    "observed_failure": {"type": "string", "minLength": 1, "not": {"const": "UNKNOWN"}},
+    "discovery_evidence": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/evidence"}
+    },
+    "design_named_failure_mode": {"enum": ["YES", "NO", "UNKNOWN"]},
+    "marco_approval": {"$ref": "#/$defs/marco_approval"},
+    "design_review": {"$ref": "#/$defs/review_gap"},
+    "code_review_testing": {"$ref": "#/$defs/review_gap"},
+    "implementation_vs_reviewed_design": {"$ref": "#/$defs/implementation_gap"},
+    "activation_runtime": {"$ref": "#/$defs/runtime_gap"},
+    "operator_impact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["duration_ms", "cost"],
+      "properties": {
+        "duration_ms": {"oneOf": [{"const": "UNKNOWN"}, {"type": "integer", "minimum": 0}]},
+        "cost": {
+          "oneOf": [
+            {"const": "UNKNOWN"},
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["amount", "currency", "unit"],
+              "properties": {
+                "amount": {"type": "string", "pattern": "^(0|[0-9]+)(\\.[0-9]+)?$"},
+                "currency": {"type": "string", "minLength": 1, "not": {"const": "UNKNOWN"}},
+                "unit": {"type": "string", "minLength": 1, "not": {"const": "UNKNOWN"}}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "root_class": {
+      "enum": [
+        "human-review miss", "operator-surface blindness", "platform-constraint blindness",
+        "authority/projection confusion", "self-deadlock", "partial-outcome masking",
+        "activation/runtime gap", "test gap", "scope drift", "other-explicit"
+      ]
+    },
+    "corrective_owner": {
+      "oneOf": [
+        {"const": "UNOWNED"},
+        {"type": "string", "pattern": "^asana:task:[1-9][0-9]*$"}
+      ]
+    },
+    "owning_boundary": {"type": "string", "minLength": 1, "not": {"const": "UNKNOWN"}},
+    "telemetry_evidence": {
+      "oneOf": [
+        {"const": "UNKNOWN"},
+        {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^telemetry:[A-Za-z0-9._/-]+:[A-Za-z0-9._:@/-]+$"}
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "string",
+      "pattern": "^(github:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:(review:[1-9][0-9]*@[0-9a-f]{40}|run:[1-9][0-9]*@[0-9a-f]{40}|comment:[1-9][0-9]*)|asana:(story|task):[1-9][0-9]*|runtime:[A-Za-z0-9._/-]+:[A-Za-z0-9._:@/-]+)$"
+    },
+    "marco_approval": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "decision_evidence"],
+      "properties": {
+        "status": {"enum": ["YES", "NO", "NOT_APPLICABLE", "UNKNOWN"]},
+        "decision_evidence": {
+          "oneOf": [
+            {"const": "UNKNOWN"},
+            {"type": "string", "pattern": "^asana:decision:[A-Za-z0-9._-]+@story:[1-9][0-9]*$"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"enum": ["YES", "NO"]}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "decision_evidence": {"type": "string", "pattern": "^asana:decision:[A-Za-z0-9._-]+@story:[1-9][0-9]*$"}
+            }
+          },
+          "else": {"properties": {"decision_evidence": {"const": "UNKNOWN"}}}
+        }
+      ]
+    },
+    "review_gap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "detail"],
+      "properties": {
+        "status": {"enum": ["MISSED", "NOT_MISSED", "UNKNOWN"]},
+        "detail": {"type": "string", "minLength": 1}
+      },
+      "allOf": [{"$ref": "#/$defs/unknown_detail_rule"}]
+    },
+    "implementation_gap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "detail"],
+      "properties": {
+        "status": {"enum": ["DRIFT", "ALIGNED", "UNKNOWN"]},
+        "detail": {"type": "string", "minLength": 1}
+      },
+      "allOf": [{"$ref": "#/$defs/unknown_detail_rule"}]
+    },
+    "runtime_gap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "detail"],
+      "properties": {
+        "status": {"enum": ["GAP", "NO_GAP", "UNKNOWN"]},
+        "detail": {"type": "string", "minLength": 1}
+      },
+      "allOf": [{"$ref": "#/$defs/unknown_detail_rule"}]
+    },
+    "unknown_detail_rule": {
+      "if": {"properties": {"status": {"const": "UNKNOWN"}}, "required": ["status"]},
+      "then": {"properties": {"detail": {"const": "UNKNOWN"}}},
+      "else": {"properties": {"detail": {"not": {"const": "UNKNOWN"}}}}
+    }
+  }
+}

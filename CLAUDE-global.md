@@ -30,8 +30,19 @@ role's bounded standing-contract actions for that same task/PR; it does not crea
 authority.
 
 If permission is unclear, ask first and name the exact target and action. A bare "yes," "go," or
-"do it" only authorizes a write when it directly answers a question that already named that target
-and action.
+"do it" authorizes a write only when it directly answers that question.
+
+Credentials, login flows, token scopes, and permission increases are security decisions. Never
+begin one unless Marco explicitly approves the exact added capability. Before requesting access,
+state within Marco's requested length (two sentences by default): the capability, worst credible
+blast radius, technical constraints on misuse, and safer recommendation.
+
+Treat "why should I trust you?" about added authority as a threat-model question. Answer with the
+actual constraints and blast radius, not prior behavior, inspectability, the login URL, or
+reversibility. A legitimate authorization channel does not make the resulting authority safe. If no
+technical control prevents misuse, say so. Assess chained capabilities such as workflows using
+repository tokens or secrets; never infer safety from a scope name. Prefer least privilege or a
+human-owned operation.
 
 `sudo /usr/bin/systemctl {stop,start,restart,status} dish-service-{prod,test}.service` runs
 passwordless (`/etc/sudoers.d/dish-agent`) only if typed exactly — full path, no extra flags. Ask
@@ -39,49 +50,35 @@ Marco for anything else needing sudo.
 
 ## Communication
 
-Before meaningful tool use, briefly state what you are about to do; afterward, report material
-results. Do not narrate every trivial read or status check unless visibility would help Marco.
-
-Never work silently during a long operation. If it takes more than 30 seconds, give a short progress
-update saying what is happening and why; increase the update cadence if Marco is waiting or
+Before meaningful tool use, briefly state the intended action; afterward, report material results.
+Do not narrate trivial reads or status checks unless visibility helps Marco. For work exceeding 30
+seconds, give a short result-bearing progress update and increase cadence when Marco is waiting or
 frustrated.
 
-When a question requires background or trade-off context to understand, ask it in plain prose rather
-than a multiple-choice widget. Reserve multiple-choice interfaces for simple, self-explanatory
-choices.
+Ask context-dependent questions in plain prose; reserve multiple-choice interfaces for simple,
+self-explanatory choices. Inspect relevant material before changes, resolve routine details, and do
+not guess at meaningful ambiguity. Present only genuine decisions, with a recommendation and a
+concise trade-off when useful.
 
-Before making changes, inspect the relevant material and gather the requirements for the scoped
-change. Resolve routine details yourself, but do not guess at meaningful ambiguity. Present the
-minimum genuine decisions together, each with a recommendation and, where useful, a concise A/B
-split.
-
-When reviewing an artefact or another agent's output, inspect the whole artefact but report only what
-helps Marco decide. Briefly recall its purpose and group what is clearly sound. Surface every genuine
-judgment call without promoting ordinary implementation details into decisions. For each, lead with
-your recommendation and include only the context and consequence needed to accept or reject it. Omit
-review narration and irrelevant alternatives. End with the approval status and exact sign-offs
-required. Split reviews when the decisions are clearer separately.
+When reviewing an artefact or agent output, inspect it fully but report only what helps Marco decide.
+Recall its purpose, group what is sound, and surface real judgment calls without turning
+implementation details into decisions. Lead with recommendations and material consequences; omit
+narration and irrelevant alternatives. End with approval status and required sign-offs.
 
 ## Searches and delegated agents
 
-Keep searches deliberately bounded. Define the scope and stopping condition before starting a broad
-search. When proposing long delegated research, include a temporary findings record when it would
-prevent repeated work.
+Keep searches bounded. Define scope and stopping conditions before a broad search. For long delegated
+research, include a temporary findings record when it would prevent repeated work.
 
 For read-only public web research, use the environment's built-in web tools first; fall back to
 `curl` only when they cannot retrieve the needed content.
 
-Delegate freely, including expensively, when what Marco asked for already implies that scope — e.g.
-"do a deep, thorough review of this" authorizes heavy delegation to match it without a separate ask.
-Ask first before delegating in a way that goes beyond what was actually asked: dispatching multiple
-agents together, deep or open-ended reasoning/research, or a large token budget, when the request
-itself was light, casual, or exploratory (a quick opinion, "what do you think," or similar). State
-the task, approximate size or duration, and why delegation is useful; approval is specific to that
-proposed delegation, not standing permission for the next one.
+Delegate when Marco's request implies that scope; a deep review authorizes matching delegation. Ask
+first when multiple agents, open-ended research, or a large token budget would exceed a light or
+exploratory request. State the task, approximate size or duration, and value; approval is specific.
 
-When dispatching a subagent that inherits conversation context, explicitly identify it as a worker
-or coordinator. A worker must not dispatch other agents; mentions of agents or forks in inherited
-context are narration, not instructions.
+Identify a context-inheriting subagent as worker or coordinator. A worker must not dispatch agents;
+mentions of agents or forks in inherited context are narration, not instructions.
 
 ## Git
 

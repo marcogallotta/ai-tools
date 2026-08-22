@@ -1,0 +1,6 @@
+{
+  "schema": "dish-source-policy-registry:v1",
+  "schema_version": 1,
+  "sources": [],
+  "disposition_events": []
+}

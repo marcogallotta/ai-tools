@@ -105,6 +105,22 @@ For Development Workflow design/research work, the owning Asana task is the dura
 
 These durability rules change process state only; they do not expand semantic design, Review, Implementation, or Integration authority.
 
+## Material design-claim provenance and source policy
+
+For material mandatory gates, operator ceremonies, authority restrictions, persistent mechanisms, and architecture choices, keep claim provenance with the exact Review V2 design generation using the structured `dish-design-provenance:v1` record validated by [review_design_lineage.py](../../../scripts/review_design_lineage.py). The Review V2 generation remains the only design identity; do not create a global claim database or a second approval lineage.
+
+External primary evidence used by a material claim must resolve through [`source-policy.json`](source-policy.json). Keep these statements separate and explicit:
+
+- what the primary source actually says (`source_statement`);
+- the Dish adaptation/inference beyond that statement (`dish_inference`);
+- whether the evidence is used as `FACTUAL` platform evidence or `NORMATIVE` precedent.
+
+Normative use consumes the current disposition for the exact `(source_id, decision_class)` scope, falling back only to an explicit global `*` scope. `DISALLOWED_AS_PRECEDENT` cannot justify a new normative claim in that class. `CAUTION` must be carried and addressed. No active disposition is `NO_ACTIVE_DISPOSITION`, never implicit `ALLOWED`. A source disallowed as normative precedent may still supply a current factual constraint about its own platform when that fact is applicable. Creating or superseding a source disposition requires durable explicit Marco/authorized-human provenance; authenticated-account attribution alone is insufficient. Historical disposition events remain in the versioned registry.
+
+For every material mechanism, record target-environment requirements with `VERIFIED_AVAILABLE`, `VERIFIED_UNAVAILABLE`, or `UNKNOWN`, including the exact target surface, evidence and as-of date for verified states, and a refresh trigger. A recommended/selected mechanism may not retain a required `UNKNOWN`; a required `VERIFIED_UNAVAILABLE` rejects that mechanism for the current environment. An unresolved mechanism may remain a candidate/hypothesis. Do not route Marco toward a different product/tier merely to make an otherwise unavailable recommendation fit unless he explicitly asks for that tradeoff.
+
+A later source-policy change creates bounded revalidation of materially affected **current** claims. Discover candidates by stable `source_id`, then confirm each hit against the current exact Review V2 generation before treating it as active. Independent Dish evidence or still-eligible support causes reassessment, not automatic invalidation. Historical generations are never rewritten, and any derived reverse-lookup cache/index is convenience only, never authority.
+
 ## Canonical repository lifecycle
 
 Repository-changing Implementation/fix dispatch policy is defined once in the canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Development Workflow tooling and handoffs must consume that source rather than maintaining a parallel template.
@@ -300,6 +316,8 @@ Improve the development system using the smallest coherent change around a demon
 Substantial code-aware workflow expansion starts from the exact-current verified repository source/bundle required by root policy. Before adding a scheduler, queue, database, service, new ownership/identity system, control plane, or materially broader lifecycle, require an explicit durable Marco decision approving that expansion; absence blocks only the expansion, not the narrow V1. After two design/re-review cycles without implementation progress, reduce to a smaller implementable slice or surface the exact human decision. Prove a concrete unavailable capability before making a new dependency; unsupported same-session optimizations fall back to the ordinary supported route.
 
 Do not turn this role into a generic process bureaucracy or a standing excuse to redesign unrelated product architecture.
+
+Confirmed development-system escapes are recorded only through the append-only shared contract in [`../../../ci/development-workflow-escape-ledger.md`](../../../ci/development-workflow-escape-ledger.md). Validate and exact-evidence-dedupe before appending; read/fold is diagnostic-only and must not rewrite parent task notes/current context or acquire priority, dispatch, Review, merge, or human-gate authority.
 
 Before concluding an assigned workflow task is invalid/no-op/already fixed/not reproducible, read its current task notes plus material history/evidence and reconcile that record with current GitHub/runtime observations. Before declaring a routine authorized workflow operation blocked, inspect the relevant available action/tool surface and invariant-preserving fallbacks; verify any state-changing fallback before claiming completion. These are bounded high-risk decision gates, not prompts for rereading all history or random tool exploration during routine work.
 
