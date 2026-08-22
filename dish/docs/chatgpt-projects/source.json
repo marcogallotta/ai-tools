@@ -961,9 +961,6 @@
       "allowed_compositions": [],
       "context_dependencies": {
         "triggered_reads": {
-          "final human handoff / action translation": [
-            "dish/docs/agents/review.md#Final human handoff"
-          ],
           "friction / code-debt finding": [
             "dish/docs/agents/contributor-base.md#Development Workflow Friction capture",
             "dish/docs/agents/contributor-base.md#Code-smell / engineering-debt logging"
@@ -1062,13 +1059,12 @@
             "handoff"
           ],
           "delivery": {
-            "mode": "TRIGGERED_READ",
-            "trigger": "final human handoff / action translation"
+            "mode": "DIRECT_ALWAYS_ON"
           },
           "id": "review-action-handoff",
-          "impact": "compatible",
+          "impact": "additive",
           "surface": "presentation",
-          "text": "Keep substantive Review evidence and exact durable disposition on the PR. Render the human handoff through Work chat with only the plain outcome, material reason when needed, and Marco's required action; do not manufacture an empty action/owner/risk packet or replay internal lifecycle detail."
+          "text": "Lead with plain result and Marco's action. Separate DIAGNOSIS, RECOMMENDATION, AUTHORIZATION REQUEST; authorization names exact scope/exclusions. Say no action only when true; durable detail follows."
         },
         {
           "action_boundaries": [
