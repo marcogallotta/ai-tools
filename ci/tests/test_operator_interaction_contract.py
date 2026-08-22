@@ -41,13 +41,17 @@ def test_canonical_chatty_contract_is_generated_into_root_and_avoids_phrase_dict
         assert brittle not in "\n".join(rules)
 
 
-def test_attention_contract_keeps_depth_and_minimum_packet_in_one_generated_source():
+def test_attention_contract_is_intent_first_without_a_mandatory_packet():
     rules = json.loads(SOURCE.read_text())["chatty_contract"]
     text = "\n".join(rules)
-    assert "50%, 100%, or 200%" in text
-    assert "Every depth retains:" in text
-    assert "not truth, authority, completion" in text
-    assert "never chronology/process dumps" in text
+    assert "Match the operator job before depth" in text
+    assert "truth, safety, authority boundaries, and material caveats" in text
+    assert "do not force empty owner/risk/action categories" in text
+    assert "Progressive disclosure is immediate" in text
+    assert "without an acknowledgement-only turn" in text
+    assert "`continue` or `resume` means execute remaining authorized work" in text
+    assert "Every depth retains:" not in text
+    assert "minimum packet" not in text
     style = CLAUDE_OPERATOR_STYLE.read_text()
     assert "not an independent communication authority" in style
     for rule in rules:

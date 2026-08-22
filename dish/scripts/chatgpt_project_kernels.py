@@ -846,8 +846,9 @@ REQUIRED_EVAL_IDS|={'review-v3-audit-excluded', 'review-v3-stale-generation-does
 REQUIRED_EVAL_IDS|={'review-v3-operator-workflow-before-after','review-v3-stale-architecture-block','review-v3-frozen-generation-zero-mutation','review-v3-epistemic-stop-prevents-false-pass','review-v3-epistemic-stop-prevents-false-block','review-v3-rollout-misses-failure','review-v3-wrong-asana-context','review-v3-cross-host-reground-loop','review-v3-parallel-lineage-reuse-race','review-v3-stable-base-conflict-cost','review-v3-rollback-scope-mismatch','review-v3-competing-intent-summary','review-v3-unsupported-external-inference','review-v3-dangerous-ci-ownership','review-v3-protected-invariant-violation','review-v3-stale-section-write-converges','review-v3-headline-paraphrase-requires-reapproval','review-v3-headline-evidence-unrecoverable'}
 REQUIRED_EVAL_IDS|={'review-correction-r3-block-code-fix','review-correction-r3-merge-no-fix','review-correction-r3-design-task-shape-route','review-correction-r3-batch-isolation'}
 REQUIRED_EVAL_IDS|={'autonomy-new-conversational-implementation-needs-one-confirmation','autonomy-active-implementation-does-not-reconfirm','autonomy-worker-formal-block-fix-no-second-confirmation','autonomy-review-correction-r3-task-shape-implementation-no-second-confirmation','autonomy-known-creator-needs-independent-pass','autonomy-manual-worker-missing-automated-provenance-is-not-blocker','autonomy-ambiguous-authorship-without-pass-routes-review','autonomy-transition-evidence-does-not-fabricate-lifecycle-state'}
-ATTENTION_EVAL_IDS={'attention-depth-is-session-persistent','attention-minimum-packet-survives-50-percent','attention-progressive-disclosure-at-200-percent','attention-recovery-interaction'}
-ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field'}
+ATTENTION_EVAL_IDS={'attention-depth-is-session-persistent','attention-material-blocker-survives-50-percent','attention-progressive-disclosure-at-200-percent','attention-recovery-interaction','chatty-routine-choice-no-escalation','chatty-consequential-choice-bounded-question','chatty-less-rerenders-immediately','chatty-continue-resumes-active-work','chatty-premature-stop-correction-resumes','chatty-normal-handoff-silent-grounding','chatty-equivalent-status-aggregates'}
+ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field','transcript_quality'}
+TRANSCRIPT_METRICS={'operator_turns','tool_chatter_events','assistant_tokens'}
 def _eval_payload():return _read_json(EVALS_PATH)
 def _evals():
  x=_eval_payload().get('scenarios');
@@ -910,6 +911,12 @@ def validate_eval_contracts():
    pats=by.get(role,common)
    if q.get('require_ordered_observations') and not pats: raise KernelError(f'eval {sid} cannot order absent observations')
    if q.get('observation_link_field') and len(pats)<2: raise KernelError(f'eval {sid} link field needs multiple observations')
+  tq=q.get('transcript_quality')
+  if tq is not None:
+   if not isinstance(tq,dict) or set(tq)-{'forbidden_failure_modes','max_metrics'}: raise KernelError(f'eval {sid} invalid transcript_quality')
+   failures=tq.get('forbidden_failure_modes'); limits=tq.get('max_metrics')
+   if not isinstance(failures,list) or not failures or len(failures)!=len(set(map(str,failures))): raise KernelError(f'eval {sid} transcript_quality requires unique forbidden_failure_modes')
+   if not isinstance(limits,dict) or not limits or not set(limits).issubset(TRANSCRIPT_METRICS) or any(not isinstance(v,int) or v<0 for v in limits.values()): raise KernelError(f'eval {sid} transcript_quality has invalid max_metrics')
  required=REQUIRED_EVAL_IDS|ATTENTION_EVAL_IDS
  if seen!=required: raise KernelError(f'eval set mismatch missing={sorted(required-seen)} extras={sorted(seen-required)}')
  return out
@@ -919,14 +926,15 @@ def prepare_eval_bundle():
  for q in _evals():
   for role in q['roles']:
    text=render_role(m,s,role); case={'case_id':f"{q['id']}::{role}",'scenario_id':q['id'],'role':role,'project_name':s['roles'][role]['project_name'],'kernel_sha256':_h(text.encode()),'project_instructions':text,'prompt':str(q.get('prompts',{}).get(role,q.get('prompt','')))}
+   if q.get('transcript_quality') is not None: case['transcript_quality_required']=True
    if ORACLE_FIELDS & set(case): raise KernelError('prepared eval exposes oracle')
    cases.append(case)
- return {'schema_version':2,'runner_protocol':'dish-chatgpt-project-behavior-v2','canonical_version':m['canonical_version'],'fresh_chat_requirement':'Use a newly created chat for every case.','response_contract':{'instruction':'Return assistant_response plus independent runner-observed tool evidence.','action_vocabulary':_actions(),'runner_observation_shape':{'seq':'<positive integer>','kind':'<event kind>','operation':'<tool operation>'}},'cases':cases}
+ return {'schema_version':2,'runner_protocol':'dish-chatgpt-project-behavior-v2','canonical_version':m['canonical_version'],'fresh_chat_requirement':'Use a newly created chat for every case.','response_contract':{'instruction':'Return assistant_response plus independent runner-observed tool evidence. When transcript-quality grading is requested by the harness, also return the independent grade, failure modes, and interaction metrics.','action_vocabulary':_actions(),'runner_observation_shape':{'seq':'<positive integer>','kind':'<event kind>','operation':'<tool operation>'},'transcript_quality_shape':{'grade':'pass|fail','failure_modes':['<failure mode>'],'metrics':{'operator_turns':'<non-negative integer>','tool_chatter_events':'<non-negative integer>','assistant_tokens':'<non-negative integer>'}}},'cases':cases}
 def _oracles():
  out={}
  for q in _evals():
   for role in q['roles']:
-   out[f"{q['id']}::{role}"]={'expected_outcome':str(q['expected_outcome']),'required_actions':set(map(str,q['required_actions'])),'forbidden_actions':set(map(str,q['forbidden_actions'])),'required_observations':list(q.get('required_observations_by_role',{}).get(role,q.get('required_observations',[]))),'require_ordered_observations':bool(q.get('require_ordered_observations')),'observation_link_field':str(q.get('observation_link_field','')).strip()}
+   out[f"{q['id']}::{role}"]={'expected_outcome':str(q['expected_outcome']),'required_actions':set(map(str,q['required_actions'])),'forbidden_actions':set(map(str,q['forbidden_actions'])),'required_observations':list(q.get('required_observations_by_role',{}).get(role,q.get('required_observations',[]))),'require_ordered_observations':bool(q.get('require_ordered_observations')),'observation_link_field':str(q.get('observation_link_field','')).strip(),'transcript_quality':q.get('transcript_quality')}
  return out
 def _contains(a,b):
  if isinstance(a,dict) and isinstance(b,dict): return all(k in a and _contains(a[k],v) for k,v in b.items())
@@ -954,6 +962,16 @@ def _validate_observed_evidence(cid,o,obs):
  if link:
   vals=[x.get(link) for x in found if x.get(link) not in (None,'')]
   if len(vals)<2 or len(set(map(str,vals)))!=1: raise KernelError(f'behavior eval failed for {cid}: required observations do not share {link}')
+def _validate_transcript_quality(cid,o,quality):
+ gate=o['transcript_quality']
+ if gate is None:return
+ if not isinstance(quality,dict) or quality.get('grade')!='pass': raise KernelError(f'behavior eval failed for {cid}: transcript quality did not pass')
+ failures=quality.get('failure_modes'); metrics=quality.get('metrics')
+ if not isinstance(failures,list) or not isinstance(metrics,dict) or set(metrics)!=TRANSCRIPT_METRICS or any(not isinstance(v,int) or v<0 for v in metrics.values()): raise KernelError(f'behavior result {cid} invalid transcript quality evidence')
+ forbidden=set(map(str,gate['forbidden_failure_modes']))
+ if forbidden&set(map(str,failures)): raise KernelError(f'behavior eval failed for {cid}: forbidden transcript failure mode')
+ for metric,limit in gate['max_metrics'].items():
+  if metrics[metric]>limit: raise KernelError(f'behavior eval failed for {cid}: transcript metric {metric} exceeds {limit}')
 def evaluate_behavior_results(p):
  m,_=load_canonical(); validate_eval_contracts()
  if p.get('schema_version')!=2 or p.get('runner_protocol')!='dish-chatgpt-project-behavior-v2' or p.get('canonical_version')!=m['canonical_version']: raise KernelError('behavior results metadata mismatch')
@@ -968,7 +986,7 @@ def evaluate_behavior_results(p):
   if not isinstance(acts,list) or not acts: raise KernelError(f'behavior result {cid} requires actions')
   acts=set(map(str,acts)); unknown=acts-vocab; o=oracles[cid]
   if unknown or str(resp.get('outcome',''))!=o['expected_outcome'] or o['required_actions']-acts or o['forbidden_actions']&acts: raise KernelError(f'behavior eval failed for {cid}')
-  _validate_observed_evidence(cid,o,r.get('runner_observations')); by[cid]=r
+  _validate_observed_evidence(cid,o,r.get('runner_observations')); _validate_transcript_quality(cid,o,r.get('transcript_quality')); by[cid]=r
  missing=set(oracles)-set(by)
  if missing: raise KernelError(f'behavior results missing cases: {sorted(missing)}')
  return sorted(by)
@@ -981,7 +999,7 @@ def run_fresh_chat_runner(command):
   if c.returncode: raise KernelError(f'fresh-chat runner failed for {case["case_id"]}: {c.stderr.strip()}')
   try:r=json.loads(c.stdout)
   except json.JSONDecodeError as e: raise KernelError(f'invalid runner JSON for {case["case_id"]}') from e
-  results.append({'case_id':case['case_id'],'fresh_chat_id':r.get('fresh_chat_id'),'assistant_response':r.get('assistant_response'),'runner_observations':r.get('runner_observations',[])})
+  results.append({'case_id':case['case_id'],'fresh_chat_id':r.get('fresh_chat_id'),'assistant_response':r.get('assistant_response'),'runner_observations':r.get('runner_observations',[]),'transcript_quality':r.get('transcript_quality')})
  return {'schema_version':2,'runner_protocol':b['runner_protocol'],'canonical_version':b['canonical_version'],'results':results}
 def version_status(project_version,role_key,action_boundary):
  d=classify_project_drift(project_version,role_key,action_boundary)

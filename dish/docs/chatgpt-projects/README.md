@@ -85,11 +85,13 @@ python3 dish/scripts/chatgpt_project_kernels.py version --project-version <decla
 
 The behavior-v2 runner protocol separates the assistant's declared outcome/actions from **runner-observed evidence**. For scenarios that require external side effects, `evals.json` contains a hidden observation oracle. The runner must capture actual tool-layer events such as capability discovery, a durable GitHub write, and authoritative readback, including exact PR/head/write identity where required. Assistant-authored text such as “I submitted the review” is never observation evidence. The evaluator rejects missing, wrong-head, wrong-transport, mismatched-write, or out-of-order evidence even when the assistant declares every expected action label.
 
+Chatty scenarios may also carry a hidden transcript-quality oracle; their prepared case exposes only `transcript_quality_required`, never the hidden failure/threshold criteria. The independent runner reports a PASS/FAIL grade, named failure modes, and interaction metrics (`operator_turns`, `tool_chatter_events`, and `assistant_tokens`). The evaluator rejects forbidden failures such as premature stopping, acknowledgement-only correction, option dumping, or narration, and enforces scenario-specific turn/chatter ceilings. Token count remains an observed comparison metric rather than a universal sentence or response cap.
+
 A runner is therefore part of the trusted eval boundary: it must instrument the fresh ChatGPT Project interaction and report tool observations independently of assistant prose. The repository harness can validate the recorded trace and link/readback invariants; it cannot cryptographically prove that an external runner fabricated no events.
 
 ## Acceptance and rollout policy
 
-The repository keeps the complete approved matrix — currently 210 scenarios / 370 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits the full matrix, and action-bearing cases keep their machine-verifiable observation requirements.
+The repository keeps the complete approved matrix — currently 217 scenarios / 380 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits the full matrix, and action-bearing cases keep their machine-verifiable observation requirements.
 
 The **complete live matrix run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or full live result bundle does not by itself make a repository change unreviewable or require manual recreation of the matrix.
 
