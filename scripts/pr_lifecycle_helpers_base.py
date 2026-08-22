@@ -6,6 +6,7 @@ import io
 import json
 import zipfile
 
+from ci_failure_fingerprint import FingerprintError, validate_fingerprint
 from pr_lifecycle_support import *
 
 
@@ -183,14 +184,23 @@ def parse_ci_failure_ownership(
                 cid = int(comment.get("id"))
             except (TypeError, ValueError):
                 cid = -1
-            records.append(
-                {
-                    "classification": classification,
-                    "evidence": evidence,
-                    "comment_id": cid,
-                    "timestamp": timestamp,
-                }
-            )
+            record = {
+                "classification": classification,
+                "evidence": evidence,
+                "comment_id": cid,
+                "timestamp": timestamp,
+            }
+            fingerprint = str(fields.get("fingerprint") or "").strip().lower()
+            if fingerprint:
+                try:
+                    record["causal_fingerprint"] = validate_fingerprint(fingerprint)
+                except FingerprintError:
+                    return {
+                        "classification": "AMBIGUOUS",
+                        "evidence": "CI ownership marker has malformed causal fingerprint",
+                        "comment_id": comment.get("id"),
+                    }
+            records.append(record)
     if not records:
         return {
             "classification": "AMBIGUOUS",

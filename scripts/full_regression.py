@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 from xml.etree import ElementTree
 
+from ci_failure_fingerprint import causal_fingerprint
+
 EVIDENCE_SCHEMA = "dish-full-regression-v1"
 TRIAGE_SCHEMA = "dish-full-regression-triage-v1"
 RUN_STATE_SCHEMA = "dish-full-regression-run-state-v1"
@@ -207,6 +209,12 @@ def record_failure(
     failure_id = _failure_identity(
         kind=kind, component=component, source=source, invariant=invariant
     )
+    fingerprint, causal_identity = causal_fingerprint(
+        owner_surface=component,
+        failure_surface=source,
+        invariant=invariant,
+        signature=failure_kind,
+    )
     payload = {
         "schema": FAILURE_SCHEMA,
         "failure_id": failure_id,
@@ -216,6 +224,8 @@ def record_failure(
         "invariant": invariant,
         "failure_kind": failure_kind,
         "detail": detail,
+        "causal_fingerprint": fingerprint,
+        "causal_identity": causal_identity,
     }
     path = output_dir / "failures" / f"{hashlib.sha256(failure_id.encode()).hexdigest()[:20]}.json"
     if path.exists():
@@ -657,6 +667,11 @@ def validate_triage_record(
         )
         if not isinstance(evidence_failure, Mapping):
             raise ContractError(f"evidence missing failure record for required ID: {failure_id}")
+        causal_fingerprint = str(record.get("causal_fingerprint") or "").strip().lower()
+        if not causal_fingerprint:
+            raise ContractError("triage causal_fingerprint is required")
+        if causal_fingerprint != str(evidence_failure.get("causal_fingerprint") or ""):
+            raise ContractError("triage causal_fingerprint does not match evidence failure")
     else:
         evidence_failure = None
 

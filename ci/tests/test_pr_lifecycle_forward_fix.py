@@ -11,7 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from pr_lifecycle_ci_recovery import recover_failed_ci, BASELINE_OWNER_MARKER
+from ci_failure_fingerprint import causal_fingerprint
+from pr_lifecycle_ci_recovery import (
+    recover_failed_ci,
+    BASELINE_OCCURRENCE_MARKER,
+    BASELINE_OWNER_MARKER,
+)
 from pr_lifecycle_projection import atomic_write, build_projection, read_projection
 from pr_lifecycle_support import LifecycleError, LifecycleState, PRLifecycle
 from pr_lifecycle_task_state import apply_transition, execution_truth, task_snapshot
@@ -70,7 +75,18 @@ class FakeEngine:
     def inspect(self, raw): return self.current
 
 
-def lifecycle(classification: str, *, evidence="proof", run_id=123, main_sha=None):
+FINGERPRINT = causal_fingerprint(
+    owner_surface="python-control-plane",
+    failure_surface="pytest",
+    invariant="tests/test_policy.py::test_owner",
+    signature="test_failure",
+)[0]
+
+
+def lifecycle(
+    classification: str, *, evidence="proof", run_id=123, main_sha=None,
+    fingerprint=FINGERPRINT,
+):
     gate={
         "diagnosis": pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value,
         "failure_ownership":classification,
@@ -78,6 +94,8 @@ def lifecycle(classification: str, *, evidence="proof", run_id=123, main_sha=Non
         "required_workflow_run_id":run_id,
         "required_check":pr_gate.REQUIRED_ORDINARY_CI_CONTEXT,
     }
+    if fingerprint is not None:
+        gate["failure_causal_fingerprint"] = fingerprint
     if main_sha: gate["failure_main_sha"]=main_sha
     return PRLifecycle(number=8,url="u",title="t",head="a"*40,branch="b",base="main",draft=False,
         state=LifecycleState.REVIEW_PASSED,state_label="review",task_ids=["1217561810880370"],gate=gate)
@@ -130,6 +148,41 @@ def test_current_main_failure_dedupes_one_owner_and_fans_out():
     owners=[t for t in asana.tasks.values() if BASELINE_OWNER_MARKER in t.get("notes","")]
     assert len(owners)==1
     assert any("dish-external-dependency:v1" in c["body"] for c in engine.github.comments)
+    owner_gid = owners[0]["gid"]
+    assert len([s for s in asana.stories[owner_gid] if BASELINE_OCCURRENCE_MARKER in s["text"]]) == 1
+
+
+def test_same_cause_across_main_shas_reuses_owner_and_refreshes_occurrence():
+    asana=FakeAsana()
+    task={"gid":"1217561810880370","name":"stage2","notes":"","completed":False,"modified_at":"t","memberships":[{"project":{"gid":"proj"},"section":{"gid":"ready"}}],"dependencies":[]}
+    asana.tasks[task["gid"]]=task; asana.project_tasks["proj"]=[task["gid"]]
+    first=lifecycle("PROVEN_CURRENT_MAIN", main_sha="b"*40); first.asana=[task]
+    recover_failed_ci(FakeEngine(first, asana=asana), first)
+    owner_gid=next(gid for gid, value in asana.tasks.items() if BASELINE_OWNER_MARKER in value.get("notes", ""))
+    asana.tasks[owner_gid]["completed"] = True
+    second=lifecycle("PROVEN_CURRENT_MAIN", main_sha="c"*40, run_id=124); second.asana=[task]
+    recover_failed_ci(FakeEngine(second, asana=asana), second)
+    owners=[t for t in asana.tasks.values() if BASELINE_OWNER_MARKER in t.get("notes","")]
+    assert len(owners)==1
+    assert owners[0]["completed"] is False
+    stories=asana.stories[owners[0]["gid"]]
+    assert len([story for story in stories if BASELINE_OCCURRENCE_MARKER in story["text"]])==2
+    assert any("CURRENT AFFECTED SHA: " + "c"*40 in story["text"] for story in stories)
+
+
+def test_distinct_cause_creates_distinct_owner_and_missing_fingerprint_fails_closed():
+    asana=FakeAsana()
+    task={"gid":"1217561810880370","name":"stage2","notes":"","completed":False,"modified_at":"t","memberships":[{"project":{"gid":"proj"},"section":{"gid":"ready"}}],"dependencies":[]}
+    asana.tasks[task["gid"]]=task; asana.project_tasks["proj"]=[task["gid"]]
+    first=lifecycle("PROVEN_CURRENT_MAIN", main_sha="b"*40); first.asana=[task]
+    recover_failed_ci(FakeEngine(first, asana=asana), first)
+    other=causal_fingerprint(owner_surface="python-control-plane", failure_surface="pytest", invariant="tests/test_policy.py::test_other", signature="test_failure")[0]
+    second=lifecycle("PROVEN_CURRENT_MAIN", main_sha="b"*40, fingerprint=other); second.asana=[task]
+    recover_failed_ci(FakeEngine(second, asana=asana), second)
+    assert len([t for t in asana.tasks.values() if BASELINE_OWNER_MARKER in t.get("notes","")])==2
+    ambiguous=lifecycle("PROVEN_CURRENT_MAIN", main_sha="b"*40, fingerprint=None); ambiguous.asana=[task]
+    assert recover_failed_ci(FakeEngine(ambiguous, asana=asana), ambiguous) is ambiguous
+    assert "fails closed as ambiguous" in ambiguous.residual_reason
 
 
 def test_task_transition_exact_precondition_idempotent_and_readback():

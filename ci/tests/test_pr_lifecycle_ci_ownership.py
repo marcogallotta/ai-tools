@@ -30,15 +30,19 @@ def test_pending_exact_head_ci_waits_in_integration_without_changing_review_verd
     assert state.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.PENDING.value
 
 
-def _ownership_comment(classification, *, evidence="run:700/job:test/signature:x"):
+def _ownership_comment(
+    classification, *, evidence="run:700/job:test/signature:x", fingerprint=None
+):
     from urllib.parse import quote
 
+    fingerprint_field = f" fingerprint={fingerprint}" if fingerprint else ""
     return {
         "id": 99,
         "body": (
             f"<!-- dish-ci-failure-ownership:v1 head={base.HEAD} "
             f"check={quote('Dish / exact-head certification', safe='')} "
-            f"classification={classification} evidence={quote(evidence, safe='')} -->"
+            f"classification={classification} evidence={quote(evidence, safe='')}"
+            f"{fingerprint_field} -->"
         ),
         "created_at": base.NOW.isoformat(),
         "updated_at": base.NOW.isoformat(),
@@ -79,6 +83,16 @@ def test_failed_ci_proven_current_main_requires_external_owner_record_not_candid
     assert state.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
     assert state.gate["failure_ownership"] == "PROVEN_CURRENT_MAIN"
     assert "MAIN OWNED" in state.residual_reason
+
+
+def test_proven_current_main_carries_valid_causal_fingerprint_to_recovery_gate():
+    fingerprint = "ci-cause-v1:" + "a" * 32
+    gh = base.FakeGitHub()
+    gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [_ownership_comment("PROVEN_CURRENT_MAIN", fingerprint=fingerprint)]
+    state = base.engine(gh, authority=True).inspect(gh.pr)
+    assert state.gate["failure_causal_fingerprint"] == fingerprint
 
 
 def test_pending_ci_preserves_review_passed_headline():
