@@ -667,9 +667,9 @@ def test_fresh_implementation_identity_is_agent_derived_without_weakening_lineag
  rule={r['id']:r for r in kernels.effective_rules(source,'implementation')}[
   'implementation-remote-first-local-boundary'
  ]
- assert rule['impact']=='additive'
- assert 'orchestration derives and records branch/base' in rule['text']
- assert 'Existing lineages stay exact' in rule['text']
+ assert rule['impact']=='breaking'
+ assert 'orchestration derives branch/base' in rule['text']
+ assert 'existing lineages stay exact' in rule['text']
  root=(DISH_ROOT.parent/'CLAUDE.md').read_text()
  implementation=(DISH_ROOT/'docs'/'agents'/'implementation.md').read_text()
  handoff=(DISH_ROOT/'docs'/'agents'/'templates'/'implementation-handoff.md').read_text()
@@ -738,12 +738,14 @@ def test_c1_standing_contracts_preserve_authority_and_capture_surfaces():
 def test_coordinator_concurrency_requires_evidence_and_preserves_reasoning_frontier():
  _,source=kernels.load_canonical()
  rule={r['id']:r for r in kernels.effective_rules(source,'coordinator')}[
-  'coordinator-evidence-based-concurrency'
+ 'coordinator-evidence-based-concurrency'
  ]
+ assert rule['impact']=='breaking'
  assert 'verified current causal edge' in rule['text']
  assert 'Proven independence is sticky' in rule['text']
- assert 'unrelated PR/CI/Implementation fan-in never suppresses independent Research or Design Review' in rule['text']
+ assert 'complete deterministic eligible frontier' in rule['text']
  coordinator=(DISH_ROOT/'docs'/'agents'/'coordinator.md').read_text()
+ assert 'FALLBACK_TO_BASELINE / LAST_KNOWN_GOOD' in coordinator
  architecture=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'work-identity-and-concurrency.md').read_text()
  for text in (coordinator,architecture):
   assert 'exact upstream result' in text
@@ -758,6 +760,47 @@ def test_coordinator_concurrency_requires_evidence_and_preserves_reasoning_front
   'coordinator-concurrency-sticky-independence',
   'coordinator-concurrency-drain-reasoning-frontier',
   'coordinator-concurrency-omitted-p0',
+ }
+ assert expected<={scenario['id'] for scenario in kernels._evals()}
+
+
+def test_coordinator_operating_loop_g9_has_deterministic_admission_host_evidence_and_regressions():
+ _,source=kernels.load_canonical()
+ rules={r['id']:r for r in kernels.effective_rules(source,'coordinator')}
+ live=rules['coordinator-live-scan']
+ host=rules['coordinator-evidence-based-host-recommendation']
+ assert live['impact']=='breaking'
+ assert 'deterministic projection/frontier' in live['text']
+ assert 'model judgment chooses only among valid actions' in live['text']
+ assert host['impact']=='breaking'
+ assert host['delivery']=={'mode':'TRIGGERED_READ','trigger':'execution host recommendation'}
+ assert 'convenience/overlap alone is insufficient' in host['text']
+ assert 'grants no dispatch, role, lineage, Review, or Integration authority' in host['text']
+
+ coordinator=(DISH_ROOT/'docs'/'agents'/'coordinator.md').read_text()
+ authority=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'authority-and-state.md').read_text()
+ hosts=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'execution-hosts-and-operator-boundary.md').read_text()
+ recovery=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'recovery-observability-and-completion.md').read_text()
+ adr=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'decisions'/'0005-capability-grounded-execution.md').read_text()
+ control=(DISH_ROOT.parent/'OPERATOR_CONTROL_PLANE.md').read_text()
+ assert 'Clean unchanged deterministic state produces no model turn' in coordinator
+ assert 'Failed admission is logged and refused' in coordinator
+ assert 'creates no queue, dependency authority, scheduler, dispatch authority, or prompt-side state mirror' in authority
+ assert 'concrete material advantage' in hosts
+ assert 'normal model input' in recovery
+ assert 'Coordinator may recommend local execution' in adr
+ assert 'deterministic admission confirms' in control
+
+ expected={
+  'coordinator-loop-action-first-fallback','coordinator-loop-drain-fallback',
+  'coordinator-loop-additive-off','coordinator-loop-projection-normal-input',
+  'coordinator-loop-projection-unknown','coordinator-loop-post-model-wait-refusal',
+  'coordinator-loop-local-benefit-infrastructure',
+  'coordinator-loop-local-benefit-convenience-rejected',
+  'coordinator-loop-local-benefit-remote-available','coordinator-loop-hosted-default',
+  'coordinator-loop-stop-reset-outer-fence','coordinator-loop-source-backend-equivalence',
+  'coordinator-loop-restart-recovery','coordinator-loop-zero-idle-turn',
+  'coordinator-loop-versioned-telemetry',
  }
  assert expected<={scenario['id'] for scenario in kernels._evals()}
 
@@ -828,18 +871,24 @@ def test_current_project_is_silent_and_no_zero_prefix():
  assert ok is True and message=='' and '0/3' not in message
 
 def test_d96_plus_additive_drift_continues_without_resync():
- m,s=kernels.load_canonical(); edge=next(e for e in reversed(m['change_history']) if any(x['impact']=='additive' for x in e['changes'])); parent=edge['from_version']
- change=next(x for x in edge['changes'] if x['impact']=='additive')
- role=next(r for r in change['roles'] if r!='*') if '*' not in change['roles'] else 'review'
- boundary=next(b for b in change['action_boundaries'] if b!='*') if '*' not in change['action_boundaries'] else 'review-write'
- d=kernels.classify_project_drift(parent,role,boundary,manifest=m,source=s)
+ m,s=kernels.load_canonical(); d=None
+ for edge in reversed(m['change_history']):
+  for change in edge['changes']:
+   if change['impact']!='additive': continue
+   role=next(r for r in change['roles'] if r!='*') if '*' not in change['roles'] else 'audit'
+   boundary=next(b for b in change['action_boundaries'] if b!='*') if '*' not in change['action_boundaries'] else 'analysis'
+   candidate=kernels.classify_project_drift(edge['from_version'],role,boundary,manifest=m,source=s)
+   if not candidate['block'] and candidate['drift_level']==2:
+    d=candidate; break
+  if d: break
+ assert d is not None
  assert not d['block'] and not d['resync_required'] and d['drift_level']==2
  assert d['indicator']=='PROJECT SETTINGS: OUTDATED · DRIFT 2/3'
 
-def test_v708_review_write_is_nonblocking_and_uses_current_authority():
+def test_v708_review_write_honors_current_proved_host_routing_break():
  m,s=kernels.load_canonical(); d=kernels.classify_project_drift('dish-chatgpt-projects-v2-708fb9a9a9bc','review','review-write',manifest=m,source=s)
- assert d['state']=='outdated' and not d['block'] and not d['resync_required']
- assert d['drift_level'] in {1,2} and d['indicator'].startswith('PROJECT SETTINGS: OUTDATED · DRIFT ')
+ assert d['state']=='hard_break' and d['block'] and d['resync_required']
+ assert d['drift_level']==3 and d['indicator']=='PROJECT SETTINGS: HARD BREAK · DRIFT 3/3'
 
 def test_pre_d96_fixture_proves_unconditional_mismatch_stop():
  pre_d96_fixture = """PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-b6a326f98ad4
@@ -864,7 +913,7 @@ def test_invalid_or_unknown_drift_routes_to_integrity_error_without_resync():
 def test_published_main_86_generation_is_retained_and_current_break_history_is_honored():
  m,s=kernels.load_canonical(); old='dish-chatgpt-projects-v2-86b8011172ee'
  assert old in kernels.required_versions(m)
- ordinary=kernels.classify_project_drift(old,'review','review-write',manifest=m,source=s)
+ ordinary=kernels.classify_project_drift(old,'audit','analysis',manifest=m,source=s)
  assert ordinary['state']=='outdated' and not ordinary['block'] and not ordinary['resync_required'] and ordinary['drift_level'] in {1,2}
  emergency=kernels.classify_project_drift(old,'implementation','handoff',manifest=m,source=s)
  assert emergency['state']=='hard_break' and emergency['block'] and emergency['resync_required'] and emergency['drift_level']==3
@@ -893,8 +942,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426','dish-chatgpt-projects-v2-b545b493a5cc'})
- assert set(versions)==expected and len(versions)==40
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426','dish-chatgpt-projects-v2-b545b493a5cc','dish-chatgpt-projects-v2-7d10fa5d611e'})
+ assert set(versions)==expected and len(versions)==41
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
@@ -974,13 +1023,10 @@ def test_design_principles_projection_is_derived_and_present_everywhere():
   assert rule['text'] in path.read_text(), role
 
 def test_malformed_unrelated_history_only_blocks_the_affected_action():
- m,s=kernels.load_canonical(); m=copy.deepcopy(m); old=None
- for edge in m['change_history']:
-  for change in edge['changes']:
-   if change.get('rule_id')=='coordinator-live-scan' and 'status' in change.get('action_boundaries',[]):
-    change.pop('impact'); old=edge['from_version']; break
-  if old:break
- unrelated=kernels.classify_project_drift(old,'review','review-write',manifest=m,source=s)
+ m,s=kernels.load_canonical(); m=copy.deepcopy(m); edge=m['change_history'][-1]; old=edge['from_version']
+ change=next(c for c in edge['changes'] if c.get('rule_id')=='coordinator-live-scan')
+ change.pop('impact')
+ unrelated=kernels.classify_project_drift(old,'integration','merge',manifest=m,source=s)
  affected=kernels.classify_project_drift(old,'coordinator','status',manifest=m,source=s)
  assert not unrelated['block'] and unrelated['state']!='integrity_error'
  assert affected['state']=='integrity_error' and affected['block'] and not affected['resync_required']
@@ -1017,20 +1063,28 @@ def test_historical_reclassification_has_machine_readable_provenance():
     kernels._validate_correction(change); corrected.append(change)
  assert corrected and all(c['historical_correction']['previous_impact']=='breaking' for c in corrected)
 
-def test_self_transition_is_nonblocking_for_every_role_and_action():
+def test_current_transition_blocks_only_its_proved_role_and_action_boundaries():
  m,s=kernels.load_canonical(); parent=m['change_history'][-1]['from_version']
  boundaries={'startup','status','dispatch','handoff','role-critical-write','review-write','merge','analysis'}
+ affected={
+  ('coordinator','status'),('coordinator','dispatch'),('coordinator','handoff'),
+  ('implementation','role-critical-write'),('implementation','handoff'),
+  ('review','review-write'),('review','handoff'),
+ }
  for role in s['roles']:
   for boundary in boundaries:
    d=kernels.classify_project_drift(parent,role,boundary,manifest=m,source=s)
-   assert d['state']=='outdated' and not d['block'] and not d['resync_required'], (role,boundary,d)
-   assert d['drift_level'] in {1,2}
+   if (role,boundary) in affected:
+    assert d['state']=='hard_break' and d['block'] and d['resync_required'] and d['drift_level']==3, (role,boundary,d)
+   else:
+    assert d['state']=='outdated' and not d['block'] and not d['resync_required'], (role,boundary,d)
+    assert d['drift_level']==1
 
 def test_generated_digest_integrity_is_strict_only_for_current_generation():
  m,s=kernels.load_canonical(); current=kernels.classify_project_drift(m['canonical_version'],'review','status',manifest=m,source=s,actual_generated_sha256='wrong')
  assert current['state']=='integrity_error' and not current['resync_required']
  old=kernels.classify_project_drift('dish-chatgpt-projects-v2-708fb9a9a9bc','review','review-write',manifest=m,source=s,actual_generated_sha256='historical-digest')
- assert old['state']=='outdated' and not old['block']
+ assert old['state']=='hard_break' and old['block'] and old['resync_required']
 
 def test_impact_is_explicit_and_never_inferred_from_rule_criticality():
  for surface in ('authority','safety','presentation'):

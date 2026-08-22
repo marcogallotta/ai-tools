@@ -20,8 +20,11 @@ This document identifies authoritative facts and derived state. Detailed transit
 | Actual TEST/PROD state | Direct runtime/environment evidence | Asana status summaries |
 | Local Implementation ownership | Repository worktree claim for the exact lineage | identity files and PR leases |
 | Local Integration admission | Per-PR/head fence and fresh GitHub/Asana reads | dispatcher status |
+| Coordinator current-state/action frontier | GitHub, Asana, repository policy, and direct runtime evidence by fact | normalized lifecycle/task projection and deterministic hard-invariant admission |
 
 [The lifecycle dispatcher](../../../../scripts/pr_lifecycle.py) reconstructs a queue view from durable GitHub and linked Asana facts. Its process memory and output are projections, not authoritative lifecycle storage.
+
+The Coordinator normally consumes that maintained normalized projection rather than asking a model to rediscover mechanically knowable state. The deterministic layer constructs the complete eligible frontier and owns exact identity, contradiction/unknown classification, recorded dependencies, current controls, execution truth, wake/receipt/fence identity, and hard-invariant admission. Model judgment may choose among already valid actions and interpret leverage, convergence, local-benefit, and operator-attention tradeoffs; it cannot mint facts or authority. Missing projection facts remain unknown/reconciliation-required, and bounded direct reads are recovery/forensic fallback.
 
 ## Invariants
 
@@ -36,6 +39,8 @@ This document identifies authoritative facts and derived state. Detailed transit
 - Mutable current task state does not retroactively redefine an already-dispatched exact design or PR candidate without explicit lineage movement.
 - Ambiguous writes are reconciled by authoritative readback before replay.
 - Contradictions remain explicit until the owning authority resolves them.
+- A Coordinator proposal remains advisory until deterministic admission revalidates its exact current facts and hard invariants.
+- Derived Coordinator state creates no queue, dependency authority, scheduler, dispatch authority, or prompt-side state mirror.
 
 ## Current anchors
 

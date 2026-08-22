@@ -164,7 +164,7 @@ The PR must contain the complete agent-to-agent instructions; Marco must not be 
 
 ### Temporary exact-byte bundle containment
 
-For the current publication-friction containment path, the GitHub connector remains the normal publication path. Do **not** pre-route local merely because a candidate is large, multi-file, or looks inconvenient to publish. First attempt normal connector publication. Only when that actual attempt is failing/unavailable or starts degrading into slow manual blob/chunk/base64 work, and the remote Implementation agent still has the complete exact candidate bytes, may this local fallback activate. The human relay is then deliberately minimal:
+For the current publication-friction containment path, the GitHub connector remains the normal publication path when no concrete material local advantage was established at dispatch. Do **not** pre-route local merely because a candidate is generically large, multi-file, or looks inconvenient; a positive route requires evidence of an actual payload/model-context/transport boundary and its material benefit. When no such evidence exists, first attempt normal connector publication. If that attempt is failing/unavailable or starts degrading into slow manual blob/chunk/base64 work, and the remote Implementation agent still has the complete exact candidate bytes, this local fallback may activate. The human relay is then deliberately minimal:
 
 - before stopping the GitHub connector path, tell Marco **why it stopped and exactly what was tried**. Name the concrete connector mutation(s)/fallback(s) attempted and the observed failure/degradation; `large`, `multi-file`, or `looks slow` is not a stop reason by itself;
 - produce **one downloadable exact candidate Git bundle**; that bundle is the only file Marco is expected to download or pass to the local agent;
@@ -176,7 +176,7 @@ For the current publication-friction containment path, the GitHub connector rema
 - if the named bundle itself is missing, unreadable, invalid, or does not contain the expected candidate tree, classify `FRESH AUTHORING REQUIRED`; prior exact-tree/test evidence does not transfer to newly authored bytes;
 - after exact publication, run `scripts/pr_lifecycle.py implementation-finalize --pr <N> --expected-head <published-head> --clear-publication-blocker` when the blocker section is stale. Completion is successful only when authoritative GitHub readback proves the same exact head with `draft=false`; a failed transition/readback remains unfinished.
 
-This is temporary containment, not a second publication architecture. Existing materializer recovery and remote-first routing remain authoritative dependencies and are not duplicated here.
+This is temporary containment, not a second publication architecture. Existing materializer recovery and the evidence-based host-routing boundary remain authoritative dependencies and are not duplicated here.
 
 A local Implementation-completion agent accepting this ownership handoff must:
 
@@ -208,17 +208,17 @@ Preserve established authority and identity boundaries. Do not introduce a secon
 
 When a dependency, architectural contradiction, or necessary scope expansion appears, report it rather than silently broadening the task.
 
-### Remote-first execution and local-work classification
+### Evidence-based execution-host classification
 
-Substantive repository implementation is remote/hosted by default. Local execution is not continuity authority and is not justified by convenience, a prior local agent, a slow suite, a timeout, a missing optional dependency, or one failed publication primitive while another authorized hosted path remains. Before routing semantic Implementation locally, name the exact capability the hosted path cannot provide and the bounded authorized fallbacks already exhausted.
+Substantive repository implementation is remote/hosted by default. Local execution is not continuity authority and is not justified by convenience, overlap, a prior local agent, elapsed runtime, a timeout, preference, or a missing optional dependency. A local route may be recommended only when current evidence establishes either an exact unavailable hosted capability with exhausted bounded fallbacks or a concrete material local advantage: required infrastructure/system capability, a proved large-file/payload/model-context boundary, required shared local state, or materially lower convergence/publication cost. Name the evidence and expected benefit.
 
 Classify every residual local requirement by work type, independently from elapsed runtime:
 
 - `TESTS ONLY — <exact local test/environment boundary>` for already-authored source that only needs native/local evidence;
-- `IMPLEMENTATION / PUBLICATION — <exact unavailable remote capability>; fallbacks exhausted: <bounded list>` only when a real local source/publication mutation is unavoidable;
+- `IMPLEMENTATION / PUBLICATION — <exact unavailable hosted capability and exhausted fallbacks | concrete material local advantage + evidence/benefit>` only when the route includes real local source/publication mutation;
 - `LOCAL SYSTEM ACCESS — <exact capability>` for sudo/systemd/device/installed-runtime operations that are neither semantic authoring nor merely a test command.
 
-Only the second form, with both the unavailable hosted capability and exhausted fallbacks explicit, can justify a local Implementation route. `TESTS ONLY` and `LOCAL SYSTEM ACCESS` never do. Report runtime separately when useful; a 45-minute suite remains `TESTS ONLY`, while a 30-second source repair remains Implementation. Preserve completed remote evidence and hand off only the irreducibly local residual.
+Only the second form, with its exact unavailable-capability proof or concrete material local-benefit evidence, can justify a local Implementation route. `LOCAL BENEFIT` is advisory: it creates no dependency or WAIT, changes no SEND NOW classification, grants no branch/role/local-dispatch authority, and waives no claim, Review, certification, or Integration gate. `TESTS ONLY` and `LOCAL SYSTEM ACCESS` never justify semantic source mutation by themselves. Report runtime separately when useful; a 45-minute suite remains `TESTS ONLY`, while a 30-second source repair remains Implementation. Preserve completed evidence and hand off only the exact remaining work. When no concrete material local advantage exists, use the normal hosted route.
 
 ### Scope discipline
 

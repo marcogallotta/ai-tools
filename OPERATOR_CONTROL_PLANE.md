@@ -56,15 +56,15 @@ Persist only the attempt/failure information actually required to avoid duplicat
 
 Blocked work stays out of Ready. Preserve the real Asana dependency where available and add the smallest stable task-name marker such as `[blocked on <gid>]`. Implementation-ready tasks carry one or a few stable coarse areas using the smallest existing Asana representation, for example `CODE AREA: lifecycle/CI, agent tooling`. Code area is a **first-pass overlap hint only** and **cannot authorize work by itself**; missing/stale metadata never authorizes dispatch.
 
-Coordinator's ordinary next-work path is deliberately narrow:
+Coordinator's ordinary next-work path consumes the current deterministic projection and complete eligible frontier. It is deliberately narrow:
 
-1. read maintained Ready;
+1. read the normalized current frontier derived from maintained Ready and current lifecycle authority;
 2. compare priority/urgency;
 3. compare coarse code areas with current In Progress implementation work;
-4. perform **one live sanity check** on the selected candidate's dependencies, human-decision/review gates, and competing GitHub lineage;
+4. perform **one live sanity check** only when the projection marks a relevant fact stale, unknown, contradictory, or outside its coverage;
 5. dispatch only if that live check agrees.
 
-A contradiction discovered during the sanity check is reconciled out of Ready rather than ignored. Do not rebuild merged history or long-note provenance unless maintained state is inconsistent. Ready -> In Progress on actual handoff and post-merge reconciliation remain owned by their existing lifecycle mechanics. This policy creates **no scheduler, second queue, or ownership service**. Do not create a specialist scheduler.
+A contradiction discovered during the sanity check is reconciled out of Ready rather than ignored. Do not ask a model to rebuild deterministic current state, merged history, or long-note provenance unless maintained state is inconsistent. A model-selected wave remains advisory until deterministic admission confirms current SEND NOW/WAIT/authority invariants. Ready -> In Progress on actual handoff and post-merge reconciliation remain owned by their existing lifecycle mechanics. This policy creates **no scheduler, second queue, or ownership service**. Do not create a specialist scheduler.
 
 ## Authorized Implementation handoff state
 

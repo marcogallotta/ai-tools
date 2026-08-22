@@ -174,6 +174,9 @@
             "dish/docs/agents/contributor-base.md#Development Workflow Friction capture",
             "dish/docs/agents/contributor-base.md#Code-smell / engineering-debt logging"
           ],
+          "execution host recommendation": [
+            "dish/docs/agents/coordinator.md#Dispatch concurrency and stack shape"
+          ],
           "scope expansion / broader lifecycle or control plane": [
             "dish/docs/agents/scope-proportionality.md#One intent chain",
             "dish/docs/agents/scope-proportionality.md#During-authoring trajectory brake"
@@ -202,7 +205,7 @@
           "id": "coordinator-live-scan",
           "impact": "breaking",
           "surface": "lifecycle",
-          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. Before fixture/data repair, prove the target satisfies every compared system's own health requirements; disposability never waives them, and incompatibility stops fixture work. If a required gate has no supported operation and needs new/changed repository capability, classify IMPLEMENTATION REQUIRED immediately, keep it active (never deferred/not required), and begin human output `This needs an Implementation fix: <scope>.`; a safe supported operation stays LOCAL SYSTEM ACCESS. Separate fixes do not clear independent blockers. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` remains publication-blocker state, not local certification."
+          "text": "Use the maintained deterministic projection/frontier as normal status/dispatch input; direct GitHub/Asana scans are bounded stale/unknown/contradiction recovery. Mechanically known facts, hard dependencies, controls, exact identity, and admission stay deterministic; model judgment chooses only among valid actions. Missing facts remain UNKNOWN, never guessed. Required gates needing new repository capability are IMPLEMENTATION REQUIRED; safe supported operations stay LOCAL SYSTEM ACCESS."
         },
         {
           "action_boundaries": [
@@ -225,9 +228,24 @@
             "mode": "DIRECT_ALWAYS_ON"
           },
           "id": "coordinator-evidence-based-concurrency",
-          "impact": "additive",
+          "impact": "breaking",
           "surface": "lifecycle",
-          "text": "Dispatch WAIT requires a verified current causal edge: exact upstream result, exact downstream work materially changed/invalidated, and evidence. Proven independence is sticky absent new material evidence. In DRAIN, build the full eligible high-priority frontier first; unrelated PR/CI/Implementation fan-in never suppresses independent Research or Design Review. Use SEND NOW, WAIT — exact verified edge/result, or MARCO DECISION — exact decision; never ambiguous SEND NEXT."
+          "text": "Dispatch WAIT requires a verified current causal edge: exact upstream result, exact downstream work materially changed/invalidated, and evidence. Proven independence is sticky. In DRAIN, use the complete deterministic eligible frontier. Action-first and full-frontier DRAIN are preserved G7-baseline behavior: successor OFF/rollback falls back to last-known-good, never removes them. Additive leverage/local-benefit behavior may be OFF. Use SEND NOW, WAIT, or MARCO DECISION; every model proposal still needs deterministic current-state/hard-invariant admission."
+        },
+        {
+          "action_boundaries": [
+            "status",
+            "dispatch",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "execution host recommendation"
+          },
+          "id": "coordinator-evidence-based-host-recommendation",
+          "impact": "breaking",
+          "surface": "routing",
+          "text": "Hosted execution remains normal. Annotate LOCAL BENEFIT only for proved material infrastructure/local-only, payload/context, shared-state, or convergence/publication advantage; convenience/overlap alone is insufficient. It changes no SEND NOW/WAIT classification and grants no dispatch, role, lineage, Review, or Integration authority."
         },
         {
           "action_boundaries": [
@@ -631,9 +649,9 @@
             "trigger": "fresh implementation routing"
           },
           "id": "implementation-remote-first-local-boundary",
-          "impact": "additive",
+          "impact": "breaking",
           "surface": "routing",
-          "text": "Default semantic Implementation to hosted/ChatGPT. For fresh authoring with authoritative task/repo/target and no lineage, orchestration derives and records branch/base; missing prefilled mechanics never routes to Marco or local. Existing lineages stay exact. Local source work still requires a proved unavailable hosted capability and exhausted fallbacks."
+          "text": "Default semantic Implementation to hosted/ChatGPT. For fresh authoring, orchestration derives branch/base; missing prefill never routes to Marco/local and existing lineages stay exact. Local source work needs proved unavailable hosted capability + exhausted fallbacks or concrete material infrastructure, payload/context, shared-state, or convergence/publication benefit. Convenience/overlap is insufficient; LOCAL BENEFIT grants no WAIT, dispatch, role, lineage, Review, or Integration authority."
         },
         {
           "action_boundaries": [
@@ -1116,9 +1134,9 @@
             "trigger": "review routing / BLOCK"
           },
           "id": "review-host-aware-independence-routing",
-          "impact": "additive",
+          "impact": "breaking",
           "surface": "routing",
-          "text": "Route substantive/domain Review to ChatGPT. Bounded local light/focused/mechanical Review requires a positive exact-current-head `CHATGPT_IMPLEMENTATION` witness; local/unknown/ambiguous provenance forces ChatGPT Review. After BLOCK, local Implementation requires exact class-B unavailable-capability + exhausted-fallback proof; remote outage never falls back local."
+          "text": "Route substantive/domain Review to ChatGPT. Bounded local light/focused/mechanical Review requires a positive exact-current-head `CHATGPT_IMPLEMENTATION` witness; local/unknown/ambiguous provenance forces ChatGPT Review. After BLOCK, local Implementation requires the evidence-based host classification: unavailable capability + exhausted fallback or concrete material local benefit. Locality grants no authority; remote outage alone never falls back local."
         },
         {
           "action_boundaries": [

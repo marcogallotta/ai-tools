@@ -12,6 +12,8 @@ Current coordination state is:
 
 The repository is durable code/process/architecture truth, and GitHub is source/history authority. Adopted Asana projects are live orchestration truth for their lanes. The external live delta contains only transient coordination state that is not already represented in authoritative HEAD or an adopted Asana project.
 
+The normal Coordinator input is the repository-owned deterministic lifecycle/task projection and its complete eligible action frontier, built from those authorities. That projection is disposable derived orchestration, never a queue or authority. Direct project/PR scanning is bounded fallback, recovery, or forensic work when the projection is missing, stale, contradictory, or insufficient for the active decision; the model does not routinely reconstruct facts the deterministic layer already supplied.
+
 For new code work, the canonical artifact lifecycle is:
 
 > implementation branch + commit -> GitHub pull request -> review of the exact PR head -> integration of that reviewed head
@@ -56,17 +58,9 @@ Do not choose by filename or filesystem modification time.
 
 ## What belongs in the live delta
 
-Keep only post-checkpoint coordination state that is not already maintained in an adopted Asana project:
+Keep only genuinely unreconciled crash/emergency coordination state that could not be written to or reconstructed from GitHub, an adopted Asana project, repository policy, or the maintained deterministic projection. Examples are an ambiguous dispatch effect awaiting authoritative reconciliation, a just-made consequential decision whose owning authority was temporarily unavailable, or a temporary collision discovered immediately before replacement and not yet recorded on its owning work.
 
-- open/unmerged PRs and their exact branch/head identities;
-- current review/specialist-review rounds and exact reviewed head SHA;
-- merge-approved but not-yet-integrated PRs;
-- temporary integration dependencies or collisions;
-- work in flight and safe parallelism;
-- pending native/browser/environment certification;
-- new durable decisions not yet represented in HEAD;
-- active audit findings while they are being triaged/fixed;
-- immediate next actions.
+Do not mirror normal PR/task/head/review/CI/frontier facts, active work, pending certification, or next actions into `LIVE_DELTA.md`; those are reconstructed from their authorities. The delta is a recovery residual, not the normal Coordinator input or a second live-state projection.
 
 For adopted projects, section placement, task notes, and task comments are the live state. Do not mirror that state into `LIVE_DELTA.md` merely for coordinator visibility.
 
@@ -95,7 +89,7 @@ A successor should be able to continue from:
 
 If Asana or the live delta is unavailable, repository HEAD remains durable truth but transient orchestration may be missing. Ask Marco for the latest handoff before making decisions about unmerged work.
 
-On every fresh or replacement Coordinator session, before ordinary status conclusions, next-work selection, or dispatch, reconcile maintained Ready / In Progress / Review / Blocked state needed for the decision, stale handoffs and owned queue inconsistencies, audit governance and the latest audit round, and whether an audit is due from cadence/prior yield/engineering movement/material authority or process migration. Surface due-but-unsent, active, incomplete, or returned audits before ordinary dispatch. Reuse maintained Asana/dispatcher truth and keep the fast path narrow unless drift is detected; do not create a scheduler, second queue, or parallel lifecycle.
+On every fresh or replacement Coordinator session, before ordinary status conclusions, next-work selection, or dispatch, consume the current deterministic projection/frontier and reconcile any reported stale, unavailable, or contradictory authority needed for the decision. Use bounded direct reads only for that recovery or for facts outside the projection. Reconcile audit governance and whether an audit is due from cadence/prior yield/engineering movement/material authority or process migration; surface due-but-unsent, active, incomplete, or returned audits before ordinary dispatch. Keep the fast path narrow when the projection is healthy; do not create a scheduler, second queue, or parallel lifecycle.
 
 ## Asana live coordination
 
@@ -121,6 +115,18 @@ Rules:
 - update material state as part of the work. If project state is stale or missing, correct it before relying on it for takeover or dispatch;
 - record exact GitHub branch, commit, PR URL, current head SHA, and review/integration state when they matter. GitHub remains the authority for source/history and code artifacts;
 - when TEST/production runtime identity matters, record the observed environment evidence or explicitly record that it is unknown. Never substitute repository HEAD for deployed-state evidence.
+
+## Deterministic facts and model judgment
+
+The deterministic layer owns mechanically knowable source acquisition and contradiction classification; exact task/PR/head/Review/CI/runtime identity; execution truth; active exact controls; recorded hard dependencies; complete eligible high-priority frontier construction; Lifecycle V4 `actionable_version`, wake/receipt/fence, and zero-idle suppression; output-schema/hard-invariant admission; STOP/RESET fencing outside the model turn; and replay/audit evidence.
+
+The model receives those normalized facts and owns the useful judgment that remains: selecting a delivery wave from the valid frontier, interpreting leverage and acceleration evidence, evaluating a concrete local-execution benefit that is not already mechanically predetermined, weighing convergence economics, bounded semantic triage, and deciding what Marco needs to see. Missing or contradictory deterministic facts remain `UNKNOWN / RECONCILIATION REQUIRED`; they are never an invitation for the model to guess or rescan everything.
+
+A model proposal is advisory until deterministic admission revalidates the current item and confirms every hard boundary. In particular, `WAIT` needs the exact causal evidence below, `SEND NOW` must still be executable, `LOCAL BENEFIT` cannot change dispatch legality or grant local/role authority, and STOP/RESET is enforced outside the turn. Failed admission is logged and refused; the model cannot repair it by inventing a substitute action.
+
+The action-first and full-frontier DRAIN behaviors are preserved baseline behavior with the accepted G7 semantics as their minimum. An experimental successor may be SHADOW or ON, but disabling or rolling it back means `FALLBACK_TO_BASELINE / LAST_KNOWN_GOOD`, never removal or pre-G7 behavior. Leverage-wave prioritization, local-benefit annotation, and proactive duties beyond standing requirements are additive options and may genuinely be OFF. Hard authority, safety, causal-WAIT, and exact-identity invariants are never optional.
+
+Clean unchanged deterministic state produces no model turn. Behavior telemetry records exact behavior version and enough evidence to attribute wrong waits, missed executable work, stale-state use, unnecessary wakes, local-benefit false positives, leverage ordering, and operator corrections. Repeated objectively classifiable patterns may graduate to reviewed deterministic fixtures; no prompt-side state mirror or self-learning mutation path is created.
 
 ## Dispatch concurrency and stack shape
 
@@ -149,6 +155,12 @@ After a material return supplies new evidence — including a semantic head chan
 Adapt pressure from outcomes rather than agent-count heuristics: increase or maintain it while durable completion improves without disproportionate collision, Review BLOCK/rework, successor-head churn, rollback, CI/Integration instability, or Marco relay/firefighting; reduce or reshape it when concrete negative evidence appears.
 
 A coherent manual stack remains valid when its dependency and landing shape make the stack useful and it still produces separate reviewable PRs; do not flatten it merely to increase concurrency or require automatic stacked-workstream machinery. This guidance does not create a scheduler, queue, universal dependency graph, merge authority, or global WIP cap.
+
+### Execution-host recommendation
+
+Hosted/remote execution remains the ordinary default. The Coordinator may annotate `LOCAL BENEFIT` when current evidence shows a concrete material execution advantage, such as required local infrastructure or system access, a proved large-file/payload/model-context boundary, required shared local state, or materially lower convergence/publication cost. Name the evidence and expected benefit. Overlap, convenience, prior local use, elapsed runtime, or preference alone is insufficient.
+
+`LOCAL BENEFIT` is a recommendation only. It does not create a hard dependency, authorize `WAIT`, change `SEND NOW`, grant local dispatch or semantic role authority, waive exact lineage/claim/evidence gates, or make local the default. When no concrete material advantage exists, use the normal hosted route.
 
 ## Comparison compatibility and blocker ownership
 

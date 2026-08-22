@@ -19,6 +19,8 @@ flowchart LR
     Main --> Completion[Rollout and acceptance when required]
     Dispatcher[Restartable lifecycle dispatcher] -. derives and routes .-> PR
     Dispatcher -. derives and routes .-> Gate
+    Dispatcher -. normalized facts/frontier .-> Coordinator[Coordinator judgment]
+    Coordinator -. admitted proposal .-> Dispatcher
 ```
 
 ## Current authority summary
@@ -29,7 +31,7 @@ flowchart LR
 | Development task state, accepted design, decisions, and orchestration | Owning Asana project/task under its repository-owned project contract |
 | Product/runtime behavior actually deployed | Direct environment evidence |
 | Role permissions and lifecycle invariants | Repository standing contracts and accepted ADRs |
-| Routine PR state projection and routing | Derived by [the lifecycle dispatcher](../../../../scripts/pr_lifecycle.py); never a second authority |
+| Routine PR/task state projection, Coordinator frontier, and routing | Derived by [the lifecycle dispatcher](../../../../scripts/pr_lifecycle.py); deterministic admission guards model proposals; never a second authority |
 
 ## Start here for…
 

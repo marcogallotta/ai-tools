@@ -12,7 +12,7 @@ This document records architectural host and human-attention boundaries. It does
 
 Semantic role and execution host are separate. ChatGPT uses connected GitHub/Asana capabilities and repository-owned remote publication paths. Claude Code and Codex use a live checkout plus native Git and the repository-owned worktree lifecycle. Worker is an execution mode whose authority comes from the routed standing role, not from its name. Final V1-A Integration landing remains local-only.
 
-Remote/hosted Implementation is the normal semantic authoring path. Local authoring requires proof of an unavailable remote source/publication capability and bounded exhausted fallbacks. Native tests remain `TESTS ONLY`; sudo, systemd, devices, and installed runtime access remain `LOCAL SYSTEM ACCESS`. Elapsed time and convenience do not change those classes.
+Remote/hosted Implementation is the normal semantic authoring path. Local execution may be recommended when current evidence establishes a concrete material advantage: required local infrastructure/system capability, a proved large-file/payload/model-context boundary, required shared local state, or materially lower convergence/publication cost. The recommendation names its evidence and benefit; locality, overlap, elapsed time, prior local use, or convenience alone is insufficient. Native tests remain `TESTS ONLY`; sudo, systemd, devices, and installed runtime access remain `LOCAL SYSTEM ACCESS` unless the actual work also includes semantic source mutation.
 
 Marco owns outcomes, priorities, consequential design/risk/cost, and explicit exceptional authority. Agents own the authorized inner loop: grounding, diagnosis, retries, supported recovery, reconciliation, and routine technical choices. They interrupt Marco only when his answer materially changes the allowed or desirable path and current authority, evidence, and ordinary engineering judgment cannot resolve it.
 
@@ -29,6 +29,8 @@ Progressive-disclosure corrections apply immediately: expansion adds relevant de
 - Consequential product/design/risk/cost/authority choices, destructive/production/external effects, unrecoverable input, material safety changes, and unavoidable manual relays remain operator boundaries.
 - Concision or progressive disclosure changes presentation only; it never hides material truth or ends unfinished authorized work.
 - Missing automation is not converted into a permanent Marco relay duty.
+- A local-benefit recommendation is advisory: it creates no dependency or WAIT, changes no SEND NOW classification, grants no role/local-dispatch authority, and waives no lineage, claim, Review, certification, or Integration gate.
+- When no concrete material local advantage exists, remote/hosted execution remains the ordinary default.
 - Missing prefilled fresh-authoring branch/base fields are resolved from live authority rather than routed to Marco; this never permits replacing an existing lineage or bypassing base freshness checks.
 - Handoffs are executable only after mandatory durable identities are resolved and read back.
 - A local completion route preserves the existing task/branch/PR lineage and the exact bounded residual work.
