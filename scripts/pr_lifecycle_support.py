@@ -68,6 +68,10 @@ class LifecycleError(RuntimeError):
     """A durable lifecycle action could not be completed safely."""
 
 
+class ObservationBudgetError(RuntimeError):
+    """A projection ceiling was reached and must bypass partial-result recovery."""
+
+
 class HTTPError(LifecycleError):
     def __init__(self, status: int, message: str, body: str = "") -> None:
         super().__init__(f"HTTP {status}: {message}{': ' + body if body else ''}")
@@ -225,11 +229,47 @@ class AsanaBackend(Protocol):
     def move_task_to_section(self, gid: str, section_gid: str) -> None: ...
 
 
+@dataclass
+class ObservationBudget:
+    max_requests: int = 600
+    max_seconds: float = 600.0
+    requests: int = 0
+    started: float = field(default_factory=time.monotonic)
+    last_progress: float = field(default_factory=time.monotonic)
+
+    def before_request(self, method: str, url: str) -> float:
+        elapsed = time.monotonic() - self.started
+        if elapsed >= self.max_seconds:
+            raise ObservationBudgetError(
+                f"observation wall budget exhausted after {elapsed:.1f}s "
+                f"({self.requests}/{self.max_requests} requests)"
+            )
+        if self.requests >= self.max_requests:
+            raise ObservationBudgetError(
+                f"observation request budget exhausted ({self.requests}/{self.max_requests})"
+            )
+        self.requests += 1
+        now = time.monotonic()
+        if self.requests % 25 == 0 or now - self.last_progress >= 30:
+            print(json.dumps({
+                "event": "lifecycle_projection_progress",
+                "requests": self.requests,
+                "request_limit": self.max_requests,
+                "elapsed_seconds": round(now - self.started, 1),
+                "wall_limit_seconds": self.max_seconds,
+                "method": method,
+                "url": urlparse.urlsplit(url).path,
+            }, sort_keys=True), file=sys.stderr, flush=True)
+            self.last_progress = now
+        return max(0.001, self.max_seconds - (now - self.started))
+
+
 class JSONHTTPClient:
-    def __init__(self, *, timeout: float = 10.0) -> None:
+    def __init__(self, *, timeout: float = 10.0, budget: ObservationBudget | None = None) -> None:
         if timeout <= 0:
             raise LifecycleError("HTTP timeout must be positive")
         self.timeout = timeout
+        self.budget = budget
 
     def _timeout_error(self, url: str) -> LifecycleError:
         return LifecycleError(f"request timed out after {self.timeout:g}s for {url}")
@@ -242,6 +282,9 @@ class JSONHTTPClient:
         headers: Mapping[str, str] | None = None,
         body: Mapping[str, Any] | None = None,
     ) -> tuple[int, dict[str, str], Any]:
+        timeout = self.timeout
+        if self.budget is not None:
+            timeout = min(timeout, self.budget.before_request(method, url))
         payload = None
         request_headers = {"Accept": "application/json"}
         if headers:
@@ -251,7 +294,7 @@ class JSONHTTPClient:
             request_headers.setdefault("Content-Type", "application/json")
         req = urlrequest.Request(url, data=payload, headers=request_headers, method=method)
         try:
-            with urlrequest.urlopen(req, timeout=self.timeout) as response:
+            with urlrequest.urlopen(req, timeout=timeout) as response:
                 raw = response.read().decode("utf-8")
                 parsed: Any = json.loads(raw) if raw else {}
                 return response.status, dict(response.headers.items()), parsed
@@ -265,9 +308,19 @@ class JSONHTTPClient:
                 pass
             raise HTTPError(exc.code, str(message), raw[:500]) from exc
         except (TimeoutError, socket.timeout) as exc:
+            if self.budget is not None:
+                dimension = "wall" if timeout < self.timeout else "per-request"
+                raise ObservationBudgetError(
+                    f"observation {dimension} budget exhausted during request for {url}"
+                ) from exc
             raise self._timeout_error(url) from exc
         except urlerror.URLError as exc:
             if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                if self.budget is not None:
+                    dimension = "wall" if timeout < self.timeout else "per-request"
+                    raise ObservationBudgetError(
+                        f"observation {dimension} budget exhausted during request for {url}"
+                    ) from exc
                 raise self._timeout_error(url) from exc
             raise LifecycleError(f"request failed for {url}: {exc.reason}") from exc
 
@@ -278,20 +331,33 @@ class JSONHTTPClient:
         *,
         headers: Mapping[str, str] | None = None,
     ) -> tuple[int, dict[str, str], bytes]:
+        timeout = self.timeout
+        if self.budget is not None:
+            timeout = min(timeout, self.budget.before_request(method, url))
         request_headers = {"Accept": "application/octet-stream"}
         if headers:
             request_headers.update(headers)
         req = urlrequest.Request(url, headers=request_headers, method=method)
         try:
-            with urlrequest.urlopen(req, timeout=self.timeout) as response:
+            with urlrequest.urlopen(req, timeout=timeout) as response:
                 return response.status, dict(response.headers.items()), response.read()
         except urlerror.HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
             raise HTTPError(exc.code, str(exc.reason or "request failed"), raw[:500]) from exc
         except (TimeoutError, socket.timeout) as exc:
+            if self.budget is not None:
+                dimension = "wall" if timeout < self.timeout else "per-request"
+                raise ObservationBudgetError(
+                    f"observation {dimension} budget exhausted during request for {url}"
+                ) from exc
             raise self._timeout_error(url) from exc
         except urlerror.URLError as exc:
             if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                if self.budget is not None:
+                    dimension = "wall" if timeout < self.timeout else "per-request"
+                    raise ObservationBudgetError(
+                        f"observation {dimension} budget exhausted during request for {url}"
+                    ) from exc
                 raise self._timeout_error(url) from exc
             raise LifecycleError(f"request failed for {url}: {exc.reason}") from exc
 
@@ -615,7 +681,8 @@ class AsanaREST:
         query = urlparse.urlencode({
             "opt_fields": (
                 "gid,name,notes,completed,completed_at,modified_at,permalink_url,"
-                "dependencies.gid,dependents.gid,memberships.project.gid,memberships.project.name,"
+                "dependencies.gid,dependencies.completed,dependents.gid,"
+                "memberships.project.gid,memberships.project.name,"
                 "memberships.section.gid,memberships.section.name"
             )
         })
@@ -674,7 +741,12 @@ class AsanaREST:
         seen: set[str] = set()
         for _ in range(1000):
             params = {
-                "opt_fields": "gid,name,notes,completed,completed_at,modified_at,memberships.project.gid,memberships.section.gid,dependencies.gid,dependencies.completed",
+                "opt_fields": (
+                    "gid,name,notes,completed,completed_at,modified_at,"
+                    "memberships.project.gid,memberships.project.name,"
+                    "memberships.section.gid,memberships.section.name,"
+                    "dependencies.gid,dependencies.completed"
+                ),
                 "limit": 100,
             }
             if offset:

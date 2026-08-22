@@ -761,7 +761,7 @@ class V4Reconciler:
         self,
         *,
         store: V4StateStore,
-        authoritative_cases: Callable[[], Iterable[Mapping[str, Any]]],
+        authoritative_cases: Callable[[DirtySnapshot], Iterable[Mapping[str, Any]]],
         bridge: WakeBridge | None,
         active_owners: frozenset[str] = DEFAULT_ACTIVE_OWNERS,
     ):
@@ -772,7 +772,7 @@ class V4Reconciler:
 
     def baseline_current(self) -> dict[str, Any]:
         """Baseline current authoritative cases with a hard zero-turn result."""
-        cases = [dict(value) for value in self.authoritative_cases()]
+        cases = [dict(value) for value in self.authoritative_cases(DirtySnapshot(token=0, resources=()))]
         baselined = self.store.baseline_current(cases, active_owners=self.active_owners)
         return {
             "actionable_cases": len(cases),
@@ -797,7 +797,7 @@ class V4Reconciler:
                 "wake_results": wake_results,
                 "model_turns_started": started,
             }
-        cases = [dict(value) for value in self.authoritative_cases()]
+        cases = [dict(value) for value in self.authoritative_cases(snapshot)]
         prepared = self.store.prepare_wakes(cases, active_owners=self.active_owners)
         self.store.compare_and_clear(snapshot)
         wake_results = self.bridge.dispatch_pending() if self.bridge is not None else []

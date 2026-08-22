@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 import io
 import json
+import hashlib
+import math
 from pathlib import Path
 import zipfile
 
@@ -26,7 +28,11 @@ from pr_lifecycle_local_integration import LocalIntegrationLauncher, checkpoint_
 from pr_lifecycle_terminal import TerminalCleanupDispatcher
 from pr_lifecycle_operator import action_first_status
 from pr_lifecycle_projection import atomic_write, build_projection, read_projection
-from pr_lifecycle_task_state import execution_truth, ensure_projection_comment
+from pr_lifecycle_task_state import (
+    execution_basis,
+    execution_truth_from_basis,
+    ensure_projection_comment,
+)
 from pr_lifecycle_rollout import reconstruct as reconstruct_rollout, rollout_projection
 import pr_lifecycle_controller
 from pr_certification import SELECTOR_GAP_OWNER_TASKS, selector_gap_owner_operations
@@ -214,7 +220,36 @@ def _build_engine(
     token = args.github_token or os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
     if not token:
         raise LifecycleError("GitHub token is required via --github-token, GITHUB_TOKEN, or GH_TOKEN")
-    http = JSONHTTPClient(timeout=args.http_timeout)
+    budget = None
+    if args.projection_path is not None:
+        for gid in [*args.observation_project_gids, *args.refresh_task_gids]:
+            if not TASK_GID_RE.fullmatch(str(gid).strip()):
+                raise LifecycleError(f"invalid projection Asana GID: {gid!r}")
+        if not 0 < args.projection_max_active_tasks <= 500:
+            raise LifecycleError("projection active-task budget must be between 1 and 500")
+        if not 0 < args.projection_max_requests <= 1000:
+            raise LifecycleError("projection request budget must be between 1 and 1000")
+        if not math.isfinite(args.projection_max_seconds) or not 0 < args.projection_max_seconds <= 1200:
+            raise LifecycleError("projection wall budget must be between 1 and 1200 seconds")
+        if not math.isfinite(args.http_timeout) or not 0 < args.http_timeout <= 30:
+            raise LifecycleError("projection HTTP timeout must be between 0 and 30 seconds")
+        budget = ObservationBudget(
+            max_requests=args.projection_max_requests,
+            max_seconds=args.projection_max_seconds,
+        )
+        print(json.dumps({
+            "event": "lifecycle_projection_preflight",
+            "projects": sorted(str(gid) for gid in args.observation_project_gids),
+            "dirty_tasks": sorted(str(gid) for gid in args.refresh_task_gids),
+            "bootstrap": bool(args.projection_bootstrap),
+            "limits": {
+                "active_tasks": args.projection_max_active_tasks,
+                "requests": args.projection_max_requests,
+                "wall_seconds": args.projection_max_seconds,
+                "per_request_seconds": args.http_timeout,
+            },
+        }, sort_keys=True), file=sys.stderr, flush=True)
+    http = JSONHTTPClient(timeout=args.http_timeout, budget=budget)
     github = GitHubREST(args.repo, token, api_root=args.github_api_root, http=http)
     asana_token = args.asana_token or os.getenv("ASANA_ACCESS_TOKEN")
     asana = AsanaREST(asana_token, http=http) if asana_token else None
@@ -324,6 +359,10 @@ def _task_observation_cycle(
     values: list[PRLifecycle],
     *,
     configured_projects: Iterable[str] = (),
+    previous_tasks: Iterable[Mapping[str, Any]] = (),
+    dirty_task_gids: Iterable[str] = (),
+    bootstrap: bool = False,
+    max_active_tasks: int = 200,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if engine.asana is None:
         return [], {
@@ -351,53 +390,144 @@ def _task_observation_cycle(
             "reason": "no Asana project scope could be established from linked task memberships",
         }
 
-    tasks: dict[str, dict[str, Any]] = {}
-    scope_errors: list[dict[str, str]] = []
+    if not 0 < max_active_tasks <= 500:
+        raise LifecycleError("projection active-task budget must be between 1 and 500")
+    listed_tasks: dict[str, dict[str, Any]] = {}
     for project_gid in sorted(project_ids):
-        try:
-            listed = engine.asana.list_project_tasks(project_gid)
-        except LifecycleError as exc:
-            scope_errors.append({"project": project_gid, "error": str(exc)})
-            continue
+        listed = engine.asana.list_project_tasks(project_gid)
         for task in listed:
             gid = str(task.get("gid") or "")
-            if not gid or gid in tasks:
+            if gid and gid not in listed_tasks:
+                listed_tasks[gid] = dict(task)
+    active_count = sum(not bool(task.get("completed")) for task in listed_tasks.values())
+    if active_count > max_active_tasks:
+        print(json.dumps({
+            "event": "lifecycle_projection_task_cap_exhausted",
+            "listed_tasks": len(listed_tasks),
+            "active_tasks": active_count,
+            "active_task_limit": max_active_tasks,
+        }, sort_keys=True), file=sys.stderr, flush=True)
+        raise LifecycleError(
+            f"projection active-task budget exceeded before detail reads "
+            f"({active_count}/{max_active_tasks})"
+        )
+
+    previous = {
+        str(task.get("gid") or ""): dict(task)
+        for task in previous_tasks
+        if isinstance(task, Mapping) and task.get("gid")
+    }
+    dirty = {str(gid) for gid in dirty_task_gids if str(gid)}
+
+    def fingerprint(task: Mapping[str, Any]) -> str:
+        memberships = []
+        for membership in task.get("memberships") or []:
+            if not isinstance(membership, Mapping):
+                continue
+            project = membership.get("project") if isinstance(membership.get("project"), Mapping) else {}
+            section = membership.get("section") if isinstance(membership.get("section"), Mapping) else {}
+            memberships.append({
+                "project": {"gid": project.get("gid"), "name": project.get("name")},
+                "section": {"gid": section.get("gid"), "name": section.get("name")},
+            })
+        dependencies = [
+            {"gid": value.get("gid"), "completed": bool(value.get("completed"))}
+            for value in task.get("dependencies") or [] if isinstance(value, Mapping)
+        ]
+        stable = {
+            "gid": str(task.get("gid") or ""),
+            "name": str(task.get("name") or ""),
+            "notes": str(task.get("notes") or ""),
+            "completed": bool(task.get("completed")), "completed_at": task.get("completed_at"),
+            "modified_at": str(task.get("modified_at") or ""),
+            "memberships": sorted(memberships, key=lambda value: json.dumps(value, sort_keys=True)),
+            "dependencies": sorted(dependencies, key=lambda value: str(value.get("gid") or "")),
+        }
+        return hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    cached_truths: dict[str, dict[str, Any]] = {}
+    if not bootstrap:
+        for gid, listed in listed_tasks.items():
+            if bool(listed.get("completed")) or gid in dirty:
+                continue
+            cached = previous.get(gid) or {}
+            basis = cached.get("execution_basis")
+            if cached.get("fingerprint") != fingerprint(listed) or not isinstance(basis, Mapping):
                 continue
             try:
-                authoritative = engine.asana.get_task(gid)
-                stories = engine.asana.get_stories(gid)
-                truth = execution_truth(authoritative, stories, now=engine.now())
-                projection = {
-                    "gid": gid,
-                    "name": authoritative.get("name"),
-                    "completed": bool(authoritative.get("completed")),
-                    "completed_at": authoritative.get("completed_at"),
-                    "modified_at": authoritative.get("modified_at"),
-                    "memberships": list(authoritative.get("memberships") or []),
-                    "dependencies": list(authoritative.get("dependencies") or []),
-                    "dependents": list(authoritative.get("dependents") or []),
-                    "execution": truth,
-                    "provenance": {
-                        "task": "asana-direct-read",
-                        "stories": "asana-complete-story-history",
-                    },
-                }
-                rollout = rollout_projection(reconstruct_rollout(stories, task_gid=gid))
-                if rollout is not None:
-                    projection["rollout"] = rollout
-                tasks[gid] = projection
-            except LifecycleError as exc:
-                tasks[gid] = {
-                    "gid": gid,
-                    "error": str(exc),
-                    "provenance": {"task": "asana-direct-read"},
-                }
+                cached_truths[gid] = execution_truth_from_basis(basis, now=engine.now())
+            except LifecycleError:
+                continue
+    print(json.dumps({
+        "event": "lifecycle_projection_task_plan",
+        "listed_tasks": len(listed_tasks),
+        "active_tasks": active_count,
+        "completed_minimal_rows": len(listed_tasks) - active_count,
+        "cached_active_tasks": len(cached_truths),
+        "deep_read_active_tasks": active_count - len(cached_truths),
+        "dirty_task_hints": len(dirty),
+    }, sort_keys=True), file=sys.stderr, flush=True)
+
+    tasks: dict[str, dict[str, Any]] = {}
+    for gid, listed in listed_tasks.items():
+        listed_fingerprint = fingerprint(listed)
+        if bool(listed.get("completed")):
+            tasks[gid] = {
+                "gid": gid,
+                "name": listed.get("name"),
+                "completed": True,
+                "completed_at": listed.get("completed_at"),
+                "modified_at": listed.get("modified_at"),
+                "memberships": list(listed.get("memberships") or []),
+                "dependencies": list(listed.get("dependencies") or []),
+                "fingerprint": listed_fingerprint,
+                "provenance": {"task": "asana-project-list-completed"},
+            }
+            continue
+        cached = previous.get(gid) or {}
+        basis = cached.get("execution_basis")
+        if gid in cached_truths and isinstance(basis, Mapping):
+            projection = dict(cached)
+            projection["execution"] = cached_truths[gid]
+            if isinstance(basis.get("story_rollout"), Mapping):
+                projection["rollout"] = dict(basis["story_rollout"])
+            else:
+                projection.pop("rollout", None)
+            projection["provenance"] = {
+                "task": "asana-complete-fingerprint",
+                "stories": "cached-complete-story-history",
+            }
+            tasks[gid] = projection
+            continue
+        authoritative = engine.asana.get_task(gid)
+        stories = engine.asana.get_stories(gid)
+        basis = execution_basis(authoritative, stories)
+        rollout = rollout_projection(reconstruct_rollout(stories, task_gid=gid))
+        basis["story_rollout"] = rollout
+        projection = {
+            "gid": gid,
+            "name": authoritative.get("name"),
+            "completed": bool(authoritative.get("completed")),
+            "completed_at": authoritative.get("completed_at"),
+            "modified_at": authoritative.get("modified_at"),
+            "memberships": list(authoritative.get("memberships") or []),
+            "dependencies": list(authoritative.get("dependencies") or []),
+            "dependents": list(authoritative.get("dependents") or []),
+            "fingerprint": fingerprint(authoritative),
+            "execution_basis": basis,
+            "execution": execution_truth_from_basis(basis, now=engine.now()),
+            "provenance": {
+                "task": "asana-direct-read",
+                "stories": "asana-complete-story-history",
+            },
+        }
+        if rollout is not None:
+            projection["rollout"] = rollout
+        tasks[gid] = projection
     scope = {
-        "status": "COMPLETE" if not scope_errors else "INCOMPLETE",
+        "status": "COMPLETE",
         "projects": sorted(project_ids),
     }
-    if scope_errors:
-        scope["errors"] = scope_errors
     return list(tasks.values()), scope
 
 
@@ -605,12 +735,22 @@ def _projection_health(
 def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args: argparse.Namespace, *, mutate_tasks: bool) -> None:
     if args.projection_path is None:
         return
+    previous: Mapping[str, Any] = {}
+    if args.projection_path.exists():
+        try:
+            previous = read_projection(args.projection_path)
+        except (OSError, ValueError):
+            previous = {}
     tasks, task_scope = _task_observation_cycle(
         engine,
         values,
         configured_projects=(
             () if mutate_tasks else getattr(args, "observation_project_gids", ())
         ),
+        previous_tasks=previous.get("tasks") or [],
+        dirty_task_gids=getattr(args, "refresh_task_gids", ()),
+        bootstrap=bool(getattr(args, "projection_bootstrap", False)),
+        max_active_tasks=int(getattr(args, "projection_max_active_tasks", 200)),
     )
     if mutate_tasks:
         _write_task_projection_comments(engine, tasks)
@@ -628,14 +768,8 @@ def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args
             )
     source_observation = _source_observation_cycle(engine, values)
     previous_full_regression: Mapping[str, Any] = {}
-    if args.projection_path.exists():
-        try:
-            previous = read_projection(args.projection_path)
-        except (OSError, ValueError):
-            pass
-        else:
-            if isinstance(previous.get("full_regression"), Mapping):
-                previous_full_regression = previous["full_regression"]
+    if isinstance(previous.get("full_regression"), Mapping):
+        previous_full_regression = previous["full_regression"]
     controller, full_regression = _projection_health(
         engine,
         previous_full_regression=previous_full_regression,
@@ -695,6 +829,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--merge-method", choices=["merge", "squash", "rebase"], default="squash")
     parser.add_argument("--projection-path", type=Path, help="atomic lifecycle JSON projection path")
+    parser.add_argument(
+        "--projection-bootstrap", action="store_true",
+        help="authoritatively deep-read every active task; required on service process start",
+    )
+    parser.add_argument(
+        "--refresh-task-gid", dest="refresh_task_gids", action="append", default=[],
+        help="dirty Asana task that must bypass the warm fingerprint cache; repeatable",
+    )
+    parser.add_argument("--projection-max-active-tasks", type=int, default=200)
+    parser.add_argument("--projection-max-requests", type=int, default=600)
+    parser.add_argument("--projection-max-seconds", type=float, default=600.0)
     parser.add_argument(
         "--project-gid",
         dest="observation_project_gids",
@@ -786,6 +931,14 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if (
+            args.command == "status"
+            and args.projection_path is not None
+            and args.include_closed
+        ):
+            raise LifecycleError(
+                "projection --include-closed is disabled without an exact bounded PR selector"
+            )
         if args.command == "classify-publication-route":
             result = classify_publication_route(
                 connector_attempt_state=args.connector_attempt_state,
@@ -865,7 +1018,7 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         return 130
-    except (LifecycleError, pr_gate.GateError) as exc:
+    except (LifecycleError, ObservationBudgetError, pr_gate.GateError) as exc:
         print(f"pr_lifecycle: {exc}", file=sys.stderr)
         return 2
 

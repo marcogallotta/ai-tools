@@ -88,7 +88,7 @@ def test_idle_heartbeat_starts_zero_model_turns(tmp_path):
     app = FakeAppServer()
     reconciler = V4Reconciler(
         store=state,
-        authoritative_cases=lambda: calls.append(True) or [CASE],
+        authoritative_cases=lambda snapshot: calls.append(snapshot) or [CASE],
         bridge=bridge(tmp_path, state, app),
     )
     assert reconciler.reconcile() == {
@@ -107,7 +107,7 @@ def test_cold_start_baselines_existing_case_without_model_turn(tmp_path):
     current = [dict(CASE)]
     reconciler = V4Reconciler(
         store=state,
-        authoritative_cases=lambda: current,
+        authoritative_cases=lambda snapshot: current,
         bridge=bridge(tmp_path, state, app),
     )
     state.mark_dirty(
@@ -145,12 +145,12 @@ def test_cold_start_baselines_existing_case_without_model_turn(tmp_path):
 
 def test_cold_start_baseline_is_one_shot_and_refuses_existing_wake_history(tmp_path):
     state = store(tmp_path)
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [CASE], bridge=None)
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [CASE], bridge=None)
     assert reconciler.baseline_current()["baselined"] == 1
 
     changed = dict(CASE)
     changed["next_action"] = "new action must not be silently baselined"
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [changed], bridge=None)
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [changed], bridge=None)
     assert reconciler.baseline_current()["baselined"] == 0
     assert state.prepare_wakes([changed])[0]["status"] == "PREPARED"
 
@@ -170,18 +170,36 @@ def test_duplicate_and_out_of_order_webhooks_coalesce_to_one_authoritative_wake(
     calls = []
     reconciler = V4Reconciler(
         store=state,
-        authoritative_cases=lambda: calls.append(True) or [CASE],
+        authoritative_cases=lambda snapshot: calls.append(snapshot) or [CASE],
         bridge=bridge(tmp_path, state, app),
     )
     result = reconciler.reconcile()
     assert result["model_turns_started"] == 1
     assert len(app.started) == 1
     assert len(calls) == 1
+    assert {item["resource_kind"] for item in calls[0].resources} == {"pull_request", "repository"}
     assert state.snapshot_dirty().resources == ()
     ingest_event(state, provider="github", payload=payload, delivery_id="dup-after")
     result = reconciler.reconcile()
     assert result["model_turns_started"] == 0
     assert len(app.started) == 1
+
+
+def test_failed_authoritative_refresh_retains_dirty_and_starts_zero_turns(tmp_path):
+    state = store(tmp_path)
+    app = FakeAppServer()
+    state.mark_dirty(
+        provider="asana", resource_kind="task", resource_id="1217762116932884", delivery_id="1",
+    )
+    reconciler = V4Reconciler(
+        store=state,
+        authoritative_cases=lambda snapshot: (_ for _ in ()).throw(RuntimeError("budget exhausted")),
+        bridge=bridge(tmp_path, state, app),
+    )
+    with pytest.raises(RuntimeError, match="budget exhausted"):
+        reconciler.reconcile()
+    assert len(state.snapshot_dirty().resources) == 1
+    assert app.started == []
 
 
 def test_actionable_version_ignores_volatile_timing_but_changes_on_semantic_action():
@@ -220,7 +238,7 @@ def test_new_material_case_for_same_owner_creates_second_wake(tmp_path):
     app = FakeAppServer()
     state.mark_dirty(provider="github", resource_kind="repository", resource_id="marcogallotta/ai-tools", delivery_id="1")
     current = [dict(CASE)]
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: current, bridge=bridge(tmp_path, state, app))
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: current, bridge=bridge(tmp_path, state, app))
     assert reconciler.reconcile()["model_turns_started"] == 1
     changed = dict(CASE)
     changed["evidence"] = {"check": "Dish / exact-head certification", "failure": "new material root cause"}
@@ -238,7 +256,7 @@ def test_multiple_new_cases_for_one_owner_coalesce_into_one_wake(tmp_path):
     other["pr"] = 204
     other["head"] = "b" * 40
     state.mark_dirty(provider="github", resource_kind="repository", resource_id="marcogallotta/ai-tools", delivery_id="1")
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [CASE, other], bridge=bridge(tmp_path, state, app))
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [CASE, other], bridge=bridge(tmp_path, state, app))
     result = reconciler.reconcile()
     assert result["model_turns_started"] == 1
     receipt = next(iter(state.read()["receipts"].values()))
@@ -251,7 +269,7 @@ def test_coordinator_case_is_dormant_in_phase_b(tmp_path):
     coordinator = dict(CASE)
     coordinator["next_owner"] = "Coordinator"
     state.mark_dirty(provider="asana", resource_kind="task", resource_id="121", delivery_id="1")
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [coordinator], bridge=bridge(tmp_path, state, app))
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [coordinator], bridge=bridge(tmp_path, state, app))
     result = reconciler.reconcile()
     assert result["prepared"] == 0
     assert result["model_turns_started"] == 0
@@ -263,7 +281,7 @@ def test_human_active_thread_fence_starts_zero_turns_until_idle(tmp_path):
     app = FakeAppServer()
     app.status = "active"
     state.mark_dirty(provider="github", resource_kind="repository", resource_id="marcogallotta/ai-tools", delivery_id="1")
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [CASE], bridge=bridge(tmp_path, state, app))
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [CASE], bridge=bridge(tmp_path, state, app))
     result = reconciler.reconcile()
     assert result["model_turns_started"] == 0
     assert result["wake_results"][0]["result"] == "thread-not-idle"
@@ -278,7 +296,7 @@ def test_acceptance_ambiguity_never_blindly_replays_and_history_recovers(tmp_pat
     app.fail_after_accept = True
     state.mark_dirty(provider="github", resource_kind="repository", resource_id="marcogallotta/ai-tools", delivery_id="1")
     wake = bridge(tmp_path, state, app)
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [CASE], bridge=wake)
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [CASE], bridge=wake)
     first = reconciler.reconcile()
     assert first["model_turns_started"] == 0
     assert len(app.started) == 1
@@ -302,7 +320,7 @@ def test_uncertain_non_acceptance_requires_history_proof_before_retry(tmp_path):
 
     app = LostBeforeAccept()
     state.mark_dirty(provider="github", resource_kind="repository", resource_id="marcogallotta/ai-tools", delivery_id="1")
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [CASE], bridge=bridge(tmp_path, state, app))
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [CASE], bridge=bridge(tmp_path, state, app))
     reconciler.reconcile()
     assert len(app.started) == 1
     result = reconciler.reconcile(force=True)
@@ -332,7 +350,7 @@ def test_ambiguous_no_marker_and_active_status_never_replays(tmp_path):
     app = LostBeforeAccept()
     state.mark_dirty(provider="github", resource_kind="repository", resource_id="marcogallotta/ai-tools", delivery_id="1")
     wake = bridge(tmp_path, state, app)
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [CASE], bridge=wake)
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [CASE], bridge=wake)
     first = reconciler.reconcile()
     assert first["model_turns_started"] == 0
     assert len(app.started) == 1
@@ -356,7 +374,7 @@ def test_not_loaded_thread_is_resumed_before_admission(tmp_path):
     app = FakeAppServer()
     app.status = "notLoaded"
     state.mark_dirty(provider="github", resource_kind="repository", resource_id="marcogallotta/ai-tools", delivery_id="1")
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [CASE], bridge=bridge(tmp_path, state, app))
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [CASE], bridge=bridge(tmp_path, state, app))
     result = reconciler.reconcile()
     assert app.resumed == ["lifecycle-thread"]
     assert result["model_turns_started"] == 1
@@ -367,7 +385,7 @@ def test_accepted_turn_completion_is_recorded_and_recovers_after_restart(tmp_pat
     state = store(tmp_path)
     app = FakeAppServer()
     state.mark_dirty(provider="github", resource_kind="repository", resource_id="marcogallotta/ai-tools", delivery_id="1")
-    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [CASE], bridge=bridge(tmp_path, state, app))
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda snapshot: [CASE], bridge=bridge(tmp_path, state, app))
     result = reconciler.reconcile()
     assert result["model_turns_started"] == 1
     receipt = next(iter(state.read()["receipts"].values()))
@@ -391,7 +409,7 @@ def test_accepted_turn_completion_is_recorded_and_recovers_after_restart(tmp_pat
     # must recover the terminal COMPLETED state, distinguishing it from
     # still-in-flight ACCEPTED, purely from persisted receipts/history.
     restarted = V4Reconciler(
-        store=state, authoritative_cases=lambda: [CASE], bridge=bridge(tmp_path, state, app)
+        store=state, authoritative_cases=lambda snapshot: [CASE], bridge=bridge(tmp_path, state, app)
     )
     restarted.reconcile(force=True)
     assert state.read()["receipts"][wake_id]["status"] == "COMPLETED"

@@ -612,6 +612,7 @@ def attention_cases(
             evidence={
                 "execution_state": execution.get("state"),
                 "timestamp": execution.get("timestamp"),
+                "accepted_attempt_id": execution.get("attempt_id"),
             },
             next_owner="Coordinator",
             next_action="re-read exact attempt/claim evidence before any recovery or replacement dispatch",

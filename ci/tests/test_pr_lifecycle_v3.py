@@ -20,6 +20,7 @@ from pr_lifecycle_task_state import (
     source_landing_hold,
     structured_story,
 )
+from pr_lifecycle_v4 import actionable_version
 
 
 NOW = datetime(2026, 8, 19, 0, 0, tzinfo=timezone.utc)
@@ -273,6 +274,32 @@ def test_completed_task_stale_execution_history_is_not_active_attention():
     )
 
     assert payload["v3"]["attention"]["cases"] == []
+
+
+def test_new_accepted_attempt_gets_a_new_stale_wake_identity():
+    def stale_task(attempt_id):
+        value = task_with_hold(clear_hold())
+        value["execution"].update({
+            "state": "EXECUTION STALE — FRESH ATTEMPT-BOUND EVIDENCE REQUIRED",
+            "stale": True,
+            "stale_kind": "WORKER_EXECUTION_STALE",
+            "timestamp": (NOW - timedelta(days=2)).isoformat(),
+            "attempt_id": attempt_id,
+        })
+        return value
+
+    def case(attempt_id):
+        payload = build_projection(
+            [], repository=REPOSITORY, tasks=[stale_task(attempt_id)],
+            source_observation={"status": "COMPLETE", "pull_requests": {}, "workstreams": []},
+            generated_at=NOW,
+        )
+        return payload["v3"]["attention"]["cases"][0]
+
+    first = case("attempt-a")
+    second = case("attempt-b")
+    assert first["evidence"]["accepted_attempt_id"] == "attempt-a"
+    assert actionable_version(first) != actionable_version(second)
 
 
 def test_repeated_ci_pattern_emits_one_systemic_coordinator_finding():

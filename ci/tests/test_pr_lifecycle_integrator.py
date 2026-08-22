@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import threading
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,7 +16,7 @@ if str(SCRIPTS) not in sys.path:
 from ci_failure_fingerprint import causal_fingerprint
 from pr_lifecycle_integrator import IntegratorAudit, consume_projection, model_outcome_for_wake
 from pr_lifecycle_v3 import build_v3_projection
-from pr_lifecycle_v4 import V4StateStore, actionable_version
+from pr_lifecycle_v4 import DirtySnapshot, V4StateStore, actionable_version
 import pr_lifecycle_v4_service as v4_service
 
 
@@ -236,6 +237,32 @@ def test_completed_model_outcome_is_reconstructed_from_persisted_turn():
         "proposal": {"classification": "AMBIGUOUS"},
         "turn_id": "turn-1",
     }
+
+
+def test_service_bootstrap_and_dirty_task_are_forwarded_to_projection(monkeypatch):
+    commands = []
+    monkeypatch.setattr(v4_service.subprocess, "run", lambda command, **kwargs: (
+        commands.append(command) or SimpleNamespace(returncode=0, stdout="", stderr="")
+    ))
+    monkeypatch.setattr(v4_service, "read_projection", lambda path: {})
+    monkeypatch.setattr(v4_service, "consume_projection", lambda value: SimpleNamespace(
+        report={}, actionable_cases=(),
+    ))
+    runtime = object.__new__(v4_service.Runtime)
+    runtime.projection_ready = threading.Event()
+    runtime.projection_bootstrap_pending = True
+    runtime.projection_error = "pending"
+    runtime.audit = SimpleNamespace(publish_report=lambda report: None)
+    snapshot = DirtySnapshot(token=1, resources=({
+        "provider": "asana", "resource_kind": "task", "resource_id": "1217762116932884",
+    },))
+
+    assert runtime.authoritative_cases(snapshot) == []
+    command = commands[0]
+    assert "--projection-bootstrap" in command
+    assert command[command.index("--refresh-task-gid") + 1] == "1217762116932884"
+    assert runtime.projection_ready.is_set()
+    assert runtime.projection_bootstrap_pending is False
 
 
 def test_completion_notification_records_outcome_without_another_reconcile(monkeypatch):

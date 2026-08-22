@@ -432,6 +432,44 @@ def test_http_timeout_is_bounded_and_reported(monkeypatch):
         client.request("GET", "https://example.invalid/test")
 
 
+def test_projection_http_budget_counts_every_request_before_transport(monkeypatch):
+    calls = []
+
+    def unavailable(*args, **kwargs):
+        calls.append(True)
+        raise OSError("fixture transport")
+
+    monkeypatch.setattr("pr_lifecycle_support.urlrequest.urlopen", unavailable)
+    budget = pr_lifecycle.ObservationBudget(max_requests=1, max_seconds=60)
+    client = pr_lifecycle.JSONHTTPClient(timeout=7.0, budget=budget)
+    with pytest.raises(OSError, match="fixture transport"):
+        client.request("GET", "https://example.invalid/first")
+    with pytest.raises(pr_lifecycle.ObservationBudgetError, match="request budget exhausted"):
+        client.request("GET", "https://example.invalid/second")
+    assert calls == [True]
+
+
+def test_projection_http_timeout_is_fail_closed_budget_exhaustion(monkeypatch):
+    monkeypatch.setattr(
+        "pr_lifecycle_support.urlrequest.urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("timed out")),
+    )
+    client = pr_lifecycle.JSONHTTPClient(
+        timeout=10.0,
+        budget=pr_lifecycle.ObservationBudget(max_requests=10, max_seconds=60),
+    )
+    with pytest.raises(pr_lifecycle.ObservationBudgetError, match="per-request budget exhausted"):
+        client.request("GET", "https://example.invalid/test")
+
+
+def test_projection_wall_budget_exhausts_before_transport(monkeypatch):
+    budget = pr_lifecycle.ObservationBudget(max_requests=10, max_seconds=1)
+    budget.started -= 2
+    client = pr_lifecycle.JSONHTTPClient(timeout=10.0, budget=budget)
+    with pytest.raises(pr_lifecycle.ObservationBudgetError, match="wall budget exhausted"):
+        client.request("GET", "https://example.invalid/test")
+
+
 def test_closed_recovery_reads_one_explicit_closed_page():
     class ClosedPageHTTP:
         def __init__(self):
