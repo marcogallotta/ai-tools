@@ -99,6 +99,10 @@ def start_thread(client: CodexDaemonAppServer) -> str:
     thread_id = str(thread.get("id") or "")
     if not thread_id:
         raise RuntimeError("thread/start returned no thread id")
+    # Codex does not materialize a zero-turn thread rollout from thread/start
+    # alone. Setting non-model metadata makes the empty dedicated thread
+    # resumable without spending the model turn that commissioning forbids.
+    client._request("thread/name/set", {"threadId": thread_id, "name": "Dish Integrator"})
     tmp = THREAD_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps({"thread_id": thread_id}, indent=2) + "\n", encoding="utf-8")
     os.chmod(tmp, 0o600)
@@ -121,6 +125,10 @@ class Runtime:
     def __init__(self) -> None:
         state_path = Path(os.getenv("DISH_LIFECYCLE_V4_STATE_PATH") or STATE_DIR / "state.json")
         self.store = V4StateStore(state_path)
+        self.baseline_pending = (
+            os.getenv("DISH_LIFECYCLE_V4_BASELINE_ON_START") == "1"
+            and self.store.read().get("baseline") is None
+        )
         self.audit = IntegratorAudit(
             STATE_DIR / "integrator-audit.ndjson",
             report_path=STATE_DIR / "integrator-report.json",
@@ -183,10 +191,13 @@ class Runtime:
 
     def baseline_current(self) -> dict[str, Any]:
         with self.reconcile_lock:
-            cases = self.authoritative_cases(DirtySnapshot(token=0, resources=()))
-            baselined = self.store.baseline_current(cases, active_owners=frozenset({"Integrator"}))
-        result = {"actionable_cases": len(cases), "baselined": baselined, "model_turns_started": 0}
+            result = self._baseline_current_locked()
         log("baseline", **result)
+        return result
+
+    def _baseline_current_locked(self) -> dict[str, Any]:
+        result = self.reconciler.baseline_current()
+        self.baseline_pending = False
         return result
 
     def authoritative_cases(self, snapshot: DirtySnapshot) -> list[dict[str, Any]]:
@@ -267,7 +278,24 @@ class Runtime:
 
     def reconcile(self, *, force: bool = False) -> dict[str, Any]:
         with self.reconcile_lock:
-            result = self.reconciler.reconcile(force=force)
+            baseline = self.baseline_pending
+            if baseline:
+                result = self._baseline_current_locked()
+            else:
+                result = self.reconciler.reconcile(force=force)
+        if baseline:
+            self.record(reconciles=1)
+            self.audit.write(
+                "baseline_result",
+                force=force,
+                actionable_cases=int(result.get("actionable_cases") or 0),
+                baselined=int(result.get("baselined") or 0),
+                model_turns_started=0,
+            )
+            if self.store.snapshot_dirty().resources:
+                self.request_reconcile()
+            log("baseline", **result)
+            return result
         self.record(reconciles=1, model_turns_started=int(result.get("model_turns_started") or 0))
         self.record_completed_model_outcomes()
         self.start_completion_observers()
@@ -540,11 +568,6 @@ def main() -> int:
 
     def startup_reconcile() -> None:
         try:
-            if os.getenv("DISH_LIFECYCLE_V4_BASELINE_ON_START") == "1":
-                if runtime.store.read().get("baseline") is None:
-                    runtime.baseline_current()
-                else:
-                    log("baseline_existing")
             runtime.reconcile(force=True)
         except Exception as exc:
             log("startup_reconcile_failed", error_type=type(exc).__name__, error=str(exc))
