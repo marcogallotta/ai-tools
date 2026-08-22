@@ -470,6 +470,27 @@ def test_projection_wall_budget_exhausts_before_transport(monkeypatch):
         client.request("GET", "https://example.invalid/test")
 
 
+def test_successful_response_finishing_after_per_request_deadline_is_rejected(monkeypatch):
+    class SlowSuccess:
+        status = 200
+        headers = {}
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b"{}"
+
+    budget = pr_lifecycle.ObservationBudget(max_requests=10, max_seconds=60)
+    budget.started = budget.last_progress = 0
+    times = iter([0.0, 0.0, 0.0, 11.0])
+    monkeypatch.setattr("pr_lifecycle_support.time.monotonic", lambda: next(times))
+    monkeypatch.setattr("pr_lifecycle_support.urlrequest.urlopen", lambda *args, **kwargs: SlowSuccess())
+    client = pr_lifecycle.JSONHTTPClient(timeout=10, budget=budget)
+    with pytest.raises(pr_lifecycle.ObservationBudgetError, match="per-request budget exhausted"):
+        client.request("GET", "https://example.invalid/test")
+
+
 def test_closed_recovery_reads_one_explicit_closed_page():
     class ClosedPageHTTP:
         def __init__(self):

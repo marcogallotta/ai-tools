@@ -774,6 +774,10 @@ def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args
         engine,
         previous_full_regression=previous_full_regression,
     )
+    http = getattr(engine.github, "http", None)
+    budget = getattr(http, "budget", None)
+    if isinstance(budget, ObservationBudget):
+        budget.checkpoint("atomic projection publication")
     atomic_write(
         args.projection_path,
         build_projection(

@@ -219,7 +219,7 @@ class Runtime:
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=1200,
+                timeout=600,
             )
         except Exception as exc:
             self.projection_error = f"authoritative lifecycle reread failed: {type(exc).__name__}: {exc}"

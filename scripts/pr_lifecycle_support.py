@@ -263,6 +263,26 @@ class ObservationBudget:
             self.last_progress = now
         return max(0.001, self.max_seconds - (now - self.started))
 
+    def after_request(self, url: str, *, request_started: float, per_request_seconds: float) -> None:
+        now = time.monotonic()
+        elapsed = now - self.started
+        if elapsed > self.max_seconds:
+            raise ObservationBudgetError(
+                f"observation wall budget exhausted after {elapsed:.1f}s during request for {url}"
+            )
+        request_elapsed = now - request_started
+        if request_elapsed > per_request_seconds:
+            raise ObservationBudgetError(
+                f"observation per-request budget exhausted after {request_elapsed:.1f}s for {url}"
+            )
+
+    def checkpoint(self, dimension: str) -> None:
+        elapsed = time.monotonic() - self.started
+        if elapsed > self.max_seconds:
+            raise ObservationBudgetError(
+                f"observation wall budget exhausted after {elapsed:.1f}s before {dimension}"
+            )
+
 
 class JSONHTTPClient:
     def __init__(self, *, timeout: float = 10.0, budget: ObservationBudget | None = None) -> None:
@@ -282,6 +302,7 @@ class JSONHTTPClient:
         headers: Mapping[str, str] | None = None,
         body: Mapping[str, Any] | None = None,
     ) -> tuple[int, dict[str, str], Any]:
+        request_started = time.monotonic()
         timeout = self.timeout
         if self.budget is not None:
             timeout = min(timeout, self.budget.before_request(method, url))
@@ -297,6 +318,10 @@ class JSONHTTPClient:
             with urlrequest.urlopen(req, timeout=timeout) as response:
                 raw = response.read().decode("utf-8")
                 parsed: Any = json.loads(raw) if raw else {}
+                if self.budget is not None:
+                    self.budget.after_request(
+                        url, request_started=request_started, per_request_seconds=self.timeout,
+                    )
                 return response.status, dict(response.headers.items()), parsed
         except urlerror.HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
@@ -331,6 +356,7 @@ class JSONHTTPClient:
         *,
         headers: Mapping[str, str] | None = None,
     ) -> tuple[int, dict[str, str], bytes]:
+        request_started = time.monotonic()
         timeout = self.timeout
         if self.budget is not None:
             timeout = min(timeout, self.budget.before_request(method, url))
@@ -340,7 +366,12 @@ class JSONHTTPClient:
         req = urlrequest.Request(url, headers=request_headers, method=method)
         try:
             with urlrequest.urlopen(req, timeout=timeout) as response:
-                return response.status, dict(response.headers.items()), response.read()
+                raw = response.read()
+                if self.budget is not None:
+                    self.budget.after_request(
+                        url, request_started=request_started, per_request_seconds=self.timeout,
+                    )
+                return response.status, dict(response.headers.items()), raw
         except urlerror.HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
             raise HTTPError(exc.code, str(exc.reason or "request failed"), raw[:500]) from exc

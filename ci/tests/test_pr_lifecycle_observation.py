@@ -447,18 +447,35 @@ def test_status_projection_refuses_authority_movement_during_long_scan(tmp_path,
 
 
 def test_budget_exhaustion_retains_previous_atomic_projection(tmp_path, monkeypatch):
-    class ExhaustedAsana(ReadOnlyAsana):
-        def get_task(self, gid):
-            raise pr_lifecycle.ObservationBudgetError("observation request budget exhausted")
+    class SlowResponse:
+        status = 200
+        headers = {}
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b"{}"
 
     path = tmp_path / "projection.json"
     path.write_text('{"generation":"previous-trustworthy"}\n', encoding="utf-8")
     args = SimpleNamespace(projection_path=path, repo="marcogallotta/ai-tools")
-    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine, **kwargs: ({}, {}))
+    engine = ReadOnlyEngine(ReadOnlyAsana())
+    budget = pr_lifecycle.ObservationBudget(max_requests=10, max_seconds=5)
+    budget.started = budget.last_progress = 0
+    client = pr_lifecycle.JSONHTTPClient(timeout=10, budget=budget)
+    engine.github.http = client
+    times = iter([0.0, 0.0, 0.0, 6.0])
+    monkeypatch.setattr("pr_lifecycle_support.time.monotonic", lambda: next(times))
+    monkeypatch.setattr("pr_lifecycle_support.urlrequest.urlopen", lambda *args, **kwargs: SlowResponse())
+    def slow_final_read(engine, **kwargs):
+        engine.github.http.request("GET", "https://example.invalid/final")
+        return {}, {}
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", slow_final_read)
 
-    with pytest.raises(pr_lifecycle.ObservationBudgetError, match="request budget exhausted"):
+    with pytest.raises(pr_lifecycle.ObservationBudgetError, match="wall budget exhausted"):
         pr_lifecycle._publish_projection(
-            ReadOnlyEngine(ExhaustedAsana()), [lifecycle()], args, mutate_tasks=False,
+            engine, [lifecycle()], args, mutate_tasks=False,
         )
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "generation": "previous-trustworthy"
