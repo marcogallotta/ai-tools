@@ -362,6 +362,28 @@ def test_ci_ownership_routes_without_giving_integrator_scheduler_or_implementati
     assert integrator["review_authority"] is False
 
 
+def test_settled_nonblocking_failure_with_active_repair_owner_creates_no_attention_case():
+    gate = {
+        "diagnosis": "FAILED_REQUIRED_CI",
+        "raw_gate_outcome": "FAILED",
+        "failure_ownership": "LIKELY_NON_PR_OWNED",
+        "candidate_disposition": "NON_BLOCKING_LIKELY_UNRELATED",
+        "repair_owner_active": True,
+        "repair_owner_task": "1217449623846547",
+    }
+    payload = build_projection(
+        [lifecycle(state=LifecycleState.REVIEW_PASSED, gate=gate)],
+        repository=REPOSITORY,
+        tasks=[task_with_hold(clear_hold())],
+        source_observation=source(),
+        generated_at=NOW,
+    )
+    assert not any(
+        case["pr_number"] == 179 and case["reason_class"].startswith("CI_")
+        for case in payload["v3"]["attention"]["cases"]
+    )
+
+
 def test_handoff_repair_capability_blocker_is_owned_attention_not_marco_relay():
     value = lifecycle(state=LifecycleState.CHANGES_REQUESTED)
     value.residual_reason = (

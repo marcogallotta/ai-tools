@@ -321,7 +321,7 @@ def ensure_baseline_owner(engine: Any, current: Any) -> Any:
     encoded_evidence = urllib.parse.quote(evidence, safe="")
     dependency_marker = (
         f"<!-- {EXTERNAL_DEPENDENCY_MARKER} action=blocked task={owner_gid} check={encoded_check} "
-        f"main={main_sha} fingerprint={cause.fingerprint} evidence={encoded_evidence} "
+        f"head={current.head.lower()} main={main_sha} fingerprint={cause.fingerprint} evidence={encoded_evidence} "
         f"reason={urllib.parse.quote('proven current-main failure', safe='')} -->"
     )
     existing = parse_external_dependency(engine.github.get_comments(current.number))

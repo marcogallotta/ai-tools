@@ -33,7 +33,10 @@ def test_pending_exact_head_ci_waits_in_integration_without_changing_review_verd
 
 def _ownership_comment(
     classification, *, evidence="run:700/job:test/signature:x", fingerprint=None,
-    identity=None,
+    identity=None, disposition=None, generation=None, basis=None, contrary=None,
+    owner_task=None, main=None, main_reproduction=None, candidate_evidence=None,
+    interaction=None, interaction_hypothesis=None, targeted_evidence=None,
+    when=base.NOW, comment_id=99,
 ):
     from urllib.parse import quote
 
@@ -47,16 +50,26 @@ def _ownership_comment(
             f" invariant={quote(str(identity.get('invariant') or ''), safe='')}"
             f" signature={quote(str(identity.get('signature') or ''), safe='')}"
         )
+    extras = {
+        "disposition": disposition, "generation": generation, "basis": basis,
+        "contrary": contrary, "owner_task": owner_task, "main": main,
+        "main_reproduction": main_reproduction, "candidate_evidence": candidate_evidence,
+        "interaction": interaction, "interaction_hypothesis": interaction_hypothesis,
+        "targeted_evidence": targeted_evidence,
+    }
+    extra_fields = "".join(
+        f" {key}={quote(str(value), safe='')}" for key, value in extras.items() if value is not None
+    )
     return {
-        "id": 99,
+        "id": comment_id,
         "body": (
             f"<!-- dish-ci-failure-ownership:v1 head={base.HEAD} "
             f"check={quote('Dish / exact-head certification', safe='')} "
             f"classification={classification} evidence={quote(evidence, safe='')}"
-            f"{fingerprint_field} -->"
+            f"{fingerprint_field}{extra_fields} -->"
         ),
-        "created_at": base.NOW.isoformat(),
-        "updated_at": base.NOW.isoformat(),
+        "created_at": when.isoformat(),
+        "updated_at": when.isoformat(),
     }
 
 
@@ -122,6 +135,90 @@ def test_mismatched_causal_identity_fails_closed_as_ambiguous():
     state = base.engine(gh, authority=True).inspect(gh.pr)
     assert state.gate["failure_ownership"] == "AMBIGUOUS"
     assert "unverified causal identity" in state.gate["failure_ownership_evidence"]
+
+
+def test_likely_non_pr_owned_continues_but_cannot_admit_red_final_landing():
+    gh = base.FakeGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [_ownership_comment(
+        "LIKELY_NON_PR_OWNED",
+        disposition="NON_BLOCKING_LIKELY_UNRELATED",
+        generation="run-700-attempt-1",
+        basis="same environment failure predates candidate and candidate cannot reach setup",
+        contrary="none",
+        owner_task="1217449623846547",
+    )]
+    class ActiveOwnerAsana:
+        def get_task(self, gid): return {"gid": gid, "completed": False}
+    state = pr_lifecycle.LifecycleEngine(
+        gh, asana=ActiveOwnerAsana(), integration_authority=True, now=lambda: base.NOW
+    ).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
+    assert state.gate["raw_gate_outcome"] == "FAILED"
+    assert state.gate["candidate_disposition"] == "NON_BLOCKING_LIKELY_UNRELATED"
+    assert "final landing is not admitted" in state.residual_reason
+
+
+def test_likely_non_pr_owned_with_contrary_evidence_fails_closed():
+    gh = base.FakeGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [_ownership_comment(
+        "LIKELY_NON_PR_OWNED",
+        disposition="NON_BLOCKING_LIKELY_UNRELATED",
+        generation="run-700-attempt-1", basis="similar historical failure",
+        contrary="candidate-touches-shared-parser", owner_task="1217449623846547",
+    )]
+    state = base.engine(gh, authority=True).inspect(gh.pr)
+    assert state.gate["failure_ownership"] == "AMBIGUOUS"
+    assert state.gate["candidate_disposition"] == "BLOCKING"
+
+
+def test_likely_non_pr_owned_from_an_older_workflow_attempt_fails_closed():
+    gh = base.FakeGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [_ownership_comment(
+        "LIKELY_NON_PR_OWNED",
+        disposition="NON_BLOCKING_LIKELY_UNRELATED",
+        generation="run-699-attempt-1", basis="historical environment failure",
+        contrary="none", owner_task="1217449623846547",
+    )]
+    state = base.engine(gh, authority=True).inspect(gh.pr)
+    assert state.gate["failure_ownership"] == "AMBIGUOUS"
+    assert state.gate["candidate_disposition"] == "BLOCKING"
+    assert "stale workflow evidence generation" in state.gate["failure_ownership_evidence"]
+
+
+def test_likely_non_pr_owned_without_readable_active_repair_owner_fails_closed():
+    gh = base.FakeGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [_ownership_comment(
+        "LIKELY_NON_PR_OWNED", disposition="NON_BLOCKING_LIKELY_UNRELATED",
+        generation="run-700-attempt-1", basis="historical environment failure",
+        contrary="none", owner_task="1217449623846547",
+    )]
+    state = base.engine(gh, authority=True).inspect(gh.pr)
+    assert state.gate["failure_ownership"] == "AMBIGUOUS"
+    assert state.gate["candidate_disposition"] == "BLOCKING"
+
+
+def test_newer_pr_owned_evidence_revokes_likely_disposition():
+    gh = base.FakeGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [
+        _ownership_comment(
+            "LIKELY_NON_PR_OWNED", disposition="NON_BLOCKING_LIKELY_UNRELATED",
+            generation="run-700-attempt-1", basis="historical environment failure",
+            contrary="none", owner_task="1217449623846547",
+            when=base.NOW, comment_id=98,
+        ),
+        _ownership_comment(
+            "PR_OWNED", evidence="targeted reproduction on exact candidate",
+            when=base.NOW.replace(microsecond=1), comment_id=99,
+        ),
+    ]
+    state = base.engine(gh, authority=True).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
+    assert state.gate["failure_ownership"] == "PR_OWNED"
 
 
 def test_pending_ci_preserves_review_passed_headline():

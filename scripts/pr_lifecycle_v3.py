@@ -317,6 +317,18 @@ def attention_cases(
             ))
 
         if diagnosis == "FAILED_REQUIRED_CI":
+            disposition = str(gate.get("candidate_disposition") or "BLOCKING")
+            repair_owner_active = bool(gate.get("repair_owner_active"))
+            if (
+                ownership == "LIKELY_NON_PR_OWNED"
+                and disposition == "NON_BLOCKING_LIKELY_UNRELATED"
+                and repair_owner_active
+            ) or (
+                ownership == "PROVEN_CURRENT_MAIN"
+                and disposition == "MERGEABLE_WITH_BASELINE_DEBT"
+                and repair_owner_active
+            ):
+                continue
             if ownership == "PR_OWNED":
                 cases.append(_case(
                     repository=repository,
