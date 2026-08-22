@@ -47,7 +47,7 @@ Nothing here migrates them or applies V2 semantics to them.
 
 ### Bounded legacy capture writes
 
-`Dish — Development Workflow Friction` (`1217443500915644`) and `Dish — Code Smells / Engineering Debt` (`1217443501022227`) remain unregistered for V2 lifecycle semantics. Their exact contributor-base `notice -> dedupe -> log/update -> continue` contracts nevertheless authorize the bounded legacy capture operations they name: update a matching finding or create an unprioritized `Inbox` finding. These are non-V2 capture writes, not V2 mutation. Do not apply V2 sections/fields, infer priority, move or dispatch work, or generalize this exception to another unregistered project.
+`Dish — Development Workflow Friction` (`1217443500915644`) and `Dish — Code Smells / Engineering Debt` (`1217443501022227`) remain unregistered for V2 lifecycle semantics. Their exact contributor-base `notice -> dedupe -> log/update -> continue` contracts nevertheless authorize the bounded legacy capture operations they name: update a matching finding or create an unprioritized `Inbox` finding. These are non-V2 capture writes, not V2 mutation. Do not apply V2 sections/fields, infer priority, move or dispatch work under this shared capture exception, or generalize the exception to another unregistered project. Development Workflow's standing role contract separately authorizes the named Friction `Inbox` triage and moves; this shared exception neither revokes that role-specific authority nor extends it to Code Smells.
 
 ## Exact mode classification
 
