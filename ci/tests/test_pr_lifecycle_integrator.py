@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
@@ -266,6 +268,59 @@ def test_service_bootstrap_and_dirty_task_are_forwarded_to_projection(monkeypatc
     assert command[command.index("--refresh-task-token") + 1] == "1217762116932884:0"
     assert runtime.projection_ready.is_set()
     assert runtime.projection_bootstrap_pending is False
+
+
+def test_empty_integrator_thread_is_materialized_without_a_model_turn(monkeypatch, tmp_path):
+    calls = []
+
+    class Client:
+        def _request(self, method, params):
+            calls.append((method, params))
+            if method == "thread/start":
+                return {"thread": {"id": "thread-zero-turn"}}
+            return {}
+
+    monkeypatch.setattr(v4_service, "THREAD_FILE", tmp_path / "thread.json")
+    assert v4_service.start_thread(Client()) == "thread-zero-turn"
+    assert [method for method, _ in calls] == ["thread/start", "thread/name/set"]
+    assert calls[1][1] == {"threadId": "thread-zero-turn", "name": "Dish Integrator"}
+    assert json.loads((tmp_path / "thread.json").read_text()) == {"thread_id": "thread-zero-turn"}
+
+
+def test_failed_startup_baseline_remains_pending_for_retry(monkeypatch):
+    attempts = []
+
+    class Reconciler:
+        def baseline_current(self):
+            attempts.append("baseline")
+            if len(attempts) == 1:
+                raise RuntimeError("authority changed")
+            return {
+                "actionable_cases": 0,
+                "baselined": 0,
+                "prepared": 0,
+                "wake_results": [],
+                "model_turns_started": 0,
+            }
+
+        def reconcile(self, *, force=False):
+            raise AssertionError("ordinary reconcile must not run before baseline succeeds")
+
+    runtime = object.__new__(v4_service.Runtime)
+    runtime.baseline_pending = True
+    runtime.reconcile_lock = threading.Lock()
+    runtime.reconciler = Reconciler()
+    runtime.store = SimpleNamespace(snapshot_dirty=lambda: DirtySnapshot(token=0, resources=()))
+    runtime.audit = SimpleNamespace(write=lambda *args, **kwargs: None)
+    runtime.record = lambda **kwargs: None
+    runtime.request_reconcile = lambda **kwargs: None
+
+    with pytest.raises(RuntimeError, match="authority changed"):
+        runtime.reconcile(force=True)
+    assert runtime.baseline_pending is True
+    assert runtime.reconcile(force=True)["model_turns_started"] == 0
+    assert runtime.baseline_pending is False
+    assert attempts == ["baseline", "baseline"]
 
 
 def test_completion_notification_records_outcome_without_another_reconcile(monkeypatch):
