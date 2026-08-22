@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -110,8 +111,8 @@ TOOLS = (
     _rpc_tool(
         "get_nightly_health",
         "Read recent runs of the existing Full regression workflow and current main; never schedule or rerun it.",
-        {},
-        [],
+        VERSION_PROPERTY,
+        ["actionable_version"],
     ),
 )
 
@@ -371,8 +372,8 @@ class IntegratorReadTools:
         return {"actionable_version": version, "records": matches}
 
     def get_nightly_health(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
-        if arguments:
-            raise ValueError("get_nightly_health accepts no arguments")
+        version = self._version(arguments)
+        self._case(version)
         prefix = f"repos/{self.repository}"
         main = self._command_json(("/usr/bin/gh", "api", f"{prefix}/branches/main"))
         runs = self._command_json((
@@ -381,6 +382,7 @@ class IntegratorReadTools:
             f"{prefix}/actions/workflows/full-regression.yml/runs?per_page=10",
         ))
         return _bounded({
+            "actionable_version": version,
             "repository": self.repository,
             "scheduler_owner": "GitHub Actions full-regression.yml",
             "observe_only": True,
@@ -405,25 +407,46 @@ class IntegratorReadTools:
         }
         if name not in handlers:
             raise ValueError("unknown Integrator tool")
+        tool_input = _bounded(dict(arguments))
+        version = str(arguments.get("actionable_version") or "")
+        binding: dict[str, Any] = {}
+        if VERSION_RE.fullmatch(version):
+            try:
+                resolved = self._case(version)
+            except (FileNotFoundError, ValueError):
+                pass
+            else:
+                binding = {
+                    "wake_id": resolved.get("wake_id"),
+                    "turn_id": resolved.get("turn_id"),
+                }
         try:
             result = handlers[name](arguments)
         except Exception as exc:
             self.audit.write(
                 "model_tool_call",
                 tool=name,
-                actionable_version=arguments.get("actionable_version"),
+                actionable_version=version or None,
+                tool_input=tool_input,
                 result="refused",
                 error_type=type(exc).__name__,
+                error_detail=_clip(str(exc)),
                 model_turns_started=0,
+                **binding,
             )
             raise
         else:
+            encoded = json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
             self.audit.write(
                 "model_tool_call",
                 tool=name,
-                actionable_version=arguments.get("actionable_version"),
+                actionable_version=version or None,
+                tool_input=tool_input,
                 result="ok",
+                tool_output=result,
+                tool_output_sha256=hashlib.sha256(encoded.encode()).hexdigest(),
                 model_turns_started=0,
+                **binding,
             )
             return result
 

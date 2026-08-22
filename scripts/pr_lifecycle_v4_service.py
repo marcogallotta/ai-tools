@@ -163,6 +163,8 @@ class Runtime:
         self.force_pending = False
         self.stop = threading.Event()
         self.reconcile_lock = threading.Lock()
+        self.completion_lock = threading.Lock()
+        self.completion_observers: set[str] = set()
         self.metrics_lock = threading.Lock()
         self.metrics = {
             "accepted_events": 0,
@@ -235,6 +237,7 @@ class Runtime:
             result = self.reconciler.reconcile(force=force)
         self.record(reconciles=1, model_turns_started=int(result.get("model_turns_started") or 0))
         self.record_completed_model_outcomes()
+        self.start_completion_observers()
         self.audit.write(
             "reconcile_result",
             force=force,
@@ -246,7 +249,86 @@ class Runtime:
         log("reconcile", **result)
         return result
 
-    def record_completed_model_outcomes(self) -> int:
+    @staticmethod
+    def _turn_is_completed(read: Mapping[str, Any], turn_id: str) -> bool:
+        thread = read.get("thread") if isinstance(read.get("thread"), Mapping) else {}
+        for turn in thread.get("turns") or []:
+            if not isinstance(turn, Mapping) or str(turn.get("id") or "") != turn_id:
+                continue
+            return str(turn.get("status") or "").lower() == "completed"
+        return False
+
+    def start_completion_observers(self) -> int:
+        """Subscribe only while exact accepted turns are in flight; never poll."""
+        state = self.store.read()
+        accepted = [
+            (str(wake_id), str(receipt.get("turn_id") or ""))
+            for wake_id, receipt in (state.get("receipts") or {}).items()
+            if isinstance(receipt, Mapping)
+            and receipt.get("status") == "ACCEPTED"
+            and receipt.get("turn_id")
+        ]
+        started = 0
+        for wake_id, turn_id in accepted:
+            with self.completion_lock:
+                if wake_id in self.completion_observers:
+                    continue
+                self.completion_observers.add(wake_id)
+            threading.Thread(
+                target=self._observe_completion,
+                args=(wake_id, turn_id),
+                name=f"integrator-turn-{turn_id[:12]}",
+                daemon=True,
+            ).start()
+            started += 1
+        return started
+
+    def _observe_completion(self, wake_id: str, turn_id: str) -> None:
+        observer: CodexDaemonAppServer | None = None
+        try:
+            observer = CodexDaemonAppServer(app_server_socket(), thread_id=self.thread_id)
+            read = observer.thread_read(self.thread_id, include_turns=True)
+            if not self._turn_is_completed(read, turn_id):
+                observer.wait_for_turn_completed(
+                    turn_id,
+                    timeout_seconds=float(os.getenv("DISH_INTEGRATOR_TURN_TIMEOUT_SECONDS") or 900),
+                )
+                read = observer.thread_read(self.thread_id, include_turns=True)
+            if not self._turn_is_completed(read, turn_id):
+                raise RuntimeError("completion notification was not durable in exact thread history")
+            state = self.store.read()
+            receipt = (state.get("receipts") or {}).get(wake_id)
+            if not isinstance(receipt, Mapping) or str(receipt.get("turn_id") or "") != turn_id:
+                raise RuntimeError("completion notification does not match the durable wake receipt")
+            if receipt.get("status") == "ACCEPTED":
+                self.store.mark_completed(wake_id)
+            elif receipt.get("status") != "COMPLETED":
+                raise RuntimeError("completion notification reached a non-accepted wake receipt")
+            self.record_completed_model_outcomes(read=read)
+            self.audit.write(
+                "model_completion_observed",
+                wake_id=wake_id,
+                turn_id=turn_id,
+                receipt_status="COMPLETED",
+                model_turns_started=0,
+                observation="app-server-turn-completed-notification",
+            )
+        except Exception as exc:
+            self.audit.write(
+                "model_completion_observer_failed",
+                wake_id=wake_id,
+                turn_id=turn_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
+                model_turns_started=0,
+            )
+        finally:
+            if observer is not None:
+                observer.close()
+            with self.completion_lock:
+                self.completion_observers.discard(wake_id)
+
+    def record_completed_model_outcomes(self, *, read: Mapping[str, Any] | None = None) -> int:
         state = self.store.read()
         completed = {
             str(wake_id): dict(receipt)
@@ -263,7 +345,8 @@ class Runtime:
         pending = {key: value for key, value in completed.items() if key not in logged}
         if not pending:
             return 0
-        read = self.app_server.thread_read(self.thread_id, include_turns=True)
+        if read is None:
+            read = self.app_server.thread_read(self.thread_id, include_turns=True)
         recorded = 0
         for wake_id, receipt in pending.items():
             outcome = model_outcome_for_wake(read, wake_id)

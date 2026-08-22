@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import zipfile
 
 import pytest
 
@@ -25,6 +26,60 @@ SPEC.loader.exec_module(pr_lifecycle)
 HEAD = "a" * 40
 NEW_HEAD = "b" * 40
 NOW = datetime(2026, 8, 13, 8, 0, tzinfo=timezone.utc)
+
+
+def test_projection_health_consumes_exact_full_regression_artifact(monkeypatch):
+    evidence = {
+        "schema": "dish-full-regression-v1",
+        "run_id": "700",
+        "run_attempt": 1,
+        "main_sha": NEW_HEAD,
+        "event": "schedule",
+        "overall_result": "failed",
+        "failures": [],
+    }
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(
+            ".test-artifacts/full-regression/evidence.json",
+            json.dumps(evidence),
+        )
+    class GitHub:
+        artifact_reads = 0
+        def full_regression_runs(self):
+            return {"workflow_runs": [{
+                "id": 700,
+                "run_attempt": 1,
+                "event": "schedule",
+                "status": "completed",
+                "conclusion": "failure",
+                "head_sha": NEW_HEAD,
+            }]}
+        def get_run_artifacts(self, run_id):
+            self.artifact_reads += 1
+            assert run_id == 700
+            return [{"id": 701, "name": f"full-regression-{NEW_HEAD}", "expired": False}]
+        def download_artifact(self, artifact_id):
+            assert artifact_id == 701
+            return archive.getvalue()
+    class Engine:
+        github = GitHub()
+    monkeypatch.setattr(pr_lifecycle.pr_lifecycle_controller, "_paths", lambda: None)
+    monkeypatch.setattr(
+        pr_lifecycle.pr_lifecycle_controller,
+        "_snapshot",
+        lambda paths: {"status": "ok"},
+    )
+    engine = Engine()
+    _, result = pr_lifecycle._projection_health(engine)
+    assert result["evidence"] == evidence
+    assert result["evidence_artifact_id"] == 701
+    _, replay = pr_lifecycle._projection_health(
+        engine,
+        previous_full_regression=result,
+    )
+    assert replay["evidence"] == evidence
+    assert engine.github.artifact_reads == 1
 
 
 def pr(*, head=HEAD, draft=False, state="open", merged=False, body="Owning task: 1217443403986570"):

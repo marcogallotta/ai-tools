@@ -32,6 +32,7 @@ CI_CLASSES = frozenset({
 CI_REASON_CLASSES = frozenset({
     "CI_OWNERSHIP_AMBIGUOUS",
     "CI_INFRASTRUCTURE_OR_NETWORK",
+    "NIGHTLY_CI_UNRESOLVED",
 })
 INTEGRATOR_CI_REASON_CLASSES = CI_REASON_CLASSES | {"CI_SLOW"}
 
@@ -80,6 +81,7 @@ def _canonical_ci(gate: Mapping[str, Any]) -> dict[str, Any]:
         "classification": str(gate.get("failure_ownership") or ""),
         "candidate_disposition": gate.get("candidate_disposition"),
         "causal_fingerprint": fingerprint or None,
+        "causal_identity": gate.get("failure_causal_identity"),
         "repair_owner_task": gate.get("repair_owner_task"),
         "repair_owner_active": bool(gate.get("repair_owner_active")),
         "failure_main_sha": gate.get("failure_main_sha"),
@@ -150,6 +152,8 @@ def consume_projection(
                 decision.update(result="suppressed", reason="canonical_ci_projection_contradiction")
                 decisions.append(decision)
                 continue
+            evidence["canonical_ci"] = canonical
+            case["evidence"] = evidence
 
         version = actionable_version(case, policy_generation=policy_generation)
         actionable.append(case)
