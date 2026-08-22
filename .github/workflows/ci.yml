@@ -152,11 +152,12 @@ jobs:
         if: steps.decision.outputs.run_certification == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: pr-certification-plan-${{ steps.prepare.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr-certification-plan-${{ steps.prepare.outputs.candidate_sha }}-${{ github.run_id }}
           path: .test-artifacts/pr-certification
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
+          overwrite: true
 
   certify:
     name: Run selected certification groups
@@ -185,7 +186,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          PLAN_ARTIFACT_NAME: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          PLAN_ARTIFACT_NAME: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}
         run: |
           set -euo pipefail
           for poll in $(seq 1 60); do
@@ -200,11 +201,11 @@ jobs:
               break
             fi
             if (( ${#matches[@]} > 1 )); then
-              echo "Found duplicate current-attempt certification plan artifacts: $PLAN_ARTIFACT_NAME" >&2
+              echo "Found duplicate certification plan artifacts for this run: $PLAN_ARTIFACT_NAME" >&2
               exit 1
             fi
             if (( poll == 60 )); then
-              echo "Timed out waiting for current-attempt certification plan artifact: $PLAN_ARTIFACT_NAME" >&2
+              echo "Timed out waiting for certification plan artifact for this run: $PLAN_ARTIFACT_NAME" >&2
               exit 1
             fi
             sleep 2
@@ -213,7 +214,7 @@ jobs:
       - name: Download exact certification plan
         uses: actions/download-artifact@v8
         with:
-          name: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}
           path: .test-artifacts/pr-certification
 
       - name: Execute only planner-selected targets
