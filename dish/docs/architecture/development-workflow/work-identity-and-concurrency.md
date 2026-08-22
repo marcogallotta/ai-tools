@@ -19,6 +19,10 @@ Concurrency is chosen from concrete landing relationships:
 - a true predecessor serializes downstream authoring;
 - a coherent manual stack may keep separate task/commit/PR lineages while using each accepted head as the next base.
 
+Dispatch waits require a verified causal edge: the exact upstream result, the exact downstream work it can materially change or invalidate, and current evidence for that interaction. Concrete-sounding timing, generic caution, fan-in counts, worker counts, or startup sequencing do not establish that edge. A proven independent classification persists until new material evidence establishes a causal, resource, authority, or dependency interaction.
+
+Drain pressure is scoped to the actual bottleneck. The Coordinator constructs the full eligible high-priority frontier before applying waits; unrelated authoring, PR, CI, Review, or Integration fan-in does not remove independent Research or Design Review from that frontier.
+
 ## Invariants
 
 - One semantic Implementation owner writes a branch lineage at a time.
@@ -28,6 +32,8 @@ Concurrency is chosen from concrete landing relationships:
 - Advisory PR leases improve visibility but never grant ownership.
 - Unrelated movement of the target branch does not silently replace an established authoring base.
 - Stack propagation preserves later completed work when an earlier accepted correction must be down-merged.
+- Every omitted executable P-CRITICAL/P0 action has a named concrete current causal, resource, authority, or dependency reason.
+- Operator dispatch classes are unambiguous: send now, wait for a verified edge/result, or request an exact Marco decision; `SEND NEXT` does not encode a dependency.
 
 ## Current anchors
 

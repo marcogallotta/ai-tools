@@ -2033,6 +2033,127 @@
       ]
     },
     {
+      "id": "coordinator-concurrency-nonoverlap-start-wait",
+      "roles": [
+        "coordinator"
+      ],
+      "prompt": "A third artifact slice is already classified non-overlapping and safe in parallel. Another Implementation has not yet accepted or started. Decide whether to wait for that startup before dispatching the third slice; no new dependency or interaction evidence exists.",
+      "expected_outcome": "send_independent_work_now",
+      "required_rules": [
+        "coordinator-evidence-based-concurrency"
+      ],
+      "required_actions": [
+        "preserve_proven_independence",
+        "classify_send_now"
+      ],
+      "forbidden_actions": [
+        "wait_for_unrelated_implementation_start",
+        "reverse_independence_without_new_evidence"
+      ]
+    },
+    {
+      "id": "coordinator-concurrency-exact-sounding-noncause",
+      "roles": [
+        "coordinator"
+      ],
+      "prompt": "A Coordinator proposes WAIT — PR X starts. The result is exact-looking, but the Coordinator cannot identify downstream work that PR X starting can materially change or invalidate. Classify the action.",
+      "expected_outcome": "reject_wait_without_causal_edge",
+      "required_rules": [
+        "coordinator-evidence-based-concurrency"
+      ],
+      "required_actions": [
+        "require_exact_upstream_result",
+        "require_exact_affected_downstream_work",
+        "require_current_causal_evidence",
+        "reject_unsupported_wait"
+      ],
+      "forbidden_actions": [
+        "accept_exact_wording_as_dependency",
+        "serialize_for_startup_sequence"
+      ]
+    },
+    {
+      "id": "coordinator-concurrency-true-causal-wait",
+      "roles": [
+        "coordinator"
+      ],
+      "prompt": "An upstream schema decision is unresolved. Current interface evidence shows either result changes and may invalidate the downstream serializer design. Classify whether downstream authoring should start.",
+      "expected_outcome": "wait_for_verified_causal_result",
+      "required_rules": [
+        "coordinator-evidence-based-concurrency"
+      ],
+      "required_actions": [
+        "name_upstream_schema_result",
+        "name_affected_downstream_serializer",
+        "cite_current_interface_dependency_evidence",
+        "classify_wait_for_verified_edge"
+      ],
+      "forbidden_actions": [
+        "dispatch_invalidatable_downstream_work_as_independent",
+        "justify_wait_from_fan_in_count"
+      ]
+    },
+    {
+      "id": "coordinator-concurrency-sticky-independence",
+      "roles": [
+        "coordinator"
+      ],
+      "prompt": "Two work items were classified independent from current mutation and landing evidence. Later, generic caution suggests serializing them, but no new material causal, resource, authority, or dependency evidence appeared. Reclassify them.",
+      "expected_outcome": "keep_independent_work_parallel",
+      "required_rules": [
+        "coordinator-evidence-based-concurrency"
+      ],
+      "required_actions": [
+        "retain_independent_classification",
+        "require_new_material_evidence_for_wait",
+        "classify_send_now"
+      ],
+      "forbidden_actions": [
+        "reverse_independence_for_comfort",
+        "invent_vague_collision"
+      ]
+    },
+    {
+      "id": "coordinator-concurrency-drain-reasoning-frontier",
+      "roles": [
+        "coordinator"
+      ],
+      "prompt": "DRAIN has one active Implementation, several open PR and CI returns, and ten executable independent Research or Design Review tasks. Construct the dispatch frontier.",
+      "expected_outcome": "keep_independent_reasoning_frontier_available",
+      "required_rules": [
+        "coordinator-evidence-based-concurrency"
+      ],
+      "required_actions": [
+        "construct_full_eligible_high_priority_frontier",
+        "keep_independent_research_available",
+        "keep_independent_design_review_available",
+        "scope_drain_to_actual_fan_in_bottleneck"
+      ],
+      "forbidden_actions": [
+        "cap_reasoning_frontier_by_open_pr_count",
+        "serialize_independent_work_for_ci_fan_in"
+      ]
+    },
+    {
+      "id": "coordinator-concurrency-omitted-p0",
+      "roles": [
+        "coordinator"
+      ],
+      "prompt": "During DRAIN an executable P0 action is omitted from the dispatch frontier. No concrete current causal, resource, authority, or dependency reason is named. Evaluate the omission.",
+      "expected_outcome": "reject_unreasoned_high_priority_omission",
+      "required_rules": [
+        "coordinator-evidence-based-concurrency"
+      ],
+      "required_actions": [
+        "require_named_current_omission_reason",
+        "restore_executable_p0_to_frontier"
+      ],
+      "forbidden_actions": [
+        "omit_high_priority_action_from_generic_caution",
+        "treat_agent_count_as_omission_reason"
+      ]
+    },
+    {
       "id": "design-principles-no-invented-manual-gate",
       "roles": [
         "audit",

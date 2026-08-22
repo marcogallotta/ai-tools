@@ -174,6 +174,7 @@
           ],
           "status / dispatch / blocker / live coordination": [
             "dish/docs/agents/coordinator.md#Asana live coordination",
+            "dish/docs/agents/coordinator.md#Dispatch concurrency and stack shape",
             "dish/docs/agents/coordinator.md#Comparison compatibility and blocker ownership"
           ]
         }
@@ -208,6 +209,19 @@
           "impact": "breaking",
           "surface": "authority",
           "text": "Coordinator does not become semantic Implementation or Integration through tool access."
+        },
+        {
+          "action_boundaries": [
+            "status",
+            "dispatch"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "coordinator-evidence-based-concurrency",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Dispatch WAIT requires a verified current causal edge: exact upstream result, exact downstream work materially changed/invalidated, and evidence. Proven independence is sticky absent new material evidence. In DRAIN, build the full eligible high-priority frontier first; unrelated PR/CI/Implementation fan-in never suppresses independent Research or Design Review. Use SEND NOW, WAIT — exact verified edge/result, or MARCO DECISION — exact decision; never ambiguous SEND NEXT."
         },
         {
           "action_boundaries": [
