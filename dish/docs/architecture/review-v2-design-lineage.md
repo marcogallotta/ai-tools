@@ -71,6 +71,16 @@ The Review V2 generation remains authoritative when a projection, cache, service
 
 The human-decision provenance input proves Marco's approval of the exact Review V2 identity; it does not become a second design lineage or alternate snapshot authority.
 
+## Claim provenance, source policy, and environment applicability
+
+Material design claims may carry a structured `dish-design-provenance:v1` record, but that record is metadata bound to the exact Review V2 identity tuple `(task_gid, generation_id, canonical_sha256, relevant_repo_baseline)`. It cannot mint or select a design generation and therefore cannot become a second design authority.
+
+The repository-owned [`../agents/source-policy.json`](../agents/source-policy.json) is a separate small policy registry for external-source eligibility as normative precedent. Stable source IDs resolve exact primary-source identity, while append-only disposition events are scoped to `(source_id, decision_class)` and require durable explicit human decision provenance. `ALLOWED`, `CAUTION`, and `DISALLOWED_AS_PRECEDENT` govern normative use only; factual platform evidence remains a separate claim use. No matching active disposition is a real `NO_ACTIVE_DISPOSITION` state, not implicit permission.
+
+Claim provenance records what the source actually states separately from Dish inference/extrapolation and labels factual versus normative use. For selected mechanisms, environment applicability remains claim-local: required capabilities are `VERIFIED_AVAILABLE`, `VERIFIED_UNAVAILABLE`, or `UNKNOWN` for an exact target surface, with evidence/as-of information for verified facts and a refresh trigger. A required `UNKNOWN` cannot be promoted from candidate to recommended architecture, and `VERIFIED_UNAVAILABLE` rejects the mechanism for that environment.
+
+[review_design_lineage.py](../../../scripts/review_design_lineage.py) validates the source-policy registry and the provenance block against the exact Review V2 identity. Its bounded source reverse lookup accepts caller-supplied current exact identities and returns only matching current claims; it does not persist a global claim index or environment database. A later source-policy decision therefore produces a bounded revalidation set without rewriting historical generations. Independent support is preserved as evidence for reassessment rather than converted into automatic invalidation.
+
 ## Cumulative drift
 
 Cumulative-drift comparison is anchored to the nearest current/ancestor Review V2 generation with a provenance-valid `MARCO_APPROVED` event. It is not anchored to the immediately prior edit merely because that edit is newer.
@@ -97,4 +107,4 @@ A materially changed candidate or new material evidence creates a different key 
 6. successor generations stay in the same lineage and projections move to the successor;
 7. author/reviewer replacement preserves challenge history and independence rules.
 
-Additional tests cover invalid/foreign event handling, exact material-delta approval binding, actor-only approval rejection, exact independently recovered Marco-decision provenance, challenger/reviewer separation, projection contradictions, post-dispatch successor safety, SUPERSEDED event/lineage reconciliation, and cumulative-drift baseline selection.
+Additional tests cover invalid/foreign event handling, exact material-delta approval binding, actor-only approval rejection, exact independently recovered Marco-decision provenance, challenger/reviewer separation, projection contradictions, post-dispatch successor safety, SUPERSEDED event/lineage reconciliation, cumulative-drift baseline selection, scoped source-policy dispositions, factual-versus-normative source use, exact source-statement/Dish-inference separation, environment applicability, and current-generation-only reverse lookup.
