@@ -6,7 +6,10 @@ import io
 import json
 import zipfile
 
-from ci_failure_fingerprint import FingerprintError, SCHEMA as CAUSAL_IDENTITY_SCHEMA, validate_cause
+from ci_failure_fingerprint import (
+    FingerprintError, SCHEMA as CAUSAL_IDENTITY_SCHEMA, validate_cause,
+    validate_fingerprint,
+)
 from pr_lifecycle_support import *
 
 
@@ -127,6 +130,15 @@ def parse_external_dependency(
             evidence = _decode_marker_value(fields.get("evidence"), field="evidence reference")
             reason_value = fields.get("reason")
             reason = urlparse.unquote(reason_value).strip() if reason_value else None
+            candidate_head = str(fields.get("head") or "").lower() or None
+            if candidate_head is not None and FULL_SHA_RE.fullmatch(candidate_head) is None:
+                raise LifecycleError("external dependency marker has invalid candidate head")
+            causal_fingerprint = str(fields.get("fingerprint") or "").lower() or None
+            if causal_fingerprint is not None:
+                try:
+                    validate_fingerprint(causal_fingerprint)
+                except FingerprintError as exc:
+                    raise LifecycleError("external dependency marker has invalid causal fingerprint") from exc
             records.append(
                 ExternalDependency(
                     action=action,
@@ -139,6 +151,8 @@ def parse_external_dependency(
                     timestamp=timestamp,
                     comment_id=comment_id,
                     marker_index=marker_index,
+                    candidate_head=candidate_head,
+                    causal_fingerprint=causal_fingerprint,
                 )
             )
     if not records:
@@ -156,7 +170,14 @@ def parse_ci_failure_ownership(
     evidence only; it never weakens the required CI gate or creates source authority.
     """
     records: list[dict[str, Any]] = []
-    allowed = {"PR_OWNED", "PROVEN_CURRENT_MAIN", "INFRASTRUCTURE", "AMBIGUOUS"}
+    allowed = {
+        "PR_OWNED", "LIKELY_NON_PR_OWNED", "PROVEN_CURRENT_MAIN",
+        "INFRASTRUCTURE", "AMBIGUOUS",
+    }
+    allowed_dispositions = {
+        "BLOCKING", "NON_BLOCKING_LIKELY_UNRELATED",
+        "NON_BLOCKING_PROVEN_UNRELATED", "MERGEABLE_WITH_BASELINE_DEBT",
+    }
     for comment in comments:
         body = str(comment.get("body") or "")
         for fields in _marker_fields(body, CI_FAILURE_OWNERSHIP_MARKER):
@@ -189,7 +210,77 @@ def parse_ci_failure_ownership(
                 "evidence": evidence,
                 "comment_id": cid,
                 "timestamp": timestamp,
+                "ownership_observed_at": timestamp.isoformat(),
             }
+            defaults = {
+                "PR_OWNED": "BLOCKING",
+                "PROVEN_CURRENT_MAIN": "NON_BLOCKING_PROVEN_UNRELATED",
+                "INFRASTRUCTURE": "NON_BLOCKING_PROVEN_UNRELATED",
+                "AMBIGUOUS": "BLOCKING",
+            }
+            disposition = str(fields.get("disposition") or defaults.get(classification) or "").upper()
+            if disposition not in allowed_dispositions:
+                return {
+                    "classification": "AMBIGUOUS",
+                    "evidence": "CI ownership marker has invalid candidate disposition",
+                    "comment_id": comment.get("id"),
+                }
+            record["candidate_disposition"] = disposition
+            generation = urlparse.unquote(str(fields.get("generation") or "")).strip()
+            basis = urlparse.unquote(str(fields.get("basis") or "")).strip()
+            contrary = str(fields.get("contrary") or "").lower()
+            owner_task = str(fields.get("owner_task") or "")
+            main_sha = str(fields.get("main") or "").lower()
+            main_reproduction = urlparse.unquote(str(fields.get("main_reproduction") or "")).strip()
+            candidate_evidence = urlparse.unquote(str(fields.get("candidate_evidence") or "")).strip()
+            interaction = str(fields.get("interaction") or "").lower()
+            interaction_hypothesis = urlparse.unquote(str(fields.get("interaction_hypothesis") or "")).strip()
+            targeted_evidence = urlparse.unquote(str(fields.get("targeted_evidence") or "")).strip()
+
+            if classification == "LIKELY_NON_PR_OWNED":
+                if (
+                    disposition != "NON_BLOCKING_LIKELY_UNRELATED"
+                    or not generation or not basis or TASK_GID_RE.fullmatch(owner_task) is None
+                ):
+                    return {
+                        "classification": "AMBIGUOUS",
+                        "evidence": "likely-non-PR ownership lacks typed generation, positive causal basis, or repair owner",
+                        "comment_id": comment.get("id"),
+                    }
+                if contrary != "none":
+                    return {
+                        "classification": "AMBIGUOUS",
+                        "evidence": "likely-non-PR ownership has significant contrary or unassessed evidence",
+                        "comment_id": comment.get("id"),
+                    }
+            if disposition == "MERGEABLE_WITH_BASELINE_DEBT":
+                complete = (
+                    classification == "PROVEN_CURRENT_MAIN"
+                    and generation and FULL_SHA_RE.fullmatch(main_sha)
+                    and TASK_GID_RE.fullmatch(owner_task)
+                    and main_reproduction and candidate_evidence
+                    and contrary == "none"
+                    and interaction in {"none", "resolved"}
+                    and (interaction != "resolved" or (interaction_hypothesis and targeted_evidence))
+                )
+                if not complete:
+                    return {
+                        "classification": "AMBIGUOUS",
+                        "evidence": "baseline-debt admission lacks exact reproduction, candidate evidence, non-interaction, or repair owner",
+                        "comment_id": comment.get("id"),
+                    }
+            record.update({
+                "evidence_generation": generation or None,
+                "causal_basis": basis or None,
+                "contrary_evidence": contrary or None,
+                "repair_owner_task": owner_task or None,
+                "failure_main_sha": main_sha or None,
+                "main_reproduction_evidence": main_reproduction or None,
+                "candidate_specific_evidence": candidate_evidence or None,
+                "semantic_interaction": interaction or None,
+                "interaction_hypothesis": interaction_hypothesis or None,
+                "targeted_interaction_evidence": targeted_evidence or None,
+            })
             fingerprint = str(fields.get("fingerprint") or "").strip().lower()
             if fingerprint:
                 identity = {

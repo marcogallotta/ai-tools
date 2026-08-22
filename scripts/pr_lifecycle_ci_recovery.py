@@ -321,11 +321,17 @@ def ensure_baseline_owner(engine: Any, current: Any) -> Any:
     encoded_evidence = urllib.parse.quote(evidence, safe="")
     dependency_marker = (
         f"<!-- {EXTERNAL_DEPENDENCY_MARKER} action=blocked task={owner_gid} check={encoded_check} "
-        f"main={main_sha} fingerprint={cause.fingerprint} evidence={encoded_evidence} "
+        f"head={current.head.lower()} main={main_sha} fingerprint={cause.fingerprint} evidence={encoded_evidence} "
         f"reason={urllib.parse.quote('proven current-main failure', safe='')} -->"
     )
     existing = parse_external_dependency(engine.github.get_comments(current.number))
-    if existing is None or existing.task_gid != owner_gid or existing.main_sha != main_sha:
+    if (
+        existing is None
+        or existing.task_gid != owner_gid
+        or existing.main_sha != main_sha
+        or existing.candidate_head != current.head.lower()
+        or existing.causal_fingerprint != cause.fingerprint
+    ):
         engine.github.add_comment(
             current.number,
             dependency_marker

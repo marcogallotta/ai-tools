@@ -1,7 +1,7 @@
 from dataclasses import replace
 import pr_lifecycle_helpers_base as b
 from pr_lifecycle_support import *
-def _id(r): return (r.task_gid,r.owner_pr,r.check,r.main_sha,r.evidence)
+def _id(r): return (r.task_gid,r.owner_pr,r.check,r.main_sha,r.evidence,r.candidate_head,r.causal_fingerprint)
 def replay_external_dependency(comments):
  r=[]
  for c in comments:

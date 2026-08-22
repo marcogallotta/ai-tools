@@ -124,6 +124,8 @@ class ExternalDependency:
     timestamp: datetime
     comment_id: int
     marker_index: int
+    candidate_head: str | None = None
+    causal_fingerprint: str | None = None
 
     def json(self) -> dict[str, Any]:
         return asdict(self)

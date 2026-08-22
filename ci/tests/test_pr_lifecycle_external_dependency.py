@@ -2,6 +2,8 @@ from copy import deepcopy
 from datetime import timedelta
 
 import test_pr_lifecycle as base
+from ci_failure_fingerprint import causal_fingerprint
+from test_pr_lifecycle_ci_ownership import _ownership_comment
 
 pr_lifecycle = base.pr_lifecycle
 
@@ -39,13 +41,17 @@ def external_dependency_comment(
     reason="baseline%20failure",
     when=base.NOW,
     comment_id=80,
+    head=None,
+    fingerprint=None,
 ):
     pr_field = f" pr={owner_pr}" if owner_pr is not None else ""
+    head_field = f" head={head}" if head is not None else ""
+    fingerprint_field = f" fingerprint={fingerprint}" if fingerprint is not None else ""
     return {
         "id": comment_id,
         "body": (
             f"<!-- dish-external-dependency:v1 action={action} task=1217449623846547{pr_field} "
-            f"check={check} main={main} evidence={evidence} reason={reason} -->"
+            f"check={check}{head_field} main={main}{fingerprint_field} evidence={evidence} reason={reason} -->"
         ),
         "created_at": when.isoformat(),
         "updated_at": when.isoformat(),
@@ -239,3 +245,108 @@ def test_new_failure_after_resolution_can_be_pr_owned():
 
     assert result.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
     assert len(fixer.calls) == 1
+
+
+class ActiveOwnerAsana:
+    def get_task(self, gid):
+        return {"gid": gid, "completed": False}
+
+
+def _baseline_debt_comments(*, interaction="none", targeted_evidence=None):
+    fingerprint, identity = causal_fingerprint(
+        owner_surface="python-control-plane", failure_surface="pytest",
+        invariant="tests/test_policy.py::test_owner", signature="test_failure: expected 5 got 8",
+    )
+    ownership = _ownership_comment(
+        "PROVEN_CURRENT_MAIN", fingerprint=fingerprint, identity=identity,
+        disposition="MERGEABLE_WITH_BASELINE_DEBT", generation="run-700-attempt-1",
+        contrary="none", owner_task="1217449623846547", main="c" * 40,
+        main_reproduction="nightly-run-600-on-exact-main",
+        candidate_evidence="exact-head-targeted-test-clean",
+        interaction=interaction,
+        interaction_hypothesis="merge composition can alter parser order" if interaction != "none" else None,
+        targeted_evidence=targeted_evidence,
+        comment_id=81,
+    )
+    dependency = external_dependency_comment(
+        owner_pr=None, head=base.HEAD, main="c" * 40,
+        fingerprint=fingerprint, comment_id=80,
+    )
+    return [dependency, ownership]
+
+
+def test_proven_baseline_debt_uses_existing_candidate_evidence_without_duplicate_rerun():
+    gh = ExternalGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = _baseline_debt_comments()
+    lifecycle = pr_lifecycle.LifecycleEngine(gh, asana=ActiveOwnerAsana(), now=lambda: base.NOW)
+    state = lifecycle.inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.INTEGRATION_READY
+    assert state.gate["raw_gate_outcome"] == "FAILED"
+    assert state.gate["candidate_disposition"] == "MERGEABLE_WITH_BASELINE_DEBT"
+    assert state.external_dependency["task_gid"] == "1217449623846547"
+
+
+def test_unresolved_merge_interaction_is_ambiguous_until_targeted_evidence_exists():
+    gh = ExternalGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = _baseline_debt_comments(interaction="unresolved")
+    state = pr_lifecycle.LifecycleEngine(
+        gh, asana=ActiveOwnerAsana(), now=lambda: base.NOW
+    ).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
+    assert state.gate["failure_ownership"] == "AMBIGUOUS"
+
+    gh.comments = _baseline_debt_comments(
+        interaction="resolved", targeted_evidence="targeted merge-composition probe passed"
+    )
+    state = pr_lifecycle.LifecycleEngine(
+        gh, asana=ActiveOwnerAsana(), now=lambda: base.NOW
+    ).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.INTEGRATION_READY
+
+
+def test_baseline_marker_for_an_older_candidate_cannot_admit_current_head():
+    gh = ExternalGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = _baseline_debt_comments()
+    gh.comments[0] = external_dependency_comment(
+        owner_pr=None, head="c" * 40,
+        fingerprint=gh.comments[0]["body"].split("fingerprint=", 1)[1].split(" ", 1)[0],
+        comment_id=80,
+    )
+    state = pr_lifecycle.LifecycleEngine(
+        gh, asana=ActiveOwnerAsana(), now=lambda: base.NOW
+    ).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
+    assert state.gate["candidate_disposition"] == "MERGEABLE_WITH_BASELINE_DEBT"
+    assert state.gate["repair_owner_active"] is False
+    assert "older candidate head" in state.residual_reason
+
+
+def test_baseline_debt_cannot_admit_after_authoritative_main_moves():
+    gh = ExternalGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = _baseline_debt_comments()
+    gh.refs["heads/main"] = "d" * 40
+    state = pr_lifecycle.LifecycleEngine(
+        gh, asana=ActiveOwnerAsana(), now=lambda: base.NOW
+    ).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.WAITING_EXTERNAL_DEPENDENCY
+    assert state.gate["candidate_disposition"] == "MERGEABLE_WITH_BASELINE_DEBT"
+    assert "target branch moved" in state.residual_reason
+
+
+def test_baseline_owner_authority_read_failure_blocks_admission_explicitly():
+    class BrokenOwnerAsana:
+        def get_task(self, gid):
+            raise pr_lifecycle.LifecycleError("Asana unavailable")
+
+    gh = ExternalGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = _baseline_debt_comments()
+    state = pr_lifecycle.LifecycleEngine(
+        gh, asana=BrokenOwnerAsana(), now=lambda: base.NOW
+    ).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
+    assert "authority read failed" in state.residual_reason

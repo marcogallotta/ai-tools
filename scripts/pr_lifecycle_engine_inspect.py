@@ -7,7 +7,7 @@ from installed_host_cert import EVIDENCE as INSTALLED_HOST_CERT_EVIDENCE, requir
 from pr_lifecycle_helpers import (
     _integration_order_reason, _lease_json, _mergeability_reason,
     _pr_base, _pr_branch, _pr_number, _pr_title, _pr_url,
-    _reviewed_head, _utcnow,
+    _parse_time, _reviewed_head, _utcnow,
 )
 
 class LifecycleInspectMixin:
@@ -45,37 +45,39 @@ class LifecycleInspectMixin:
         comments: list[dict[str, Any]],
         *,
         check_identity: str,
-    ) -> tuple[ExternalDependency | None, str | None]:
+    ) -> tuple[ExternalDependency | None, str | None, bool]:
         try:
             record = parse_external_dependency(comments)
         except LifecycleError as exc:
-            return None, f"external dependency marker invalid: {exc}"
+            return None, f"external dependency marker invalid: {exc}", False
         if record is None or record.action == "resolved" or record.check != check_identity:
-            return None, None
+            return None, None, False
 
         status_reason = record.reason
         if record.owner_pr is not None:
             try:
                 owner = self.github.get_pr(record.owner_pr)
             except (LifecycleError, AssertionError):
-                owner = None
-            if owner is not None:
-                if bool(owner.get("merged") or owner.get("merged_at")):
-                    return None, f"external owner PR #{record.owner_pr} is merged; re-evaluate exact-head evidence"
-                owner_state = pr_gate.pr_state(owner)
-                if owner_state != "open":
-                    status_reason = (
-                        f"external owner PR #{record.owner_pr} is closed unmerged; dependency remains unresolved"
-                    )
+                return None, f"external owner PR #{record.owner_pr} authority read failed", False
+            if bool(owner.get("merged") or owner.get("merged_at")):
+                return None, f"external owner PR #{record.owner_pr} is merged; re-evaluate exact-head evidence", False
+            owner_state = pr_gate.pr_state(owner)
+            if owner_state != "open":
+                status_reason = (
+                    f"external owner PR #{record.owner_pr} is closed unmerged; repair continuation is required"
+                )
+                return record, status_reason, False
         elif self.asana is not None:
             try:
                 owner_task = self.asana.get_task(record.task_gid)
             except LifecycleError:
-                owner_task = None
-            if owner_task is not None and bool(owner_task.get("completed")):
-                return None, f"external owner task {record.task_gid} is complete; re-evaluate exact-head evidence"
+                return None, f"external owner task {record.task_gid} authority read failed", False
+            if bool(owner_task.get("completed")):
+                return None, f"external owner task {record.task_gid} is complete; re-evaluate exact-head evidence", False
+        else:
+            return None, f"external owner task {record.task_gid} authority is unavailable", False
 
-        return record, status_reason
+        return record, status_reason, True
 
 
     def inspect(self, pr: dict[str, Any]) -> PRLifecycle:
@@ -355,20 +357,127 @@ class LifecycleInspectMixin:
             )
 
         if diagnosis_state == pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value:
-            dependency, marker_note = self._external_dependency_for_failed_check(
+            ownership = parse_ci_failure_ownership(
+                comments, current_head=head, check_identity=pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
+            )
+            dependency, marker_note, owner_active = self._external_dependency_for_failed_check(
                 comments, check_identity=pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
             )
-            if dependency is not None:
-                reason = dependency.reason or str(diagnosis["reason"])
-                if marker_note:
-                    reason = f"{reason}; {marker_note}"
-                owned_gate = dict(diagnosis)
-                owned_gate["failure_ownership"] = "PROVEN_CURRENT_MAIN"
-                owned_gate["failure_ownership_evidence"] = dependency.evidence
+            if dependency is not None and ownership.get("comment_id") is None:
+                ownership = {
+                    **ownership,
+                    "classification": "PROVEN_CURRENT_MAIN",
+                    "evidence": dependency.evidence,
+                    "candidate_disposition": "NON_BLOCKING_PROVEN_UNRELATED",
+                    "failure_main_sha": dependency.main_sha,
+                }
+            expected_generation = (
+                f"run-{diagnosis.get('required_workflow_run_id')}-"
+                f"attempt-{diagnosis.get('required_workflow_run_attempt')}"
+            )
+            if (
+                ownership.get("evidence_generation") is not None
+                and ownership.get("evidence_generation") != expected_generation
+            ):
+                ownership = {
+                    "classification": "AMBIGUOUS",
+                    "candidate_disposition": "BLOCKING",
+                    "evidence": "CI ownership marker belongs to a stale workflow evidence generation",
+                    "comment_id": ownership.get("comment_id"),
+                }
+            ownership_time = _parse_time(ownership.get("ownership_observed_at"))
+            if dependency is not None and dependency.candidate_head not in {None, head.lower()}:
+                dependency = None
+                owner_active = False
+                marker_note = "external dependency marker belongs to an older candidate head"
+            if (
+                dependency is not None and ownership_time is not None
+                and ownership_time > dependency.timestamp
+                and ownership["classification"] in {"PR_OWNED", "AMBIGUOUS"}
+            ):
+                dependency = None
+                owner_active = False
+                marker_note = "newer exact-head ownership evidence overrides the stale baseline marker"
+
+            if ownership["classification"] == "LIKELY_NON_PR_OWNED" and not owner_active:
+                owner_gid = str(ownership.get("repair_owner_task") or "")
+                try:
+                    owner_task = self.asana.get_task(owner_gid) if self.asana is not None else None
+                except LifecycleError:
+                    owner_task = None
+                    marker_note = f"repair owner task {owner_gid} authority read failed"
+                if owner_task is not None and not bool(owner_task.get("completed")):
+                    owner_active = True
+                else:
+                    ownership = {
+                        "classification": "AMBIGUOUS",
+                        "candidate_disposition": "BLOCKING",
+                        "evidence": marker_note or f"repair owner task {owner_gid} is not active",
+                        "comment_id": ownership.get("comment_id"),
+                    }
+
+            owned_gate = dict(diagnosis)
+            owned_gate["raw_gate_outcome"] = "FAILED"
+            owned_gate["failure_ownership"] = ownership["classification"]
+            owned_gate["failure_ownership_evidence"] = ownership["evidence"]
+            owned_gate["candidate_disposition"] = ownership.get("candidate_disposition") or "BLOCKING"
+            owned_gate["repair_owner_active"] = bool(owner_active)
+            for key in (
+                "candidate_disposition", "ownership_observed_at", "evidence_generation",
+                "causal_basis", "contrary_evidence", "repair_owner_task", "failure_main_sha",
+                "main_reproduction_evidence", "candidate_specific_evidence",
+                "semantic_interaction", "interaction_hypothesis", "targeted_interaction_evidence",
+            ):
+                if ownership.get(key) is not None:
+                    owned_gate[key] = ownership[key]
+            if ownership.get("causal_fingerprint"):
+                owned_gate["failure_causal_fingerprint"] = ownership["causal_fingerprint"]
+                owned_gate["failure_causal_identity"] = ownership["causal_identity"]
+            classification = ownership["classification"]
+            owned_gate["reconciliation_kind"] = {
+                "PR_OWNED": "pr-owned-fix",
+                "LIKELY_NON_PR_OWNED": "non-blocking-likely-unrelated",
+                "PROVEN_CURRENT_MAIN": "current-main-corrective-owner",
+                "INFRASTRUCTURE": "infrastructure-retry",
+                "AMBIGUOUS": "ownership-required",
+            }.get(classification, "ownership-required")
+
+            current_target_matches = False
+            if ownership.get("candidate_disposition") == "MERGEABLE_WITH_BASELINE_DEBT":
+                target_branch = str(
+                    pr.get("base", {}).get("ref")
+                    if isinstance(pr.get("base"), Mapping)
+                    else ""
+                ).strip()
+                try:
+                    current_target_sha = (
+                        self.github.get_ref_sha(f"heads/{target_branch}").lower()
+                        if target_branch else ""
+                    )
+                except (LifecycleError, KeyError, AssertionError):
+                    current_target_sha = ""
+                    marker_note = "authoritative target-branch read failed"
+                if current_target_sha and current_target_sha == ownership.get("failure_main_sha"):
+                    current_target_matches = True
+                elif current_target_sha:
+                    marker_note = "current target branch moved beyond the proved baseline-failure SHA"
+
+            baseline_admitted = (
+                ownership.get("candidate_disposition") == "MERGEABLE_WITH_BASELINE_DEBT"
+                and pending_cert is None
+                and current_target_matches
+                and dependency is not None and owner_active
+                and dependency.candidate_head == head.lower()
+                and dependency.task_gid == ownership.get("repair_owner_task")
+                and dependency.main_sha == ownership.get("failure_main_sha")
+                and dependency.causal_fingerprint == ownership.get("causal_fingerprint")
+            )
+            if baseline_admitted:
+                owned_gate["reconciliation_kind"] = "baseline-debt-integration"
                 return PRLifecycle(
                     **base_kwargs,
-                    state=LifecycleState.WAITING_EXTERNAL_DEPENDENCY,
-                    state_label=STATE_LABELS[LifecycleState.WAITING_EXTERNAL_DEPENDENCY],
+                    state=LifecycleState.INTEGRATION_READY,
+                    state_label=STATE_LABELS[LifecycleState.INTEGRATION_READY],
                     review_class=review_class,
                     review_verdict=verdict,
                     reviewed_head=reviewed_head,
@@ -376,26 +485,12 @@ class LifecycleInspectMixin:
                     local_work=local_payload,
                     gate=owned_gate,
                     external_dependency=dependency.json(),
-                    residual_reason=reason,
-                    human_action=external_dependency_human_action(dependency),
+                    residual_reason=(
+                        "required CI remains failed, but exact current-main reproduction, candidate-specific "
+                        "evidence, semantic non-interaction, exact-head Review, and the active repair owner "
+                        "mechanically admit landing with baseline debt"
+                    ),
                 )
-
-            ownership = parse_ci_failure_ownership(
-                comments, current_head=head, check_identity=pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
-            )
-            owned_gate = dict(diagnosis)
-            owned_gate["failure_ownership"] = ownership["classification"]
-            owned_gate["failure_ownership_evidence"] = ownership["evidence"]
-            if ownership.get("causal_fingerprint"):
-                owned_gate["failure_causal_fingerprint"] = ownership["causal_fingerprint"]
-                owned_gate["failure_causal_identity"] = ownership["causal_identity"]
-            classification = ownership["classification"]
-            owned_gate["reconciliation_kind"] = {
-                "PR_OWNED": "pr-owned-fix",
-                "PROVEN_CURRENT_MAIN": "current-main-corrective-owner",
-                "INFRASTRUCTURE": "infrastructure-retry",
-                "AMBIGUOUS": "ownership-required",
-            }.get(classification, "ownership-required")
             if classification == "PR_OWNED":
                 residual = "CI FAILURE — PR OWNED — exact-head evidence proves this candidate owns the failure; brokered fix is eligible"
                 if marker_note:
@@ -411,6 +506,48 @@ class LifecycleInspectMixin:
                     local_work=local_payload,
                     gate=owned_gate,
                     residual_reason=residual,
+                )
+            if classification == "LIKELY_NON_PR_OWNED":
+                residual = (
+                    "CI FAILURE — LIKELY NOT PR OWNED — raw failure remains visible; lifecycle may continue "
+                    "without a duplicate rerun, but unresolved-red final landing is not admitted"
+                )
+                if marker_note:
+                    residual = f"{residual}; {marker_note}"
+                return PRLifecycle(
+                    **base_kwargs,
+                    state=LifecycleState.REVIEW_PASSED,
+                    state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
+                    review_class=review_class,
+                    review_verdict=verdict,
+                    reviewed_head=reviewed_head,
+                    active_leases=lease_payload,
+                    local_work=local_payload,
+                    gate=owned_gate,
+                    external_dependency=dependency.json() if dependency is not None else None,
+                    residual_reason=residual,
+                )
+            if dependency is not None and classification == "PROVEN_CURRENT_MAIN":
+                reason = dependency.reason or str(diagnosis["reason"])
+                if marker_note:
+                    reason = f"{reason}; {marker_note}"
+                return PRLifecycle(
+                    **base_kwargs,
+                    state=LifecycleState.WAITING_EXTERNAL_DEPENDENCY,
+                    state_label=STATE_LABELS[LifecycleState.WAITING_EXTERNAL_DEPENDENCY],
+                    review_class=review_class,
+                    review_verdict=verdict,
+                    reviewed_head=reviewed_head,
+                    active_leases=lease_payload,
+                    local_work=local_payload,
+                    gate=owned_gate,
+                    external_dependency=dependency.json(),
+                    residual_reason=reason,
+                    human_action=(
+                        external_dependency_human_action(dependency)
+                        if owner_active
+                        else "Send a fix agent to restore the baseline repair owner."
+                    ),
                 )
             if classification == "INFRASTRUCTURE":
                 residual = "CI FAILURE — INFRASTRUCTURE — workflow/infrastructure repair is owned outside semantic Implementation"
