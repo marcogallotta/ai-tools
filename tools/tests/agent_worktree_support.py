@@ -42,7 +42,14 @@ class Harness:
         run([GIT, "init", "-b", "main", str(self.seed)])
         self._identity(self.seed)
         (self.seed / "tracked.txt").write_text("base\n", encoding="utf-8")
-        git(self.seed, "add", "tracked.txt")
+        tools = self.seed / "tools"
+        tools.mkdir()
+        (tools / ".gitignore").write_text("__pycache__/\n.venv/\n", encoding="utf-8")
+        # The synthetic repository has no third-party tool dependencies; an empty
+        # requirements file exercises the real worktree-local venv lifecycle without
+        # turning every Git lifecycle regression into a package-download test.
+        (tools / "requirements.txt").write_text("", encoding="utf-8")
+        git(self.seed, "add", "tracked.txt", "tools/.gitignore", "tools/requirements.txt")
         git(self.seed, "commit", "-m", "base")
         git(self.seed, "remote", "add", "origin", str(self.origin))
         git(self.seed, "push", "-u", "origin", "main")

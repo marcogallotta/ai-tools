@@ -11,6 +11,7 @@ from .operations import (
     validate_branch, verify_owned_worktree, ensure_commit_object, record_observation,
 )
 from .repository import discover_repository
+from .tool_environment import preflight_tool_environment
 from .state import (
     TaskLock, atomic_write_json, clear_agent_reference, load_task_state, new_active_task_state,
     read_json_object, set_agent_reference, state_path, task_state_paths, task_worktree_path, validate_agent_state,
@@ -292,6 +293,9 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
         atomic_write_json(state_file, provisional)
         if agent_id is not None:
             set_agent_reference(agent_id, provisional)
+        preflight_tool_environment(
+            task_gid=task_gid, agent_id=agent_id, worktree=identity.path, head=identity.head
+        )
         return payload_from_state(
             "adopt",
             provisional,
@@ -388,6 +392,9 @@ def command_start(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
         atomic_write_json(state_file, provisional)
         if agent_id is not None:
             set_agent_reference(agent_id, provisional)
+        preflight_tool_environment(
+            task_gid=task_gid, agent_id=agent_id, worktree=identity.path, head=identity.head
+        )
         return payload_from_state("start", provisional, identity, relation="absent", remote_head=None, target_head=remote_base)
 
 
@@ -422,6 +429,9 @@ def resume_locked(
             "REMOTE_DIVERGED",
             f"remote owned branch {state['branch']} diverged from local HEAD {identity.head}; automatic merge/rebase/force-push is refused",
         )
+    preflight_tool_environment(
+        task_gid=task_gid, agent_id=agent_id, worktree=identity.path, head=identity.head
+    )
     return payload_from_state(command_name, state, identity, relation=relation, remote_head=remote_head, target_head=target_head)
 
 
