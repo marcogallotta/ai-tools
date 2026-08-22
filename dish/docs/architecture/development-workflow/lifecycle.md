@@ -35,6 +35,13 @@ assumption cannot become architecture or code; only the affected semantic path p
 bounded mechanics continue, and an irreducible Marco-only material fact is the only gap routed to
 Marco. This is a correctness invariant, not a new lifecycle state or approval gate.
 
+One exact governing Marco Intent Baseline/specification also bounds the implementation slice across
+dispatch, authoring, and semantic Code Review. Working scope projections and a qualitative solution
+envelope make drift visible but create no new intent authority. During authoring, material structural
+departure is reconciled by shrinking, routing a genuinely necessary expansion through existing
+design authority, or separating adjacent ownership before further expansion. Metrics are tripwires,
+not gates, and trivial changes acquire no mandatory planning artifact.
+
 Integration uses the exact reviewed candidate and performs only authorized mechanical reconciliation. A changed head returns to fresh Review. Source landing is distinct from deployment, migration, activation, or operator acceptance; a task becomes complete only after its actual residual obligations are done.
 
 ## Invariants
@@ -47,11 +54,14 @@ Integration uses the exact reviewed candidate and performs only authorized mecha
 - Detailed GitHub substates are not duplicated as an Asana lifecycle system.
 - Numeric confidence and green tests never substitute for the material understanding/evidence that
   the disputed semantic requirement actually needs.
+- Scope projections and solution envelopes never replace the governing intent/specification, and an
+  authoring trajectory check never replaces final semantic Review.
 
 ## Current anchors
 
 - [`../../agents/implementation.md`](../../agents/implementation.md)
 - [`../../agents/research.md`](../../agents/research.md)
+- [`../../agents/scope-proportionality.md`](../../agents/scope-proportionality.md)
 - [`../../agents/review.md`](../../agents/review.md)
 - [`../../agents/integration.md`](../../agents/integration.md)
 - [`../../../../scripts/pr_lifecycle.py`](../../../../scripts/pr_lifecycle.py)

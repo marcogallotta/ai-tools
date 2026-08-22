@@ -57,6 +57,10 @@ read and follow [`research.md`](research.md). Its epistemic-sufficiency invarian
 self-service evidence resolution before bounded escalation; it adds no role, approval gate, or
 numeric confidence authority.
 
+For implementation-slice framing and scope-amplification risk, read and follow
+[`scope-proportionality.md`](scope-proportionality.md). Its before/during/after checks consume one
+governing Intent Baseline; they add no intent authority, mandatory plan, or Review verdict.
+
 ## ChatGPT Project kernels
 
 Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatgpt-projects/`](../chatgpt-projects/README.md). Regardless of installed Project vintage, fetch this role's current generated Project kernel from that directory on current `main` at the first substantive action and read it as current session policy; installed Project custom-instruction text is a bootstrap/version witness only until this fetch succeeds. Those generated kernels bootstrap high-consequence gates and drift detection; this index and the mapped standing contracts remain detailed role authority. A canonical-version mismatch is non-blocking by itself: fold exact role/action history, continue for `DRIFT 1/3` compatible/unrelated and `DRIFT 2/3` additive changes, and stop/resynchronize only for proof-backed applicable `DRIFT 3/3` incompatibility. Missing, malformed, or unproved drift metadata is `INTEGRITY ERROR · DRIFT ?/3` and fails closed only the affected action for repository repair, not Project resync.

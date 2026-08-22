@@ -169,7 +169,8 @@
             "dish/docs/agents/contributor-base.md#Code-smell / engineering-debt logging"
           ],
           "scope expansion / broader lifecycle or control plane": [
-            "dish/docs/agents/coordinator.md#Continuity model"
+            "dish/docs/agents/scope-proportionality.md#One intent chain",
+            "dish/docs/agents/scope-proportionality.md#During-authoring trajectory brake"
           ],
           "status / dispatch / blocker / live coordination": [
             "dish/docs/agents/coordinator.md#Asana live coordination",
@@ -278,7 +279,7 @@
           "id": "scope-amplification-checkpoint",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+          "text": "Keep one governing Intent Baseline across dispatch, authoring, and Review. Scope fields are disposable WHAT projections; the solution envelope calibrates HOW. During structural drift: shrink, justify expansion through existing design/Marco authority, or separate ownership before building. Metrics are tripwires only; trivial work needs no persisted plan and small high-consequence work keeps its controls."
         },
         {
           "action_boundaries": [
@@ -344,7 +345,8 @@
             "dish/docs/architecture/postgresql-runtime.md#Proving tests"
           ],
           "scope expansion / broader lifecycle or control plane": [
-            "dish/docs/agents/development-workflow.md#Change discipline"
+            "dish/docs/agents/scope-proportionality.md#One intent chain",
+            "dish/docs/agents/scope-proportionality.md#During-authoring trajectory brake"
           ],
           "shared-resource capacity / availability change": [
             "dish/docs/agents/development-workflow.md#Shared-resource concurrency preflight"
@@ -483,7 +485,7 @@
           "id": "scope-amplification-checkpoint",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+          "text": "Keep one governing Intent Baseline across dispatch, authoring, and Review. Scope fields are disposable WHAT projections; the solution envelope calibrates HOW. During structural drift: shrink, justify expansion through existing design/Marco authority, or separate ownership before building. Metrics are tripwires only; trivial work needs no persisted plan and small high-consequence work keeps its controls."
         },
         {
           "id": "development-workflow-design-review",
@@ -639,7 +641,7 @@
           "id": "scope-amplification-checkpoint",
           "impact": "additive",
           "surface": "safety",
-          "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+          "text": "Keep one governing Intent Baseline across dispatch, authoring, and Review. Scope fields are disposable WHAT projections; the solution envelope calibrates HOW. During structural drift: shrink, justify expansion through existing design/Marco authority, or separate ownership before building. Metrics are tripwires only; trivial work needs no persisted plan and small high-consequence work keeps its controls."
         },
         {
           "action_boundaries": [
@@ -1114,7 +1116,7 @@
           "id": "scope-amplification-checkpoint",
           "impact": "additive",
           "surface": "safety",
-          "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+          "text": "Keep one governing Intent Baseline across dispatch, authoring, and Review. Scope fields are disposable WHAT projections; the solution envelope calibrates HOW. During structural drift: shrink, justify expansion through existing design/Marco authority, or separate ownership before building. Metrics are tripwires only; trivial work needs no persisted plan and small high-consequence work keeps its controls."
         },
         {
           "action_boundaries": [

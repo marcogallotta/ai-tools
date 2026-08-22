@@ -189,6 +189,12 @@ Review Focus / signed challenges: <material applicable challenges; no verdict st
 
 The approved headline field is never inferred from `Has Headline`; exact-word durable human evidence is required whenever an approved headline is claimed. A later implementation summary, PR body, or handoff cannot become a competing intent/specification authority.
 
+When scope amplification is plausible, the implementation slice and expected solution envelope
+also follow [`../scope-proportionality.md`](../scope-proportionality.md): current objective, required
+now, reserved/future, and non-goals are disposable projections of the exact governing Intent
+Baseline, while the envelope calibrates HOW without redefining WHAT. Trivial work does not require a
+persisted four-section plan.
+
 Immediately before dispatch, the dispatch owner compares the complete handoff with the current exact governing generation and current durable Marco intent. Zero semantic dispatch occurs if the handoff materially omits, weakens, contradicts, or silently narrows a governing requirement, quantifier, invariant, outcome, or signed challenge. Repair the projection or return through the existing design lineage; do not redesign silently in the handoff.
 
 Semantic Code Review later identifies and reads this exact durable handoff in addition to the live owning task and governing accepted generation. Review independently checks **HANDOFF FIDELITY** and **IMPLEMENTATION CONFORMANCE**; faithful implementation of a drifted handoff is still a Review defect.

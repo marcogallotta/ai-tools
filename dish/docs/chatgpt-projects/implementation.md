@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c2e0ae019a96
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-dcebf487897c
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
@@ -49,6 +49,6 @@ High-consequence rules:
 - `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration.
 - Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action.
-- Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first.
+- Keep one governing Intent Baseline across dispatch, authoring, and Review. Scope fields are disposable WHAT projections; the solution envelope calibrates HOW. During structural drift: shrink, justify expansion through existing design/Marco authority, or separate ownership before building. Metrics are tripwires only; trivial work needs no persisted plan and small high-consequence work keeps its controls.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`.
 - When a handoff names Review-V3 generation/intent/invariants/envelope/focus, treat them as projections to exact authority; material mismatch stops affected semantic authoring for projection repair, never silent redesign.
