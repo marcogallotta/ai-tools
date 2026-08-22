@@ -1,9 +1,22 @@
-import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+async function readJavaScriptTree(directory) {
+  const contents = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      contents.push(await readJavaScriptTree(entryPath));
+    } else if (entry.isFile() && entry.name.endsWith(".js")) {
+      contents.push(await readFile(entryPath, "utf-8"));
+    }
+  }
+  return contents.join("\n");
+}
 const reviewBuild = process.argv.includes("--review");
 const generator = spawnSync(process.execPath, [path.join(root, "tools", "generate-client.mjs")], { stdio: "inherit" });
 if (generator.status !== 0) process.exit(generator.status ?? 1);
@@ -32,7 +45,8 @@ if (reviewBuild) {
   await rm(path.join(dist, "js", "prototype"), { recursive: true, force: true });
   await rm(path.join(dist, "js", "review"), { recursive: true, force: true });
   await rm(path.join(dist, "styles", "review.css"), { force: true });
-  await writeFile(path.join(dist, "build.json"), `${JSON.stringify({
+  const metadataPath = path.join(dist, "build.json");
+  await writeFile(metadataPath, `${JSON.stringify({
     contractVersion: "dish-frontend-v1",
     fixtureBacked: false,
     networkMode: "read-only-postgresql",
@@ -41,12 +55,27 @@ if (reviewBuild) {
     privatePostgresqlReadsExplicitActivation: true,
   }, null, 2)}\n`);
 
+  const metadata = JSON.parse(await readFile(metadataPath, "utf-8"));
+  if (metadata.fixtureBacked !== false) {
+    throw new Error("Production frontend build metadata must declare fixtureBacked=false");
+  }
+  if (metadata.networkMode !== "read-only-postgresql") {
+    throw new Error("Production frontend build metadata must declare read-only-postgresql network mode");
+  }
+
   for (const forbidden of ["fixtures", "js/prototype", "js/review", "styles/review.css"]) {
     try {
       await access(path.join(dist, forbidden));
       throw new Error(`Production frontend contains forbidden review artifact: ${forbidden}`);
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
+    }
+  }
+
+  const productionText = await readJavaScriptTree(dist);
+  for (const forbidden of ["Fixture prototype", 'TASK_ROUTE_PREFIX = "/task/"']) {
+    if (productionText.includes(forbidden)) {
+      throw new Error(`Production frontend contains forbidden review-only JavaScript: ${forbidden}`);
     }
   }
   console.log(`Built production-shaped frontend at ${dist}`);
