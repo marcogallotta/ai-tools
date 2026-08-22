@@ -38,7 +38,17 @@ def case():
         "repository": "marcogallotta/ai-tools",
         "pr": 41,
         "head": "a" * 40,
-        "evidence": {"failure_ownership": "AMBIGUOUS"},
+        "evidence": {
+            "failure_ownership": "AMBIGUOUS",
+            "canonical_ci": {
+                "classification": "AMBIGUOUS",
+                "candidate_disposition": "BLOCKING",
+                "causal_fingerprint": FINGERPRINT,
+                "repair_owner_active": False,
+                "ownership_evidence": "exact evidence",
+                "raw_gate_outcome": "FAILED",
+            },
+        },
         "next_owner": "Integrator",
         "next_action": "light bounded CI diagnosis",
     }
@@ -102,6 +112,18 @@ def test_check_log_refuses_a_check_from_another_head(tmp_path, monkeypatch):
         assert "does not belong" in str(exc)
     else:
         raise AssertionError("wrong-head check log was not refused")
+
+
+def test_model_tool_audit_binds_exact_input_output_digest_and_turn(tmp_path):
+    tools = configured_tools(tmp_path)
+    version = actionable_version(case())
+    tools.call("get_integrator_case", {"actionable_version": version})
+    record = tools.audit.records()[-1]
+    assert record["event"] == "model_tool_call"
+    assert record["tool_input"] == {"actionable_version": version}
+    assert record["tool_output"]["actionable_version"] == version
+    assert len(record["tool_output_sha256"]) == 64
+    assert record["wake_id"]
 
 
 def test_isolated_codex_home_has_only_read_tools_and_no_shell(tmp_path):
@@ -172,3 +194,20 @@ def test_automated_turn_is_read_only_and_schema_bound():
     assert captured["params"]["approvalPolicy"] == "never"
     assert captured["params"]["sandboxPolicy"] == {"type": "readOnly"}
     assert captured["params"]["outputSchema"] == INTEGRATOR_PROPOSAL_SCHEMA
+
+
+def test_app_server_completion_wait_uses_notification_without_status_polling():
+    client = object.__new__(CodexDaemonAppServer)
+    class Socket:
+        def settimeout(self, value):
+            self.timeout = value
+    client.socket = Socket()
+    messages = iter([
+        json.dumps({"method": "item/completed", "params": {}}),
+        json.dumps({
+            "method": "turn/completed",
+            "params": {"turn": {"id": "turn-1", "status": "completed"}},
+        }),
+    ])
+    client._read_text = lambda: next(messages)
+    assert client.wait_for_turn_completed("turn-1")["status"] == "completed"

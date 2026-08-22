@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import zipfile
 
 import pytest
 
@@ -25,6 +26,90 @@ SPEC.loader.exec_module(pr_lifecycle)
 HEAD = "a" * 40
 NEW_HEAD = "b" * 40
 NOW = datetime(2026, 8, 13, 8, 0, tzinfo=timezone.utc)
+
+
+def test_projection_health_consumes_exact_full_regression_artifact(monkeypatch):
+    first_evidence = {
+        "schema": "dish-full-regression-v1",
+        "run_id": "700",
+        "run_attempt": 1,
+        "main_sha": NEW_HEAD,
+        "event": "schedule",
+        "overall_result": "failed",
+        "failures": [],
+    }
+    second_evidence = {**first_evidence, "run_attempt": 2, "overall_result": "passed"}
+    def archive(value):
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as bundle:
+            bundle.writestr(
+                ".test-artifacts/full-regression/evidence.json",
+                json.dumps(value),
+            )
+        return output.getvalue()
+    archives = {701: archive(first_evidence), 702: archive(second_evidence)}
+    class GitHub:
+        artifact_reads = 0
+        current_attempt = 1
+        available_attempts = 1
+        def full_regression_runs(self):
+            return {"workflow_runs": [{
+                "id": 700,
+                "run_attempt": self.current_attempt,
+                "event": "schedule",
+                "status": "completed",
+                "conclusion": "failure",
+                "head_sha": NEW_HEAD,
+            }]}
+        def get_run_artifacts(self, run_id):
+            self.artifact_reads += 1
+            assert run_id == 700
+            return [
+                {"id": value, "name": f"full-regression-{NEW_HEAD}", "expired": False}
+                for value in range(701, 701 + self.available_attempts)
+            ]
+        def download_artifact(self, artifact_id):
+            return archives[artifact_id]
+    class Engine:
+        github = GitHub()
+    monkeypatch.setattr(pr_lifecycle.pr_lifecycle_controller, "_paths", lambda: None)
+    monkeypatch.setattr(
+        pr_lifecycle.pr_lifecycle_controller,
+        "_snapshot",
+        lambda paths: {"status": "ok"},
+    )
+    engine = Engine()
+    _, result = pr_lifecycle._projection_health(engine)
+    assert result["evidence"] == first_evidence
+    assert result["evidence_artifact_id"] == 701
+    _, replay = pr_lifecycle._projection_health(
+        engine,
+        previous_full_regression=result,
+    )
+    assert replay["evidence"] == first_evidence
+    assert engine.github.artifact_reads == 1
+    engine.github.current_attempt = 2
+    engine.github.available_attempts = 2
+    _, rerun = pr_lifecycle._projection_health(
+        engine,
+        previous_full_regression=result,
+    )
+    assert rerun["run_attempt"] == 2
+    assert rerun["evidence"] == second_evidence
+    assert rerun["evidence_artifact_id"] == 702
+    _, rerun_replay = pr_lifecycle._projection_health(
+        engine,
+        previous_full_regression=rerun,
+    )
+    assert rerun_replay["evidence"] == second_evidence
+    assert engine.github.artifact_reads == 2
+    engine.github.current_attempt = 3
+    _, stale = pr_lifecycle._projection_health(
+        engine,
+        previous_full_regression=rerun,
+    )
+    assert stale["status"] == "unavailable"
+    assert "exact completed run attempt" in stale["error"]
 
 
 def pr(*, head=HEAD, draft=False, state="open", merged=False, body="Owning task: 1217443403986570"):

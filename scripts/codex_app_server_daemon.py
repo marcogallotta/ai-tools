@@ -9,6 +9,7 @@ from pathlib import Path
 import socket
 import struct
 import threading
+import time
 from typing import Any, Mapping
 
 from integrator_model_contract import INTEGRATOR_PROPOSAL_SCHEMA, INTEGRATOR_WAKE_INSTRUCTION
@@ -203,6 +204,26 @@ class CodexDaemonAppServer:
                 "outputSchema": INTEGRATOR_PROPOSAL_SCHEMA,
             },
         )
+
+    def wait_for_turn_completed(
+        self, turn_id: str, *, timeout_seconds: float = 900.0
+    ) -> Mapping[str, Any]:
+        """Wait on app-server's completion notification; this performs no polling."""
+        if not turn_id:
+            raise ValueError("turn_id is required")
+        deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"turn {turn_id} did not complete before the observer deadline")
+            self.socket.settimeout(remaining)
+            message = json.loads(self._read_text())
+            if message.get("method") != "turn/completed":
+                continue
+            params = message.get("params") if isinstance(message.get("params"), Mapping) else {}
+            turn = params.get("turn") if isinstance(params.get("turn"), Mapping) else {}
+            if str(turn.get("id") or "") == turn_id:
+                return dict(turn)
 
 
 class RecoveringCodexDaemonAppServer:
