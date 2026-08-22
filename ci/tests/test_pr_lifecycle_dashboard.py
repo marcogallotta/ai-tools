@@ -141,7 +141,8 @@ def test_projection_health_reads_controller_and_latest_full_regression(monkeypat
     class GitHub:
         def full_regression_runs(self):
             return {"workflow_runs": [{
-                "id": 42, "status": "completed", "conclusion": "success",
+                "id": 42, "run_attempt": 1,
+                "status": "completed", "conclusion": "success",
                 "head_sha": "c" * 40, "updated_at": "2026-08-18T00:00:00Z",
             }]}
 
@@ -150,6 +151,17 @@ def test_projection_health_reads_controller_and_latest_full_regression(monkeypat
 
     monkeypatch.setattr(pr_lifecycle.pr_lifecycle_controller, "_paths", lambda: {"state": Path("unused")})
     monkeypatch.setattr(pr_lifecycle.pr_lifecycle_controller, "_snapshot", lambda paths: {"status": "running"})
-    controller, regression = pr_lifecycle._projection_health(Engine())
+    controller, regression = pr_lifecycle._projection_health(
+        Engine(),
+        previous_full_regression={
+            "id": 42,
+            "run_attempt": 1,
+            "evidence": {
+                "run_id": "42",
+                "run_attempt": 1,
+                "main_sha": "c" * 40,
+            },
+        },
+    )
     assert controller == {"status": "running"}
     assert regression["id"] == 42 and regression["conclusion"] == "success"

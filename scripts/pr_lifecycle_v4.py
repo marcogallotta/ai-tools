@@ -22,6 +22,8 @@ import subprocess
 import threading
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
+from integrator_model_contract import INTEGRATOR_PROPOSAL_SCHEMA, INTEGRATOR_WAKE_INSTRUCTION
+
 
 STATE_SCHEMA = "dish-pr-lifecycle-v4-state-v1"
 WAKE_SCHEMA = "dish-pr-lifecycle-v4-wake-v1"
@@ -41,6 +43,16 @@ _VOLATILE_KEYS = frozenset({
     "retry_at",
     "timestamp",
     "updated_at",
+})
+_OCCURRENCE_KEYS = frozenset({
+    "delivery_id",
+    "job_id",
+    "required_workflow_run_attempt",
+    "required_workflow_run_id",
+    "run_attempt",
+    "run_id",
+    "workflow_run_attempt",
+    "workflow_run_id",
 })
 
 
@@ -63,7 +75,7 @@ def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def _safe_semantics(value: Any) -> Any:
+def _safe_semantics(value: Any, *, include_occurrence: bool = False) -> Any:
     """Remove timing/retry noise while retaining semantic evidence."""
     if isinstance(value, Mapping):
         result: dict[str, Any] = {}
@@ -72,12 +84,14 @@ def _safe_semantics(value: Any) -> Any:
             lowered = key.lower()
             if lowered in _VOLATILE_KEYS:
                 continue
+            if not include_occurrence and lowered in _OCCURRENCE_KEYS:
+                continue
             if lowered.endswith("_at") and lowered not in {"created_at_authority"}:
                 continue
-            result[key] = _safe_semantics(child)
+            result[key] = _safe_semantics(child, include_occurrence=include_occurrence)
         return result
     if isinstance(value, (list, tuple)):
-        return [_safe_semantics(item) for item in value]
+        return [_safe_semantics(item, include_occurrence=include_occurrence) for item in value]
     return value
 
 
@@ -127,7 +141,9 @@ def wake_packet(
                 "reviewed_head": case.get("reviewed_head"),
                 "review_verdict": case.get("review_verdict"),
                 "evidence_fingerprint": case.get("evidence_fingerprint"),
-                "evidence": _safe_semantics(case.get("evidence") or {}),
+                "evidence": _safe_semantics(
+                    case.get("evidence") or {}, include_occurrence=True
+                ),
                 "next_owner": case.get("next_owner"),
                 "next_action": case.get("next_action"),
             }
@@ -525,8 +541,7 @@ class CodexAppServer:
         client_user_message_id: str,
     ) -> Mapping[str, Any]:
         text = (
-            "Dish lifecycle V4 actionable wake. Treat this packet as an event hint only; re-read live authority before action.\n"
-            + json.dumps(packet, sort_keys=True)
+            INTEGRATOR_WAKE_INSTRUCTION + "\n" + json.dumps(packet, sort_keys=True)
         )
         return self._request(
             "turn/start",
@@ -534,6 +549,9 @@ class CodexAppServer:
                 "threadId": thread_id,
                 "clientUserMessageId": client_user_message_id,
                 "input": [{"type": "text", "text": text}],
+                "approvalPolicy": "never",
+                "sandboxPolicy": {"type": "readOnly"},
+                "outputSchema": INTEGRATOR_PROPOSAL_SCHEMA,
             },
         )
 

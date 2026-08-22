@@ -222,7 +222,7 @@ def test_configured_project_gid_fails_closed_when_malformed():
 def test_status_projection_consumes_asana_observation_without_write(tmp_path, monkeypatch):
     asana = ReadOnlyAsana(completed=False)
     engine = ReadOnlyEngine(asana)
-    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine: ({}, {}))
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine, **kwargs: ({}, {}))
     args = SimpleNamespace(projection_path=tmp_path / "projection.json", repo="marcogallotta/ai-tools")
 
     pr_lifecycle._publish_projection(engine, [lifecycle()], args, mutate_tasks=False)
@@ -243,7 +243,7 @@ def test_status_projection_uses_configured_scope_after_last_pr_lands(tmp_path, m
             return []
 
     engine = NoOpenPREngine(asana)
-    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine: ({}, {}))
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine, **kwargs: ({}, {}))
     args = SimpleNamespace(
         projection_path=tmp_path / "projection.json",
         repo="marcogallotta/ai-tools",
@@ -267,7 +267,7 @@ def test_mutating_projection_does_not_expand_writes_from_configured_scope(tmp_pa
             return []
 
     engine = NoOpenPREngine(asana)
-    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine: ({}, {}))
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine, **kwargs: ({}, {}))
     args = SimpleNamespace(
         projection_path=tmp_path / "projection.json",
         repo="marcogallotta/ai-tools",

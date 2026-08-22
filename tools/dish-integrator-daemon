@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Start the dedicated Integrator daemon with only its read-only MCP tools.
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "${SELF}")/.." && pwd)"
+STATE_DIR="${DISH_LIFECYCLE_V4_STATE_DIR:-${HOME}/.local/state/dish/pr-lifecycle-v4}"
+INTEGRATOR_CODEX_HOME="${DISH_INTEGRATOR_CODEX_HOME:-${STATE_DIR}/codex-home}"
+SOURCE_CODEX_HOME="${DISH_OPERATOR_CODEX_HOME:-${HOME}/.codex}"
+CODEX="${DISH_LIFECYCLE_V4_CODEX:-${HOME}/.codex/packages/standalone/current/codex}"
+PYTHON="${DISH_LIFECYCLE_V4_PYTHON:-${REPO_ROOT}/dish/.venv/bin/python}"
+
+case "${1:-start}" in
+  start)
+    "${PYTHON}" "${REPO_ROOT}/scripts/integrator_runtime_config.py" \
+      --codex-home "${INTEGRATOR_CODEX_HOME}" \
+      --source-codex-home "${SOURCE_CODEX_HOME}" \
+      --repo "${REPO_ROOT}" \
+      --state-dir "${STATE_DIR}" \
+      --python "${PYTHON}" >/dev/null
+    CODEX_HOME="${INTEGRATOR_CODEX_HOME}" exec "${CODEX}" app-server daemon start
+    ;;
+  stop)
+    CODEX_HOME="${INTEGRATOR_CODEX_HOME}" exec "${CODEX}" app-server daemon stop
+    ;;
+  *)
+    echo "usage: $(basename "$0") [start|stop]" >&2
+    exit 2
+    ;;
+esac

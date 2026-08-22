@@ -37,7 +37,33 @@ _INTEGRATOR_REASON_CLASSES = {
     "AUTHORITY_CONTRADICTION",
     "INTEGRATION_READBACK_UNCERTAIN",
     "RECURRING_BUILD_HEALTH_PATTERN",
+    "NIGHTLY_CI_UNRESOLVED",
 }
+
+
+def _canonical_ci_gate(gate: Mapping[str, Any]) -> dict[str, Any]:
+    """Project only the canonical semantic CI fields into wake evidence."""
+    keys = (
+        "failure_ownership",
+        "candidate_disposition",
+        "failure_causal_fingerprint",
+        "failure_causal_identity",
+        "repair_owner_task",
+        "repair_owner_active",
+        "failure_main_sha",
+        "evidence_generation",
+        "failure_ownership_evidence",
+        "required_check",
+        "required_status_context",
+        "required_workflow_run_id",
+        "required_workflow_run_attempt",
+        "raw_gate_outcome",
+    )
+    return {
+        key: gate.get(key)
+        for key in keys
+        if gate.get(key) is not None and gate.get(key) != ""
+    }
 
 
 def _instant(value: Any) -> datetime | None:
@@ -277,6 +303,7 @@ def attention_cases(
     sources: Mapping[str, Any],
     repository: str,
     controller: Mapping[str, Any],
+    full_regression: Mapping[str, Any] | None = None,
     generated_at: datetime,
     slow_seconds: int | None = None,
 ) -> list[dict[str, Any]]:
@@ -317,6 +344,7 @@ def attention_cases(
             ))
 
         if diagnosis == "FAILED_REQUIRED_CI":
+            canonical_ci = _canonical_ci_gate(gate)
             disposition = str(gate.get("candidate_disposition") or "BLOCKING")
             repair_owner_active = bool(gate.get("repair_owner_active"))
             if (
@@ -339,6 +367,7 @@ def attention_cases(
                         "failure_ownership": ownership,
                         "ownership_evidence": gate.get("failure_ownership_evidence"),
                         "required_status_context": gate.get("required_status_context"),
+                        "canonical_ci": canonical_ci,
                     },
                     next_owner="Implementation",
                     next_action="return exact PR/head failure evidence through the existing fix route",
@@ -355,6 +384,7 @@ def attention_cases(
                         "failure_ownership": ownership,
                         "ownership_evidence": gate.get("failure_ownership_evidence"),
                         "required_status_context": gate.get("required_status_context"),
+                        "canonical_ci": canonical_ci,
                     },
                     next_owner="Coordinator",
                     next_action="schedule the proven external/current-main repair; do not mutate the candidate",
@@ -370,6 +400,7 @@ def attention_cases(
                     evidence={
                         "failure_ownership": ownership,
                         "ownership_evidence": gate.get("failure_ownership_evidence"),
+                        "canonical_ci": canonical_ci,
                     },
                     next_owner="Integrator",
                     next_action="diagnose infrastructure failure and preserve the candidate unchanged",
@@ -385,6 +416,7 @@ def attention_cases(
                     evidence={
                         "failure_ownership": ownership or "AMBIGUOUS",
                         "ownership_evidence": gate.get("failure_ownership_evidence"),
+                        "canonical_ci": canonical_ci,
                     },
                     next_owner="Integrator",
                     next_action="diagnose CI ownership; no semantic mutation until ownership is proven",
@@ -491,6 +523,66 @@ def attention_cases(
                 observed_at=generated_at,
             ))
 
+    nightly = dict(full_regression or {})
+    nightly_evidence = (
+        nightly.get("evidence") if isinstance(nightly.get("evidence"), Mapping) else {}
+    )
+    if (
+        nightly_evidence.get("schema") == "dish-full-regression-v1"
+        and nightly_evidence.get("overall_result") == "failed"
+    ):
+        run_id = str(nightly_evidence.get("run_id") or "")
+        main_sha = str(nightly_evidence.get("main_sha") or "").lower()
+        run_attempt = nightly_evidence.get("run_attempt")
+        for failure in nightly_evidence.get("failures") or []:
+            if not isinstance(failure, Mapping):
+                continue
+            fingerprint = str(failure.get("causal_fingerprint") or "").strip().lower()
+            if not fingerprint:
+                continue
+            canonical_ci = {
+                "failure_ownership": "AMBIGUOUS",
+                "candidate_disposition": "BLOCKING",
+                "failure_causal_fingerprint": fingerprint,
+                "failure_causal_identity": failure.get("causal_identity"),
+                "failure_main_sha": main_sha,
+                "evidence_generation": "dish-full-regression-v1",
+                "failure_ownership_evidence": (
+                    "existing full-regression evidence requires unresolved durable triage"
+                ),
+                "required_check": str(failure.get("component") or "full-regression"),
+                "required_workflow_run_id": run_id,
+                "required_workflow_run_attempt": run_attempt,
+                "raw_gate_outcome": "FAILED",
+            }
+            cases.append(_case(
+                repository=repository,
+                reason_class="NIGHTLY_CI_UNRESOLVED",
+                pr=None,
+                task=None,
+                evidence={
+                    "failure_ownership": "AMBIGUOUS",
+                    "canonical_ci": canonical_ci,
+                    "full_regression": {
+                        "run_id": run_id,
+                        "run_attempt": run_attempt,
+                        "main_sha": main_sha,
+                        "event": nightly_evidence.get("event"),
+                        "failure_id": failure.get("failure_id"),
+                        "component": failure.get("component"),
+                        "invariant": failure.get("invariant"),
+                        "failure_kind": failure.get("failure_kind"),
+                    },
+                },
+                next_owner="Integrator",
+                next_action=(
+                    "investigate the unresolved existing full-regression failure and propose the next fix owner; "
+                    "do not classify, schedule, rerun, or mutate"
+                ),
+                observed_at=generated_at,
+                first_seen=_instant(nightly_evidence.get("completed_at")) or generated_at,
+            ))
+
     for task in tasks:
         if not isinstance(task, Mapping) or task.get("error"):
             continue
@@ -594,6 +686,7 @@ def build_v3_projection(
     source_observation: Mapping[str, Any],
     repository: str,
     controller: Mapping[str, Any],
+    full_regression: Mapping[str, Any] | None = None,
     generated_at: datetime,
 ) -> dict[str, Any]:
     pr_values = [dict(pr) for pr in prs]
@@ -620,6 +713,7 @@ def build_v3_projection(
         sources=sources,
         repository=repository,
         controller=controller,
+        full_regression=full_regression,
         generated_at=generated_at,
     )
     integrator_cases = [

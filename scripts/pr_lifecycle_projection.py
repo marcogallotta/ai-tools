@@ -426,6 +426,7 @@ def build_projection(
         source_observation=dict(source_observation or {}),
         repository=repository,
         controller=dict(controller or {}),
+        full_regression=dict(full_regression or {}),
         generated_at=generated_at,
     )
     return {

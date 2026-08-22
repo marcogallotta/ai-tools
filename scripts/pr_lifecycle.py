@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import sys
+import io
+import json
 from pathlib import Path
+import zipfile
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -22,7 +25,7 @@ from pr_lifecycle_integration_certification import LocalIntegrationCertification
 from pr_lifecycle_local_integration import LocalIntegrationLauncher, checkpoint_claim
 from pr_lifecycle_terminal import TerminalCleanupDispatcher
 from pr_lifecycle_operator import action_first_status
-from pr_lifecycle_projection import atomic_write, build_projection
+from pr_lifecycle_projection import atomic_write, build_projection, read_projection
 from pr_lifecycle_task_state import execution_truth, ensure_projection_comment
 from pr_lifecycle_rollout import reconstruct as reconstruct_rollout, rollout_projection
 import pr_lifecycle_controller
@@ -508,7 +511,11 @@ def _source_observation_cycle(
     return result
 
 
-def _projection_health(engine: LifecycleEngine) -> tuple[dict[str, Any], dict[str, Any]]:
+def _projection_health(
+    engine: LifecycleEngine,
+    *,
+    previous_full_regression: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
         controller = pr_lifecycle_controller._snapshot(pr_lifecycle_controller._paths())
     except (OSError, ValueError) as exc:
@@ -519,10 +526,78 @@ def _projection_health(engine: LifecycleEngine) -> tuple[dict[str, Any], dict[st
         latest = runs[0] if runs else {}
         full_regression = {
             key: latest.get(key)
-            for key in ("id", "status", "conclusion", "head_sha", "updated_at", "html_url")
+            for key in (
+                "id", "run_attempt", "event", "status", "conclusion", "head_sha",
+                "updated_at", "html_url",
+            )
             if latest.get(key) is not None
         }
-    except LifecycleError as exc:
+        if latest.get("id") and latest.get("status") == "completed":
+            previous = dict(previous_full_regression or {})
+            previous_evidence = (
+                previous.get("evidence")
+                if isinstance(previous.get("evidence"), Mapping)
+                else None
+            )
+            if (
+                previous_evidence is not None
+                and str(previous.get("id") or "") == str(latest.get("id") or "")
+                and str(previous.get("run_attempt") or "")
+                == str(latest.get("run_attempt") or "")
+                and str(previous_evidence.get("run_id") or "") == str(latest.get("id") or "")
+                and str(previous_evidence.get("run_attempt") or "")
+                == str(latest.get("run_attempt") or "")
+                and str(previous_evidence.get("main_sha") or "") == str(latest.get("head_sha") or "")
+            ):
+                full_regression["evidence"] = dict(previous_evidence)
+                if previous.get("evidence_artifact_id") is not None:
+                    full_regression["evidence_artifact_id"] = previous["evidence_artifact_id"]
+                return controller, full_regression
+            artifacts = engine.github.get_run_artifacts(int(latest["id"]))
+            expected_name = f"full-regression-{latest.get('head_sha')}"
+            candidates = sorted(
+                (
+                    item for item in artifacts
+                    if item.get("name") == expected_name
+                    and item.get("id")
+                    and not item.get("expired")
+                ),
+                key=lambda item: int(item["id"]),
+                reverse=True,
+            )
+            for artifact in candidates:
+                archive = engine.github.download_artifact(int(artifact["id"]))
+                with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+                    evidence_paths = [
+                        name for name in bundle.namelist()
+                        if name == "evidence.json" or name.endswith("/full-regression/evidence.json")
+                    ]
+                    if len(evidence_paths) != 1:
+                        raise LifecycleError(
+                            "full-regression artifact must contain exactly one evidence.json"
+                        )
+                    evidence = json.loads(bundle.read(evidence_paths[0]))
+                if not isinstance(evidence, Mapping):
+                    raise LifecycleError("full-regression evidence is not an object")
+                if evidence.get("schema") != "dish-full-regression-v1":
+                    raise LifecycleError("full-regression evidence schema is invalid")
+                exact_attempt = (
+                    str(evidence.get("run_id") or "") == str(latest.get("id") or "")
+                    and str(evidence.get("run_attempt") or "")
+                    == str(latest.get("run_attempt") or "")
+                    and str(evidence.get("main_sha") or "")
+                    == str(latest.get("head_sha") or "")
+                )
+                if not exact_attempt:
+                    continue
+                full_regression["evidence"] = dict(evidence)
+                full_regression["evidence_artifact_id"] = artifact.get("id")
+                break
+            if candidates and "evidence" not in full_regression:
+                raise LifecycleError(
+                    "no full-regression artifact matches the exact completed run attempt"
+                )
+    except (LifecycleError, OSError, TypeError, ValueError, zipfile.BadZipFile) as exc:
         full_regression = {"status": "unavailable", "error": str(exc)}
     return controller, full_regression
 
@@ -552,7 +627,19 @@ def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args
                 "authority changed during projection generation; trustworthy snapshot publication refused"
             )
     source_observation = _source_observation_cycle(engine, values)
-    controller, full_regression = _projection_health(engine)
+    previous_full_regression: Mapping[str, Any] = {}
+    if args.projection_path.exists():
+        try:
+            previous = read_projection(args.projection_path)
+        except (OSError, ValueError):
+            pass
+        else:
+            if isinstance(previous.get("full_regression"), Mapping):
+                previous_full_regression = previous["full_regression"]
+    controller, full_regression = _projection_health(
+        engine,
+        previous_full_regression=previous_full_regression,
+    )
     atomic_write(
         args.projection_path,
         build_projection(

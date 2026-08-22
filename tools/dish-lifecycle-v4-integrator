@@ -8,6 +8,7 @@ SCRIPT_ROOT="$(cd "$(dirname "${SELF}")/.." && pwd)"
 GIT_COMMON_DIR="$(git -C "${SCRIPT_ROOT}" rev-parse --path-format=absolute --git-common-dir)"
 REPO_ROOT="${DISH_LIFECYCLE_V4_OPERATOR_REPO:-$(dirname "${GIT_COMMON_DIR}")}"
 STATE_DIR="${DISH_LIFECYCLE_V4_STATE_DIR:-${HOME}/.local/state/dish/pr-lifecycle-v4}"
+INTEGRATOR_CODEX_HOME="${DISH_INTEGRATOR_CODEX_HOME:-${STATE_DIR}/codex-home}"
 THREAD_FILE="${STATE_DIR}/thread.json"
 FENCE_FILE="${STATE_DIR}/integrator.fence"
 CODEX="${DISH_LIFECYCLE_V4_CODEX:-${HOME}/.codex/packages/standalone/current/codex}"
@@ -30,7 +31,7 @@ case "${1:-open}" in
     ;;
   __open-locked)
     systemctl --user start "${BRIDGE_SERVICE}"
-    exec "${CODEX}" resume --remote unix:// -C "${REPO_ROOT}" \
+    CODEX_HOME="${INTEGRATOR_CODEX_HOME}" exec "${CODEX}" resume --remote unix:// -C "${REPO_ROOT}" \
       --sandbox read-only --ask-for-approval never "$(thread_id)"
     ;;
   status)
@@ -45,8 +46,14 @@ case "${1:-open}" in
   thread)
     thread_id
     ;;
+  report)
+    exec python3 -m json.tool "${STATE_DIR}/integrator-report.json"
+    ;;
+  audit)
+    exec tail -n "${DISH_INTEGRATOR_AUDIT_LINES:-100}" "${STATE_DIR}/integrator-audit.ndjson"
+    ;;
   *)
-    echo "usage: ${COMMAND_NAME} [open|resume|status|start|stop|restart|logs|thread]" >&2
+    echo "usage: ${COMMAND_NAME} [open|resume|status|start|stop|restart|logs|thread|report|audit]" >&2
     exit 2
     ;;
 esac

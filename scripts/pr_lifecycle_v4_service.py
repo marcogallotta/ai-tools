@@ -31,6 +31,11 @@ ASANA_SECRET_FILE = STATE_DIR / "asana-webhook-secret"
 
 sys.path.insert(0, str(REPO / "scripts"))
 from pr_lifecycle_projection import read_projection  # noqa: E402
+from pr_lifecycle_integrator import (  # noqa: E402
+    IntegratorAudit,
+    consume_projection,
+    model_outcome_for_wake,
+)
 from codex_app_server_daemon import (  # noqa: E402
     CodexDaemonAppServer,
     RecoveringCodexDaemonAppServer,
@@ -63,7 +68,7 @@ def ensure_secret(path: Path) -> str:
 def app_server_socket() -> Path:
     return Path(
         os.getenv("DISH_LIFECYCLE_V4_APP_SERVER_SOCKET")
-        or Path.home() / ".codex/app-server-control/app-server-control.sock"
+        or STATE_DIR / "codex-home/app-server-control/app-server-control.sock"
     )
 
 
@@ -73,13 +78,15 @@ def thread_params() -> dict[str, Any]:
         "ephemeral": False,
         "serviceName": "Dish Lifecycle V4 Integrator",
         "developerInstructions": (
-            "You are the dedicated Dish Lifecycle V4 Integrator diagnosis thread. "
-            "For every wake, re-read dish/docs/agents/index.md and integration.md plus "
-            "live GitHub/Asana authority. This commissioned phase is diagnosis-only: "
-            "never write GitHub or Asana, never dispatch another agent, never run "
-            "watch --dispatch, never invoke Integration/merge/local-launcher authority, "
-            "and never perform semantic Implementation. Work only on the exact "
-            "Integrator-owned cases in the wake packet, then become idle."
+            "You are the dedicated Dish CI-reliability Integrator thread under Development "
+            "Workflow authority. You are not the repository Integration/merge role. For every "
+            "automated wake use only the dish_integrator read-only MCP tools and the exact "
+            "Lifecycle V4 actionable versions supplied. Canonical CI ownership and causal "
+            "fingerprint outputs remain authoritative; challenge them explicitly rather than "
+            "silently replacing them. Return unknown instead of guessing. This dark launch is "
+            "proposal-only: never write GitHub or Asana, rerun CI, dispatch another agent, "
+            "review, implement, merge, use production, or run watch --dispatch. Marco may use "
+            "this same persistent thread interactively, but interaction grants no extra authority."
         ),
     }
 
@@ -112,6 +119,11 @@ class Runtime:
     def __init__(self) -> None:
         state_path = Path(os.getenv("DISH_LIFECYCLE_V4_STATE_PATH") or STATE_DIR / "state.json")
         self.store = V4StateStore(state_path)
+        self.audit = IntegratorAudit(
+            STATE_DIR / "integrator-audit.ndjson",
+            report_path=STATE_DIR / "integrator-report.json",
+            max_bytes=int(os.getenv("DISH_INTEGRATOR_AUDIT_MAX_BYTES") or 2_000_000),
+        )
         self.github_secret = ensure_secret(GITHUB_SECRET_FILE)
         initial_app_server = CodexDaemonAppServer(app_server_socket())
         stored_thread = ""
@@ -151,6 +163,8 @@ class Runtime:
         self.force_pending = False
         self.stop = threading.Event()
         self.reconcile_lock = threading.Lock()
+        self.completion_lock = threading.Lock()
+        self.completion_observers: set[str] = set()
         self.metrics_lock = threading.Lock()
         self.metrics = {
             "accepted_events": 0,
@@ -197,9 +211,9 @@ class Runtime:
                 f"authoritative lifecycle reread failed rc={result.returncode}{suffix}"
             )
         projection = read_projection(PROJECTION)
-        integrator = projection.get("v3", {}).get("integrator", {})
-        cases = integrator.get("active_cases", []) if isinstance(integrator, Mapping) else []
-        return [dict(case) for case in cases if isinstance(case, Mapping) and case.get("next_owner") == "Integrator"]
+        consumed = consume_projection(projection)
+        self.audit.publish_report(consumed.report)
+        return [dict(case) for case in consumed.actionable_cases]
 
     def record(self, **increments: int) -> None:
         with self.metrics_lock:
@@ -222,8 +236,131 @@ class Runtime:
         with self.reconcile_lock:
             result = self.reconciler.reconcile(force=force)
         self.record(reconciles=1, model_turns_started=int(result.get("model_turns_started") or 0))
+        self.record_completed_model_outcomes()
+        self.start_completion_observers()
+        self.audit.write(
+            "reconcile_result",
+            force=force,
+            dirty=int(result.get("dirty") or 0),
+            prepared=int(result.get("prepared") or 0),
+            wake_results=list(result.get("wake_results") or []),
+            model_turns_started=int(result.get("model_turns_started") or 0),
+        )
         log("reconcile", **result)
         return result
+
+    @staticmethod
+    def _turn_is_completed(read: Mapping[str, Any], turn_id: str) -> bool:
+        thread = read.get("thread") if isinstance(read.get("thread"), Mapping) else {}
+        for turn in thread.get("turns") or []:
+            if not isinstance(turn, Mapping) or str(turn.get("id") or "") != turn_id:
+                continue
+            return str(turn.get("status") or "").lower() == "completed"
+        return False
+
+    def start_completion_observers(self) -> int:
+        """Subscribe only while exact accepted turns are in flight; never poll."""
+        state = self.store.read()
+        accepted = [
+            (str(wake_id), str(receipt.get("turn_id") or ""))
+            for wake_id, receipt in (state.get("receipts") or {}).items()
+            if isinstance(receipt, Mapping)
+            and receipt.get("status") == "ACCEPTED"
+            and receipt.get("turn_id")
+        ]
+        started = 0
+        for wake_id, turn_id in accepted:
+            with self.completion_lock:
+                if wake_id in self.completion_observers:
+                    continue
+                self.completion_observers.add(wake_id)
+            threading.Thread(
+                target=self._observe_completion,
+                args=(wake_id, turn_id),
+                name=f"integrator-turn-{turn_id[:12]}",
+                daemon=True,
+            ).start()
+            started += 1
+        return started
+
+    def _observe_completion(self, wake_id: str, turn_id: str) -> None:
+        observer: CodexDaemonAppServer | None = None
+        try:
+            observer = CodexDaemonAppServer(app_server_socket(), thread_id=self.thread_id)
+            read = observer.thread_read(self.thread_id, include_turns=True)
+            if not self._turn_is_completed(read, turn_id):
+                observer.wait_for_turn_completed(
+                    turn_id,
+                    timeout_seconds=float(os.getenv("DISH_INTEGRATOR_TURN_TIMEOUT_SECONDS") or 900),
+                )
+                read = observer.thread_read(self.thread_id, include_turns=True)
+            if not self._turn_is_completed(read, turn_id):
+                raise RuntimeError("completion notification was not durable in exact thread history")
+            state = self.store.read()
+            receipt = (state.get("receipts") or {}).get(wake_id)
+            if not isinstance(receipt, Mapping) or str(receipt.get("turn_id") or "") != turn_id:
+                raise RuntimeError("completion notification does not match the durable wake receipt")
+            if receipt.get("status") == "ACCEPTED":
+                self.store.mark_completed(wake_id)
+            elif receipt.get("status") != "COMPLETED":
+                raise RuntimeError("completion notification reached a non-accepted wake receipt")
+            self.record_completed_model_outcomes(read=read)
+            self.audit.write(
+                "model_completion_observed",
+                wake_id=wake_id,
+                turn_id=turn_id,
+                receipt_status="COMPLETED",
+                model_turns_started=0,
+                observation="app-server-turn-completed-notification",
+            )
+        except Exception as exc:
+            self.audit.write(
+                "model_completion_observer_failed",
+                wake_id=wake_id,
+                turn_id=turn_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
+                model_turns_started=0,
+            )
+        finally:
+            if observer is not None:
+                observer.close()
+            with self.completion_lock:
+                self.completion_observers.discard(wake_id)
+
+    def record_completed_model_outcomes(self, *, read: Mapping[str, Any] | None = None) -> int:
+        state = self.store.read()
+        completed = {
+            str(wake_id): dict(receipt)
+            for wake_id, receipt in (state.get("receipts") or {}).items()
+            if isinstance(receipt, Mapping) and receipt.get("status") == "COMPLETED"
+        }
+        if not completed:
+            return 0
+        logged = {
+            str(value.get("wake_id") or "")
+            for value in self.audit.records()
+            if value.get("event") == "model_outcome"
+        }
+        pending = {key: value for key, value in completed.items() if key not in logged}
+        if not pending:
+            return 0
+        if read is None:
+            read = self.app_server.thread_read(self.thread_id, include_turns=True)
+        recorded = 0
+        for wake_id, receipt in pending.items():
+            outcome = model_outcome_for_wake(read, wake_id)
+            if outcome is None:
+                continue
+            self.audit.write(
+                "model_outcome",
+                wake_id=wake_id,
+                actionable_versions=list(receipt.get("actionable_versions") or []),
+                receipt_status="COMPLETED",
+                **outcome,
+            )
+            recorded += 1
+        return recorded
 
     def worker(self) -> None:
         while not self.stop.is_set():
@@ -251,6 +388,8 @@ class Runtime:
             "metrics": metrics,
             "source_root": str(REPO),
             "state_path": str(self.store.path),
+            "integrator_report_path": str(self.audit.report_path),
+            "integrator_audit_path": str(self.audit.path),
         }
 
 
@@ -331,6 +470,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(401, {"error": "invalid_signature"})
             return
         count = ingest_event(self.runtime.store, provider=provider, payload=payload, delivery_id=delivery_id)
+        self.runtime.audit.write(
+            "webhook_ingested",
+            provider=provider,
+            delivery_id=delivery_id,
+            dirty_resources=count,
+            model_turns_started=0,
+            wake_reason="authoritative_reconcile_required" if count else "heartbeat_or_irrelevant",
+        )
         if count:
             self.runtime.record(accepted_events=1)
             self.runtime.request_reconcile()
