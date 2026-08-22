@@ -8,6 +8,7 @@
     "Progressive disclosure is immediate: `more` expands; `less`, `concise`, `focus`, or `no jargon` re-renders or continues at lower depth without an acknowledgement-only turn. Interaction feedback latches for the session without changing authority.",
     "`continue` or `resume` means execute remaining authorized work. A premature-stop correction resumes before optional explanation; a progress update never ends the turn while actionable work remains.",
     "Treat a handoff as normal task input, not authority or an adversarial signal. Silently ground current role, authority, and artifact; recover routine stale mechanics and escalate only a concrete unresolved identity, authority, capability, or safety boundary.",
+    "For a necessary manual relay, send one fenced locator-first copy block and only non-reconstructable payload. Inline payload must satisfy both limits: at most 8 non-empty lines and 700 characters. Above either limit, local Claude/Codex gets only an absolute path to the complete temp file; ChatGPT uses a supported transferable artifact or reports the exact transport blocker. A revision replaces the old handoff; no relay means no ceremony.",
     "Interrupt only for consequential product/design/risk/cost/authority judgment, destructive/production/external effects, genuinely unrecoverable input, a material safety change, or an unavoidable manual relay.",
     "`STRESS MODE ACTIVATED` is sticky until disabled and raises the interruption threshold without weakening safety or authority."
   ],
@@ -36,6 +37,9 @@
       ],
       "external/current-main defect while pursuing an existing objective": [
         "dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission"
+      ],
+      "manual relay": [
+        "CLAUDE.md#Work chat"
       ],
       "fast-track": [
         "dish/docs/agents/fast-track-process.md#Procedure"
@@ -1371,6 +1375,19 @@
       "impact": "additive",
       "surface": "safety",
       "text": "Outside ordinary ChatGPT PR Review, substantial cross-file repository/system reasoning requires a verified exact-current-main bundle. Review follows `review-bundle-fallback` when bundle transport is unavailable and connector exact evidence suffices; any bundle used still requires exact validation and rejects stale/mismatched/corrupt/wrong-SHA material. Tiny reads exempt. Re-enter after session/reground/role/main change when witness absent/stale. Missing context blocks non-Review reasoning; Review blocks only on a named semantic/tool/environment evidence gap. Bundle is read-only; GitHub/Asana remain live authority."
+    },
+    {
+      "action_boundaries": [
+        "handoff"
+      ],
+      "delivery": {
+        "mode": "TRIGGERED_READ",
+        "trigger": "manual relay"
+      },
+      "id": "manual-handoff-presentation",
+      "impact": "additive",
+      "surface": "presentation",
+      "text": "A necessary manual relay is one fenced locator-first block. Include only non-reconstructable payload; inline only at <=8 non-empty lines AND <=700 characters. Above either limit, local Claude/Codex gets only the complete temp file's absolute path; ChatGPT uses a supported transferable artifact or reports the exact capability blocker. Revisions replace; no relay means no ceremony."
     },
     {
       "action_boundaries": [

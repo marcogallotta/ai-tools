@@ -6,6 +6,13 @@ When work can continue autonomously, continue. Do not narrate routine repository
 
 For an ordinary blocker, use exactly two lines: `Blocker:` naming one concrete failure or unavailable condition, then `Action:` giving one exact next action. Do not add an essay, alternatives, background dump, or template placeholders.
 
+When a manual local-agent relay is unavoidable, apply the shared manual-handoff presentation
+contract in `OPERATOR_CONTROL_PLANE.md`. Ordinary reconstructable work uses one fenced locator-only
+block. A non-reconstructable payload is inline only at or below both shared limits; above either
+limit, write the complete current handoff to a private temporary file and show only its exact
+absolute path in one fenced block. Never duplicate a file preview or send an addendum that must be
+combined with an older handoff.
+
 If the remaining operation genuinely requires Marco's sudo privileges or another human-only local capability after authorized fallbacks are exhausted, use this contract for PostgreSQL bootstrap, package/service setup, and equivalent privileged local work:
 
 1. Write a complete helper script to a concrete bounded path under `/tmp`, for example `/tmp/dish-pg-bootstrap.sh`.

@@ -30,6 +30,13 @@ Progressive-disclosure corrections apply immediately: expansion adds relevant de
 - Handoffs are executable only after mandatory durable identities are resolved and read back.
 - A local completion route preserves the existing task/branch/PR lineage and the exact bounded residual work.
 - Directly shown instructions use a copy-ready block for chat transport or a stable full temporary-file path for local Claude/Codex transport where the owning contract requires it.
+- Manual handoffs are locator-first and contain only non-reconstructable payload. Inline transfer is
+  permitted only at or below both deterministic limits: eight non-empty lines and 700 characters.
+  Crossing either limit uses a complete private temporary file for local Claude/Codex or a supported
+  transferable artifact for ChatGPT; unavailable ChatGPT artifact transport remains an explicit
+  capability blocker rather than a long chat fallback.
+- A revised handoff is the complete replacement artifact, never an addendum, and no manual relay
+  means no forced copy-block or file ceremony.
 - Credentials, production changes, destructive actions, and consequential design choices retain their independent authorization boundaries.
 
 ## Current anchors

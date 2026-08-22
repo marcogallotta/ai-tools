@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import os
+from pathlib import Path
 import re
+import tempfile
 from typing import Mapping
 
 
@@ -16,6 +19,8 @@ UNRESOLVED_TOKEN_RE = re.compile(
     r"<[^>\n]+>|\{\{[^}\n]+\}\}|\$\{[^}\n]+\}|(?i:\b(?:PLACEHOLDER|TBD|TODO)\b)"
 )
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
+INLINE_MAX_NONEMPTY_LINES = 8
+INLINE_MAX_CHARS = 700
 
 
 class HandoffReadiness(str, Enum):
@@ -23,6 +28,19 @@ class HandoffReadiness(str, Enum):
     PREPARATION_REQUIRED = "draft_preparation_required"
     ROUTING_REQUIRED = "routing_required"
     INVALID = "invalid"
+
+
+class HandoffHost(str, Enum):
+    CHATGPT = "chatgpt"
+    LOCAL = "local"
+
+
+class HandoffPresentationKind(str, Enum):
+    NONE = "no_manual_relay"
+    INLINE = "inline_copy_block"
+    LOCAL_FILE = "local_temp_file"
+    CHATGPT_ARTIFACT = "chatgpt_artifact"
+    BLOCKED = "transport_capability_blocked"
 
 
 @dataclass(frozen=True)
@@ -34,6 +52,103 @@ class HandoffPreflight:
     @property
     def executable(self) -> bool:
         return self.readiness is HandoffReadiness.EXECUTABLE
+
+
+@dataclass(frozen=True)
+class HandoffPresentation:
+    kind: HandoffPresentationKind
+    copy_block: str | None
+    reason: str
+    file_path: Path | None = None
+
+
+def _copy_block(value: str) -> str:
+    longest = max((len(run) for run in re.findall(r"`+", value)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{value}\n{fence}"
+
+
+def _nonempty_line_count(value: str) -> int:
+    return sum(bool(line.strip()) for line in value.splitlines())
+
+
+def prepare_handoff_presentation(
+    *,
+    payload: str,
+    host: HandoffHost,
+    manual_relay_required: bool,
+    reconstructable_locator: str | None = None,
+    chatgpt_artifact_locator: str | None = None,
+    temp_directory: Path = Path("/tmp"),
+) -> HandoffPresentation:
+    """Render one complete manual relay without changing handoff authority.
+
+    Ordinary reconstructable work uses its locator. Non-reconstructable payloads are
+    inline only at or below both limits; larger local payloads are written exactly
+    once to a private temporary file, while larger ChatGPT payloads require a
+    supported transferable artifact.
+    """
+    host = HandoffHost(host)
+    if not manual_relay_required:
+        return HandoffPresentation(
+            HandoffPresentationKind.NONE,
+            None,
+            "no manual relay is required",
+        )
+
+    if reconstructable_locator is not None:
+        locator = reconstructable_locator.strip()
+        if not locator:
+            raise ValueError("reconstructable locator must not be blank")
+        return HandoffPresentation(
+            HandoffPresentationKind.INLINE,
+            _copy_block(locator),
+            "receiver can reconstruct current context from the locator",
+        )
+
+    inline = (
+        _nonempty_line_count(payload) <= INLINE_MAX_NONEMPTY_LINES
+        and len(payload) <= INLINE_MAX_CHARS
+    )
+    if inline:
+        return HandoffPresentation(
+            HandoffPresentationKind.INLINE,
+            _copy_block(payload),
+            "non-reconstructable payload fits both inline limits",
+        )
+
+    if host is HandoffHost.CHATGPT:
+        if chatgpt_artifact_locator and chatgpt_artifact_locator.strip():
+            locator = chatgpt_artifact_locator.strip()
+            return HandoffPresentation(
+                HandoffPresentationKind.CHATGPT_ARTIFACT,
+                _copy_block(locator),
+                "complete payload is available through a supported transferable artifact",
+            )
+        return HandoffPresentation(
+            HandoffPresentationKind.BLOCKED,
+            None,
+            "ChatGPT cannot transfer the complete non-reconstructable payload through a supported artifact",
+        )
+
+    directory = Path(temp_directory).resolve()
+    if not directory.is_absolute() or not directory.is_dir():
+        raise ValueError("temporary handoff directory must be an existing absolute directory")
+    descriptor, raw_path = tempfile.mkstemp(prefix="dish-handoff-", suffix=".txt", dir=directory)
+    path = Path(raw_path).resolve()
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(payload)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return HandoffPresentation(
+        HandoffPresentationKind.LOCAL_FILE,
+        _copy_block(str(path)),
+        "complete payload was written to the exact local path",
+        path,
+    )
 
 
 def validate_handoff(

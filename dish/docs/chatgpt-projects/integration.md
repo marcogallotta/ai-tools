@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-ae1ea8a3ef1a
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-69f3f14a3426
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
@@ -17,6 +17,7 @@ Triggered policy reads (before the governed action):
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
 - execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
 - external/current-main defect while pursuing an existing objective -> `dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission`
+- manual relay -> `CLAUDE.md#Work chat`
 - fast-track -> `dish/docs/agents/fast-track-process.md#Procedure`
 - task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`

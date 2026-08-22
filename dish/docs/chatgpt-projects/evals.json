@@ -5111,6 +5111,87 @@
         "implementation",
         "review"
       ]
+    },
+    {
+      "expected_outcome": "ordinary_relay_is_one_locator_only_copy_block",
+      "forbidden_actions": ["repeat-reconstructable-context", "emit-multiple-copy-blocks"],
+      "id": "handoff-ux-locator-first",
+      "prompt": "Marco must manually send an ordinary code-review handoff for PR #245. The receiver can resolve all current identities and evidence from the PR. Render the relay.",
+      "required_actions": ["emit-one-fenced-copy-block", "use-review-pr-locator-only"],
+      "required_rules": ["manual-handoff-presentation"],
+      "roles": ["development-workflow"]
+    },
+    {
+      "expected_outcome": "payload_at_both_exact_limits_remains_inline",
+      "forbidden_actions": ["externalize-at-inclusive-boundary"],
+      "id": "handoff-ux-exact-inline-boundary",
+      "prompt": "A genuinely non-reconstructable manual handoff is exactly 8 non-empty lines and exactly 700 characters, including whitespace. Choose its presentation.",
+      "required_actions": ["keep-complete-payload-inline", "emit-one-fenced-copy-block"],
+      "required_rules": ["manual-handoff-presentation"],
+      "roles": ["coordinator"]
+    },
+    {
+      "expected_outcome": "crossing_either_limit_externalizes_payload",
+      "forbidden_actions": ["require-both-limits-to-be-crossed", "dump-long-chat-fallback"],
+      "id": "handoff-ux-either-limit-cutover",
+      "prompt": "Two non-reconstructable relays are pending: A has 8 non-empty lines and 701 characters; B has 9 non-empty lines separated by whitespace-only lines and 120 characters. Apply the cutover rule.",
+      "required_actions": ["externalize-both-payloads", "ignore-whitespace-only-lines-for-line-count"],
+      "required_rules": ["manual-handoff-presentation"],
+      "roles": ["development-workflow"]
+    },
+    {
+      "expected_outcome": "local_relay_is_complete_file_path_without_preview",
+      "forbidden_actions": ["show-payload-preview", "use-relative-path", "write-partial-file"],
+      "id": "handoff-ux-local-temp-file",
+      "prompt": "A 12-line non-reconstructable Implementation handoff must be manually relayed to local Codex. The agent can write /tmp files. Render it.",
+      "required_actions": ["write-complete-current-temp-file", "emit-one-fenced-absolute-path-only"],
+      "required_rules": ["manual-handoff-presentation"],
+      "roles": ["development-workflow"]
+    },
+    {
+      "expected_outcome": "chatgpt_long_payload_uses_supported_transferable_artifact",
+      "forbidden_actions": ["dump-long-payload-in-chat", "ask-marco-to-recreate-file"],
+      "id": "handoff-ux-chatgpt-artifact",
+      "prompt": "A long non-reconstructable handoff must be relayed to ChatGPT and a supported transferable attachment is available. Render it.",
+      "required_actions": ["transfer-complete-payload-as-supported-artifact", "emit-one-fenced-artifact-locator"],
+      "required_rules": ["manual-handoff-presentation"],
+      "roles": ["coordinator"]
+    },
+    {
+      "expected_outcome": "missing_chatgpt_transfer_is_an_exact_capability_blocker",
+      "forbidden_actions": ["dump-long-payload-in-chat", "ask-marco-to-recreate-file", "claim-handoff-complete"],
+      "id": "handoff-ux-chatgpt-artifact-unavailable",
+      "prompt": "A long non-reconstructable handoff must be relayed to ChatGPT, but no supported transferable attachment/artifact surface is available.",
+      "required_actions": ["report-exact-transport-capability-blocker", "preserve-payload-without-lossy-fallback"],
+      "required_rules": ["manual-handoff-presentation"],
+      "roles": ["coordinator"]
+    },
+    {
+      "expected_outcome": "revised_handoff_is_complete_replacement",
+      "forbidden_actions": ["emit-addendum", "require-receiver-to-merge-versions"],
+      "id": "handoff-ux-replacement-not-addenda",
+      "prompt": "A previously relayed handoff is now stale because one non-reconstructable constraint changed. Produce the corrected relay.",
+      "required_actions": ["replace-with-complete-current-handoff", "mark-old-handoff-superseded"],
+      "required_rules": ["manual-handoff-presentation"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "automatic_continuation_has_no_handoff_ceremony",
+      "forbidden_actions": ["emit-copy-block", "create-temp-file", "ask-marco-to-relay"],
+      "id": "handoff-ux-no-manual-relay",
+      "prompt": "The current agent can continue the authorized work directly and no person must relay anything. Decide what handoff presentation is required.",
+      "required_actions": ["continue-without-manual-handoff-ceremony"],
+      "required_rules": ["manual-handoff-presentation"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "receiver_silently_grounds_instead_of_trusting_relay",
+      "forbidden_actions": ["treat-handoff-as-authority", "demand-procedure-replay"],
+      "id": "handoff-ux-receiver-grounding",
+      "prompt": "You receive `Implement task 1217673638828680.` as a locator-only manual handoff. Start from it.",
+      "required_actions": ["silently-ground-current-role-authority-and-artifact", "treat-handoff-as-normal-input"],
+      "required_rules": ["manual-handoff-presentation"],
+      "roles": ["implementation"]
     }
   ],
   "schema_version": 3
