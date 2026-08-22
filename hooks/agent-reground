@@ -119,6 +119,20 @@ def _validate_agent_id(value: str | None) -> str:
 
 
 def resolve_agent_id(payload: dict[str, Any]) -> tuple[str, str]:
+    certification_id = os.environ.get("DISH_HOOK_CERT_AGENT_ID")
+    if certification_id:
+        if os.environ.get("DISH_HOOK_CERTIFICATION") != "1":
+            raise RegroundError("hook-certification agent identity requires DISH_HOOK_CERTIFICATION=1")
+        configured_root = os.environ.get("DISH_AGENT_STATE_ROOT")
+        if not configured_root:
+            raise RegroundError("hook-certification agent identity requires an isolated DISH_AGENT_STATE_ROOT")
+        isolated_root = Path(configured_root).expanduser().resolve()
+        if "hook-certification" not in isolated_root.parts:
+            raise RegroundError("hook-certification state root must be under a hook-certification directory")
+        certification_host = os.environ.get("DISH_HOOK_CERT_HOST")
+        if certification_host not in {"claude", "codex"}:
+            raise RegroundError("hook-certification host must be claude or codex")
+        return _validate_agent_id(certification_id), certification_host
     codex_id = os.environ.get("CODEX_THREAD_ID")
     if codex_id:
         return _validate_agent_id(codex_id), "codex"

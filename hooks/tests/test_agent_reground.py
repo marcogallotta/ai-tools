@@ -284,3 +284,19 @@ def test_unidentified_codex_session_never_synthesizes_development_workflow_ident
     boundary = json.loads(agent_reground.boundary_path("fresh-codex-thread").read_text())
     assert boundary["status"] == "pending"
     assert "per-agent identity is missing" in boundary["last_error"]
+
+
+def test_hook_certification_identity_override_requires_explicit_isolated_state(
+    agent_reground, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DISH_HOOK_CERT_AGENT_ID", "cert-session")
+    monkeypatch.setenv("DISH_HOOK_CERT_HOST", "codex")
+    monkeypatch.setenv("DISH_HOOK_CERTIFICATION", "1")
+    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(tmp_path / "ordinary-state"))
+
+    with pytest.raises(agent_reground.RegroundError, match="hook-certification directory"):
+        agent_reground.resolve_agent_id({})
+
+    state_root = tmp_path / "hook-certification" / "state"
+    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
+    assert agent_reground.resolve_agent_id({}) == ("cert-session", "codex")

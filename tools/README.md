@@ -330,3 +330,11 @@ tools/agent-worktree claim \
 ```
 
 The claim validates the canonical repository, exact remote branch head, PR identity, role/task/project/branch tuple, host-specific identity-source label, launch timestamp, provenance path/permissions, and any visible `CODEX_THREAD_ID` before writing the per-agent identity note. Missing, stale, malformed, noisy, shell-like, or conflicting provenance fails before the child command. `--require-launch-provenance` never falls back to a pre-existing unrelated identity. The per-agent identity remains non-authoritative; live orchestration/GitHub plus the claim decide what may be mutated.
+
+Once inside that claimed local continuation, the canonical real-host entrypoint is one command:
+
+```sh
+tools/dish-hook-certify --pr <pr-number> --head <exact-pr-head>
+```
+
+It derives the Claude/Codex active hook surface, runs the selected evidence, drives required real-host children, and publishes/readbacks the exact-head certificate. One-time host auth/container setup and failure handling are in [`../ci/hook-certification.md`](../ci/hook-certification.md).

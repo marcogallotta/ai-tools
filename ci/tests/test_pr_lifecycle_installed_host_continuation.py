@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+import pytest
+
 import test_pr_lifecycle as base
 import installed_host_cert
 
@@ -30,28 +32,65 @@ class RecordingFixRouter:
 
 
 def _hook_files():
-    return [{"filename": "hooks/agent-reground", "status": "modified", "patch": "@@ -1 +1 @@"}]
+    return [
+        {
+            "filename": "hooks/agent-reground",
+            "status": "modified",
+            "patch": "@@ -1 +1 @@",
+            "sha": "a" * 40,
+        }
+    ]
 
 
 def _certificate(*, head=base.HEAD):
     task = "1217443403986570"
     digest = "d" * 64
-    host_result = lambda host: {
-        "host": host,
-        "version": f"{host} 1.2.3",
-        "binary": f"/usr/local/bin/{host}",
-        "effective_config_sources": [f"/home/marco/.{host}/effective-config"],
-        "active_paths": [
-            {
-                "path": "/home/marco/.local/bin/agent-reground",
-                "resolved_target": "/worktree/hooks/agent-reground",
-                "sha256": digest,
-            }
+    active_paths = {
+        "claude": ["hooks/agent-reground"],
+        "codex": [
+            "hooks/agent-reground",
+            "hooks/codex-protected-checkout",
+            "hooks/dish-operator-context",
         ],
-        "loader_execution": {"actual_installed_binary": True, "result": "pass"},
-        "harmless_governed_action": "pass",
-        "deliberate_conflict": "denied",
     }
+    config_paths = {"claude": ".claude/settings.json", "codex": "codex/hooks.json"}
+
+    def host_result(host):
+        return {
+            "host": host,
+            "version": f"{host} 1.2.3",
+            "binary": f"/usr/local/bin/{host}",
+            "candidate_root": "/worktree",
+            "effective_config_sources": [
+                {
+                    "path": f"/worktree/{config_paths[host]}",
+                    "resolved_target": f"/worktree/{config_paths[host]}",
+                    "candidate_path": config_paths[host],
+                    "git_blob_sha": "b" * 40,
+                    "sha256": digest,
+                    "candidate_sha256": digest,
+                    "transform": "absolute-command-rebase" if host == "codex" else "none",
+                    **(
+                        {"active_command_targets": [f"/worktree/{path}" for path in active_paths[host]]}
+                        if host == "codex"
+                        else {}
+                    ),
+                }
+            ],
+            "active_paths": [
+                {
+                    "path": f"/worktree/{path}",
+                    "resolved_target": f"/worktree/{path}",
+                    "candidate_path": path,
+                    "git_blob_sha": "a" * 40 if path == "hooks/agent-reground" else "c" * 40,
+                    "sha256": digest,
+                }
+                for path in active_paths[host]
+            ],
+            "loader_execution": {"actual_installed_binary": True, "result": "pass"},
+            "harmless_governed_action": "pass",
+            "deliberate_conflict": "denied",
+        }
     return {
         "schema": installed_host_cert.SCHEMA,
         "repository": "marcogallotta/ai-tools",
@@ -61,6 +100,13 @@ def _certificate(*, head=base.HEAD):
         "task_ids": [task],
         "required_hosts": ["claude", "codex"],
         "changed_paths": ["hooks/agent-reground"],
+        "candidate_files": [
+            {"path": ".claude/settings.json", "git_blob_sha": "b" * 40, "sha256": digest},
+            {"path": "codex/hooks.json", "git_blob_sha": "b" * 40, "sha256": digest},
+            {"path": "hooks/agent-reground", "git_blob_sha": "a" * 40, "sha256": digest},
+            {"path": "hooks/codex-protected-checkout", "git_blob_sha": "c" * 40, "sha256": digest},
+            {"path": "hooks/dish-operator-context", "git_blob_sha": "c" * 40, "sha256": digest},
+        ],
         "identity": {
             "agent_id": "local-session-1",
             "host": "codex",
@@ -128,6 +174,80 @@ def test_non_host_change_does_not_create_installed_host_gate():
     gh = base.FakeGitHub(base.pr(draft=False))
     gh.pr_files = [{"filename": "dish/docs/example.md", "status": "modified", "patch": "docs"}]
     assert base.engine(gh).inspect(gh.pr).state == p.LifecycleState.REVIEW_READY
+
+
+def test_dormant_hook_and_active_core_only_do_not_select_tier_c_host_certificate():
+    assert installed_host_cert.hook_surface_classification("hooks/memory-write-guard.sh") == "DORMANT_COMPONENT"
+    assert installed_host_cert.hook_surface_classification("hooks/protected_checkout.py") == "CODEX_ACTIVE"
+    assert installed_host_cert.requirement_for_files(
+        [{"filename": "hooks/memory-write-guard.sh", "status": "modified", "sha": "e" * 40}]
+    ) is None
+    assert installed_host_cert.requirement_for_files(
+        [{"filename": "hooks/protected_checkout.py", "status": "modified", "sha": "f" * 40}]
+    ) is None
+
+
+def test_certification_harness_change_selects_both_real_hosts():
+    requirement = installed_host_cert.requirement_for_files(
+        [{"filename": "tools/dish-hook-certify", "status": "modified", "sha": "e" * 40}]
+    )
+    assert requirement is not None
+    assert requirement.hosts == ("claude", "codex")
+
+
+@pytest.mark.parametrize("bad_target", ["/tmp/stale-main/hooks/agent-reground", "/tmp/unrelated-hook"])
+def test_certificate_rejects_stale_or_unrelated_active_hook_target(bad_target):
+    requirement = installed_host_cert.requirement_for_files(_hook_files())
+    assert requirement is not None
+    certificate = _certificate()
+    for host in certificate["hosts"]:
+        target = next(item for item in host["active_paths"] if item["candidate_path"] == "hooks/agent-reground")
+        target["resolved_target"] = bad_target
+    with pytest.raises(installed_host_cert.HostCertError, match="not the exact candidate path"):
+        installed_host_cert.validate_certificate(
+            certificate,
+            repository="marcogallotta/ai-tools",
+            pr_number=31,
+            branch="agent/test",
+            head=base.HEAD,
+            task_ids=["1217443403986570"],
+            requirement=requirement,
+        )
+
+
+def test_certificate_rejects_stale_effective_config_source_even_with_passing_booleans():
+    requirement = installed_host_cert.requirement_for_files(_hook_files())
+    assert requirement is not None
+    certificate = _certificate()
+    claude = next(item for item in certificate["hosts"] if item["host"] == "claude")
+    claude["effective_config_sources"][0]["resolved_target"] = "/tmp/not-the-candidate/effective-config"
+    with pytest.raises(installed_host_cert.HostCertError, match="not the exact candidate config path"):
+        installed_host_cert.validate_certificate(
+            certificate,
+            repository="marcogallotta/ai-tools",
+            pr_number=31,
+            branch="agent/test",
+            head=base.HEAD,
+            task_ids=["1217443403986570"],
+            requirement=requirement,
+        )
+
+
+def test_certificate_rejects_wrong_candidate_blob_even_with_passing_booleans():
+    requirement = installed_host_cert.requirement_for_files(_hook_files())
+    assert requirement is not None
+    certificate = _certificate()
+    next(item for item in certificate["candidate_files"] if item["path"] == "hooks/agent-reground")["git_blob_sha"] = "f" * 40
+    with pytest.raises(installed_host_cert.HostCertError, match="does not bind exact candidate blob"):
+        installed_host_cert.validate_certificate(
+            certificate,
+            repository="marcogallotta/ai-tools",
+            pr_number=31,
+            branch="agent/test",
+            head=base.HEAD,
+            task_ids=["1217443403986570"],
+            requirement=requirement,
+        )
 
 
 def test_valid_exact_head_host_certificate_allows_review_ready_transition():

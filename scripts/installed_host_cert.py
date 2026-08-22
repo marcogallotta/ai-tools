@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import datetime as dt
 import hashlib
 import json
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -36,9 +38,16 @@ class HostCertError(RuntimeError):
 class HostCertRequirement:
     hosts: tuple[str, ...]
     paths: tuple[str, ...]
+    active_paths: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    candidate_blobs: tuple[tuple[str, str], ...] = ()
 
     def json(self) -> dict[str, Any]:
-        return {"hosts": list(self.hosts), "paths": list(self.paths)}
+        return {
+            "hosts": list(self.hosts),
+            "paths": list(self.paths),
+            "active_paths": {host: list(paths) for host, paths in self.active_paths},
+            "candidate_blobs": dict(self.candidate_blobs),
+        }
 
 
 @dataclass(frozen=True)
@@ -51,6 +60,123 @@ class HostCertStatus:
 
 def _filename(item: Mapping[str, Any]) -> str:
     return str(item.get("filename") or item.get("path") or "").strip()
+
+
+def _repo_root(repo_root: Path | str | None = None) -> Path:
+    if repo_root is not None:
+        return Path(repo_root).resolve()
+    return Path(__file__).resolve().parents[1]
+
+
+def _hook_commands(value: Any) -> Iterable[str]:
+    if isinstance(value, dict):
+        command = value.get("command")
+        if isinstance(command, str) and command.strip():
+            yield command.strip()
+        for child in value.values():
+            yield from _hook_commands(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _hook_commands(child)
+
+
+def _command_hook_path(command: str, root: Path) -> str | None:
+    match = re.search(r"(?:\$CLAUDE_PROJECT_DIR|[^\s\"']*)/hooks/(?P<name>[A-Za-z0-9_.-]+)", command)
+    if match:
+        return f"hooks/{match.group('name')}"
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    hooks = root / "hooks"
+    for token in tokens:
+        name = Path(token).name
+        if name and (hooks / name).is_file():
+            return f"hooks/{name}"
+    return None
+
+
+def _python_hook_dependencies(root: Path, path: str) -> set[str]:
+    source_path = root / path
+    try:
+        source = source_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return set()
+    dependencies: set[str] = set()
+    for node in ast.walk(tree):
+        module = None
+        if isinstance(node, ast.ImportFrom):
+            module = node.module
+        elif isinstance(node, ast.Import) and len(node.names) == 1:
+            module = node.names[0].name
+        if not module or "." in module:
+            continue
+        candidate = root / "hooks" / f"{module}.py"
+        if candidate.is_file():
+            dependencies.add(candidate.relative_to(root).as_posix())
+    return dependencies
+
+
+def active_hook_surface(repo_root: Path | str | None = None) -> dict[str, dict[str, Any]]:
+    """Derive the active hook surface from authoritative Claude/Codex configs.
+
+    Direct host adapters come only from `.claude/settings.json` and `codex/hooks.json`.
+    Python modules imported by those adapters are marked as active components, but they
+    are not host protocol boundaries by themselves.
+    """
+    root = _repo_root(repo_root)
+    direct: dict[str, set[str]] = {}
+    configs = {"claude": ".claude/settings.json", "codex": "codex/hooks.json"}
+    for host, config_path in configs.items():
+        try:
+            config = json.loads((root / config_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HostCertError(f"cannot derive {host} active hooks from {config_path}: {exc}") from exc
+        for command in _hook_commands(config):
+            hook_path = _command_hook_path(command, root)
+            if hook_path:
+                direct.setdefault(hook_path, set()).add(host)
+
+    components: dict[str, set[str]] = {}
+    frontier = list(direct)
+    seen = set(frontier)
+    while frontier:
+        parent = frontier.pop()
+        parent_hosts = direct.get(parent) or components.get(parent) or set()
+        for dependency in _python_hook_dependencies(root, parent):
+            components.setdefault(dependency, set()).update(parent_hosts)
+            if dependency not in seen:
+                seen.add(dependency)
+                frontier.append(dependency)
+
+    result: dict[str, dict[str, Any]] = {}
+    for path, hosts in sorted(direct.items()):
+        result[path] = {"hosts": tuple(sorted(hosts)), "boundary": "host-adapter"}
+    for path, hosts in sorted(components.items()):
+        if path in result:
+            continue
+        result[path] = {"hosts": tuple(sorted(hosts)), "boundary": "active-component"}
+    return result
+
+
+def hook_surface_classification(path: str, repo_root: Path | str | None = None) -> str | None:
+    root = _repo_root(repo_root)
+    surface = active_hook_surface(root)
+    if path in {".claude/settings.json", "codex/hooks.json"}:
+        return "INSTALL_WIRING"
+    item = surface.get(path)
+    if item:
+        hosts = set(item["hosts"])
+        if hosts == {"claude", "codex"}:
+            return "SHARED_ACTIVE"
+        if hosts == {"claude"}:
+            return "CLAUDE_ACTIVE"
+        if hosts == {"codex"}:
+            return "CODEX_ACTIVE"
+    if path.startswith("hooks/") and not path.startswith("hooks/tests/"):
+        return "DORMANT_COMPONENT"
+    return None
 
 
 def _install_wiring_patch(item: Mapping[str, Any]) -> bool:
@@ -69,10 +195,16 @@ def _install_wiring_patch(item: Mapping[str, Any]) -> bool:
     return any(needle in patch for needle in needles)
 
 
-def requirement_for_files(files: Iterable[Mapping[str, Any]]) -> HostCertRequirement | None:
+def requirement_for_files(
+    files: Iterable[Mapping[str, Any]], repo_root: Path | str | None = None
+) -> HostCertRequirement | None:
     """Classify only runtime hook/config/install-wiring surfaces that cross the installed-host boundary."""
+    root = _repo_root(repo_root)
+    surface = active_hook_surface(root)
     hosts: set[str] = set()
     paths: set[str] = set()
+    candidate_blobs: dict[str, str] = {}
+    harness_paths = {"scripts/installed_host_cert.py", "tools/dish-hook-certify"}
     for item in files:
         path = _filename(item)
         if not path:
@@ -82,7 +214,10 @@ def requirement_for_files(files: Iterable[Mapping[str, Any]]) -> HostCertRequire
             path_hosts.add("claude")
         elif path == "codex/hooks.json":
             path_hosts.add("codex")
-        elif path.startswith("hooks/") and not path.startswith("hooks/tests/"):
+        elif path in surface and surface[path]["boundary"] == "host-adapter":
+            path_hosts.update(surface[path]["hosts"])
+        elif path in harness_paths:
+            # The shared one-command certificate harness is itself a concrete host boundary.
             path_hosts.update(("claude", "codex"))
         elif path in {"README.md", "codex/README.md"} and _install_wiring_patch(item):
             # Installation wiring is operational even when expressed in the repo-owned install runbook.
@@ -95,9 +230,21 @@ def requirement_for_files(files: Iterable[Mapping[str, Any]]) -> HostCertRequire
         if path_hosts:
             paths.add(path)
             hosts.update(path_hosts)
+            blob = str(item.get("sha") or "").strip().lower()
+            if FULL_SHA_RE.fullmatch(blob):
+                candidate_blobs[path] = blob
     if not hosts:
         return None
-    return HostCertRequirement(tuple(sorted(hosts)), tuple(sorted(paths)))
+    active_paths = tuple(
+        (host, tuple(sorted(path for path, item in surface.items() if item["boundary"] == "host-adapter" and host in item["hosts"])))
+        for host in sorted(hosts)
+    )
+    return HostCertRequirement(
+        tuple(sorted(hosts)),
+        tuple(sorted(paths)),
+        active_paths,
+        tuple(sorted(candidate_blobs.items())),
+    )
 
 
 def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
@@ -124,6 +271,13 @@ def _require_digest(value: Any, label: str) -> str:
     text = _require_string(value, label).lower()
     if DIGEST_RE.fullmatch(text) is None:
         raise HostCertError(f"certificate {label} must be a SHA-256 hex digest")
+    return text
+
+
+def _require_git_blob(value: Any, label: str) -> str:
+    text = _require_string(value, label).lower()
+    if FULL_SHA_RE.fullmatch(text) is None:
+        raise HostCertError(f"certificate {label} must be a 40-character Git blob SHA")
     return text
 
 
@@ -191,21 +345,104 @@ def _validate_fence(fence: Any, *, required_hosts: list[str]) -> None:
         raise HostCertError("certificate fence.ended_at precedes fence.started_at")
 
 
-def _validate_host_result(item: Any, required_host: str) -> None:
+def _validate_host_result(
+    item: Any,
+    required_host: str,
+    *,
+    expected_active_paths: Iterable[str],
+    candidate_blobs: Mapping[str, str],
+    candidate_file_evidence: Mapping[str, tuple[str, str]],
+) -> None:
     if not isinstance(item, dict) or item.get("host") != required_host:
         raise HostCertError(f"certificate host result for {required_host} is missing")
     _require_string(item.get("version"), f"hosts.{required_host}.version")
     _require_string(item.get("binary"), f"hosts.{required_host}.binary")
-    _require_string_list(item.get("effective_config_sources"), f"hosts.{required_host}.effective_config_sources")
+    candidate_root = Path(_require_string(item.get("candidate_root"), f"hosts.{required_host}.candidate_root"))
+    if not candidate_root.is_absolute():
+        raise HostCertError(f"certificate hosts.{required_host}.candidate_root must be absolute")
+
+    config_path = ".claude/settings.json" if required_host == "claude" else "codex/hooks.json"
+    effective_sources = item.get("effective_config_sources")
+    if not isinstance(effective_sources, list) or not effective_sources:
+        raise HostCertError(f"certificate hosts.{required_host}.effective_config_sources must be non-empty")
+    config_match = False
+    for index, source in enumerate(effective_sources):
+        label = f"hosts.{required_host}.effective_config_sources[{index}]"
+        if not isinstance(source, dict):
+            raise HostCertError(f"certificate {label} must be an object with candidate-byte evidence")
+        _require_string(source.get("path"), f"{label}.path")
+        _require_string(source.get("resolved_target"), f"{label}.resolved_target")
+        candidate_path = _require_string(source.get("candidate_path"), f"{label}.candidate_path")
+        blob = _require_git_blob(source.get("git_blob_sha"), f"{label}.git_blob_sha")
+        actual_digest = _require_digest(source.get("sha256"), f"{label}.sha256")
+        candidate_digest = _require_digest(source.get("candidate_sha256"), f"{label}.candidate_sha256")
+        transform = source.get("transform")
+        if transform not in {"none", "absolute-command-rebase"}:
+            raise HostCertError(f"certificate {label}.transform must be none or absolute-command-rebase")
+        if transform == "none" and actual_digest != candidate_digest:
+            raise HostCertError(f"certificate {label} does not match exact candidate config bytes")
+        if transform == "none":
+            expected_target = candidate_root.joinpath(*Path(candidate_path).parts)
+            if Path(str(source.get("resolved_target"))).resolve(strict=False) != expected_target.resolve(strict=False):
+                raise HostCertError(f"certificate {label}.resolved_target is not the exact candidate config path")
+        if transform == "absolute-command-rebase" and required_host != "codex":
+            raise HostCertError(f"certificate {label} may rebase commands only for the Codex isolated config")
+        if transform == "absolute-command-rebase":
+            command_targets = source.get("active_command_targets")
+            if not isinstance(command_targets, list) or not command_targets:
+                raise HostCertError(f"certificate {label}.active_command_targets must be non-empty")
+            normalized_targets = {str(Path(_require_string(value, f"{label}.active_command_targets"))) for value in command_targets}
+            expected_targets = {
+                str(candidate_root.joinpath(*Path(path).parts)) for path in expected_active_paths
+            }
+            if normalized_targets != expected_targets:
+                raise HostCertError(
+                    f"certificate {label}.active_command_targets do not resolve exactly to the candidate hook surface"
+                )
+        expected_blob = candidate_blobs.get(candidate_path)
+        if expected_blob and blob != expected_blob:
+            raise HostCertError(f"certificate {label} Git blob does not match exact candidate")
+        candidate_evidence = candidate_file_evidence.get(candidate_path)
+        if candidate_evidence and (blob, candidate_digest) != candidate_evidence:
+            raise HostCertError(f"certificate {label} candidate bytes do not match candidate_files evidence")
+        if candidate_path == config_path:
+            config_match = True
+    if not config_match:
+        raise HostCertError(
+            f"certificate hosts.{required_host}.effective_config_sources does not bind {config_path}"
+        )
+
     active_paths = item.get("active_paths")
     if not isinstance(active_paths, list) or not active_paths:
         raise HostCertError(f"certificate hosts.{required_host}.active_paths must be non-empty")
+    seen_candidate_paths: set[str] = set()
     for index, path in enumerate(active_paths):
         if not isinstance(path, dict):
             raise HostCertError(f"certificate hosts.{required_host}.active_paths[{index}] must be an object")
-        _require_string(path.get("path"), f"hosts.{required_host}.active_paths[{index}].path")
-        _require_string(path.get("resolved_target"), f"hosts.{required_host}.active_paths[{index}].resolved_target")
-        _require_digest(path.get("sha256"), f"hosts.{required_host}.active_paths[{index}].sha256")
+        label = f"hosts.{required_host}.active_paths[{index}]"
+        _require_string(path.get("path"), f"{label}.path")
+        resolved_target = Path(_require_string(path.get("resolved_target"), f"{label}.resolved_target"))
+        candidate_path = _require_string(path.get("candidate_path"), f"{label}.candidate_path")
+        if candidate_path.startswith("/") or ".." in Path(candidate_path).parts:
+            raise HostCertError(f"certificate {label}.candidate_path must be repository-relative")
+        expected_target = candidate_root.joinpath(*Path(candidate_path).parts)
+        if Path(str(resolved_target)).resolve(strict=False) != expected_target.resolve(strict=False):
+            raise HostCertError(f"certificate {label}.resolved_target is not the exact candidate path")
+        blob = _require_git_blob(path.get("git_blob_sha"), f"{label}.git_blob_sha")
+        _require_digest(path.get("sha256"), f"{label}.sha256")
+        expected_blob = candidate_blobs.get(candidate_path)
+        if expected_blob and blob != expected_blob:
+            raise HostCertError(f"certificate {label} Git blob does not match exact candidate")
+        candidate_evidence = candidate_file_evidence.get(candidate_path)
+        if candidate_evidence and (blob, _require_digest(path.get("sha256"), f"{label}.sha256")) != candidate_evidence:
+            raise HostCertError(f"certificate {label} bytes do not match candidate_files evidence")
+        seen_candidate_paths.add(candidate_path)
+    missing_active = set(expected_active_paths) - seen_candidate_paths
+    if missing_active:
+        raise HostCertError(
+            f"certificate hosts.{required_host}.active_paths missing candidate hook(s): "
+            + ", ".join(sorted(missing_active))
+        )
     loader = item.get("loader_execution")
     if not isinstance(loader, dict):
         raise HostCertError(f"certificate hosts.{required_host}.loader_execution must be an object")
@@ -246,6 +483,22 @@ def validate_certificate(
     changed_paths = sorted(_require_string_list(certificate.get("changed_paths"), "changed_paths"))
     if changed_paths != sorted(requirement.paths):
         raise HostCertError("certificate changed_paths do not match changed-surface classification")
+    candidate_files = certificate.get("candidate_files")
+    if not isinstance(candidate_files, list) or not candidate_files:
+        raise HostCertError("certificate candidate_files must be a non-empty list")
+    expected_blobs = dict(requirement.candidate_blobs)
+    seen_candidate_files: dict[str, tuple[str, str]] = {}
+    for index, item in enumerate(candidate_files):
+        label = f"candidate_files[{index}]"
+        if not isinstance(item, dict):
+            raise HostCertError(f"certificate {label} must be an object")
+        path = _require_string(item.get("path"), f"{label}.path")
+        blob = _require_git_blob(item.get("git_blob_sha"), f"{label}.git_blob_sha")
+        digest = _require_digest(item.get("sha256"), f"{label}.sha256")
+        seen_candidate_files[path] = (blob, digest)
+    for path, blob in expected_blobs.items():
+        if seen_candidate_files.get(path, (None, None))[0] != blob:
+            raise HostCertError(f"certificate candidate_files does not bind exact candidate blob for {path}")
 
     _validate_identity(certificate.get("identity"), branch=branch, head=head, pr_number=pr_number, task_ids=tasks)
     fence = certificate.get("fence")
@@ -262,8 +515,23 @@ def validate_certificate(
     if sorted(result_hosts) != required_hosts:
         raise HostCertError("certificate hosts must exactly match required_hosts")
     by_host = {str(item.get("host")): item for item in host_results}
+    active_paths_by_host = dict(requirement.active_paths)
     for host in required_hosts:
-        _validate_host_result(by_host.get(host), host)
+        config_path = ".claude/settings.json" if host == "claude" else "codex/hooks.json"
+        missing_candidate_evidence = set(active_paths_by_host.get(host, ())) | {config_path}
+        missing_candidate_evidence -= set(seen_candidate_files)
+        if missing_candidate_evidence:
+            raise HostCertError(
+                "certificate candidate_files missing active candidate evidence: "
+                + ", ".join(sorted(missing_candidate_evidence))
+            )
+        _validate_host_result(
+            by_host.get(host),
+            host,
+            expected_active_paths=active_paths_by_host.get(host, ()),
+            candidate_blobs=expected_blobs,
+            candidate_file_evidence=seen_candidate_files,
+        )
 
     checks = certificate.get("checks")
     if not isinstance(checks, dict):
