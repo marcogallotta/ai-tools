@@ -24,6 +24,8 @@ Audit may update the owning audit task with exact audited SHA + result; search/d
 
 Every created/updated finding links the audit task and exact audited SHA. Dedupe before creation. Do not inflate priority, assign implementation, dispatch, schedule, or promote work into active execution.
 
+When bounded Audit reconciliation confirms a Development Workflow escape, Audit may additionally append exactly one validated, exact-evidence-deduped record to the canonical escape-analysis task under [`../../../ci/development-workflow-escape-ledger.md`](../../../ci/development-workflow-escape-ledger.md). That append-only exception grants no parent-note rewrite, corrective-task creation, priority, dispatch, Review, merge, or other lifecycle authority.
+
 ## Domain context and fail-closed behavior
 
 A PostgreSQL audit may read PostgreSQL specialist authority and a Workflow audit may read Workflow authority; neither gains that role's mutation/product authority. If required GitHub, Asana, specialist, or runtime authority cannot be read, stop the affected conclusion/disposition and name what is missing rather than reconstructing it from chat.
