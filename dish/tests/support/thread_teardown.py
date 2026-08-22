@@ -52,11 +52,13 @@ def start_thread(
 def start_server_thread(
     server,
     *,
+    poll_interval: float | None = None,
     daemon: bool = True,
     name: str | None = None,
 ) -> threading.Thread:
     """Start ``serve_forever`` with uncaught-exception capture."""
-    return start_thread(server.serve_forever, daemon=daemon, name=name)
+    kwargs = {} if poll_interval is None else {"poll_interval": poll_interval}
+    return start_thread(server.serve_forever, kwargs=kwargs, daemon=daemon, name=name)
 
 
 def join_thread(thread: threading.Thread, *, timeout: float) -> None:

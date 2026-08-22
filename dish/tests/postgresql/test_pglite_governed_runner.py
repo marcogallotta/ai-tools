@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import importlib.util
+from concurrent.futures import ThreadPoolExecutor
 from importlib.machinery import SourceFileLoader
 import json
 import os
+import select as select_module
 import subprocess
 import sys
-import time
+import threading
 from pathlib import Path
 
 import psutil
@@ -57,13 +59,28 @@ def _write_junit(path: Path, *, failure: str | None = None) -> None:
     path.write_text(f'<testsuite tests="1">{case}</testsuite>', encoding="utf-8")
 
 
-def _wait_gone(pid: int, timeout: float = 3.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not psutil.pid_exists(pid):
-            return True
-        time.sleep(0.05)
-    return not psutil.pid_exists(pid)
+def _observe_descendant_snapshot(
+    runner, monkeypatch
+) -> tuple[threading.Event, list[int | None]]:
+    observed = threading.Event()
+    expected_pid: list[int | None] = [None]
+    real_snapshot = runner.DescendantTracker._snapshot
+
+    def observing_snapshot(tracker) -> None:
+        real_snapshot(tracker)
+        if expected_pid[0] in tracker._identities:
+            observed.set()
+
+    monkeypatch.setattr(runner.DescendantTracker, "_snapshot", observing_snapshot)
+    return observed, expected_pid
+
+
+def _read_ready_pid(fd: int, *, timeout: float = 2.0) -> int:
+    readable, _, _ = select_module.select([fd], [], [], timeout)
+    assert readable == [fd], "child readiness signal was not received"
+    payload = os.read(fd, 64)
+    assert payload, "child readiness signal was empty"
+    return int(payload)
 
 
 def test_classifier_does_not_call_any_pglite_assertion_infrastructure(tmp_path) -> None:
@@ -156,69 +173,110 @@ def test_aggregate_junit_records_lifecycle_failures_as_errors(tmp_path) -> None:
     assert root.find(".//error") is not None
 
 
-def test_supervisor_times_out_and_kills_detached_descendant(tmp_path) -> None:
+def test_supervisor_times_out_and_kills_detached_descendant(
+    tmp_path, monkeypatch
+) -> None:
     runner = _load_runner()
-    child_pid = tmp_path / "child.pid"
+    observed, expected_pid = _observe_descendant_snapshot(runner, monkeypatch)
+    ready = tmp_path / "ready.fifo"
+    release = tmp_path / "release.fifo"
+    os.mkfifo(ready)
+    os.mkfifo(release)
+    ready_fd = os.open(ready, os.O_RDWR | os.O_NONBLOCK)
+    release_fd = os.open(release, os.O_RDWR | os.O_NONBLOCK)
     source = tmp_path / "parent.py"
     source.write_text(
         """
-import pathlib
 import subprocess
 import sys
-import time
-child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
-pathlib.Path(sys.argv[1]).write_text(str(child.pid))
-time.sleep(60)
+import threading
+child = subprocess.Popen([sys.executable, '-S', '-c', 'import threading; threading.Event().wait()'], start_new_session=True)
+with open(sys.argv[1], 'w', encoding='utf-8') as ready:
+    ready.write(str(child.pid))
+    ready.flush()
+with open(sys.argv[2], 'rb', buffering=0) as release:
+    release.read(1)
 """,
         encoding="utf-8",
     )
 
-    result = runner._run_supervised(
-        [sys.executable, str(source), str(child_pid)],
-        log_path=tmp_path / "pytest.log",
-        workspace=tmp_path / "work",
-        timeout_seconds=0.75,
-        cleanup_grace_seconds=0.5,
-        env=os.environ.copy(),
-    )
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                runner._run_supervised,
+                [sys.executable, "-S", str(source), str(ready), str(release)],
+                log_path=tmp_path / "pytest.log",
+                workspace=tmp_path / "work",
+                timeout_seconds=0.75,
+                cleanup_grace_seconds=0.5,
+                env=os.environ.copy(),
+            )
+            child = psutil.Process(_read_ready_pid(ready_fd))
+            expected_pid[0] = child.pid
+            assert observed.wait(timeout=2.0)
+            result = future.result(timeout=3.0)
+    finally:
+        os.close(release_fd)
+        os.close(ready_fd)
 
+    _, alive = psutil.wait_procs([child], timeout=3.0)
+    assert alive == []
     assert result.timed_out is True
-    pid = int(child_pid.read_text())
-    assert _wait_gone(pid)
     assert result.cleanup_remaining == []
 
 
-def test_supervisor_cleans_detached_descendant_after_parent_passes(tmp_path) -> None:
+def test_supervisor_cleans_detached_descendant_after_parent_passes(
+    tmp_path, monkeypatch
+) -> None:
     runner = _load_runner()
-    child_pid = tmp_path / "child.pid"
+    observed, expected_pid = _observe_descendant_snapshot(runner, monkeypatch)
+    ready = tmp_path / "ready.fifo"
+    release = tmp_path / "release.fifo"
+    os.mkfifo(ready)
+    os.mkfifo(release)
+    ready_fd = os.open(ready, os.O_RDWR | os.O_NONBLOCK)
+    release_fd = os.open(release, os.O_RDWR | os.O_NONBLOCK)
     source = tmp_path / "parent.py"
     source.write_text(
         """
-import pathlib
 import subprocess
 import sys
-import time
-child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
-pathlib.Path(sys.argv[1]).write_text(str(child.pid))
-time.sleep(0.3)
+import threading
+child = subprocess.Popen([sys.executable, '-S', '-c', 'import threading; threading.Event().wait()'], start_new_session=True)
+with open(sys.argv[1], 'w', encoding='utf-8') as ready:
+    ready.write(str(child.pid))
+    ready.flush()
+with open(sys.argv[2], 'rb', buffering=0) as release:
+    release.read(1)
 """,
         encoding="utf-8",
     )
 
-    result = runner._run_supervised(
-        [sys.executable, str(source), str(child_pid)],
-        log_path=tmp_path / "pytest.log",
-        workspace=tmp_path / "work",
-        timeout_seconds=5.0,
-        cleanup_grace_seconds=0.5,
-        env=os.environ.copy(),
-    )
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                runner._run_supervised,
+                [sys.executable, "-S", str(source), str(ready), str(release)],
+                log_path=tmp_path / "pytest.log",
+                workspace=tmp_path / "work",
+                timeout_seconds=5.0,
+                cleanup_grace_seconds=0.5,
+                env=os.environ.copy(),
+            )
+            child = psutil.Process(_read_ready_pid(ready_fd))
+            expected_pid[0] = child.pid
+            assert observed.wait(timeout=2.0)
+            os.write(release_fd, b"1")
+            result = future.result(timeout=3.0)
+    finally:
+        os.close(release_fd)
+        os.close(ready_fd)
 
+    _, alive = psutil.wait_procs([child], timeout=3.0)
+    assert alive == []
     assert result.exit_code == 0
     assert result.timed_out is False
     assert result.forced_cleanup is True
-    pid = int(child_pid.read_text())
-    assert _wait_gone(pid)
     assert result.cleanup_remaining == []
 
 

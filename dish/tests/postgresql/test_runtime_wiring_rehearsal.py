@@ -22,6 +22,7 @@ from dish_service.http import DishHTTPServer
 from dish_tool.errors import DishRuleError
 from tests.support.postgresql import process_failure as process_support
 from tests.support.postgresql.runtime_wiring_evidence import valid_scenario_evidence
+from tests.support.thread_teardown import start_server_thread, stop_server
 
 DISH_ROOT = Path(__file__).resolve().parents[2]
 
@@ -156,9 +157,9 @@ class _EchoHandler(socketserver.BaseRequestHandler):
 
 
 def test_postgresql_proxy_is_a_restartable_separate_process(tmp_path: Path) -> None:
-    with socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler) as target:
-        thread = threading.Thread(target=target.serve_forever, daemon=True)
-        thread.start()
+    target = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+    thread = start_server_thread(target, poll_interval=0.005)
+    try:
         proxy_port = _free_port()
         dsn = (
             "postgresql+psycopg://dish:dish@127.0.0.1:"
@@ -192,8 +193,8 @@ def test_postgresql_proxy_is_a_restartable_separate_process(tmp_path: Path) -> N
                 assert client.recv(4096) == b"second"
         finally:
             second.terminate()
-            target.shutdown()
-            thread.join(timeout=3.0)
+    finally:
+        stop_server(target, thread, timeout=3.0)
 
 
 def _service_args(tmp_path: Path) -> SimpleNamespace:
