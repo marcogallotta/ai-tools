@@ -45,6 +45,10 @@ Nothing here migrates them or applies V2 semantics to them.
 - **Telemetry-log shape**: Dish — Agent Performance.
 - **Unstructured** (only `Untitled section`): Dish — Tests, Dish — Agentic Docs & Agent Behavior.
 
+### Bounded legacy capture writes
+
+`Dish — Development Workflow Friction` (`1217443500915644`) and `Dish — Code Smells / Engineering Debt` (`1217443501022227`) remain unregistered for V2 lifecycle semantics. Their exact contributor-base `notice -> dedupe -> log/update -> continue` contracts nevertheless authorize the bounded legacy triage operations they name: update a matching finding or create an unprioritized `Inbox` finding, and Development Workflow may triage those queues under its standing contract. These are non-V2 capture/triage writes, not V2 mutation. Do not apply V2 sections/fields, infer priority, dispatch work, or generalize this exception to another unregistered project.
+
 ## Exact mode classification
 
 Require the project GID from the registry row; a matching name on another project is not

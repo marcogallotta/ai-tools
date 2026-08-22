@@ -4,6 +4,10 @@ This is the canonical router for standing Dish agent roles. Root `CLAUDE.md` poi
 
 All repository-modifying roles inherit [`contributor-base.md`](contributor-base.md). Specialist contracts add their own scope and authority rules.
 
+### Repository capture bootstrap
+
+For repository-modifying work, the contributor-base capture contracts remain canonical and must survive host/session re-grounding. When non-blocking development friction or material code debt appears: **notice -> dedupe -> log/update -> continue**. Exact capture targets are Development Workflow Friction `1217443500915644` and Code Smells / Engineering Debt `1217443501022227`; active blockers stay on their active task/PR. This is a high-salience delivery projection, not a second policy authority.
+
 Every role or Worker mode performing a governed write in the canonical Development Workflow Asana
 project also applies the shared [`Development Workflow Asana project mode`](development-workflow-asana-mode.md)
 contract before that mutation. This cross-role mutation guard does not compose semantic role authority.
