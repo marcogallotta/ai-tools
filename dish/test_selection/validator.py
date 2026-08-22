@@ -1,13 +1,19 @@
 """Structural validation for the current-HEAD Dish test-selection map."""
 from __future__ import annotations
 
-import csv
 import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .model import ALLOWED_LANES, CLASS_NAMES, POLICY_PATH, split_field
+from .model import (
+    ALLOWED_LANES,
+    CLASS_NAMES,
+    POLICY_PATH,
+    PolicyError,
+    load_policy_mappings,
+    split_field,
+)
 
 ALLOWED_KINDS = {
     "documentation",
@@ -219,14 +225,11 @@ def validate_policy(
             errors.append(f"could not read collected nodeids: {exc}")
 
     try:
-        with policy.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            fields = set(reader.fieldnames or [])
-            missing_fields = REQUIRED_FIELDS - fields
-            if missing_fields:
-                errors.append(f"missing required columns: {sorted(missing_fields)}")
-            rows = list(reader)
-    except OSError as exc:
+        fieldnames, rows = load_policy_mappings(policy)
+        missing_fields = REQUIRED_FIELDS - set(fieldnames)
+        if missing_fields:
+            errors.append(f"missing required columns: {sorted(missing_fields)}")
+    except (OSError, PolicyError) as exc:
         return ValidationResult(0, len(_scoped_paths(repo, tracked_repo=tracked_repo)), collected_modules is not None, (str(exc),), ())
 
     paths = [row.get("path", "") for row in rows]

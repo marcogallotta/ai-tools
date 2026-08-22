@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import csv
 import fnmatch
 import functools
 import hashlib
@@ -23,6 +22,8 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 from test_selection.model import PolicyError as DishPolicyError  # noqa: E402
+from test_selection.model import load_policy_mappings as load_dish_policy_mappings  # noqa: E402
+from test_selection.model import policy_source_paths as dish_policy_source_paths  # noqa: E402
 from test_selection.planner import build_plan as build_dish_plan  # noqa: E402
 
 import test_impact_arbiter as arbiter  # noqa: E402
@@ -215,7 +216,7 @@ def graph_identity() -> str:
         ROOT / "scripts" / "integration_certification.py",
         ROOT / "scripts" / "pr_certification.py",
         REPOSITORY_POLICY_PATH,
-        OWNERSHIP_PATH,
+        *dish_policy_source_paths(OWNERSHIP_PATH),
         DISH_ROOT / "test_selection" / "model.py",
         DISH_ROOT / "test_selection" / "planner.py",
     ))
@@ -305,13 +306,13 @@ def _static_python_targets(
 def _owned_test_paths(path: Path = OWNERSHIP_PATH) -> tuple[str, ...]:
     tests: set[str] = set()
     try:
-        with path.open(newline="", encoding="utf-8") as handle:
-            for row in csv.DictReader(handle):
-                for field in ("direct_owner_tests", "critical_contract_tests"):
-                    tests.update(part.strip() for part in row.get(field, "").split(";") if part.strip())
-                if row.get("kind", "").strip() == "test":
-                    tests.add(row.get("path", "").strip())
-    except OSError as exc:
+        _, rows = load_dish_policy_mappings(path)
+        for row in rows:
+            for field in ("direct_owner_tests", "critical_contract_tests"):
+                tests.update(part.strip() for part in row.get(field, "").split(";") if part.strip())
+            if row.get("kind", "").strip() == "test":
+                tests.add(row.get("path", "").strip())
+    except DishPolicyError as exc:
         raise GraphError(f"cannot read ownership policy {path}: {exc}") from exc
     return tuple(sorted(test for test in tests if test))
 

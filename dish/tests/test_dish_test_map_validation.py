@@ -4,6 +4,7 @@ import csv
 import subprocess
 from pathlib import Path
 
+from test_selection.model import load_policy_mappings
 from test_selection.validator import _scoped_paths, validate_policy
 
 
@@ -12,9 +13,7 @@ POLICY = ROOT / "test_selection" / "ownership.csv"
 
 
 def _rows() -> tuple[list[str], list[dict[str, str]]]:
-    with POLICY.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        return list(reader.fieldnames or []), list(reader)
+    return load_policy_mappings(POLICY)
 
 
 def _write_policy(path: Path, fields: list[str], rows: list[dict[str, str]]) -> None:
