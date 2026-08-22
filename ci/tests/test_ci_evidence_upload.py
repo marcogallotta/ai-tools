@@ -17,11 +17,12 @@ def test_ci_certification_artifacts_are_hidden_path_safe_and_fail_closed():
     assert workflow.count("if-no-files-found: error") == 2
     assert "path: .test-artifacts/pr-certification/evidence.json" in workflow
 
-    attempt = "-${{ github.run_id }}-${{ github.run_attempt }}"
-    assert f"pr-certification-plan-${{{{ steps.prepare.outputs.candidate_sha }}}}{attempt}" in workflow
-    assert f"pr-certification-plan-${{{{ needs.plan.outputs.candidate_sha }}}}{attempt}" in workflow
+    run = "-${{ github.run_id }}"
+    attempt = f"{run}-${{{{ github.run_attempt }}}}"
+    assert f"pr-certification-plan-${{{{ steps.prepare.outputs.candidate_sha }}}}{run}" in workflow
+    assert f"pr-certification-plan-${{{{ needs.plan.outputs.candidate_sha }}}}{run}" in workflow
     assert f"pr-certification-evidence-${{{{ needs.plan.outputs.candidate_sha }}}}{attempt}" in workflow
-    assert "overwrite: true" not in workflow
+    assert workflow.count("overwrite: true") == 1
 
     # A passing test execution is insufficient: durable artifact creation must also succeed
     # and expose an addressable artifact before the terminal success status can be published.
@@ -43,7 +44,7 @@ def test_ci_certification_artifacts_are_hidden_path_safe_and_fail_closed():
     assert "path: ${{ inputs.path }}" in action
 
 
-def test_ci_certification_reruns_wait_for_exact_current_attempt_plan_artifact():
+def test_ci_certification_failed_job_reruns_reuse_the_exact_run_plan_artifact():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     wait_step = "- name: Wait for exact certification plan artifact"
@@ -53,7 +54,7 @@ def test_ci_certification_reruns_wait_for_exact_current_attempt_plan_artifact():
 
     exact_name = (
         "PLAN_ARTIFACT_NAME: pr-certification-plan-"
-        "${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+        "${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}"
     )
     assert exact_name in workflow
     assert '"/repos/$GITHUB_REPOSITORY/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100"' in workflow
@@ -61,12 +62,14 @@ def test_ci_certification_reruns_wait_for_exact_current_attempt_plan_artifact():
     assert "select(.expired == false)" in workflow
     assert 'grep -Fx "$PLAN_ARTIFACT_NAME"' in workflow
 
-    # Rerun scheduling may expose the consumer before the same-attempt plan upload
-    # is visible. Wait only for that exact attempt, fail closed on duplicates, and
-    # keep the wait bounded rather than falling back to any older artifact.
+    # A failed-job rerun does not rerun a successful plan job. The consumer must
+    # therefore reuse the candidate-and-run-bound plan while evidence remains
+    # attempt-specific. A whole-workflow rerun replaces the same plan name.
     assert "for poll in $(seq 1 60); do" in workflow
     assert "sleep 2" in workflow
     assert "${#matches[@]} == 1" in workflow
     assert "${#matches[@]} > 1" in workflow
-    assert "Timed out waiting for current-attempt certification plan artifact" in workflow
-    assert "overwrite: true" not in workflow
+    assert "Timed out waiting for certification plan artifact for this run" in workflow
+    assert "overwrite: true" in workflow
+    assert "PLAN_ARTIFACT_NAME:" in workflow
+    assert "PLAN_ARTIFACT_NAME: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}" not in workflow

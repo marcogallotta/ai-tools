@@ -119,10 +119,10 @@ def test_workflow_status_targets_exact_actions_run_and_selected_runner_only():
     assert "steps.prepare.outputs.candidate_sha" in workflow
     assert "needs.plan.outputs.candidate_sha" in workflow
     assert "required_groups" not in workflow  # execution spec, not duplicated YAML lane authority
-    assert "pr-certification-plan-${{ steps.prepare.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
-    assert "pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
+    assert "pr-certification-plan-${{ steps.prepare.outputs.candidate_sha }}-${{ github.run_id }}" in workflow
+    assert "pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}" in workflow
     assert "pr-certification-evidence-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
-    assert "overwrite: true" not in workflow
+    assert workflow.count("overwrite: true") == 1
     assert "if: needs.plan.outputs.run_certification == 'true'" in workflow
 
 
