@@ -17,6 +17,10 @@ Every other Dish-prefixed Asana project follows the shared, project-agnostic
 Development Workflow contract above, and a project absent from its registry gets zero governed V2
 mutation.
 
+After either project-mode contract authorizes a V2 field mutation, apply the shared
+[`structured task-field lifecycle`](structured-task-fields.md) for `Code Area`, `Agent owner`,
+`Version`, and `Has Headline`. Those fields are projections and do not compose new role authority.
+
 All roles also apply the shared [`Dish operator / orchestration control plane`](../../../OPERATOR_CONTROL_PLANE.md) for presentation mechanics. Coordinator and Development Workflow additionally apply its action-specific queue/handoff/decision/triage sections; that shared file is a decomposition aid, not role composition or a new authority layer.
 
 | Role / common names | Standing contract |

@@ -15,6 +15,7 @@ This document identifies authoritative facts and derived state. Detailed transit
 | Repository source/history and branch/PR head | GitHub | local refs, bundles, dispatcher views |
 | Formal PR Review and CI/check evidence | GitHub records bound to exact head | Integration gate, status projection |
 | Accepted design, task decisions, lifecycle section, and dependencies | Live owning Asana task/project | handoffs and PR context |
+| Structured task fields (`Code Area`, `Agent owner`, `Version`, `Has Headline`) | Their underlying current scope, role, generation, or exact human-intent evidence | Asana field values |
 | Role authority and process invariants | Current repository contracts | Project kernels and handoffs |
 | Actual TEST/PROD state | Direct runtime/environment evidence | Asana status summaries |
 | Local Implementation ownership | Repository worktree claim for the exact lineage | identity files and PR leases |
@@ -25,6 +26,11 @@ This document identifies authoritative facts and derived state. Detailed transit
 ## Invariants
 
 - A projection never silently overrides its owning authority.
+- Blank structured fields can truthfully mean raw, unassessed, legacy, or not-yet-adopted state;
+  they are reconciled at natural lifecycle checkpoints rather than through a blanket metadata gate.
+- `Has Headline: Yes - approved` projects recoverable exact words plus explicit Marco approval. It
+  is sticky until a new explicit durable Marco decision replaces it; the field cannot mint or
+  rewrite human intent.
 - Branch names and PR numbers are insufficient when the contract requires an exact head or lineage.
 - Authenticated account metadata does not prove Marco personally decided or authored an action.
 - Mutable current task state does not retroactively redefine an already-dispatched exact design or PR candidate without explicit lineage movement.
@@ -35,6 +41,7 @@ This document identifies authoritative facts and derived state. Detailed transit
 
 - [`../../agents/operator-provenance.md`](../../agents/operator-provenance.md)
 - [`../../agents/development-workflow-asana-mode.md`](../../agents/development-workflow-asana-mode.md)
+- [`../../agents/structured-task-fields.md`](../../agents/structured-task-fields.md)
 - [`../../../../scripts/pr_lifecycle.py`](../../../../scripts/pr_lifecycle.py)
 - [`../../../../tools/agent-worktree`](../../../../tools/agent-worktree)
 

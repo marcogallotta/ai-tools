@@ -143,11 +143,9 @@ structured mutation.
 
 - **Priority** comes only from explicit Marco/durable priority authority or an approved
   deterministic rule. Otherwise use `UNSET`; severity words do not imply priority.
-- **Code Area** is coarse routing/parallelism context derived from the actual work surface. It is
-  not conflict proof or mutation authority.
-- **Version** is populated only when durable evidence explicitly identifies this task's own
-  version/generation. Context such as `Review V2` or `Integration V1` is not a field value and
-  Version never determines readiness.
+- **Code Area**, **Agent owner**, **Version**, and **Has Headline** follow the shared
+  [`structured task-field lifecycle`](structured-task-fields.md). Freshly read it before changing
+  one of those fields. Their values project durable authority and never create it.
 
 Coordinator/Development Workflow own semantic cross-workstream triage, dedupe, consolidation,
 reconciliation, and routing. Finding producers normally create raw findings in Needs Processing
