@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
-from typing import Mapping
+from typing import Callable, Mapping
 
 
 TASK_GID_RE = re.compile(r"(?<!\d)\d{16}(?!\d)")
@@ -78,7 +78,7 @@ def prepare_handoff_presentation(
     host: HandoffHost,
     manual_relay_required: bool,
     reconstructable_locator: str | None = None,
-    chatgpt_artifact_locator: str | None = None,
+    chatgpt_artifact_writer: Callable[[str], str] | None = None,
     temp_directory: Path = Path("/tmp"),
 ) -> HandoffPresentation:
     """Render one complete manual relay without changing handoff authority.
@@ -96,30 +96,33 @@ def prepare_handoff_presentation(
             "no manual relay is required",
         )
 
+    content = payload
     if reconstructable_locator is not None:
         locator = reconstructable_locator.strip()
         if not locator:
             raise ValueError("reconstructable locator must not be blank")
-        return HandoffPresentation(
-            HandoffPresentationKind.INLINE,
-            _copy_block(locator),
-            "receiver can reconstruct current context from the locator",
-        )
+        content = locator if not payload else f"{locator}\n{payload}"
 
     inline = (
-        _nonempty_line_count(payload) <= INLINE_MAX_NONEMPTY_LINES
-        and len(payload) <= INLINE_MAX_CHARS
+        _nonempty_line_count(content) <= INLINE_MAX_NONEMPTY_LINES
+        and len(content) <= INLINE_MAX_CHARS
     )
     if inline:
         return HandoffPresentation(
             HandoffPresentationKind.INLINE,
-            _copy_block(payload),
-            "non-reconstructable payload fits both inline limits",
+            _copy_block(content),
+            "complete locator and non-reconstructable payload fit both inline limits",
         )
 
     if host is HandoffHost.CHATGPT:
-        if chatgpt_artifact_locator and chatgpt_artifact_locator.strip():
-            locator = chatgpt_artifact_locator.strip()
+        if chatgpt_artifact_writer is not None:
+            locator = chatgpt_artifact_writer(content).strip()
+            if not locator:
+                return HandoffPresentation(
+                    HandoffPresentationKind.BLOCKED,
+                    None,
+                    "ChatGPT artifact transfer did not return a usable locator",
+                )
             return HandoffPresentation(
                 HandoffPresentationKind.CHATGPT_ARTIFACT,
                 _copy_block(locator),
@@ -139,7 +142,7 @@ def prepare_handoff_presentation(
     try:
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
-            stream.write(payload)
+            stream.write(content)
     except BaseException:
         path.unlink(missing_ok=True)
         raise
