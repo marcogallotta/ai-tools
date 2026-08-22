@@ -1,6 +1,7 @@
 """Typed required-CI recovery for the lifecycle controller."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
 import urllib.parse
@@ -8,8 +9,9 @@ from typing import Any, Mapping
 
 from pr_lifecycle_support import LifecycleError, LifecycleState
 from pr_lifecycle_helpers import parse_external_dependency
+from pr_lifecycle_task_state import apply_transition, task_snapshot
 import pr_gate
-from ci_failure_fingerprint import FingerprintError, validate_fingerprint
+from ci_failure_fingerprint import CausalIdentity, FingerprintError, validate_cause
 
 INFRA_RETRY_MARKER = "dish-infrastructure-retry:v1"
 BASELINE_OWNER_MARKER = "dish-current-main-corrective-owner:v1"
@@ -111,13 +113,149 @@ def _marker_for_owner(fingerprint: str) -> str:
     return f"<!-- {BASELINE_OWNER_MARKER} key={key} fingerprint={fingerprint} -->"
 
 
-def _occurrence_marker(
-    *, fingerprint: str, current: Any, main_sha: str, check: str, run_id: int | None
-) -> str:
+@dataclass(frozen=True)
+class CorrectiveOccurrence:
+    source: str
+    classification: str
+    main_sha: str
+    check: str
+    evidence: str
+    run_id: str
+    pr_number: int | None = None
+    head_sha: str | None = None
+
+
+def _occurrence_marker(*, fingerprint: str, occurrence: CorrectiveOccurrence) -> str:
     return (
-        f"<!-- {BASELINE_OCCURRENCE_MARKER} fingerprint={fingerprint} source=pr "
-        f"pr={current.number} head={current.head.lower()} main={main_sha} "
-        f"run={run_id or 'unknown'} check={urllib.parse.quote(check, safe='')} -->"
+        f"<!-- {BASELINE_OCCURRENCE_MARKER} fingerprint={fingerprint} "
+        f"source={urllib.parse.quote(occurrence.source, safe='')} "
+        f"pr={occurrence.pr_number or 'none'} head={occurrence.head_sha or 'none'} "
+        f"main={occurrence.main_sha} run={urllib.parse.quote(occurrence.run_id, safe='')} "
+        f"check={urllib.parse.quote(occurrence.check, safe='')} -->"
+    )
+
+
+def _ready_section(asana: Any, project_gid: str) -> str:
+    sections = asana.get_project_sections(project_gid)
+    matches = [str(item.get("gid") or "") for item in sections if item.get("name") == "Ready"]
+    if len(matches) != 1 or not matches[0]:
+        raise LifecycleError("corrective owner project must have exactly one Ready section")
+    return matches[0]
+
+
+def ensure_corrective_owner(
+    asana: Any,
+    *,
+    project_gid: str,
+    cause: CausalIdentity,
+    occurrence: CorrectiveOccurrence,
+) -> dict[str, Any]:
+    marker = _marker_for_owner(cause.fingerprint)
+    owner = asana.find_task_by_marker(project_gid, BASELINE_OWNER_MARKER, marker)
+    if owner is None:
+        owner = asana.create_task(
+            project_gid,
+            name=f"P0 — CURRENT MAIN CORRECTIVE OWNER — {occurrence.check}",
+            notes=(
+                f"OWNER: Implementation\nSTATE: BASELINE CORRECTIVE OWNER\n"
+                f"FIRST AFFECTED SHA: {occurrence.main_sha}\nCHECK: {occurrence.check}\n\n"
+                f"CAUSAL FINGERPRINT: {cause.fingerprint}\n{marker}\n"
+                f"CAUSAL IDENTITY: {cause.json()}\nFirst evidence: {occurrence.evidence}\n"
+                "This task deduplicates every occurrence of the same normalized defect; run and "
+                "commit identities remain attached occurrence evidence."
+            ),
+        )
+    owner_gid = str(owner.get("gid") or "")
+    if not owner_gid:
+        raise LifecycleError("baseline corrective owner creation/readback lacks task GID")
+
+    ready_section = _ready_section(asana, project_gid)
+    owner = asana.get_task(owner_gid)
+    snapshot = task_snapshot(owner)
+    in_ready = any(
+        membership["project"] == project_gid and membership["section"] == ready_section
+        for membership in snapshot["memberships"]
+    )
+    if owner.get("completed") is True or not in_ready:
+        apply_transition(
+            asana,
+            owner_gid,
+            expected=snapshot,
+            desired={"completed": False, "section": ready_section},
+            kind="baseline-corrective-owner-actionable",
+        )
+    owner = asana.get_task(owner_gid)
+    verified = task_snapshot(owner)
+    if owner.get("completed") is True or not any(
+        membership["project"] == project_gid and membership["section"] == ready_section
+        for membership in verified["memberships"]
+    ):
+        raise LifecycleError("baseline corrective owner actionable-state readback failed")
+
+    occurrence_marker = _occurrence_marker(
+        fingerprint=cause.fingerprint, occurrence=occurrence
+    )
+    stories = asana.get_stories(owner_gid)
+    if not any(occurrence_marker in str(story.get("text") or "") for story in stories):
+        asana.add_comment(
+            owner_gid,
+            occurrence_marker
+            + f"\nCURRENT AFFECTED SHA: {occurrence.main_sha}\n"
+            + f"CLASSIFICATION: {occurrence.classification}\n"
+            + f"EVIDENCE: {occurrence.evidence}\nREPAIR OWNER: Implementation",
+        )
+        if not any(
+            occurrence_marker in str(story.get("text") or "")
+            for story in asana.get_stories(owner_gid)
+        ):
+            raise LifecycleError("baseline corrective occurrence readback failed")
+    return owner
+
+
+def ensure_scheduled_baseline_owner(
+    asana: Any, *, project_gid: str, evidence: Mapping[str, Any], triage: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Route one already-classified scheduled/manual baseline failure to the shared owner."""
+    if evidence.get("schema") != "dish-full-regression-v1":
+        raise LifecycleError("scheduled route requires full-regression v1 evidence")
+    if triage.get("schema") != "dish-full-regression-triage-v1":
+        raise LifecycleError("scheduled route requires full-regression triage v1")
+    if str(triage.get("full_regression_run_id") or "") != str(evidence.get("run_id") or ""):
+        raise LifecycleError("scheduled triage run does not match evidence")
+    if str(triage.get("main_sha") or "").lower() != str(evidence.get("main_sha") or "").lower():
+        raise LifecycleError("scheduled triage main SHA does not match evidence")
+    if triage.get("classification") != "unrelated baseline":
+        return None
+    failure_id = str(triage.get("failure_id") or "")
+    failure = next(
+        (item for item in evidence.get("failures", []) if item.get("failure_id") == failure_id),
+        None,
+    )
+    if not isinstance(failure, Mapping):
+        raise LifecycleError("scheduled triage does not reference exact failure evidence")
+    try:
+        cause = validate_cause(
+            fingerprint=str(triage.get("causal_fingerprint") or ""),
+            identity=failure.get("causal_identity") if isinstance(failure.get("causal_identity"), Mapping) else {},
+        )
+    except FingerprintError as exc:
+        raise LifecycleError(f"scheduled baseline causal identity is ambiguous: {exc}") from exc
+    main_sha = str(evidence.get("main_sha") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", main_sha):
+        raise LifecycleError("scheduled baseline evidence lacks exact main SHA")
+    event = str(evidence.get("event") or "")
+    source = "scheduled" if event == "schedule" else "manual"
+    occurrence = CorrectiveOccurrence(
+        source=source,
+        classification="UNRELATED_BASELINE",
+        main_sha=main_sha,
+        check=str(failure.get("component") or "full-regression"),
+        evidence=str(triage.get("analysis") or "classified full-regression baseline failure"),
+        run_id=str(evidence.get("run_id") or ""),
+        head_sha=main_sha,
+    )
+    return ensure_corrective_owner(
+        asana, project_gid=project_gid, cause=cause, occurrence=occurrence
     )
 
 
@@ -140,14 +278,18 @@ def ensure_baseline_owner(engine: Any, current: Any) -> Any:
     check = _check_identity(current)
     evidence = str(gate.get("failure_ownership_evidence") or "proven current-main failure")
     try:
-        fingerprint = validate_fingerprint(str(gate.get("failure_causal_fingerprint") or ""))
+        cause = validate_cause(
+            fingerprint=str(gate.get("failure_causal_fingerprint") or ""),
+            identity=gate.get("failure_causal_identity")
+            if isinstance(gate.get("failure_causal_identity"), Mapping)
+            else {},
+        )
     except FingerprintError:
         current.residual_reason = (
             "Current-main ownership lacks a strong causal fingerprint; corrective owner creation "
             "fails closed as ambiguous."
         )
         return current
-    marker = _marker_for_owner(fingerprint)
 
     project_ids: list[str] = []
     for task in current.asana:
@@ -160,45 +302,26 @@ def ensure_baseline_owner(engine: Any, current: Any) -> Any:
         current.residual_reason = "Current-main failure owner cannot be placed because no owning task project is available."
         return current
     project_gid = project_ids[0]
-    owner = engine.asana.find_task_by_marker(project_gid, BASELINE_OWNER_MARKER, marker)
-    if owner is None:
-        owner = engine.asana.create_task(
-            project_gid,
-            name=f"P0 — CURRENT MAIN CORRECTIVE OWNER — {check}",
-            notes=(
-                f"OWNER: Implementation\nSTATE: BASELINE CORRECTIVE OWNER\nMAIN SHA: {main_sha}\nCHECK: {check}\n\n"
-                f"CAUSAL FINGERPRINT: {fingerprint}\n{marker}\nFirst evidence: {evidence}\n"
-                "This task deduplicates every occurrence of the same normalized defect; run and "
-                "commit identities remain attached occurrence evidence."
-            ),
-        )
-    owner_gid = str(owner.get("gid") or "")
-    if not owner_gid:
-        raise LifecycleError("baseline corrective owner creation/readback lacks task GID")
-    if owner.get("completed") is True:
-        owner = engine.asana.update_projection_fields(owner_gid, {"completed": False})
-
-    occurrence = _occurrence_marker(
-        fingerprint=fingerprint,
-        current=current,
+    occurrence = CorrectiveOccurrence(
+        source="pr",
+        classification="PROVEN_CURRENT_MAIN",
         main_sha=main_sha,
         check=check,
-        run_id=_run_id(current),
+        evidence=evidence,
+        run_id=str(_run_id(current) or "unknown"),
+        pr_number=current.number,
+        head_sha=current.head.lower(),
     )
-    stories = engine.asana.get_stories(owner_gid)
-    if not any(occurrence in str(story.get("text") or "") for story in stories):
-        engine.asana.add_comment(
-            owner_gid,
-            occurrence
-            + f"\nCURRENT AFFECTED SHA: {main_sha}\nCLASSIFICATION: PROVEN_CURRENT_MAIN\n"
-            + f"EVIDENCE: {evidence}\nREPAIR OWNER: Implementation",
-        )
+    owner = ensure_corrective_owner(
+        engine.asana, project_gid=project_gid, cause=cause, occurrence=occurrence
+    )
+    owner_gid = str(owner["gid"])
 
     encoded_check = urllib.parse.quote(check, safe="")
     encoded_evidence = urllib.parse.quote(evidence, safe="")
     dependency_marker = (
         f"<!-- {EXTERNAL_DEPENDENCY_MARKER} action=blocked task={owner_gid} check={encoded_check} "
-        f"main={main_sha} fingerprint={fingerprint} evidence={encoded_evidence} "
+        f"main={main_sha} fingerprint={cause.fingerprint} evidence={encoded_evidence} "
         f"reason={urllib.parse.quote('proven current-main failure', safe='')} -->"
     )
     existing = parse_external_dependency(engine.github.get_comments(current.number))

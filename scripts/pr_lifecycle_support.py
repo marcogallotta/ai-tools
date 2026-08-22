@@ -216,6 +216,7 @@ class AsanaBackend(Protocol):
     def get_stories(self, gid: str) -> list[dict[str, Any]]: ...
     def add_comment(self, gid: str, text: str) -> dict[str, Any]: ...
     def list_project_tasks(self, project_gid: str) -> list[dict[str, Any]]: ...
+    def get_project_sections(self, project_gid: str) -> list[dict[str, Any]]: ...
     def create_task(self, project_gid: str, *, name: str, notes: str) -> dict[str, Any]: ...
     def find_task_by_marker(self, project_gid: str, marker_name: str, exact_marker: str) -> dict[str, Any] | None: ...
     def update_projection_fields(self, gid: str, fields: Mapping[str, Any]) -> dict[str, Any]: ...
@@ -691,6 +692,33 @@ class AsanaREST:
                 raise LifecycleError(f"Asana project {project_gid} tasks pagination repeated offset")
             seen.add(offset)
         raise LifecycleError(f"Asana project {project_gid} tasks pagination exceeded bound")
+
+    def get_project_sections(self, project_gid: str) -> list[dict[str, Any]]:
+        offset: str | None = None
+        values: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for _ in range(100):
+            params = {"opt_fields": "gid,name", "limit": 100}
+            if offset:
+                params["offset"] = offset
+            _, _, payload = self.http.request(
+                "GET",
+                f"{self.api_root}/projects/{project_gid}/sections?{urlparse.urlencode(params)}",
+                headers=self.headers,
+            )
+            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                raise LifecycleError(f"Asana project {project_gid} sections response was not a list")
+            values.extend(dict(item) for item in payload["data"] if isinstance(item, dict))
+            next_page = payload.get("next_page")
+            if next_page is None:
+                return values
+            if not isinstance(next_page, dict) or not next_page.get("offset"):
+                raise LifecycleError(f"Asana project {project_gid} sections pagination is malformed")
+            offset = str(next_page["offset"])
+            if offset in seen:
+                raise LifecycleError(f"Asana project {project_gid} sections pagination repeated offset")
+            seen.add(offset)
+        raise LifecycleError(f"Asana project {project_gid} sections pagination exceeded bound")
 
     def create_task(self, project_gid: str, *, name: str, notes: str) -> dict[str, Any]:
         _, _, value = self.http.request(

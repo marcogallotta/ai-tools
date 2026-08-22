@@ -13,12 +13,13 @@ sys.path.insert(0, str(SCRIPTS))
 
 from ci_failure_fingerprint import causal_fingerprint
 from pr_lifecycle_ci_recovery import (
+    ensure_scheduled_baseline_owner,
     recover_failed_ci,
     BASELINE_OCCURRENCE_MARKER,
     BASELINE_OWNER_MARKER,
 )
 from pr_lifecycle_projection import atomic_write, build_projection, read_projection
-from pr_lifecycle_support import LifecycleError, LifecycleState, PRLifecycle
+from pr_lifecycle_support import AsanaREST, LifecycleError, LifecycleState, PRLifecycle
 from pr_lifecycle_task_state import apply_transition, execution_truth, task_snapshot
 import pr_lifecycle_controller as controller
 import pr_gate
@@ -54,7 +55,9 @@ class FakeAsana:
         return self.get_task(gid)
     def move_task_to_section(self, gid, section_gid):
         self.moves.append((gid, section_gid))
-        self.tasks[gid]["memberships"] = [{"project":{"gid":"p"},"section":{"gid":section_gid}}]
+        project = self.tasks[gid]["memberships"][0]["project"]["gid"]
+        self.tasks[gid]["memberships"] = [{"project":{"gid":project},"section":{"gid":section_gid}}]
+    def get_project_sections(self, project_gid): return [{"gid":"ready","name":"Ready"},{"gid":"done","name":"Done"}]
     def list_project_tasks(self, project_gid): return [self.get_task(gid) for gid in self.project_tasks.get(project_gid, [])]
     def create_task(self, project_gid, *, name, notes):
         gid = str(1217561810889999 + len(self.tasks))
@@ -75,12 +78,12 @@ class FakeEngine:
     def inspect(self, raw): return self.current
 
 
-FINGERPRINT = causal_fingerprint(
+FINGERPRINT, CAUSAL_IDENTITY = causal_fingerprint(
     owner_surface="python-control-plane",
     failure_surface="pytest",
     invariant="tests/test_policy.py::test_owner",
     signature="test_failure",
-)[0]
+)
 
 
 def lifecycle(
@@ -96,6 +99,7 @@ def lifecycle(
     }
     if fingerprint is not None:
         gate["failure_causal_fingerprint"] = fingerprint
+        gate["failure_causal_identity"] = CAUSAL_IDENTITY
     if main_sha: gate["failure_main_sha"]=main_sha
     return PRLifecycle(number=8,url="u",title="t",head="a"*40,branch="b",base="main",draft=False,
         state=LifecycleState.REVIEW_PASSED,state_label="review",task_ids=["1217561810880370"],gate=gate)
@@ -178,11 +182,66 @@ def test_distinct_cause_creates_distinct_owner_and_missing_fingerprint_fails_clo
     recover_failed_ci(FakeEngine(first, asana=asana), first)
     other=causal_fingerprint(owner_surface="python-control-plane", failure_surface="pytest", invariant="tests/test_policy.py::test_other", signature="test_failure")[0]
     second=lifecycle("PROVEN_CURRENT_MAIN", main_sha="b"*40, fingerprint=other); second.asana=[task]
+    second.gate["failure_causal_identity"] = causal_fingerprint(owner_surface="python-control-plane", failure_surface="pytest", invariant="tests/test_policy.py::test_other", signature="test_failure")[1]
     recover_failed_ci(FakeEngine(second, asana=asana), second)
     assert len([t for t in asana.tasks.values() if BASELINE_OWNER_MARKER in t.get("notes","")])==2
     ambiguous=lifecycle("PROVEN_CURRENT_MAIN", main_sha="b"*40, fingerprint=None); ambiguous.asana=[task]
     assert recover_failed_ci(FakeEngine(ambiguous, asana=asana), ambiguous) is ambiguous
     assert "fails closed as ambiguous" in ambiguous.residual_reason
+
+
+def test_scheduled_and_pr_occurrences_converge_on_one_verified_owner():
+    asana=FakeAsana()
+    task={"gid":"1217561810880370","name":"stage2","notes":"","completed":False,"modified_at":"t","memberships":[{"project":{"gid":"proj"},"section":{"gid":"ready"}}],"dependencies":[]}
+    asana.tasks[task["gid"]]=task; asana.project_tasks["proj"]=[task["gid"]]
+    evidence={
+        "schema":"dish-full-regression-v1","main_sha":"b"*40,"run_id":"nightly-10","event":"schedule",
+        "failures":[{"failure_id":"failure-1","component":"python-control-plane","causal_fingerprint":FINGERPRINT,"causal_identity":CAUSAL_IDENTITY}],
+    }
+    triage={"schema":"dish-full-regression-triage-v1","full_regression_run_id":"nightly-10","main_sha":"b"*40,"failure_id":"failure-1","classification":"unrelated baseline","causal_fingerprint":FINGERPRINT,"analysis":"reproduced on current main"}
+    ensure_scheduled_baseline_owner(asana, project_gid="proj", evidence=evidence, triage=triage)
+    current=lifecycle("PROVEN_CURRENT_MAIN", main_sha="c"*40, run_id=200); current.asana=[task]
+    recover_failed_ci(FakeEngine(current, asana=asana), current)
+    owners=[value for value in asana.tasks.values() if BASELINE_OWNER_MARKER in value.get("notes","")]
+    assert len(owners)==1
+    stories=asana.stories[owners[0]["gid"]]
+    assert any("source=scheduled" in story["text"] for story in stories)
+    assert any("source=pr" in story["text"] for story in stories)
+    assert any("CLASSIFICATION: UNRELATED_BASELINE" in story["text"] for story in stories)
+    assert any("CLASSIFICATION: PROVEN_CURRENT_MAIN" in story["text"] for story in stories)
+
+
+def test_completed_owner_reopen_fails_on_section_readback_ambiguity():
+    class StalePlacementAsana(FakeAsana):
+        def create_task(self, project_gid, *, name, notes):
+            created=super().create_task(project_gid, name=name, notes=notes)
+            self.tasks[created["gid"]]["memberships"][0]["section"]["gid"]="done"
+            return self.get_task(created["gid"])
+        def move_task_to_section(self, gid, section_gid):
+            self.moves.append((gid, section_gid))
+
+    asana=StalePlacementAsana()
+    task={"gid":"1217561810880370","name":"stage2","notes":"","completed":False,"modified_at":"t","memberships":[{"project":{"gid":"proj"},"section":{"gid":"ready"}}],"dependencies":[]}
+    asana.tasks[task["gid"]]=task; asana.project_tasks["proj"]=[task["gid"]]
+    current=lifecycle("PROVEN_CURRENT_MAIN", main_sha="b"*40); current.asana=[task]
+    with pytest.raises(LifecycleError, match="section readback mismatch"):
+        recover_failed_ci(FakeEngine(current, asana=asana), current)
+
+
+def test_asana_adapter_reads_all_project_sections_for_actionable_placement():
+    class SectionHTTP:
+        def __init__(self): self.calls=[]
+        def request(self, method, url, *, headers=None, body=None):
+            self.calls.append(url)
+            if "offset=next" in url:
+                return 200, {}, {"data":[{"gid":"ready","name":"Ready"}],"next_page":None}
+            return 200, {}, {"data":[{"gid":"done","name":"Done"}],"next_page":{"offset":"next"}}
+
+    http=SectionHTTP()
+    assert AsanaREST("token", http=http).get_project_sections("proj") == [
+        {"gid":"done","name":"Done"},{"gid":"ready","name":"Ready"}
+    ]
+    assert len(http.calls)==2
 
 
 def test_task_transition_exact_precondition_idempotent_and_readback():

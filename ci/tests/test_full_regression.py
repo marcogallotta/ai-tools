@@ -162,25 +162,49 @@ def test_evidence_records_exact_range_all_lanes_failure_and_timing(tmp_path: Pat
     assert required[0].startswith("lane:browser-acceptance:lane-command:")
     assert evidence["lane_results"]["browser-acceptance"]["failure_ids"] == required
     failure = evidence["failures"][0]
-    assert failure["causal_fingerprint"].startswith("ci-cause-v1:")
-    assert failure["causal_identity"]["owner_surface"] == "browser-acceptance"
+    assert failure["causal_fingerprint"] is None
+    assert failure["causal_identity"] is None
 
 
 def test_causal_fingerprint_ignores_occurrence_sha_and_separates_distinct_causes(tmp_path: Path):
     first = fr.record_failure(
         output_dir=tmp_path / "first", kind="lane", component="python-control-plane",
         source="pytest", invariant="tests/test_policy.py::test_owner", failure_kind="test_failure",
+        detail="expected 5 got 8; run id 40",
     )
     repeated = fr.record_failure(
         output_dir=tmp_path / "repeated", kind="lane", component="python-control-plane",
         source="pytest", invariant="tests/test_policy.py::test_owner", failure_kind="test_failure",
+        detail="expected 5 got 8; run id 41",
     )
     distinct = fr.record_failure(
         output_dir=tmp_path / "distinct", kind="lane", component="python-control-plane",
-        source="pytest", invariant="tests/test_policy.py::test_other", failure_kind="test_failure",
+        source="pytest", invariant="tests/test_policy.py::test_owner", failure_kind="test_failure",
+        detail="database connection refused",
     )
     assert first["causal_fingerprint"] == repeated["causal_fingerprint"]
     assert first["causal_fingerprint"] != distinct["causal_fingerprint"]
+
+
+def test_weak_fallback_evidence_requires_ambiguous_triage(tmp_path: Path):
+    _state(tmp_path)
+    _lanes(tmp_path, failed="browser-acceptance")
+    evidence = fr.finalize_run(output_dir=tmp_path, evidence_path=tmp_path / "evidence.json")
+    failure = evidence["failures"][0]
+    assert failure["causal_fingerprint"] is None
+    record = {
+        "schema": fr.TRIAGE_SCHEMA,
+        "full_regression_run_id": "42",
+        "main_sha": SHA,
+        "failure_id": failure["failure_id"],
+        "causal_fingerprint": None,
+        "classification": "unrelated baseline",
+        "analysis": "coarse fallback only",
+    }
+    with pytest.raises(fr.ContractError, match="must remain ambiguous"):
+        fr.validate_triage_record(record, evidence)
+    record["classification"] = "ambiguous"
+    fr.validate_triage_record(record, evidence)
 
 
 def test_missing_required_lane_fails_closed(tmp_path: Path):

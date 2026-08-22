@@ -76,20 +76,27 @@
           "failure_kind": {"type": "string", "minLength": 1},
           "detail": {"type": ["string", "null"]},
           "causal_fingerprint": {
-            "type": "string",
-            "pattern": "^ci-cause-v1:[0-9a-f]{32}$"
+            "oneOf": [
+              {"type": "null"},
+              {"type": "string", "pattern": "^ci-cause-v1:[0-9a-f]{32}$"}
+            ]
           },
           "causal_identity": {
-            "type": "object",
-            "required": ["schema", "owner_surface", "failure_surface", "invariant", "signature"],
-            "additionalProperties": false,
-            "properties": {
-              "schema": {"const": "dish-ci-causal-fingerprint-v1"},
-              "owner_surface": {"type": "string", "minLength": 1},
-              "failure_surface": {"type": "string", "minLength": 1},
-              "invariant": {"type": "string", "minLength": 1},
-              "signature": {"type": "string", "minLength": 1}
-            }
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "required": ["schema", "owner_surface", "failure_surface", "invariant", "signature"],
+                "additionalProperties": false,
+                "properties": {
+                  "schema": {"const": "dish-ci-causal-fingerprint-v1"},
+                  "owner_surface": {"type": "string", "minLength": 1},
+                  "failure_surface": {"type": "string", "minLength": 1},
+                  "invariant": {"type": "string", "minLength": 1},
+                  "signature": {"type": "string", "minLength": 1}
+                }
+              }
+            ]
           }
         }
       }

@@ -388,6 +388,7 @@ class LifecycleInspectMixin:
             owned_gate["failure_ownership_evidence"] = ownership["evidence"]
             if ownership.get("causal_fingerprint"):
                 owned_gate["failure_causal_fingerprint"] = ownership["causal_fingerprint"]
+                owned_gate["failure_causal_identity"] = ownership["causal_identity"]
             classification = ownership["classification"]
             owned_gate["reconciliation_kind"] = {
                 "PR_OWNED": "pr-owned-fix",

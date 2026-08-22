@@ -18,11 +18,13 @@
     "main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "failure_id": {"type": "string", "minLength": 1},
     "causal_fingerprint": {
-      "type": "string",
-      "pattern": "^ci-cause-v1:[0-9a-f]{32}$"
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^ci-cause-v1:[0-9a-f]{32}$"}
+      ]
     },
     "classification": {
-      "enum": ["related regression", "unrelated baseline", "environment-infrastructure"]
+      "enum": ["related regression", "unrelated baseline", "environment-infrastructure", "ambiguous"]
     },
     "analysis": {"type": "string", "minLength": 1},
     "responsible_change": {
