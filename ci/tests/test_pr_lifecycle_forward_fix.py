@@ -174,6 +174,27 @@ def test_same_cause_across_main_shas_reuses_owner_and_refreshes_occurrence():
     assert any("CURRENT AFFECTED SHA: " + "c"*40 in story["text"] for story in stories)
 
 
+def test_completed_owner_in_done_reopens_to_ready_once_and_replay_is_idempotent():
+    asana=FakeAsana()
+    task={"gid":"1217561810880370","name":"stage2","notes":"","completed":False,"modified_at":"t","memberships":[{"project":{"gid":"proj"},"section":{"gid":"ready"}}],"dependencies":[]}
+    asana.tasks[task["gid"]]=task; asana.project_tasks["proj"]=[task["gid"]]
+    current=lifecycle("PROVEN_CURRENT_MAIN", main_sha="b"*40); current.asana=[task]
+    recover_failed_ci(FakeEngine(current, asana=asana), current)
+    owner_gid=next(gid for gid, value in asana.tasks.items() if BASELINE_OWNER_MARKER in value.get("notes", ""))
+    asana.tasks[owner_gid]["completed"] = True
+    asana.tasks[owner_gid]["memberships"][0]["section"]["gid"] = "done"
+    replay=lifecycle("PROVEN_CURRENT_MAIN", main_sha="c"*40, run_id=124); replay.asana=[task]
+    engine=FakeEngine(replay, asana=asana)
+    recover_failed_ci(engine, replay)
+    assert asana.tasks[owner_gid]["completed"] is False
+    assert asana.tasks[owner_gid]["memberships"][0]["section"]["gid"] == "ready"
+    first_moves=list(asana.moves)
+    first_occurrences=len([story for story in asana.stories[owner_gid] if BASELINE_OCCURRENCE_MARKER in story["text"]])
+    recover_failed_ci(engine, replay)
+    assert asana.moves == first_moves
+    assert len([story for story in asana.stories[owner_gid] if BASELINE_OCCURRENCE_MARKER in story["text"]]) == first_occurrences
+
+
 def test_distinct_cause_creates_distinct_owner_and_missing_fingerprint_fails_closed():
     asana=FakeAsana()
     task={"gid":"1217561810880370","name":"stage2","notes":"","completed":False,"modified_at":"t","memberships":[{"project":{"gid":"proj"},"section":{"gid":"ready"}}],"dependencies":[]}

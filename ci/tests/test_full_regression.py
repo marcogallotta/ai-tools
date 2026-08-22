@@ -207,6 +207,20 @@ def test_weak_fallback_evidence_requires_ambiguous_triage(tmp_path: Path):
     fr.validate_triage_record(record, evidence)
 
 
+def test_named_failure_kind_without_material_detail_remains_ambiguous(tmp_path: Path):
+    failure = fr.record_failure(
+        output_dir=tmp_path,
+        kind="lane",
+        component="native-postgresql",
+        source="pytest",
+        invariant="tests/test_native.py::test_locking",
+        failure_kind="failed",
+        detail=None,
+    )
+    assert failure["causal_fingerprint"] is None
+    assert failure["causal_identity"] is None
+
+
 def test_missing_required_lane_fails_closed(tmp_path: Path):
     _state(tmp_path)
     for lane in fr.LANES[:-1]:
@@ -299,6 +313,7 @@ def test_triage_related_failure_must_match_evidence_lane_and_invariant(tmp_path:
     failure = fr.record_failure(
         output_dir=tmp_path, kind="lane", component="browser-acceptance",
         source="browser-harness", invariant="fixture board renders", failure_kind="assertion_failure",
+        detail="expected fixture board to render",
     )
     evidence = fr.finalize_run(output_dir=tmp_path, evidence_path=tmp_path / "evidence.json")
     record = _miss(

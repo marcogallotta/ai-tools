@@ -87,9 +87,10 @@ def cause_for_failure(
 ) -> CausalIdentity | None:
     """Return a strong cause, or None when only occurrence-level evidence exists."""
     kind = _normalize(failure_kind, "failure_kind")
-    if kind in WEAK_FAILURE_KINDS:
+    stable_detail = str(detail or "").strip()
+    if kind in WEAK_FAILURE_KINDS or not stable_detail:
         return None
-    signature = f"{kind}: {detail}" if detail and str(detail).strip() else kind
+    signature = f"{kind}: {stable_detail}"
     return CausalIdentity.build(
         owner_surface=owner_surface,
         failure_surface=failure_surface,
