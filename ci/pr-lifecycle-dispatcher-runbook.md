@@ -255,6 +255,8 @@ INSTALLED HOST CERTIFICATE
 
 `scripts/installed_host_cert.py` defines the changed-surface classifier, canonical digest, certificate schema, and parser. The certificate binds the exact candidate/task/branch/head, fresh launch/claim identity, full-window fence pre/final digests, installed host versions/binaries, effective config sources, active path targets/digests, actual installed-loader execution, harmless governed action, deliberate conflict denial, recovery/shell-trust/stale-reference regressions, and restoration/final-activation readback. Any head movement makes previous evidence ineligible. Only a structurally valid exact-head pass permits normal independent Review; it grants no Review or Integration authority.
 
+The local worker executes this boundary through the checked-in one-command surface documented in [`hook-certification.md`](hook-certification.md): `tools/dish-hook-certify --pr <n> --head <sha>`. The command owns host preflight, selected child launch, evidence collection, exact-byte/path validation, cleanup, durable certificate publication, and readback; the parent model does not reconstruct those mechanics from old PR transcripts.
+
 ## Worker execution profile
 
 Worker is one execution host/profile, never a union semantic role. Every trigger binds one exact standing role, one phase, and exact durable task/PR/head/design context. The Worker loads that role contract and cannot self-select or compose another specialist authority.

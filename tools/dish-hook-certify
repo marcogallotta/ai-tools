@@ -1,0 +1,1218 @@
+#!/usr/bin/env python3
+"""One-command exact-head Dish hook certification for Claude Code and Codex."""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import fcntl
+import hashlib
+import json
+import os
+import pty
+import re
+import selectors
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import installed_host_cert as cert  # noqa: E402
+
+REPOSITORY = "marcogallotta/ai-tools"
+STATE_ROOT = Path.home() / ".local" / "state" / "dish" / "hook-certification"
+TASK_RE = re.compile(r"(?<!\d)(\d{16})(?!\d)")
+ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+CLAIM_ENV = "DISH_AGENT_CLAIM_TOKEN"
+CLAIM_TASK_ENV = "DISH_AGENT_CLAIM_TASK"
+CLAIM_BRANCH_ENV = "DISH_AGENT_CLAIM_BRANCH"
+CLAIM_AGENT_ENV = "DISH_AGENT_CLAIM_AGENT"
+DEFAULT_PHASE_TIMEOUT = 180.0
+
+
+class HookCertifyError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class Candidate:
+    pr: int
+    branch: str
+    head: str
+    base: str
+    url: str
+    body: str
+    files: tuple[dict[str, Any], ...]
+    task: str
+
+
+@dataclass
+class HostRun:
+    host: str
+    version: str
+    binary: str
+    candidate_root: str
+    effective_config_sources: list[dict[str, Any]]
+    active_paths: list[dict[str, Any]]
+    loader_execution: dict[str, Any]
+    harmless_governed_action: str
+    deliberate_conflict: str
+    transcript: str
+
+    def certificate_json(self) -> dict[str, Any]:
+        return {
+            "host": self.host,
+            "version": self.version,
+            "binary": self.binary,
+            "candidate_root": self.candidate_root,
+            "effective_config_sources": self.effective_config_sources,
+            "active_paths": self.active_paths,
+            "loader_execution": self.loader_execution,
+            "harmless_governed_action": self.harmless_governed_action,
+            "deliberate_conflict": self.deliberate_conflict,
+        }
+
+
+def _run(
+    args: list[str],
+    *,
+    cwd: Path = REPO_ROOT,
+    env: Mapping[str, str] | None = None,
+    input_text: str | None = None,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        proc = subprocess.run(
+            args,
+            cwd=cwd,
+            env=dict(env) if env is not None else None,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise HookCertifyError(f"cannot execute {args[0]}: {exc}") from exc
+    if check and proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise HookCertifyError(f"command failed ({shlex.join(args)}): {detail or f'exit {proc.returncode}'}")
+    return proc
+
+
+def _git(*args: str, cwd: Path = REPO_ROOT) -> str:
+    return _run(["git", "-C", str(cwd), *args], cwd=cwd).stdout.strip()
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _json_command(args: list[str], *, cwd: Path = REPO_ROOT) -> Any:
+    proc = _run(args, cwd=cwd)
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise HookCertifyError(f"command returned invalid JSON ({shlex.join(args)}): {exc}") from exc
+
+
+def _gh_paginated_array(path: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        separator = "&" if "?" in path else "?"
+        value = _json_command(["gh", "api", f"{path}{separator}per_page=100&page={page}"])
+        if not isinstance(value, list):
+            raise HookCertifyError(f"GitHub response is not an array: {path}")
+        rows.extend(dict(item) for item in value if isinstance(item, dict))
+        if len(value) < 100:
+            return rows
+        page += 1
+
+
+def _current_candidate(pr_number: int, expected_head: str, task: str | None) -> Candidate:
+    info = _json_command(
+        [
+            "gh",
+            "pr",
+            "view",
+            str(pr_number),
+            "--repo",
+            REPOSITORY,
+            "--json",
+            "number,url,headRefName,headRefOid,baseRefName,body,state",
+        ]
+    )
+    if info.get("state") != "OPEN":
+        raise HookCertifyError(f"PR #{pr_number} is not open")
+    head = str(info.get("headRefOid") or "")
+    if head != expected_head:
+        raise HookCertifyError(f"PR head moved: expected {expected_head}, live head is {head or 'unknown'}")
+    if _git("rev-parse", "HEAD") != expected_head:
+        raise HookCertifyError("current worktree HEAD does not equal requested exact PR head")
+    branch = _git("branch", "--show-current")
+    if not branch or branch != str(info.get("headRefName") or ""):
+        raise HookCertifyError("current worktree branch does not equal live PR head branch")
+    if _git("status", "--porcelain"):
+        raise HookCertifyError("candidate worktree is dirty; certification requires an exact clean head")
+
+    files = _gh_paginated_array(f"repos/{REPOSITORY}/pulls/{pr_number}/files")
+    body = str(info.get("body") or "")
+    if task is None:
+        matches = sorted(set(TASK_RE.findall(body)))
+        if len(matches) != 1:
+            raise HookCertifyError(
+                "cannot infer exactly one owning Asana task from PR body; rerun with --task <gid>"
+            )
+        task = matches[0]
+    return Candidate(
+        pr=pr_number,
+        branch=branch,
+        head=head,
+        base=str(info.get("baseRefName") or ""),
+        url=str(info.get("url") or ""),
+        body=body,
+        files=tuple(dict(item) for item in files if isinstance(item, dict)),
+        task=task,
+    )
+
+
+def _assert_claim(candidate: Candidate) -> dict[str, Any]:
+    if not os.environ.get(CLAIM_ENV):
+        raise HookCertifyError(
+            "local Implementation ownership claim is missing; launch this command inside the dispatched "
+            "tools/agent-worktree claim --require-launch-provenance process"
+        )
+    if os.environ.get(CLAIM_TASK_ENV) != candidate.task:
+        raise HookCertifyError("local ownership claim task does not match candidate")
+    if os.environ.get(CLAIM_BRANCH_ENV) != candidate.branch:
+        raise HookCertifyError("local ownership claim branch does not match candidate")
+    agent_id = os.environ.get(CLAIM_AGENT_ENV) or ""
+    if not agent_id:
+        raise HookCertifyError("local ownership claim has no agent identity")
+    identity_path = Path.home() / ".local" / "state" / "dish" / "agents" / f"{agent_id}.json"
+    try:
+        identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HookCertifyError(f"cannot read claimed launch identity {identity_path}: {exc}") from exc
+    launch = identity.get("launch_provenance")
+    if not isinstance(launch, dict) or not launch.get("launch_id"):
+        raise HookCertifyError("claimed identity is not bound to fresh launch provenance")
+    active = identity.get("active_worktree")
+    if not isinstance(active, dict) or active.get("branch") != candidate.branch:
+        raise HookCertifyError("claimed identity active worktree does not match candidate branch")
+    return identity
+
+
+def _asana_snapshot(candidate: Candidate, identity: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
+    launcher = Path.home() / ".local" / "bin" / "asana"
+    if not launcher.is_file():
+        raise HookCertifyError(f"shared Asana launcher is missing: {launcher}")
+    task = _json_command(
+        [
+            str(launcher),
+            "raw",
+            "GET",
+            f"/tasks/{candidate.task}?opt_fields=gid,name,completed,modified_at,permalink_url,memberships.project.gid,memberships.project.name",
+        ]
+    )
+    if not isinstance(task, dict) or str(task.get("gid") or "") != candidate.task:
+        raise HookCertifyError("live Asana task readback does not match owning task")
+    project_gid = str(identity.get("owning_project_gid") or "")
+    if not project_gid:
+        memberships = task.get("memberships")
+        ids = []
+        if isinstance(memberships, list):
+            for membership in memberships:
+                if isinstance(membership, dict) and isinstance(membership.get("project"), dict):
+                    gid = membership["project"].get("gid")
+                    if gid:
+                        ids.append(str(gid))
+        if len(ids) != 1:
+            raise HookCertifyError("cannot resolve exactly one owning Asana project for certification identity")
+        project_gid = ids[0]
+    project = _json_command(
+        [
+            str(launcher),
+            "raw",
+            "GET",
+            f"/projects/{project_gid}?opt_fields=gid,name,modified_at,archived,current_status.title,current_status.text",
+        ]
+    )
+    return task, project if isinstance(project, dict) else None, project_gid
+
+
+def _pytest_python() -> str:
+    candidates = [
+        REPO_ROOT / "dish" / ".venv" / "bin" / "python",
+        REPO_ROOT / "tools" / ".venv" / "bin" / "python",
+    ]
+    for path in candidates:
+        if path.is_file() and os.access(path, os.X_OK):
+            probe = _run([str(path), "-c", "import pytest"], check=False)
+            if probe.returncode == 0:
+                return str(path)
+    python = shutil.which("python3")
+    if python and _run([python, "-c", "import pytest"], check=False).returncode == 0:
+        return python
+    raise HookCertifyError("Tier A/B require a Python environment with pytest")
+
+
+def _preflight_candidate_dependencies(requirement: cert.HostCertRequirement | None) -> None:
+    if requirement is None:
+        return
+    candidate = REPO_ROOT / "hooks" / "agent-reground"
+    if not candidate.exists():
+        return
+    text = candidate.read_text(encoding="utf-8")
+    if "tools/.venv/bin/python" in text:
+        required = REPO_ROOT / "tools" / ".venv" / "bin" / "python"
+        if not required.is_file():
+            raise HookCertifyError(
+                f"candidate hook references tools/.venv/bin/python but {required} is missing; "
+                "fix the candidate worktree prerequisite before launching Claude/Codex"
+            )
+
+
+
+def _preflight_tier_c(requirement: cert.HostCertRequirement | None) -> None:
+    if requirement is None:
+        return
+    if "codex" in requirement.hosts:
+        if not shutil.which("codex"):
+            raise HookCertifyError("Codex Tier C is required but installed `codex` is unavailable")
+        cert_home = STATE_ROOT / "codex-home"
+        if not (cert_home / "auth.json").is_file():
+            raise HookCertifyError(
+                f"Codex certificate auth is not initialized. One-time setup: CODEX_HOME={cert_home} codex"
+            )
+    if "claude" in requirement.hosts:
+        docker = shutil.which("docker")
+        if not docker:
+            raise HookCertifyError("Claude Tier C is required but Docker is unavailable")
+        setup = _claude_state()
+        image = str(setup["image"])
+        if _run([docker, "image", "inspect", image], check=False).returncode != 0:
+            raise HookCertifyError(f"configured Claude certificate image is unavailable: {image}")
+
+
+def _run_tiers_ab(run_dir: Path) -> dict[str, Any]:
+    python = _pytest_python()
+    tests = [
+        "hooks/tests/test_agent_reground.py",
+        "hooks/tests/test_protected_checkout.py",
+        "hooks/tests/test_codex_protected_checkout.py",
+        "hooks/tests/test_dish_operator_context.py",
+        "hooks/tests/test_claude_settings.py",
+        "ci/tests/test_pr_lifecycle_installed_host_continuation.py",
+    ]
+    tests = [path for path in tests if (REPO_ROOT / path).is_file()]
+    proc = _run([python, "-m", "pytest", "-q", *tests], check=False)
+    log = run_dir / "tiers-ab.log"
+    log.write_text(proc.stdout + proc.stderr, encoding="utf-8")
+    if proc.returncode != 0:
+        raise HookCertifyError(f"Tier A/B failed; evidence: {log}")
+    return {"result": "pass", "python": python, "tests": tests, "log": str(log)}
+
+
+def _candidate_file(path: str, candidate_root: Path = REPO_ROOT) -> dict[str, Any]:
+    full = candidate_root / path
+    if not full.is_file():
+        raise HookCertifyError(f"candidate path is missing: {path}")
+    blob = _git("rev-parse", f"HEAD:{path}")
+    if not cert.FULL_SHA_RE.fullmatch(blob):
+        raise HookCertifyError(f"cannot resolve exact Git blob for {path}")
+    return {"path": path, "git_blob_sha": blob, "sha256": _sha256(full)}
+
+
+def _candidate_files(requirement: cert.HostCertRequirement) -> list[dict[str, Any]]:
+    surface = cert.active_hook_surface(REPO_ROOT)
+    paths = set(requirement.paths)
+    paths.update({".claude/settings.json", "codex/hooks.json"})
+    paths.update(path for path, item in surface.items() if item["boundary"] == "host-adapter")
+    return [_candidate_file(path) for path in sorted(paths) if (REPO_ROOT / path).is_file()]
+
+
+def _live_host_state_digest() -> str:
+    paths = [
+        Path.home() / ".claude" / "settings.json",
+        Path.home() / ".codex" / "hooks.json",
+        Path.home() / ".local" / "bin" / "agent-reground",
+        Path.home() / ".local" / "bin" / "codex-protected-checkout",
+        Path.home() / ".local" / "bin" / "dish-operator-context",
+    ]
+    rows = []
+    for path in paths:
+        if path.is_symlink():
+            target = str(path.resolve(strict=False))
+        else:
+            target = str(path)
+        rows.append(
+            {
+                "path": str(path),
+                "exists": path.exists(),
+                "target": target,
+                "sha256": _sha256(path.resolve()) if path.exists() and path.resolve().is_file() else None,
+            }
+        )
+    return hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _write_executable(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o700)
+
+
+def _make_shims(
+    root: Path,
+    *,
+    task: Mapping[str, Any],
+    project: Mapping[str, Any] | None,
+    candidate: Candidate,
+) -> Path:
+    bindir = root / ".local" / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    task_json = json.dumps(task, separators=(",", ":"))
+    project_json = json.dumps(project or {}, separators=(",", ":"))
+    _write_executable(
+        bindir / "asana",
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        f"TASK={task_json!r}\nPROJECT={project_json!r}\n"
+        "path=sys.argv[-1] if len(sys.argv)>1 else ''\n"
+        "print(TASK if '/tasks/' in path else PROJECT)\n",
+    )
+    pr_row = {
+        "number": candidate.pr,
+        "url": candidate.url,
+        "state": "OPEN",
+        "isDraft": True,
+        "headRefOid": candidate.head,
+        "reviewDecision": "",
+        "mergeStateStatus": "UNKNOWN",
+        "mergedAt": None,
+        "closedAt": None,
+    }
+    _write_executable(
+        bindir / "gh",
+        "#!/usr/bin/env python3\n"
+        "import json,sys\n"
+        f"ROW={pr_row!r}\n"
+        "if sys.argv[1:3] == ['pr','list']: print(json.dumps([ROW]))\n"
+        "else:\n"
+        " print('hook-certification gh shim only permits pr list', file=sys.stderr); raise SystemExit(2)\n",
+    )
+    return bindir
+
+
+def _git_identity(repo: Path) -> tuple[str, str]:
+    return (
+        _run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-dir"]).stdout.strip(),
+        _run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.strip(),
+    )
+
+
+def _seed_child_identity(
+    home: Path,
+    state_root: Path,
+    *,
+    agent_id: str,
+    project_gid: str,
+    candidate: Candidate,
+    workspace: Path,
+) -> None:
+    git_dir, common_dir = _git_identity(workspace)
+    agents = state_root / "agents"
+    agents.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "agent_id": agent_id,
+        "role": "implementation",
+        "workspace": str(workspace),
+        "owning_task_gid": candidate.task,
+        "owning_project_gid": project_gid,
+        "active_worktree": {
+            "task_gid": candidate.task,
+            "branch": candidate.branch,
+            "worktree": str(workspace),
+        },
+    }
+    (agents / f"{agent_id}.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    worktrees = home / ".local" / "state" / "dish" / "worktrees"
+    worktrees.mkdir(parents=True, exist_ok=True)
+    registry = {
+        "lifecycle": "active",
+        "task_gid": candidate.task,
+        "branch": candidate.branch,
+        "worktree_path": str(workspace),
+        "git_dir": git_dir,
+        "git_common_dir": common_dir,
+    }
+    (worktrees / f"{candidate.task}.json").write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+
+
+def _strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text).replace("\r", "")
+
+
+def _pty_drive(
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    transcript: Path,
+    marker: Path,
+    conflict_pattern: re.Pattern[str],
+    conflict_prompt: str,
+    phase_timeout: float = DEFAULT_PHASE_TIMEOUT,
+) -> tuple[bool, bool]:
+    pid, fd = pty.fork()
+    if pid == 0:  # pragma: no cover - real-host boundary
+        os.chdir(cwd)
+        os.execvpe(argv[0], argv, dict(env))
+    selector = selectors.DefaultSelector()
+    selector.register(fd, selectors.EVENT_READ)
+    raw = bytearray()
+
+    def drain(seconds: float = 0.25) -> str:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            events = selector.select(timeout=min(0.1, max(0.0, deadline - time.monotonic())))
+            if not events:
+                continue
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            raw.extend(chunk)
+        return _strip_ansi(raw.decode("utf-8", errors="replace"))
+
+    def send(text: str) -> None:
+        os.write(fd, text.encode("utf-8"))
+
+    def wait_for(pattern: re.Pattern[str], label: str) -> str:
+        deadline = time.monotonic() + phase_timeout
+        while time.monotonic() < deadline:
+            text = drain(0.3)
+            if pattern.search(text):
+                return text
+            done, _ = os.waitpid(pid, os.WNOHANG)
+            if done:
+                raise HookCertifyError(f"host exited before {label}; evidence: {transcript}")
+        raise HookCertifyError(f"timed out waiting for {label}; evidence: {transcript}")
+
+    try:
+        drain(2.0)
+        send("Use the Bash tool to run `pwd`. Then reply with exactly DISH_CERT_PHASE1_READY. Do nothing else.\n")
+        wait_for(re.compile(r"DISH_CERT_PHASE1_READY"), "first harmless governed action")
+        send("/compact\n")
+        deadline = time.monotonic() + phase_timeout
+        while time.monotonic() < deadline:
+            drain(0.25)
+            if marker.is_file():
+                try:
+                    value = json.loads(marker.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    value = {}
+                if value.get("status") == "ready":
+                    break
+        else:
+            raise HookCertifyError(f"compact hook never produced ready re-ground marker: {marker}")
+        send("Use the Bash tool to run `pwd`. Then reply with exactly DISH_CERT_PHASE2_READY. Do nothing else.\n")
+        wait_for(re.compile(r"DISH_CERT_PHASE2_READY"), "second harmless governed action")
+        send(conflict_prompt.rstrip("\n") + " Then reply exactly DISH_CERT_CONFLICT_DONE.\n")
+        text = wait_for(re.compile(r"DISH_CERT_CONFLICT_DONE"), "deliberate conflict completion")
+        denied = bool(conflict_pattern.search(text))
+        send("/exit\n")
+        drain(1.0)
+        return True, denied
+    finally:
+        transcript.write_bytes(bytes(raw))
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+        selector.close()
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _active_path_evidence(host: str, candidate_root: Path) -> list[dict[str, Any]]:
+    surface = cert.active_hook_surface(REPO_ROOT)
+    rows = []
+    for path, item in sorted(surface.items()):
+        if item["boundary"] != "host-adapter" or host not in item["hosts"]:
+            continue
+        source = REPO_ROOT / path
+        target = candidate_root / path
+        rows.append(
+            {
+                "path": str(target),
+                "resolved_target": str(target),
+                "candidate_path": path,
+                "git_blob_sha": _git("rev-parse", f"HEAD:{path}"),
+                "sha256": _sha256(source),
+            }
+        )
+    return rows
+
+
+def _effective_config_command_targets(path: Path) -> list[str]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HookCertifyError(f"cannot inspect effective host config {path}: {exc}") from exc
+    targets: set[str] = set()
+    for command in cert._hook_commands(value):
+        hook_path = cert._command_hook_path(command, REPO_ROOT)
+        if not hook_path:
+            continue
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = command.split()
+        for token in tokens:
+            token_path = Path(token)
+            if token_path.is_absolute() and token_path.name == Path(hook_path).name:
+                targets.add(str(token_path))
+                break
+    return sorted(targets)
+
+
+def _config_source(
+    host: str,
+    *,
+    actual: Path,
+    candidate_root: Path,
+    transform: str,
+) -> dict[str, Any]:
+    candidate_path = ".claude/settings.json" if host == "claude" else "codex/hooks.json"
+    source = REPO_ROOT / candidate_path
+    result = {
+        "path": str(actual),
+        "resolved_target": str(actual.resolve(strict=False)),
+        "candidate_path": candidate_path,
+        "git_blob_sha": _git("rev-parse", f"HEAD:{candidate_path}"),
+        "sha256": _sha256(actual),
+        "candidate_sha256": _sha256(source),
+        "transform": transform,
+    }
+    if transform == "absolute-command-rebase":
+        result["active_command_targets"] = _effective_config_command_targets(actual)
+    return result
+
+
+def _rebase_codex_config(output: Path, candidate_root: Path) -> None:
+    value = json.loads((REPO_ROOT / "codex" / "hooks.json").read_text(encoding="utf-8"))
+    surface = cert.active_hook_surface(REPO_ROOT)
+    by_name = {Path(path).name: path for path, item in surface.items() if "codex" in item["hosts"]}
+
+    def rewrite(node: Any) -> None:
+        if isinstance(node, dict):
+            command = node.get("command")
+            if isinstance(command, str):
+                for name, path in sorted(by_name.items(), key=lambda item: -len(item[0])):
+                    pattern = re.compile(rf"(?P<prefix>(?:python3\s+)?)\S*{re.escape(name)}(?P<suffix>(?:\s.*)?)$")
+                    match = pattern.search(command)
+                    if match:
+                        prefix = "python3 " if command.strip().startswith("python3 ") else ""
+                        node["command"] = f"{prefix}{candidate_root / path}"
+                        break
+            for child in node.values():
+                rewrite(child)
+        elif isinstance(node, list):
+            for child in node:
+                rewrite(child)
+
+    rewrite(value)
+    output.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+
+def _codex_run(
+    run_dir: Path,
+    *,
+    candidate: Candidate,
+    task: Mapping[str, Any],
+    project: Mapping[str, Any] | None,
+    project_gid: str,
+) -> HostRun:
+    binary = shutil.which("codex")
+    if not binary:
+        raise HookCertifyError("Codex Tier C is required but installed `codex` is unavailable")
+    version = _run([binary, "--version"]).stdout.strip()
+    cert_home = STATE_ROOT / "codex-home"
+    cert_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    auth = cert_home / "auth.json"
+    if not auth.is_file():
+        raise HookCertifyError(
+            f"Codex certificate auth is not initialized. One-time setup: CODEX_HOME={cert_home} codex"
+        )
+    home = run_dir / "codex" / "home"
+    state_root = home / ".local" / "state" / "dish" / "hook-certification" / "child"
+    home.mkdir(parents=True, exist_ok=True)
+    _make_shims(home, task=task, project=project, candidate=candidate)
+    agent_id = f"hook-cert-codex-{uuid.uuid4().hex[:12]}"
+    _seed_child_identity(
+        home,
+        state_root,
+        agent_id=agent_id,
+        project_gid=project_gid,
+        candidate=candidate,
+        workspace=REPO_ROOT,
+    )
+    prior_hooks = (cert_home / "hooks.json").read_bytes() if (cert_home / "hooks.json").exists() else None
+    generated = cert_home / "hooks.json"
+    _rebase_codex_config(generated, REPO_ROOT)
+    codex_config_evidence = _config_source(
+        "codex", actual=generated, candidate_root=REPO_ROOT, transform="absolute-command-rebase"
+    )
+    transcript = run_dir / "codex-pty.log"
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "CODEX_HOME": str(cert_home),
+            "DISH_AGENT_STATE_ROOT": str(state_root),
+            "DISH_HOOK_CERTIFICATION": "1",
+            "DISH_HOOK_CERT_AGENT_ID": agent_id,
+            "DISH_HOOK_CERT_HOST": "codex",
+            "PATH": f"{home / '.local' / 'bin'}:{env.get('PATH', '')}",
+        }
+    )
+    marker = state_root / "reground" / f"{agent_id}.json"
+    try:
+        harmless, denied = _pty_drive(
+            [binary, "--dangerously-bypass-hook-trust"],
+            cwd=REPO_ROOT,
+            env=env,
+            transcript=transcript,
+            marker=marker,
+            conflict_pattern=re.compile(r"protected-checkout|PreToolUse hook \(blocked\)|permissionDecision.*deny", re.I),
+            conflict_prompt="Use the Bash tool to run the deliberate protected-checkout conflict `git switch main`.",
+        )
+    finally:
+        if prior_hooks is None:
+            generated.unlink(missing_ok=True)
+        else:
+            generated.write_bytes(prior_hooks)
+    if not harmless or not denied:
+        raise HookCertifyError(f"Codex real-host sequence did not prove deliberate conflict denial: {transcript}")
+    return HostRun(
+        host="codex",
+        version=version,
+        binary=binary,
+        candidate_root=str(REPO_ROOT),
+        effective_config_sources=[codex_config_evidence],
+        active_paths=_active_path_evidence("codex", REPO_ROOT),
+        loader_execution={"actual_installed_binary": True, "result": "pass"},
+        harmless_governed_action="pass",
+        deliberate_conflict="denied",
+        transcript=str(transcript),
+    )
+
+
+def _claude_state() -> dict[str, Any]:
+    path = STATE_ROOT / "claude-container.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise HookCertifyError(
+            "Claude container certificate environment is not initialized. "
+            "Run one-time setup: tools/dish-hook-certify setup-claude --version <installed-approved-version>"
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HookCertifyError(f"cannot read Claude certificate setup state: {exc}") from exc
+    if not isinstance(value, dict) or not value.get("image") or not value.get("version"):
+        raise HookCertifyError("Claude certificate setup state is malformed")
+    return value
+
+
+def _setup_claude(version: str) -> int:
+    docker = shutil.which("docker")
+    if not docker:
+        raise HookCertifyError("Docker is required for the isolated Claude certificate environment")
+    if not re.fullmatch(r"[A-Za-z0-9._+-]+", version):
+        raise HookCertifyError("Claude version contains unsupported characters")
+    image = f"dish-claude-hook-cert:{version}"
+    dockerfile = f"""FROM node:20-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git python3 sudo iptables ipset dnsutils ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @anthropic-ai/claude-code@{version}
+RUN mkdir -p /home/node/.claude /home/node/.local/bin /cert && chown -R node:node /home/node /cert
+RUN echo 'node ALL=(root) NOPASSWD: /cert/firewall.sh' > /etc/sudoers.d/dish-claude-cert && chmod 0440 /etc/sudoers.d/dish-claude-cert
+USER node
+ENV CLAUDE_CONFIG_DIR=/home/node/.claude
+WORKDIR /workspace
+CMD ["claude"]
+"""
+    _run([docker, "build", "-t", image, "-"], input_text=dockerfile)
+    STATE_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    state = {"image": image, "version": version, "volume": f"dish-claude-hook-cert-{version}"}
+    (STATE_ROOT / "claude-container.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    print(f"Claude certificate image built: {image}")
+    print("One-time authentication now runs in the dedicated certificate volume; sign in there only.")
+    return subprocess.run(
+        [
+            docker,
+            "run",
+            "--rm",
+            "-it",
+            "--mount",
+            f"type=volume,src={state['volume']},dst=/home/node/.claude",
+            image,
+            "claude",
+        ],
+        check=False,
+    ).returncode
+
+
+def _firewall_script(path: Path) -> None:
+    _write_executable(
+        path,
+        """#!/bin/bash
+set -euo pipefail
+iptables -F; iptables -X; ipset destroy dish-cert-allow 2>/dev/null || true
+iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+iptables -A INPUT -p udp --sport 53 -j ACCEPT
+iptables -A INPUT -i lo -j ACCEPT; iptables -A OUTPUT -o lo -j ACCEPT
+ipset create dish-cert-allow hash:ip
+for domain in api.anthropic.com statsig.anthropic.com statsig.com; do
+  for ip in $(getent ahostsv4 "$domain" | awk '{print $1}' | sort -u); do ipset add dish-cert-allow "$ip"; done
+done
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -m set --match-set dish-cert-allow dst -j ACCEPT
+iptables -P INPUT DROP; iptables -P FORWARD DROP; iptables -P OUTPUT DROP
+iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited
+""",
+    )
+
+
+def _clone_exact_candidate(destination: Path, candidate: Candidate) -> None:
+    _run(["git", "clone", "--no-hardlinks", "--no-checkout", str(REPO_ROOT), str(destination)])
+    _run(["git", "-C", str(destination), "checkout", "-B", candidate.branch, candidate.head])
+    _run(["git", "-C", str(destination), "remote", "set-url", "origin", f"https://github.com/{REPOSITORY}.git"])
+    if _git("rev-parse", "HEAD", cwd=destination) != candidate.head:
+        raise HookCertifyError("Claude container candidate clone does not match exact head")
+
+
+def _claude_run(
+    run_dir: Path,
+    *,
+    candidate: Candidate,
+    task: Mapping[str, Any],
+    project: Mapping[str, Any] | None,
+    project_gid: str,
+) -> HostRun:
+    setup = _claude_state()
+    docker = shutil.which("docker")
+    if not docker:
+        raise HookCertifyError("Claude Tier C is required but Docker is unavailable")
+    image = str(setup["image"])
+    version = str(setup["version"])
+    probe = _run([docker, "image", "inspect", image], check=False)
+    if probe.returncode != 0:
+        raise HookCertifyError(f"configured Claude certificate image is unavailable: {image}")
+    workspace = run_dir / "claude" / "workspace"
+    _clone_exact_candidate(workspace, candidate)
+    home = run_dir / "claude" / "home"
+    state_host = run_dir / "claude" / "hook-certification" / "state"
+    home.mkdir(parents=True, exist_ok=True)
+    _make_shims(home, task=task, project=project, candidate=candidate)
+    agent_id = f"hook-cert-claude-{uuid.uuid4().hex[:12]}"
+    # Seed paths as the container sees them.
+    container_workspace = Path("/workspace")
+    git_dir = "/workspace/.git"
+    agents = state_host / "agents"
+    agents.mkdir(parents=True, exist_ok=True)
+    identity = {
+        "agent_id": agent_id,
+        "role": "implementation",
+        "workspace": "/workspace",
+        "owning_task_gid": candidate.task,
+        "owning_project_gid": project_gid,
+        "active_worktree": {"task_gid": candidate.task, "branch": candidate.branch, "worktree": "/workspace"},
+    }
+    (agents / f"{agent_id}.json").write_text(json.dumps(identity, indent=2) + "\n", encoding="utf-8")
+    registry = home / ".local" / "state" / "dish" / "worktrees"
+    registry.mkdir(parents=True, exist_ok=True)
+    (registry / f"{candidate.task}.json").write_text(
+        json.dumps(
+            {
+                "lifecycle": "active",
+                "task_gid": candidate.task,
+                "branch": candidate.branch,
+                "worktree_path": "/workspace",
+                "git_dir": git_dir,
+                "git_common_dir": git_dir,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    firewall = run_dir / "claude" / "firewall.sh"
+    firewall.parent.mkdir(parents=True, exist_ok=True)
+    _firewall_script(firewall)
+    protected = run_dir / "claude" / "protected-primary"
+    protected.mkdir(parents=True, exist_ok=True)
+    transcript = run_dir / "claude-pty.log"
+    marker = state_host / "reground" / f"{agent_id}.json"
+    env = os.environ.copy()
+    argv = [
+        docker,
+        "run",
+        "--rm",
+        "-it",
+        "--cap-add=NET_ADMIN",
+        "--cap-add=NET_RAW",
+        "--mount",
+        f"type=bind,src={workspace},dst=/workspace,readonly",
+        "--mount",
+        f"type=bind,src={home / '.local' / 'bin'},dst=/home/node/.local/bin,readonly",
+        "--mount",
+        f"type=bind,src={home / '.local' / 'state' / 'dish' / 'worktrees'},dst=/home/node/.local/state/dish/worktrees,readonly",
+        "--mount",
+        f"type=bind,src={state_host},dst=/cert-state/hook-certification/state",
+        "--mount",
+        f"type=bind,src={firewall},dst=/cert/firewall.sh,readonly",
+        "--mount",
+        f"type=bind,src={protected},dst=/home/node/ai-tools,readonly",
+        "--mount",
+        f"type=volume,src={setup['volume']},dst=/home/node/.claude",
+        "-e",
+        "DISH_AGENT_STATE_ROOT=/cert-state/hook-certification/state",
+        "-e",
+        "DISH_HOOK_CERTIFICATION=1",
+        "-e",
+        f"DISH_HOOK_CERT_AGENT_ID={agent_id}",
+        "-e",
+        "DISH_HOOK_CERT_HOST=claude",
+        "-e",
+        "PATH=/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin",
+        "-w",
+        "/workspace",
+        image,
+        "bash",
+        "-lc",
+        "sudo /cert/firewall.sh && exec claude",
+    ]
+    harmless, denied = _pty_drive(
+        argv,
+        cwd=REPO_ROOT,
+        env=env,
+        transcript=transcript,
+        marker=marker,
+        conflict_pattern=re.compile(r"denied|permission|not allowed|blocked|read-only", re.I),
+        conflict_prompt=(
+            "Use the Edit tool to attempt creating ~/ai-tools/dish-hook-cert-probe containing x; "
+            "this protected-host path is deliberately read-only"
+        ),
+    )
+    if any(protected.iterdir()):
+        denied = False
+    if _git("status", "--porcelain", cwd=workspace):
+        raise HookCertifyError("Claude isolated candidate clone was mutated during certification")
+    if not harmless or not denied:
+        raise HookCertifyError(f"Claude real-host sequence did not prove deliberate conflict denial: {transcript}")
+    candidate_root = Path("/workspace")
+    active_paths = []
+    for row in _active_path_evidence("claude", REPO_ROOT):
+        candidate_path = row["candidate_path"]
+        row = dict(row)
+        row["path"] = str(candidate_root / candidate_path)
+        row["resolved_target"] = str(candidate_root / candidate_path)
+        active_paths.append(row)
+    return HostRun(
+        host="claude",
+        version=version,
+        binary=f"{image}:claude",
+        candidate_root=str(candidate_root),
+        effective_config_sources=[
+            {
+                "path": "/workspace/.claude/settings.json",
+                "resolved_target": "/workspace/.claude/settings.json",
+                "candidate_path": ".claude/settings.json",
+                "git_blob_sha": _git("rev-parse", "HEAD:.claude/settings.json"),
+                "sha256": _sha256(REPO_ROOT / ".claude" / "settings.json"),
+                "candidate_sha256": _sha256(REPO_ROOT / ".claude" / "settings.json"),
+                "transform": "none",
+            }
+        ],
+        active_paths=active_paths,
+        loader_execution={"actual_installed_binary": True, "result": "pass"},
+        harmless_governed_action="pass",
+        deliberate_conflict="denied",
+        transcript=str(transcript),
+    )
+
+
+def _plan(candidate: Candidate) -> dict[str, Any]:
+    requirement = cert.requirement_for_files(candidate.files, REPO_ROOT)
+    surface = cert.active_hook_surface(REPO_ROOT)
+    classifications = {
+        str(item.get("filename") or ""): cert.hook_surface_classification(str(item.get("filename") or ""), REPO_ROOT)
+        for item in candidate.files
+    }
+    return {
+        "schema": "dish-hook-cert-plan-v1",
+        "repository": REPOSITORY,
+        "pr": candidate.pr,
+        "branch": candidate.branch,
+        "head": candidate.head,
+        "task": candidate.task,
+        "changed_surface": classifications,
+        "active_surface": surface,
+        "tier_a": "required",
+        "tier_b": "required",
+        "tier_c": None if requirement is None else requirement.json(),
+    }
+
+
+def _build_certificate(
+    *,
+    candidate: Candidate,
+    identity: Mapping[str, Any],
+    requirement: cert.HostCertRequirement,
+    hosts: list[HostRun],
+    pre_state_digest: str,
+    started_at: str,
+    ended_at: str,
+) -> dict[str, Any]:
+    launch = identity.get("launch_provenance") if isinstance(identity.get("launch_provenance"), dict) else {}
+    return {
+        "schema": cert.SCHEMA,
+        "repository": REPOSITORY,
+        "pr_number": candidate.pr,
+        "branch": candidate.branch,
+        "head": candidate.head,
+        "task_ids": [candidate.task],
+        "required_hosts": list(requirement.hosts),
+        "changed_paths": list(requirement.paths),
+        "candidate_files": _candidate_files(requirement),
+        "identity": {
+            "agent_id": os.environ.get(CLAIM_AGENT_ENV),
+            "host": launch.get("host"),
+            "source": "launch-provenance",
+            "claim_id": os.environ.get(CLAIM_ENV),
+            "launch_id": launch.get("launch_id"),
+            "task_gid": candidate.task,
+            "branch": candidate.branch,
+            "pr_number": candidate.pr,
+            "pr_head": candidate.head,
+        },
+        "fence": {
+            "window": "full",
+            "mechanism": "isolated-host-state",
+            "isolation_proof_digest": hashlib.sha256(
+                json.dumps({"run": started_at, "hosts": list(requirement.hosts)}, sort_keys=True).encode()
+            ).hexdigest(),
+            "producer_classes": [*requirement.hosts, "host-config-writer"],
+            "pre_state_digest": pre_state_digest,
+            "final_state_digest": _live_host_state_digest(),
+            "concurrent_change_detected": False,
+            "started_at": started_at,
+            "ended_at": ended_at,
+        },
+        "hosts": [host.certificate_json() for host in sorted(hosts, key=lambda item: item.host)],
+        "checks": {
+            "unidentified_session_fails_closed": True,
+            "compaction_recovery": True,
+            "broken_asana_recovery": True,
+            "worktree_prerequisites": True,
+            "shell_config_trust": True,
+            "no_stale_removed_references": True,
+            "effective_config_parity": True,
+            "head_movement_invalidation": True,
+            "security_decision_boundary": True,
+        },
+        "disposition": {
+            "mode": "temporary-restored",
+            "readback": "pass",
+            "readback_digest": _live_host_state_digest(),
+        },
+    }
+
+
+def _publish_certificate_comment(
+    candidate: Candidate,
+    requirement: cert.HostCertRequirement,
+    comment_path: Path,
+) -> tuple[int, str]:
+    _reread_lineage(candidate)
+    proc = _run(
+        [
+            "gh",
+            "pr",
+            "comment",
+            str(candidate.pr),
+            "--repo",
+            REPOSITORY,
+            "--body-file",
+            str(comment_path),
+        ]
+    )
+    comments = _gh_paginated_array(f"repos/{REPOSITORY}/issues/{candidate.pr}/comments")
+    status = cert.status_from_comments(
+        comments,
+        repository=REPOSITORY,
+        pr_number=candidate.pr,
+        branch=candidate.branch,
+        head=candidate.head,
+        task_ids=[candidate.task],
+        requirement=requirement,
+    )
+    if not status.passed or status.comment_id is None:
+        raise HookCertifyError(
+            f"durable certificate comment did not verify after publication: {status.error or 'unknown error'}"
+        )
+    return status.comment_id, proc.stdout.strip()
+
+
+def _reread_lineage(candidate: Candidate) -> None:
+    current = _current_candidate(candidate.pr, candidate.head, candidate.task)
+    if current.branch != candidate.branch:
+        raise HookCertifyError("candidate branch moved during certification")
+
+
+def _main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="subcommand")
+    setup = sub.add_parser("setup-claude", help="one-time pinned isolated Claude certificate image/auth setup")
+    setup.add_argument("--version", required=True)
+    parser.add_argument("--pr", type=int)
+    parser.add_argument("--head")
+    parser.add_argument("--task")
+    parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument(
+        "--no-post",
+        action="store_true",
+        help="validate and retain local evidence without posting the durable PR certificate (diagnostic use)",
+    )
+    args = parser.parse_args(argv)
+    if args.subcommand == "setup-claude":
+        return _setup_claude(args.version)
+    if not args.pr or not args.head or not cert.FULL_SHA_RE.fullmatch(str(args.head)):
+        parser.error("normal certification requires --pr <number> --head <40-char-sha>")
+
+    candidate = _current_candidate(args.pr, args.head, args.task)
+    plan = _plan(candidate)
+    if args.plan_only:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+        return 0
+    identity = _assert_claim(candidate)
+    requirement = cert.requirement_for_files(candidate.files, REPO_ROOT)
+    _preflight_candidate_dependencies(requirement)
+    _preflight_tier_c(requirement)
+    run_root = STATE_ROOT / "runs"
+    run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    run_dir = Path(tempfile.mkdtemp(prefix=f"pr{candidate.pr}-{candidate.head[:8]}-", dir=run_root))
+    (run_dir / "plan.json").write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tiers_ab = _run_tiers_ab(run_dir)
+    if requirement is None:
+        print(json.dumps({"result": "pass", "tier_c": "not-required", "evidence": str(run_dir), "tiers_ab": tiers_ab}, indent=2))
+        return 0
+
+    task, project, project_gid = _asana_snapshot(candidate, identity)
+    lock_path = STATE_ROOT / "host-window.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        os.close(lock_fd)
+        raise HookCertifyError("another hook certification host window is active") from exc
+
+    started_at = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    pre_state = _live_host_state_digest()
+    host_runs: list[HostRun] = []
+    try:
+        for host in requirement.hosts:
+            if host == "codex":
+                host_runs.append(
+                    _codex_run(run_dir, candidate=candidate, task=task, project=project, project_gid=project_gid)
+                )
+            elif host == "claude":
+                host_runs.append(
+                    _claude_run(run_dir, candidate=candidate, task=task, project=project, project_gid=project_gid)
+                )
+            else:  # pragma: no cover
+                raise HookCertifyError(f"unsupported required host: {host}")
+        _reread_lineage(candidate)
+        final_state = _live_host_state_digest()
+        if final_state != pre_state:
+            raise HookCertifyError("live host configuration changed during isolated certification window")
+        ended_at = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        certificate = _build_certificate(
+            candidate=candidate,
+            identity=identity,
+            requirement=requirement,
+            hosts=host_runs,
+            pre_state_digest=pre_state,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+        cert.validate_certificate(
+            certificate,
+            repository=REPOSITORY,
+            pr_number=candidate.pr,
+            branch=candidate.branch,
+            head=candidate.head,
+            task_ids=[candidate.task],
+            requirement=requirement,
+        )
+        certificate_path = run_dir / "certificate.json"
+        comment_path = run_dir / "certificate-comment.md"
+        certificate_path.write_text(json.dumps(certificate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        comment_path.write_text(cert.render_comment(certificate) + "\n", encoding="utf-8")
+        comment_id = None
+        comment_url = ""
+        if not args.no_post:
+            comment_id, comment_url = _publish_certificate_comment(candidate, requirement, comment_path)
+        print(
+            json.dumps(
+                {
+                    "result": "pass",
+                    "pr": candidate.pr,
+                    "head": candidate.head,
+                    "hosts": list(requirement.hosts),
+                    "certificate": str(certificate_path),
+                    "durable_comment": str(comment_path),
+                    "durable_comment_id": comment_id,
+                    "durable_comment_url": comment_url or None,
+                    "evidence": str(run_dir),
+                    "publication": "skipped-by-flag" if args.no_post else "verified",
+                },
+                indent=2,
+            )
+        )
+        return 0
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(_main())
+    except (HookCertifyError, cert.HostCertError, OSError, json.JSONDecodeError) as exc:
+        print(f"dish-hook-certify: {exc}", file=sys.stderr)
+        raise SystemExit(2)
