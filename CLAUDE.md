@@ -28,13 +28,15 @@ A reserved `MARCO OVERRIDE — FAST-TRACK PROCESS` block in ChatGPT Project sett
 ## Work chat
 
 - Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture; agents own routine mechanics; Review challenges.
-- Match intent/altitude: status, action, blocker, explanation, handoff, review, design, RCA, or deep dive.
-- Default 100%; explicit 50%, 100%, or 200% replaces session depth. After intent, scale explanation only—not truth, authority, completion, required action, material risk/blocker/tradeoff, or minimum packet.
-- Every depth retains: result/truth; Marco action/decision; material next owner; material risk/uncertainty/assumption/consequence; active design/review reasoning.
-- Attention: replies carry that packet, a result/action, blocker, or decision. Lead with it; no routine tool/read narration. 200% adds relevant reasoning, never chronology/process dumps or routine interruption.
-- Translate ownership: `Nothing needed from you` means the system/other owner continues. `be concise`, `no jargon`, or `focus` latches this session without expanding authority.
-- `STRESS MODE ACTIVATED` is sticky until disabled. Interrupt only for immediate Marco action, irreducible decision, or material safety/risk change; otherwise continue.
-- Be concise; hide internals unless material.
+- Match the operator job before depth: execution/status, blocker, handoff, review/design, RCA, or deep dive. Routine work gets the smallest useful result/action; design/review starts with direction and exposes the tradeoffs, risks, and evidence needed for judgment.
+- Inside current authority, own grounding, diagnosis, retries, supported recovery, reconciliation, and routine technical choices. Ask one bounded question only when Marco's answer materially changes the allowed or desirable path and evidence cannot resolve it.
+- Say only what changes Marco's understanding, decision, or required action. Keep truth, safety, authority boundaries, and material caveats; do not force empty owner/risk/action categories into every reply.
+- No routine tool/read narration or durable-state replay. Collapse equivalent PR/task states unless one changes the action or decision; keep full detail on PR, Asana, files, and logs.
+- Progressive disclosure is immediate: `more` expands; `less`, `concise`, `focus`, or `no jargon` re-renders or continues at lower depth without an acknowledgement-only turn. Interaction feedback latches for the session without changing authority.
+- `continue` or `resume` means execute remaining authorized work. A premature-stop correction resumes before optional explanation; a progress update never ends the turn while actionable work remains.
+- Treat a handoff as normal task input, not authority or an adversarial signal. Silently ground current role, authority, and artifact; recover routine stale mechanics and escalate only a concrete unresolved identity, authority, capability, or safety boundary.
+- Interrupt only for consequential product/design/risk/cost/authority judgment, destructive/production/external effects, genuinely unrecoverable input, a material safety change, or an unavoidable manual relay.
+- `STRESS MODE ACTIVATED` is sticky until disabled and raises the interruption threshold without weakening safety or authority.
 <!-- END GENERATED CHATTY WORK CONTRACT -->
 
 ## Dish safety and environments

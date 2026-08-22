@@ -1822,13 +1822,26 @@
       "required_rules": [],
       "roles": [
         "implementation"
-      ]
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "plan_instead_of_execution",
+          "role_or_tool_read_narration",
+          "acknowledgement_only_turn"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
     },
     {
       "expected_outcome": "progress_does_not_terminate_unfinished_authorized_work",
       "forbidden_actions": [
         "stop_after_progress_update",
-        "require_extra_go_prompt"
+        "require_extra_go_prompt",
+        "polished_status_yield",
+        "fake_asynchronous_continuation"
       ],
       "id": "chatty-progress-is-not-completion",
       "prompt": "You are midway through an already-authorized multi-step implementation. A progress update is due, but the remaining steps are mechanically determined and available. Continue the work after the update and finish or hit a real boundary.",
@@ -1840,7 +1853,18 @@
       "required_rules": [],
       "roles": [
         "implementation"
-      ]
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "premature_stop",
+          "fake_asynchronous_continuation",
+          "giant_state_dump"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
     },
     {
       "expected_outcome": "high_level_review_supports_direction_judgment_without_process_dump",
@@ -1864,7 +1888,18 @@
       "roles": [
         "development-workflow",
         "review"
-      ]
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "wrong_abstraction_level",
+          "action_buried_under_evidence",
+          "option_dumping"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
     },
     {
       "expected_outcome": "session_feedback_changes_later_substantive_output",
@@ -1886,7 +1921,18 @@
       "required_rules": [],
       "roles": [
         "implementation"
-      ]
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "acknowledgement_only_turn",
+          "interaction_feedback_ignored",
+          "routine_narration"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
     },
     {
       "expected_outcome": "contradictory_live_state_is_reconciled_before_human_rerouting",
@@ -1918,6 +1964,268 @@
       "roles": [
         "coordinator"
       ]
+    },
+    {
+      "expected_outcome": "routine_engineering_choice_is_resolved_inside_current_authority",
+      "forbidden_actions": [
+        "ask_marco_to_choose_routine_mechanics",
+        "option_dumping",
+        "plan_only_turn",
+        "narrate_routine_investigation"
+      ],
+      "id": "chatty-routine-choice-no-escalation",
+      "prompt": "Two implementation approaches are both safe and inside the accepted design. Repository evidence makes one slightly simpler, and neither changes product behavior, cost, risk, or authority. Finish the choice and continue the implementation.",
+      "required_actions": [
+        "resolve_from_repository_evidence",
+        "make_routine_engineering_choice",
+        "continue_authorized_inner_loop"
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation"
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "avoidable_operator_turn",
+          "option_dumping",
+          "plan_instead_of_execution"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
+    },
+    {
+      "expected_outcome": "consequential_unresolved_choice_is_one_bounded_recommended_question",
+      "forbidden_actions": [
+        "silently_choose_consequential_product_behavior",
+        "ask_multiple_unbounded_questions",
+        "dump_internal_mechanics",
+        "continue_past_material_ambiguity"
+      ],
+      "id": "chatty-consequential-choice-bounded-question",
+      "prompt": "Current evidence cannot determine which of two user-visible behaviors Marco wants. The choice materially changes product semantics, both are allowed, and no authorized source resolves it. Handle the boundary.",
+      "required_actions": [
+        "state_recommended_direction",
+        "ask_one_bounded_material_question",
+        "explain_operator_level_consequence"
+      ],
+      "required_rules": [],
+      "roles": [
+        "development-workflow",
+        "implementation"
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "option_dumping",
+          "wrong_abstraction_level",
+          "avoidable_extra_question"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
+    },
+    {
+      "expected_outcome": "lower_depth_feedback_immediately_changes_substantive_answer",
+      "forbidden_actions": [
+        "acknowledgement_only_turn",
+        "repeat_previous_detail",
+        "require_same_correction_again",
+        "treat_presentation_feedback_as_authority_change"
+      ],
+      "id": "chatty-less-rerenders-immediately",
+      "prompt": "After a detailed but still-active design answer, Marco says `less, focus, no jargon`. Continue with the useful lower-depth answer now.",
+      "required_actions": [
+        "apply_recent_interaction_feedback",
+        "rerender_or_continue_immediately",
+        "preserve_material_truth_and_boundary"
+      ],
+      "required_rules": [],
+      "roles": [
+        "development-workflow",
+        "review"
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "less_then_understood",
+          "acknowledgement_only_turn",
+          "wrong_abstraction_level"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
+    },
+    {
+      "expected_outcome": "continue_resumes_and_completes_available_authorized_work",
+      "forbidden_actions": [
+        "summarize_remaining_work_instead_of_execution",
+        "require_extra_go_prompt",
+        "polished_status_yield",
+        "fake_asynchronous_continuation"
+      ],
+      "id": "chatty-continue-resumes-active-work",
+      "observation_link_field": "write_id",
+      "prompt": "An authorized implementation is active and the next mutation plus readback are mechanically available. Marco says `continue`. Respond to that instruction.",
+      "require_ordered_observations": true,
+      "required_actions": [
+        "resume_authorized_execution",
+        "perform_remaining_action",
+        "verify_action_readback",
+        "finish_or_surface_real_boundary"
+      ],
+      "required_observations": [
+        {
+          "equals": {
+            "target": "continue-fixture"
+          },
+          "kind": "durable_write",
+          "operation": "chatty_disposable_action"
+        },
+        {
+          "equals": {
+            "target": "continue-fixture",
+            "verified": true
+          },
+          "kind": "readback",
+          "operation": "chatty_disposable_action"
+        }
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation"
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "premature_stop",
+          "fake_asynchronous_continuation",
+          "giant_state_dump"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
+    },
+    {
+      "expected_outcome": "premature_stop_correction_resumes_before_optional_explanation",
+      "forbidden_actions": [
+        "explanation_only_reply",
+        "postmortem_before_resume",
+        "require_extra_go_prompt",
+        "stop_after_progress_update"
+      ],
+      "id": "chatty-premature-stop-correction-resumes",
+      "observation_link_field": "write_id",
+      "prompt": "You yielded after a progress report even though authorized work remained. Marco asks why you stopped; the next mutation and readback are still available. Correct the failure.",
+      "require_ordered_observations": true,
+      "required_actions": [
+        "resume_before_optional_explanation",
+        "perform_remaining_action",
+        "verify_action_readback",
+        "finish_or_surface_real_boundary"
+      ],
+      "required_observations": [
+        {
+          "equals": {
+            "target": "resume-fixture"
+          },
+          "kind": "durable_write",
+          "operation": "chatty_disposable_action"
+        },
+        {
+          "equals": {
+            "target": "resume-fixture",
+            "verified": true
+          },
+          "kind": "readback",
+          "operation": "chatty_disposable_action"
+        }
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation"
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "premature_stop",
+          "explanation_instead_of_execution",
+          "avoidable_operator_turn"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
+    },
+    {
+      "expected_outcome": "receiver_silently_grounds_normal_handoff_and_executes",
+      "forbidden_actions": [
+        "treat_handoff_as_authority",
+        "suspicious_handoff_theater",
+        "escalate_routine_stale_mechanic",
+        "ask_marco_to_relay_reconstructable_context"
+      ],
+      "id": "chatty-normal-handoff-silent-grounding",
+      "prompt": "A normal internal handoff names the task and PR but contains one stale checkout path. Current repository and task authority can recover the right artifact without changing scope or permissions. Receive the work.",
+      "required_actions": [
+        "treat_handoff_as_normal_input",
+        "ground_current_role_authority_and_artifact",
+        "recover_routine_stale_mechanic",
+        "continue_authorized_work"
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation",
+        "review"
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "suspicious_handoff_theater",
+          "avoidable_operator_turn",
+          "routine_mismatch_escalation"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
+    },
+    {
+      "expected_outcome": "equivalent_states_collapse_to_one_operator_relevant_result",
+      "forbidden_actions": [
+        "giant_state_dump",
+        "repeat_equivalent_pr_states",
+        "lead_with_ids_hashes_or_test_inventory",
+        "manufacture_empty_status_categories"
+      ],
+      "id": "chatty-equivalent-status-aggregates",
+      "prompt": "Seven earlier PRs in a serialized stack are independently accepted and need no Marco action; the eighth is in implementation. Give the useful status without replaying every identical lifecycle record.",
+      "required_actions": [
+        "aggregate_equivalent_states",
+        "state_current_active_result",
+        "state_marco_action_only_if_needed",
+        "keep_durable_detail_off_chat"
+      ],
+      "required_rules": [],
+      "roles": [
+        "development-workflow"
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "giant_state_dump",
+          "action_buried_under_evidence",
+          "mandatory_packet_inflation"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
     },
     {
       "expected_outcome": "evidence_grounded_root_cause_analysis",
@@ -2385,26 +2693,38 @@
       ]
     },
     {
-      "id": "attention-minimum-packet-survives-50-percent",
+      "id": "attention-material-blocker-survives-50-percent",
       "roles": [
         "implementation",
         "review"
       ],
       "required_rules": [],
       "prompt": "Marco has set 50% depth. The current candidate has a real blocker that needs his decision and exposes a material risk. Report it.",
-      "expected_outcome": "concise_blocker_preserves_minimum_sufficient_operator_packet",
+      "expected_outcome": "concise_blocker_preserves_only_material_decision_information",
       "required_actions": [
         "state-current-truth",
         "state-marco-decision",
         "state-material-risk",
-        "state-next-owner-or-continuation",
-        "keep-decision-reasoning"
+        "state-only-actionable-continuation",
+        "keep-material-decision-reasoning"
       ],
       "forbidden_actions": [
-        "suppress-required-blocker-packet-for-depth",
+        "suppress-material-blocker-for-depth",
         "hide-material-risk",
-        "ask-redundant-permission"
-      ]
+        "ask-redundant-permission",
+        "manufacture-empty-status-categories"
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "action_buried_under_evidence",
+          "giant_state_dump",
+          "mandatory_packet_inflation"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
     },
     {
       "id": "attention-progressive-disclosure-at-200-percent",
@@ -2434,18 +2754,30 @@
       ],
       "required_rules": [],
       "prompt": "A bounded autonomous recovery is making routine authorized retries without ambiguity. Later it exhausts its bounded recovery and needs Marco to choose between two materially different paths. Communicate both moments.",
-      "expected_outcome": "routine_recovery_stays_quiet_but_material_exhaustion_surfaces_full_packet",
+      "expected_outcome": "routine_recovery_stays_quiet_but_material_exhaustion_surfaces_decision",
       "required_actions": [
         "continue-routine-recovery-without-interruption",
         "surface-exhaustion-as-real-blocker",
         "state-material-choice-and-consequence",
-        "preserve-minimum-sufficient-packet"
+        "say-only-decision-relevant-information"
       ],
       "forbidden_actions": [
         "narrate-every-routine-retry",
         "hide-recovery-exhaustion",
-        "continue-past-material-ambiguity"
-      ]
+        "continue-past-material-ambiguity",
+        "manufacture-empty-status-categories"
+      ],
+      "transcript_quality": {
+        "forbidden_failure_modes": [
+          "avoidable_operator_turn",
+          "routine_recovery_narration",
+          "option_dumping"
+        ],
+        "max_metrics": {
+          "operator_turns": 1,
+          "tool_chatter_events": 0
+        }
+      }
     },
     {
       "id": "development-workflow-asana-legacy-mode",
