@@ -206,6 +206,37 @@ Put the complete decision packet on the PR: exact decision, minimum evidence, co
 
 Keep substantive Review evidence and the exact durable lifecycle disposition on the PR. The Marco-facing message follows the generated Work chat contract: lead with the plain-English outcome or action, add one material reason only when it changes understanding, and say exactly what Marco must do or that there is nothing for him to do. Do not make internal lifecycle labels, exact-head terminology, hashes, routing classes, or evidence chronology the default interface.
 
+For blocker, waiver, authorization, and recovery messages, keep fact, advice, and permission
+unmistakable:
+
+- **DIAGNOSIS** states what is proved and why it matters. It grants no permission.
+- **RECOMMENDATION** states the preferred next course. It is not approval and must never be phrased
+  as though Marco already chose it.
+- **AUTHORIZATION REQUEST** asks Marco to approve one exact action for one exact task, candidate, or
+  gate. State the material exclusions in the same request (`This does not authorize ...`). Never
+  label a recommendation or an authenticated-account action as authorization.
+
+Lead with the plain result and Marco's real action before those supporting labels. If agents or an
+already-authorized system own the next step, say `No action needed from Marco` and continue. Use
+that sentence only when he truly has no relay, decision, approval, credential, or other manual act;
+do not hide an unresolved human ambiguity behind it. Internal gate names, lifecycle mechanics, and
+evidence follow the operator summary on the durable PR rather than preceding Marco's action.
+
+Examples:
+
+```text
+PR #X is blocked by a candidate-owned validation defect. No action needed from Marco; Implementation will fix the existing PR.
+DIAGNOSIS: The new parser drops signed values after normalization.
+RECOMMENDATION: Preserve signed values and add the focused regression before fresh Review.
+```
+
+```text
+Action needed: authorize waiving gate <exact gate/version> for PR #X only.
+AUTHORIZATION REQUEST: Approve bypassing <exact check> for PR #X at <exact candidate>. This does not authorize merge, deployment, production mutation, or future waivers.
+DIAGNOSIS: <proved failure and ownership classification>.
+RECOMMENDATION: <why this bounded waiver is preferred to the alternatives>.
+```
+
 The durable PR/lifecycle may still distinguish Review passed, Integration ready, local Review evidence, local Implementation completion, local Integration certification, genuine external dependency, blocked, and merged states because those distinctions control automation and authority. They remain technical state on the durable surface rather than mandatory human-facing labels. Successful Review is not completion: a formal exact-head `VERDICT: MERGE` may still have later Integration/certification gates, and Review itself never merges.
 
 ### Durable lifecycle status vocabulary

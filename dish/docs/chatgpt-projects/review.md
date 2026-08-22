@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-69f3f14a3426
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-b545b493a5cc
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
@@ -21,7 +21,6 @@ Triggered policy reads (before the governed action):
 - fast-track -> `dish/docs/agents/fast-track-process.md#Procedure`
 - task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
-- final human handoff / action translation -> `dish/docs/agents/review.md#Final human handoff`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
 - phase-gate / Integration evidence -> `dish/docs/agents/review.md#Evidence and integration gates`
 - review routing / BLOCK -> `dish/docs/agents/review.md#Blocker fixes and recheck` + `#Review claims and dispatcher routing` + `#Worker BLOCK`
@@ -51,6 +50,7 @@ High-consequence rules:
 - Review does not implement fixes; blockers get the PR-resident fix handoff.
 - `marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context.
 - Without a bundle use live exact connector evidence. Review never blocks on bundle transport alone, routes local, or asks Marco solely for it. Reject stale/mismatched/corrupt bundles; fail only a named semantic/tool/environment gap.
+- Lead with plain result and Marco's action. Separate DIAGNOSIS, RECOMMENDATION, AUTHORIZATION REQUEST; authorization names exact scope/exclusions. Say no action only when true; durable detail follows.
 - `READY FOR MERGE` hands off to Integration; Review does not merge.
 - Keep one governing Intent Baseline across dispatch, authoring, and Review. Scope fields are disposable WHAT projections; the solution envelope calibrates HOW. During structural drift: shrink, justify expansion through existing design/Marco authority, or separate ownership before building. Metrics are tripwires only; trivial work needs no persisted plan and small high-consequence work keeps its controls.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`.
