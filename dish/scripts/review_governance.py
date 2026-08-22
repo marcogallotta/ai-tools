@@ -3,12 +3,29 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Any, Callable, Mapping, Sequence
+import sys
+from typing import Any, Mapping, Sequence
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ROOT_SCRIPTS = REPO_ROOT / "scripts"
+if str(ROOT_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(ROOT_SCRIPTS))
+
+from review_design_lineage import (  # noqa: E402
+    Event,
+    EventType,
+    Generation,
+    HumanDecisionProvenance,
+    Identity,
+    State,
+    digest,
+    reconstruct,
+)
 
 SCHEMA = "dish-review-governance:v1"
 PROJECTION_PATH = Path("dish/docs/agents/review-governance.json")
@@ -40,6 +57,9 @@ CLASSIFICATION_RULES = {
     "SEMANTIC_CURRENT_RISK_BLOCKER": "RV5-TAXONOMY-01",
     "HARD_ADMISSION_BLOCKER": "RV5-TAXONOMY-01",
 }
+AUTHORIZED_CLASSIFICATION_ROLES = {"Review", "Coordinator", "Development Workflow"}
+_EVIDENCE_SEAL = object()
+_REVIEW_SEAL = object()
 
 
 class GovernanceError(ValueError):
@@ -47,14 +67,50 @@ class GovernanceError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewGovernanceEvidenceRefs:
-    """References resolved by the caller's authoritative Asana/Git read adapter."""
+class AuthorizedClassification:
+    """Semantic input supplied by a governing standing role, never inferred here."""
 
-    classification_ref: str
-    generation_ref: str
-    independent_review_ref: str
-    events_ref: str
-    human_decision_provenance_ref: str
+    classification: str
+    authorized_by_role: str
+    governing_rule_id: str
+    evidence_ref: str
+    governance_semantic_sha256: str
+    material_delta_set_sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveredIndependentDesignReview:
+    identity: Identity
+    review_ref: str
+    review_sha256: str
+    reviewer_identity: str
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _REVIEW_SEAL:
+            raise GovernanceError(
+                "independent Review evidence must come from durable-payload reconstruction"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ReconstructedReviewV2Evidence:
+    """Sealed output of canonical Review V2 reconstruction and payload validation."""
+
+    generation: Generation
+    reconstruction_state: State | None
+    valid_event_gids: tuple[str, ...]
+    current_approval_event: Event | None
+    current_human_decision: HumanDecisionProvenance | None
+    independent_review: RecoveredIndependentDesignReview
+    source_refs: tuple[str, ...]
+    repairable_provenance_event_gids: tuple[str, ...]
+    blocking_contradictions: tuple[str, ...]
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _EVIDENCE_SEAL:
+            raise GovernanceError("Review V2 evidence must come from canonical reconstruction")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,13 +148,15 @@ def load_projection(repo_root: Path) -> dict[str, Any]:
         raise GovernanceError("every Review-governance rule requires an id")
     if len(ids) != len(set(ids)):
         raise GovernanceError("Review-governance rule ids must be unique")
-    actual = semantic_digest(projection)
-    if projection.get("semantic_sha256") != actual:
+    if projection.get("semantic_sha256") != semantic_digest(projection):
         raise GovernanceError("Review-governance semantic digest mismatch")
     return projection
 
 
-def validate_contract_parity(repo_root: Path, projection: Mapping[str, Any]) -> tuple[str, ...]:
+def validate_contract_parity(
+    repo_root: Path,
+    projection: Mapping[str, Any],
+) -> tuple[str, ...]:
     failures: list[str] = []
     for rule in projection["rules"]:
         text = rule.get("text")
@@ -122,227 +180,263 @@ def _is_sha256(value: str | None) -> bool:
     return bool(value and re.fullmatch(r"[0-9a-f]{64}", value))
 
 
-def _load_bytes(loader: Callable[[str], bytes], ref: str) -> bytes:
-    if not isinstance(ref, str) or not ref.strip():
-        raise GovernanceError("authoritative evidence reference is required")
-    value = loader(ref)
-    if not isinstance(value, bytes):
-        raise GovernanceError(f"authoritative loader returned non-bytes for {ref}")
-    return value
-
-
-def _load_record(loader: Callable[[str], bytes], ref: str) -> dict[str, Any]:
+def recover_independent_design_review(
+    *,
+    identity: Identity,
+    review_ref: str,
+    review_payload: bytes,
+    cumulative_material_authors: Sequence[str],
+) -> RecoveredIndependentDesignReview:
+    """Bind independent PASS evidence to durable bytes and exact four-part identity."""
     try:
-        value = json.loads(_load_bytes(loader, ref))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GovernanceError(f"invalid authoritative JSON record at {ref}") from exc
-    if not isinstance(value, dict):
-        raise GovernanceError(f"authoritative record at {ref} must be an object")
-    return value
+        text = review_payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise GovernanceError("independent Review payload must be UTF-8") from exc
+    required = (
+        "INDEPENDENT AGENTIC DESIGN REVIEW — PASS",
+        "VERDICT: PASS",
+        f"- Task: {identity.task_gid}",
+        f"- Generation: {identity.generation_id}",
+        f"- Canonical SHA-256: {identity.canonical_sha256}",
+        "INDEPENDENCE",
+        "does not remember or recover material authorship",
+    )
+    if identity.relevant_repo_baseline is not None:
+        required += (f"- Candidate baseline: {identity.relevant_repo_baseline}",)
+    missing = [token for token in required if token not in text]
+    if missing:
+        raise GovernanceError(
+            "durable independent Review evidence is incomplete: " + ", ".join(missing)
+        )
+    reviewer = next(
+        (line.strip() for line in reversed(text.splitlines()) if line.startswith("— Dish Agent:")),
+        "",
+    )
+    if not reviewer:
+        raise GovernanceError("durable independent Review lacks reviewer attribution")
+    authors = {value.strip() for value in cumulative_material_authors if value.strip()}
+    if reviewer in authors:
+        raise GovernanceError("material author cannot supply independent Design Review")
+    return RecoveredIndependentDesignReview(
+        identity=identity,
+        review_ref=review_ref,
+        review_sha256=digest(review_payload),
+        reviewer_identity=reviewer,
+        _seal=_REVIEW_SEAL,
+    )
 
 
-def _identity(record: Mapping[str, Any]) -> tuple[Any, Any, Any]:
-    return record.get("task_gid"), record.get("generation_id"), record.get("canonical_sha256")
+def extract_exact_decision_payload(story_payload: bytes) -> bytes:
+    """Recover the exact decision paragraph from the durable Asana story envelope."""
+    try:
+        text = story_payload.decode("utf-8")
+        tail = text.split("Exact decision payload:\n", 1)[1]
+        decision = tail.split("\n\nDecision SHA-256:", 1)[0]
+    except (UnicodeDecodeError, IndexError) as exc:
+        raise GovernanceError("durable story lacks the exact decision-payload boundary") from exc
+    if not decision.strip():
+        raise GovernanceError("durable decision payload is empty")
+    return decision.encode()
 
 
-def _reconstruct_human_required_evidence(
+def reconstruct_review_v2_evidence(
     *,
-    refs: ReviewGovernanceEvidenceRefs,
-    loader: Callable[[str], bytes],
-    classification: Mapping[str, Any],
-) -> tuple[str, tuple[str, ...]]:
-    generation = _load_record(loader, refs.generation_ref)
-    if generation.get("schema") != "dish-design-generation:v1":
-        return "MECHANICAL_EVIDENCE_BLOCKED", ("generation record schema is not Review V2",)
-    expected = _identity(classification)
-    if _identity(generation) != expected:
-        return "MECHANICAL_EVIDENCE_BLOCKED", ("classification and generation identities disagree",)
-    snapshot_ref = generation.get("canonical_snapshot_ref")
-    if not isinstance(snapshot_ref, str):
-        return "MECHANICAL_EVIDENCE_BLOCKED", (
-            "generation lacks a durable canonical snapshot reference",
-        )
-    snapshot_sha = hashlib.sha256(_load_bytes(loader, snapshot_ref)).hexdigest()
-    if snapshot_sha != generation.get("canonical_sha256"):
-        return "MECHANICAL_EVIDENCE_BLOCKED", (
-            "recovered canonical snapshot digest disagrees with generation",
-        )
+    generation: Generation,
+    events: Sequence[Event],
+    human_decisions: Sequence[HumanDecisionProvenance],
+    canonical_snapshot_payload: bytes,
+    decision_payloads: Mapping[str, bytes],
+    independent_review: RecoveredIndependentDesignReview,
+    source_refs: Sequence[str],
+) -> ReconstructedReviewV2Evidence:
+    """Use canonical Review V2 types/reconstruction; reject invented wrapper schemas."""
+    if digest(canonical_snapshot_payload) != generation.canonical_sha256:
+        raise GovernanceError("recovered canonical snapshot digest disagrees with Review V2")
+    if independent_review.identity != generation.identity:
+        raise GovernanceError("independent Review identity disagrees with Review V2")
 
-    review = _load_record(loader, refs.independent_review_ref)
-    if review.get("schema") != "dish-review-governance-independent-review:v1":
-        return "MECHANICAL_EVIDENCE_BLOCKED", ("independent Review record schema is invalid",)
-    if _identity(review) != expected or review.get("verdict") != "PASS":
-        return "MECHANICAL_EVIDENCE_BLOCKED", (
-            "fresh independent PASS for the exact generation is not established",
-        )
-    if review.get("independence") != "INDEPENDENT" or not review.get("reviewer_identity"):
-        return "MECHANICAL_EVIDENCE_BLOCKED", ("independent reviewer identity is not established",)
+    recovered_decisions: dict[str, HumanDecisionProvenance] = {}
+    invalid_decision_refs: set[str] = set()
+    for decision in human_decisions:
+        payload = decision_payloads.get(decision.decision_ref)
+        if payload is None or digest(payload) != decision.decision_sha256:
+            invalid_decision_refs.add(decision.decision_ref)
+            continue
+        if decision.identity != generation.identity:
+            invalid_decision_refs.add(decision.decision_ref)
+            continue
+        recovered_decisions[decision.decision_ref] = decision
 
-    events = _load_record(loader, refs.events_ref)
-    if events.get("schema") != "dish-review-governance-events:v1":
-        return "MECHANICAL_EVIDENCE_BLOCKED", ("generation event record schema is invalid",)
-    if events.get("current_generation_id") != expected[1]:
-        return "MECHANICAL_EVIDENCE_BLOCKED", (
-            "exact current generation identity is not established",
-        )
-    items = events.get("events")
-    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
-        return "MECHANICAL_EVIDENCE_BLOCKED", ("generation event record is malformed",)
-    matching = [item for item in items if _identity(item) == expected]
-    created = [item for item in matching if item.get("event_type") == "CREATED"]
-    if len(created) != 1 or matching[0].get("event_type") != "CREATED":
-        return "MECHANICAL_EVIDENCE_BLOCKED", (
-            "generation event history lacks one leading CREATED event",
-        )
-    if any(item.get("event_type") in {"SUPERSEDED", "CANCELLED"} for item in matching):
-        return "MECHANICAL_EVIDENCE_BLOCKED", (
-            "the approved generation is superseded or cancelled",
-        )
-    approvals = [item for item in matching if item.get("event_type") == "MARCO_APPROVED"]
-    if not approvals:
-        return "NEEDS_HUMAN_REVIEW", (
-            "exact durable Marco approval for the current generation is absent",
-        )
-    if len(approvals) != 1:
-        return "MECHANICAL_EVIDENCE_BLOCKED", ("approval event history is contradictory",)
-    approval = approvals[0]
+    rebuilt = reconstruct(generation, events, recovered_decisions)
+    valid = set(rebuilt.valid_event_gids)
+    valid_approvals = [
+        event
+        for event in events
+        if event.event_gid in valid and event.event_type is EventType.MARCO_APPROVED
+    ]
+    approval = valid_approvals[-1] if valid_approvals else None
+    decision = (
+        recovered_decisions.get(approval.human_decision_ref)
+        if approval is not None and approval.human_decision_ref is not None
+        else None
+    )
+    repairable: list[str] = []
+    blocking: list[str] = []
+    for contradiction in rebuilt.contradictions:
+        if contradiction.code == "invalid-marco-approval-provenance" and approval is not None:
+            repairable.append(contradiction.source)
+        else:
+            blocking.append(f"{contradiction.code}:{contradiction.source}")
+    if invalid_decision_refs and approval is None:
+        blocking.extend(f"unrecovered-decision:{ref}" for ref in sorted(invalid_decision_refs))
 
-    decision = _load_record(loader, refs.human_decision_provenance_ref)
-    if decision.get("schema") != "dish-human-decision-provenance:v1":
-        return "MECHANICAL_EVIDENCE_BLOCKED", ("human-decision provenance schema is invalid",)
-    if _identity(decision) != expected:
-        return "NEEDS_HUMAN_REVIEW", ("human-decision provenance is stale for this generation",)
-    if decision.get("decision_kind") != "MARCO_APPROVAL" or decision.get("decided_by") != "Marco":
-        return "NEEDS_HUMAN_REVIEW", ("durable explicit Marco approval is not established",)
-    decision_ref = decision.get("decision_ref")
-    decision_sha = decision.get("decision_sha256")
-    if not isinstance(decision_ref, str) or not _is_sha256(decision_sha):
-        return "MECHANICAL_EVIDENCE_BLOCKED", ("human-decision provenance identity is malformed",)
-    if hashlib.sha256(_load_bytes(loader, decision_ref)).hexdigest() != decision_sha:
-        return "MECHANICAL_EVIDENCE_BLOCKED", (
-            "recovered human-decision payload digest disagrees with provenance",
-        )
-    material_delta = classification.get("material_delta_set_sha256")
-    if not _is_sha256(material_delta):
-        return "MECHANICAL_EVIDENCE_BLOCKED", (
-            "classification lacks an exact material-delta identity",
-        )
-    if decision.get("material_delta_set_sha256") != material_delta:
-        return "NEEDS_HUMAN_REVIEW", ("human decision does not bind the classified material delta",)
-    if approval.get("material_delta_set_sha256") != material_delta:
-        return "NEEDS_HUMAN_REVIEW", ("approval event does not bind the classified material delta",)
-    if (
-        approval.get("human_decision_ref") != decision_ref
-        or approval.get("human_decision_sha256") != decision_sha
-    ):
-        return "MECHANICAL_EVIDENCE_BLOCKED", (
-            "approval event disagrees with recovered human-decision provenance",
-        )
-    return "ELIGIBLE_TO_CONTINUE", ()
+    return ReconstructedReviewV2Evidence(
+        generation=generation,
+        reconstruction_state=rebuilt.state,
+        valid_event_gids=rebuilt.valid_event_gids,
+        current_approval_event=approval,
+        current_human_decision=decision,
+        independent_review=independent_review,
+        source_refs=tuple(source_refs),
+        repairable_provenance_event_gids=tuple(repairable),
+        blocking_contradictions=tuple(blocking),
+        _seal=_EVIDENCE_SEAL,
+    )
 
 
-def _load_classification(
-    *,
-    refs: ReviewGovernanceEvidenceRefs,
-    loader: Callable[[str], bytes],
+def _validate_classification(
+    classification: AuthorizedClassification,
     projection: Mapping[str, Any],
-) -> dict[str, Any]:
-    record = _load_record(loader, refs.classification_ref)
-    if record.get("schema") != "dish-review-governance-classification:v1":
-        raise GovernanceError("authorized semantic classification record is required")
-    classification = record.get("classification")
-    if classification not in AUTHORIZED_CLASSIFICATIONS:
+) -> None:
+    if not isinstance(classification, AuthorizedClassification):
+        raise GovernanceError("authorized semantic classification object is required")
+    if classification.classification not in AUTHORIZED_CLASSIFICATIONS:
         raise GovernanceError("authorized semantic classification is required")
-    role = record.get("authorized_by_role")
-    if role not in {"Review", "Coordinator", "Development Workflow"}:
+    if classification.authorized_by_role not in AUTHORIZED_CLASSIFICATION_ROLES:
         raise GovernanceError("classification lacks an authorized standing role")
-    rule_id = record.get("governing_rule_id")
+    if not classification.evidence_ref.strip():
+        raise GovernanceError("classification lacks an exact evidence reference")
     rule_ids = {rule.get("id") for rule in projection.get("rules", [])}
-    if rule_id not in rule_ids:
+    if classification.governing_rule_id not in rule_ids:
         raise GovernanceError("classification lacks an exact governing rule reference")
-    if rule_id != CLASSIFICATION_RULES[classification]:
+    if classification.governing_rule_id != CLASSIFICATION_RULES[classification.classification]:
         raise GovernanceError("classification cites the wrong governing rule")
     if (
-        not record.get("task_gid")
-        or not record.get("generation_id")
-        or not _is_sha256(record.get("canonical_sha256"))
+        classification.material_delta_set_sha256 is not None
+        and not _is_sha256(classification.material_delta_set_sha256)
     ):
-        raise GovernanceError("classification lacks exact task/generation identity")
-    return record
+        raise GovernanceError("classification material-delta identity is malformed")
+
+
+def _human_required_admission(
+    classification: AuthorizedClassification,
+    evidence: ReconstructedReviewV2Evidence | None,
+) -> tuple[str, bool, tuple[str, ...]]:
+    if not isinstance(evidence, ReconstructedReviewV2Evidence):
+        return (
+            "MECHANICAL_EVIDENCE_BLOCKED",
+            False,
+            ("canonical reconstructed Review V2 evidence is required",),
+        )
+    if evidence.blocking_contradictions:
+        return (
+            "MECHANICAL_EVIDENCE_BLOCKED",
+            False,
+            ("Review V2 reconstruction contains unresolved contradictions",),
+        )
+    if evidence.reconstruction_state in {State.SUPERSEDED, State.CANCELLED}:
+        return (
+            "MECHANICAL_EVIDENCE_BLOCKED",
+            False,
+            ("the approved Review V2 generation is no longer current",),
+        )
+    approval = evidence.current_approval_event
+    decision = evidence.current_human_decision
+    if approval is None or decision is None:
+        return (
+            "NEEDS_HUMAN_REVIEW",
+            True,
+            ("exact durable Marco approval for the current generation is absent",),
+        )
+    material_delta = classification.material_delta_set_sha256
+    if material_delta is None:
+        return (
+            "MECHANICAL_EVIDENCE_BLOCKED",
+            False,
+            ("human-required classification lacks exact material-delta identity",),
+        )
+    if (
+        approval.identity != evidence.generation.identity
+        or decision.identity != evidence.generation.identity
+        or approval.material_delta_set_sha256 != material_delta
+        or decision.material_delta_set_sha256 != material_delta
+    ):
+        return (
+            "NEEDS_HUMAN_REVIEW",
+            True,
+            ("approval does not bind the exact Review V2 identity and material delta",),
+        )
+    return "ELIGIBLE_TO_CONTINUE", True, ()
 
 
 def evaluate_admission(
     *,
-    evidence_refs: ReviewGovernanceEvidenceRefs,
-    authoritative_loader: Callable[[str], bytes],
+    classification: AuthorizedClassification,
     projection: Mapping[str, Any],
+    evidence: ReconstructedReviewV2Evidence | None = None,
     parity_failures: Sequence[str] = (),
 ) -> ReviewGovernanceDecision:
-    """Evaluate admission from records reloaded through an authoritative adapter."""
-    record = _load_classification(
-        refs=evidence_refs,
-        loader=authoritative_loader,
-        projection=projection,
-    )
-    classification = str(record["classification"])
-    authority_ref = evidence_refs.classification_ref
-    rule_id = str(record["governing_rule_id"])
+    """Evaluate admission from semantic input plus canonical reconstructed evidence."""
+    _validate_classification(classification, projection)
     reasons: list[str] = []
-    if record.get("governance_semantic_sha256") != projection.get("semantic_sha256"):
+    if classification.governance_semantic_sha256 != projection.get("semantic_sha256"):
         reasons.append("semantic digest does not match the checked projection")
     if parity_failures:
         reasons.append("standing contract and Review-governance projection disagree")
     if reasons:
-        return ReviewGovernanceDecision(
-            classification,
-            authority_ref,
-            rule_id,
-            "MECHANICAL_EVIDENCE_BLOCKED",
-            False,
-            tuple(reasons),
-        )
-    if classification in BLOCKING_CLASSIFICATIONS:
-        return ReviewGovernanceDecision(
-            classification, authority_ref, rule_id, "BLOCKED_BY_AUTHORIZED_CLASSIFICATION", True, ()
-        )
-    if classification in ELIGIBLE_CLASSIFICATIONS:
-        return ReviewGovernanceDecision(
-            classification, authority_ref, rule_id, "ELIGIBLE_TO_CONTINUE", True, ()
-        )
-    evidence_admission, evidence_failures = _reconstruct_human_required_evidence(
-        refs=evidence_refs,
-        loader=authoritative_loader,
-        classification=record,
-    )
-    if evidence_admission != "ELIGIBLE_TO_CONTINUE":
-        return ReviewGovernanceDecision(
-            classification,
-            authority_ref,
-            rule_id,
-            evidence_admission,
-            evidence_admission != "MECHANICAL_EVIDENCE_BLOCKED",
-            evidence_failures,
-        )
+        admission, sufficient = "MECHANICAL_EVIDENCE_BLOCKED", False
+    elif classification.classification in BLOCKING_CLASSIFICATIONS:
+        admission, sufficient = "BLOCKED_BY_AUTHORIZED_CLASSIFICATION", True
+    elif classification.classification in ELIGIBLE_CLASSIFICATIONS:
+        admission, sufficient = "ELIGIBLE_TO_CONTINUE", True
+    else:
+        admission, sufficient, failures = _human_required_admission(classification, evidence)
+        reasons.extend(failures)
     return ReviewGovernanceDecision(
-        classification, authority_ref, rule_id, "ELIGIBLE_TO_CONTINUE", True, ()
+        classification.classification,
+        classification.evidence_ref,
+        classification.governing_rule_id,
+        admission,
+        sufficient,
+        tuple(reasons),
     )
 
 
 def render_human_impact_report(
     *,
     decision: ReviewGovernanceDecision,
-    evidence_refs: ReviewGovernanceEvidenceRefs,
+    evidence: ReconstructedReviewV2Evidence | None,
     protected_paths_touched: Sequence[str],
     base_semantic_sha256: str,
     head_semantic_sha256: str,
     parity_failures: Sequence[str],
 ) -> dict[str, Any]:
     """Render evidence without treating paths or digests as semantic classification."""
+    authoritative = None
+    if evidence is not None:
+        authoritative = {
+            "review_v2_identity": evidence.generation.identity.tuple(),
+            "source_refs": list(evidence.source_refs),
+            "independent_review_ref": evidence.independent_review.review_ref,
+            "repairable_provenance_event_gids": list(
+                evidence.repairable_provenance_event_gids
+            ),
+        }
     return {
         "schema": "dish-review-governance-impact:v1",
         "classification_source": decision.classification_authority_ref,
         "decision": asdict(decision),
-        "authoritative_evidence_refs": asdict(evidence_refs),
+        "authoritative_review_v2_evidence": authoritative,
         "protected_paths_touched": sorted(set(protected_paths_touched)),
         "base_semantic_sha256": base_semantic_sha256,
         "head_semantic_sha256": head_semantic_sha256,

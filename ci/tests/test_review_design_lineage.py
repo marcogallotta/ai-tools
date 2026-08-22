@@ -1,4 +1,5 @@
 import hashlib
+import json
 import pathlib
 import sys
 
@@ -9,6 +10,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from review_design_lineage import (  # noqa: E402
     DESIGN_PROVENANCE_SCHEMA,
+    GENERATION_SCHEMA,
     SOURCE_POLICY_SCHEMA,
     Challenge,
     ChallengeKey,
@@ -16,6 +18,7 @@ from review_design_lineage import (  # noqa: E402
     EnvironmentApplicability,
     Event,
     EventType,
+    Generation,
     HumanDecisionProvenance,
     Identity,
     Projection,
@@ -32,6 +35,10 @@ from review_design_lineage import (  # noqa: E402
     cumulative_drift_baseline,
     external_snapshot_contradictions,
     projection_contradictions,
+    event_mapping,
+    generation_mapping,
+    human_decision_mapping,
+    parse_record_envelope,
     reconstruct,
     recover_notes,
     recover_snapshot,
@@ -96,6 +103,42 @@ def event(record, gid, kind, successor=None):
         "Dish Agent",
         successor_generation_id=successor,
     )
+
+
+def test_record_envelope_parses_canonical_records_and_preserves_full_identity():
+    record = gen("G-envelope", "candidate")
+    approval_event, decisions = approval(record)
+    decision = next(iter(decisions.values()))
+    payload = "\n".join(
+        (
+            "durable story preface",
+            json.dumps(generation_mapping(record), sort_keys=True),
+            json.dumps(event_mapping(approval_event), sort_keys=True),
+            json.dumps(human_decision_mapping(decision), sort_keys=True),
+            "durable story suffix",
+        )
+    )
+
+    records = parse_record_envelope(payload.encode())
+    generations = tuple(value for value in records if isinstance(value, Generation))
+    events = tuple(value for value in records if isinstance(value, Event))
+    human_decisions = tuple(
+        value for value in records if isinstance(value, HumanDecisionProvenance)
+    )
+
+    assert generations == (record,)
+    assert events == (approval_event,)
+    assert human_decisions == (decision,)
+    assert generations[0].identity.relevant_repo_baseline == record.relevant_repo_baseline
+
+
+def test_record_envelope_ignores_unknown_schema_and_rejects_malformed_known_record():
+    unknown = '{"schema":"invented-review-wrapper:v1","claims":{"approved":true}}'
+    assert parse_record_envelope(unknown.encode()) == ()
+
+    malformed = '{"schema":"' + GENERATION_SCHEMA + '","task_gid":"task"}'
+    with pytest.raises(ValueError, match="generation_id"):
+        parse_record_envelope(malformed.encode())
 
 
 def test_asana_design_recovery_uses_review_v2_snapshot():

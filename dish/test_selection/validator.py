@@ -76,6 +76,7 @@ SCOPED_ROOTS = {
 EXCLUDED_PARTS = {".venv", ".pytest_cache", ".test-artifacts", "node_modules", "__pycache__"}
 EXCLUDED_SCOPED_PREFIXES = {("frontend", "dist")}
 PARENT_GUIDANCE = {"../AGENTS.md", "../CLAUDE.md", "../README.md"}
+PARENT_GOVERNED_PATHS = PARENT_GUIDANCE | {"../scripts/review_design_lineage.py"}
 POLICY_DATA_PATH = "test_selection/ownership.csv"
 
 
@@ -174,7 +175,9 @@ def _file_exists(repo: Path, git_root: Path, tracked_git: set[str], ref: str) ->
 
 def _looks_like_test_file(path: str) -> bool:
     return (
-        path.startswith("tests/") or path.startswith("frontend/tests/")
+        path.startswith("tests/")
+        or path.startswith("frontend/tests/")
+        or path.startswith("../ci/tests/")
     ) and Path(path).suffix in {".py", ".js", ".mjs", ".json", ".txt"}
 
 
@@ -249,9 +252,10 @@ def validate_policy(
         errors.append(f"mapped paths outside current scope or deleted ({len(stale_map)}): {stale_map[:30]}")
 
     mapped_parent = {path for path in paths if path.startswith("../")}
-    if mapped_parent != PARENT_GUIDANCE:
+    if mapped_parent != PARENT_GOVERNED_PATHS:
         errors.append(
-            f"parent guidance mismatch: expected {sorted(PARENT_GUIDANCE)}, got {sorted(mapped_parent)}"
+            "parent governed-path mismatch: "
+            f"expected {sorted(PARENT_GOVERNED_PATHS)}, got {sorted(mapped_parent)}"
         )
 
     row_by_path = {row["path"]: row for row in rows if row.get("path")}

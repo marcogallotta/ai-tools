@@ -434,6 +434,9 @@ def discover_git_paths(
 
     scoped: set[str] = set()
     ignored: set[str] = set()
+    mapped_parent_paths = {
+        path for path in load_policy() if path.startswith("../")
+    }
     for value in raw:
         absolute = (git_root / value).resolve(strict=False)
         try:
@@ -441,10 +444,16 @@ def discover_git_paths(
             continue
         except ValueError:
             pass
-        if absolute.parent == repo_root.parent and absolute.name in {"AGENTS.md", "CLAUDE.md", "README.md"}:
-            scoped.add(f"../{absolute.name}")
-        else:
+        try:
+            parent_relative = absolute.relative_to(repo_root.parent)
+        except ValueError:
             ignored.add(value)
+            continue
+        candidate = (Path("..") / parent_relative).as_posix()
+        if candidate in mapped_parent_paths:
+            scoped.add(candidate)
+            continue
+        ignored.add(value)
     return tuple(sorted(scoped)), tuple(sorted(ignored))
 
 

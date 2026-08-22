@@ -31,6 +31,25 @@ def test_git_discovery_uses_tracked_delta_not_untracked_filesystem_state(tmp_pat
     assert ignored == ()
 
 
+def test_git_discovery_includes_exact_mapped_parent_executable(tmp_path: Path) -> None:
+    dish_root = tmp_path / "dish"
+    parent_script = tmp_path / "scripts" / "review_design_lineage.py"
+    dish_root.mkdir()
+    parent_script.parent.mkdir()
+    parent_script.write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "scripts/review_design_lineage.py"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "base"], check=True)
+    parent_script.write_text("changed\n", encoding="utf-8")
+
+    paths, ignored = discover_git_paths(repo_root=dish_root)
+
+    assert paths == ("../scripts/review_design_lineage.py",)
+    assert ignored == ()
+
+
 def test_ordinary_authority_change_selects_focused_owners_and_smoke() -> None:
     plan = build_plan(["dish_tool/review_queue.py"], policy_path=POLICY)
 

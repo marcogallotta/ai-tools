@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
+import json
 import re
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 GENERATION_SCHEMA = "dish-design-generation:v1"
 EVENT_SCHEMA = "dish-design-generation-event:v1"
@@ -371,6 +372,120 @@ def human_decision_mapping(
         "relevant_repo_baseline": decision.identity.relevant_repo_baseline,
         "material_delta_set_sha256": decision.material_delta_set_sha256,
     }
+
+
+def _record_text(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be non-empty text")
+    return value
+
+
+def identity_from_mapping(record: Mapping[str, Any]) -> Identity:
+    """Parse the canonical four-part Review V2 identity without dropping baseline."""
+    baseline = record.get("relevant_repo_baseline")
+    if baseline is not None:
+        baseline = _record_text(baseline, "relevant_repo_baseline")
+    return Identity(
+        _record_text(record.get("task_gid"), "task_gid"),
+        _record_text(record.get("generation_id"), "generation_id"),
+        _record_text(record.get("canonical_sha256"), "canonical_sha256"),
+        baseline,
+    )
+
+
+def generation_from_mapping(record: Mapping[str, Any]) -> Generation:
+    if record.get("schema") != GENERATION_SCHEMA:
+        raise ValueError("mapping is not a Review V2 generation")
+    identity = identity_from_mapping(record)
+    snapshot = record.get("canonical_snapshot")
+    snapshot_ref = record.get("canonical_snapshot_ref")
+    if snapshot is not None:
+        snapshot = _record_text(snapshot, "canonical_snapshot")
+    if snapshot_ref is not None:
+        snapshot_ref = _record_text(snapshot_ref, "canonical_snapshot_ref")
+    predecessor = record.get("predecessor_generation_id")
+    if predecessor is not None:
+        predecessor = _record_text(predecessor, "predecessor_generation_id")
+    return Generation(
+        task_gid=identity.task_gid,
+        generation_id=identity.generation_id,
+        predecessor_generation_id=predecessor,
+        canonical_sha256=identity.canonical_sha256,
+        relevant_repo_baseline=identity.relevant_repo_baseline,
+        created_at=_record_text(record.get("created_at"), "created_at"),
+        created_by=_record_text(record.get("created_by"), "created_by"),
+        canonical_snapshot=snapshot,
+        canonical_snapshot_ref=snapshot_ref,
+    )
+
+
+def event_from_mapping(record: Mapping[str, Any]) -> Event:
+    if record.get("schema") != EVENT_SCHEMA:
+        raise ValueError("mapping is not a Review V2 event")
+    try:
+        event_type = EventType(record.get("event_type"))
+    except ValueError as exc:
+        raise ValueError("unsupported Review V2 event type") from exc
+    return Event(
+        event_gid=_record_text(record.get("event_gid"), "event_gid"),
+        event_type=event_type,
+        identity=identity_from_mapping(record),
+        occurred_at=_record_text(record.get("occurred_at"), "occurred_at"),
+        actor=_record_text(record.get("actor"), "actor"),
+        successor_generation_id=record.get("successor_generation_id"),
+        material_delta_set_sha256=record.get("material_delta_set_sha256"),
+        human_decision_ref=record.get("human_decision_ref"),
+        human_decision_sha256=record.get("human_decision_sha256"),
+    )
+
+
+def human_decision_from_mapping(record: Mapping[str, Any]) -> HumanDecisionProvenance:
+    if record.get("schema") != HUMAN_DECISION_SCHEMA:
+        raise ValueError("mapping is not human-decision provenance")
+    return HumanDecisionProvenance(
+        decision_ref=_record_text(record.get("decision_ref"), "decision_ref"),
+        decision_sha256=_record_text(record.get("decision_sha256"), "decision_sha256"),
+        identity=identity_from_mapping(record),
+        material_delta_set_sha256=_record_text(
+            record.get("material_delta_set_sha256"),
+            "material_delta_set_sha256",
+        ),
+        decision_kind=_record_text(record.get("decision_kind"), "decision_kind"),
+        decided_by=_record_text(record.get("decided_by"), "decided_by"),
+    )
+
+
+def parse_record_envelope(
+    payload: bytes,
+) -> tuple[Generation | Event | HumanDecisionProvenance, ...]:
+    """Recover canonical records embedded in durable prose envelopes."""
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Review V2 record envelope must be UTF-8") from exc
+    decoder = json.JSONDecoder()
+    records: list[Generation | Event | HumanDecisionProvenance] = []
+    cursor = 0
+    while True:
+        start = text.find("{", cursor)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        cursor = start + end
+        if not isinstance(value, Mapping):
+            continue
+        schema = value.get("schema")
+        if schema == GENERATION_SCHEMA:
+            records.append(generation_from_mapping(value))
+        elif schema == EVENT_SCHEMA:
+            records.append(event_from_mapping(value))
+        elif schema == HUMAN_DECISION_SCHEMA:
+            records.append(human_decision_from_mapping(value))
+    return tuple(records)
 
 
 def recover_snapshot(

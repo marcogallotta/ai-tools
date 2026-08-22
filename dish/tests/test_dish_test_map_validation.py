@@ -28,7 +28,7 @@ def test_current_head_map_is_structurally_valid() -> None:
     result = validate_policy(repo_root=ROOT, parent_root=ROOT.parent, policy_path=POLICY)
 
     assert result.errors == ()
-    assert result.row_count == result.expected_repo_paths + 3
+    assert result.row_count == result.expected_repo_paths + 4
 
 
 
