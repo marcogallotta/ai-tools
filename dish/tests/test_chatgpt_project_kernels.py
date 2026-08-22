@@ -741,8 +741,8 @@ def test_coordinator_concurrency_requires_evidence_and_preserves_reasoning_front
  'coordinator-evidence-based-concurrency'
  ]
  assert rule['impact']=='breaking'
- assert 'verified current causal edge' in rule['text']
- assert 'Proven independence is sticky' in rule['text']
+ assert 'WAIT needs exact causal evidence' in rule['text']
+ assert 'Independence stays sticky' in rule['text']
  assert 'complete deterministic eligible frontier' in rule['text']
  coordinator=(DISH_ROOT/'docs'/'agents'/'coordinator.md').read_text()
  assert 'FALLBACK_TO_BASELINE / LAST_KNOWN_GOOD' in coordinator
@@ -770,8 +770,9 @@ def test_coordinator_operating_loop_g9_has_deterministic_admission_host_evidence
  live=rules['coordinator-live-scan']
  host=rules['coordinator-evidence-based-host-recommendation']
  assert live['impact']=='breaking'
- assert 'deterministic projection/frontier' in live['text']
- assert 'model judgment chooses only among valid actions' in live['text']
+ assert 'derived projection/frontier, not rescan' in live['text']
+ assert 'model picks valid actions' in live['text']
+ assert live['delivery']=={'mode':'DIRECT_ALWAYS_ON'}
  assert host['impact']=='breaking'
  assert host['delivery']=={'mode':'TRIGGERED_READ','trigger':'execution host recommendation'}
  assert 'convenience/overlap alone is insufficient' in host['text']
@@ -783,6 +784,11 @@ def test_coordinator_operating_loop_g9_has_deterministic_admission_host_evidence
  recovery=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'recovery-observability-and-completion.md').read_text()
  adr=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'decisions'/'0005-capability-grounded-execution.md').read_text()
  control=(DISH_ROOT.parent/'OPERATOR_CONTROL_PLANE.md').read_text()
+ rendered=(DISH_ROOT/'docs'/'chatgpt-projects'/'coordinator.md').read_text()
+ shared='read live GitHub/Asana authority'
+ projection='shared live-authority means use the derived projection/frontier, not rescan'
+ assert shared in rendered and projection in rendered
+ assert rendered.index(projection)>rendered.index(shared)
  assert 'Clean unchanged deterministic state produces no model turn' in coordinator
  assert 'Failed admission is logged and refused' in coordinator
  assert 'creates no queue, dependency authority, scheduler, dispatch authority, or prompt-side state mirror' in authority

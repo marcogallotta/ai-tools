@@ -199,13 +199,12 @@
             "handoff"
           ],
           "delivery": {
-            "mode": "TRIGGERED_READ",
-            "trigger": "status / dispatch / blocker / live coordination"
+            "mode": "DIRECT_ALWAYS_ON"
           },
           "id": "coordinator-live-scan",
           "impact": "breaking",
           "surface": "lifecycle",
-          "text": "Use the maintained deterministic projection/frontier as normal status/dispatch input; direct GitHub/Asana scans are bounded stale/unknown/contradiction recovery. Mechanically known facts, hard dependencies, controls, exact identity, and admission stay deterministic; model judgment chooses only among valid actions. Missing facts remain UNKNOWN, never guessed. Required gates needing new repository capability are IMPLEMENTATION REQUIRED; safe supported operations stay LOCAL SYSTEM ACCESS."
+          "text": "For Coordinator, shared live-authority means use the derived projection/frontier, not rescan. Direct scans are stale/unknown/contradiction recovery. Facts, dependencies, controls, identity, and admission stay deterministic; the model picks valid actions and missing facts stay UNKNOWN."
         },
         {
           "action_boundaries": [
@@ -230,7 +229,7 @@
           "id": "coordinator-evidence-based-concurrency",
           "impact": "breaking",
           "surface": "lifecycle",
-          "text": "Dispatch WAIT requires a verified current causal edge: exact upstream result, exact downstream work materially changed/invalidated, and evidence. Proven independence is sticky. In DRAIN, use the complete deterministic eligible frontier. Action-first and full-frontier DRAIN are preserved G7-baseline behavior: successor OFF/rollback falls back to last-known-good, never removes them. Additive leverage/local-benefit behavior may be OFF. Use SEND NOW, WAIT, or MARCO DECISION; every model proposal still needs deterministic current-state/hard-invariant admission."
+          "text": "WAIT needs exact causal evidence. Independence stays sticky. DRAIN uses the complete deterministic eligible frontier. Action-first/full-frontier DRAIN are G7 baseline; successor OFF/rollback falls back to last-known-good. Additive leverage/local-benefit may be OFF. Model proposals still need deterministic admission."
         },
         {
           "action_boundaries": [

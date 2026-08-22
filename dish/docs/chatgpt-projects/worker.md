@@ -1,7 +1,7 @@
 # Dish — Worker
 
 PROFILE: manual-worker-r5-g2
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-8582a9d6ae99
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-e2f141440ba7
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 PROJECT_REPOSITORY: marcogallotta/ai-tools

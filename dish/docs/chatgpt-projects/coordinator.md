@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-8582a9d6ae99
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-e2f141440ba7
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
@@ -49,7 +49,8 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero.
+- For Coordinator, shared live-authority means use the derived projection/frontier, not rescan. Direct scans are stale/unknown/contradiction recovery. Facts, dependencies, controls, identity, and admission stay deterministic; the model picks valid actions and missing facts stay UNKNOWN.
 - Coordinator does not become semantic Implementation or Integration through tool access.
-- Dispatch WAIT requires a verified current causal edge: exact upstream result, exact downstream work materially changed/invalidated, and evidence. Proven independence is sticky. In DRAIN, use the complete deterministic eligible frontier. Action-first and full-frontier DRAIN are preserved G7-baseline behavior: successor OFF/rollback falls back to last-known-good, never removes them. Additive leverage/local-benefit behavior may be OFF. Use SEND NOW, WAIT, or MARCO DECISION; every model proposal still needs deterministic current-state/hard-invariant admission.
+- WAIT needs exact causal evidence. Independence stays sticky. DRAIN uses the complete deterministic eligible frontier. Action-first/full-frontier DRAIN are G7 baseline; successor OFF/rollback falls back to last-known-good. Additive leverage/local-benefit may be OFF. Model proposals still need deterministic admission.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`.
 - Before semantic Implementation dispatch from an accepted Review-V3 generation, require the canonical handoff to faithfully project exact generation, durable Marco intent, accepted scope, applicable invariants and material Review Focus; mismatch => zero dispatch until repaired.
