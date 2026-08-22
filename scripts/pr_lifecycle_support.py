@@ -615,7 +615,8 @@ class AsanaREST:
         query = urlparse.urlencode({
             "opt_fields": (
                 "gid,name,notes,completed,completed_at,modified_at,permalink_url,"
-                "dependencies.gid,dependents.gid,memberships.project.gid,memberships.section.gid"
+                "dependencies.gid,dependents.gid,memberships.project.gid,memberships.project.name,"
+                "memberships.section.gid,memberships.section.name"
             )
         })
         _, _, value = self.http.request("GET", f"{self.api_root}/tasks/{gid}?{query}", headers=self.headers)

@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping
 import uuid
 
 from pr_lifecycle_support import PRLifecycle
+from pr_lifecycle_coordinator import consume_projection as consume_coordinator_projection
 from pr_lifecycle_v3 import build_v3_projection
 
 SCHEMA = "dish-pr-lifecycle-projection-v1"
@@ -94,7 +95,7 @@ def _default_source(pr: Mapping[str, Any]) -> dict[str, Any]:
             "publication_state": "open" if state != "closed_superseded" else "closed",
             "provenance": "github-pr-state",
         }
-    return {
+    payload = {
         "state": "UNKNOWN",
         "ultimate_target": None,
         "publication_state": "merged" if state == "merged" else state or "unknown",
@@ -429,7 +430,7 @@ def build_projection(
         full_regression=dict(full_regression or {}),
         generated_at=generated_at,
     )
-    return {
+    payload = {
         "schema": SCHEMA,
         "repository": repository,
         "reconciled_at": generated_at.isoformat(),
@@ -458,6 +459,17 @@ def build_projection(
         },
         "v3": v3,
     }
+    payload["coordinator"] = {
+        "mode": "OBSERVE_ONLY",
+        "wake_enabled": False,
+        "hourly": consume_coordinator_projection(
+            payload, duty_id="coordinator.hourly-frontier"
+        ).report,
+        "noon": consume_coordinator_projection(
+            payload, duty_id="coordinator.noon-hygiene"
+        ).report,
+    }
+    return payload
 
 
 def atomic_write(path: Path, value: Mapping[str, Any]) -> None:

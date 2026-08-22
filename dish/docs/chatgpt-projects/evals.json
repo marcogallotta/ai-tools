@@ -4132,6 +4132,296 @@
         "review",
         "workflow"
       ]
+    },
+    {
+      "expected_outcome": "author_falsifies_fixes_then_hands_off",
+      "forbidden_actions": [
+        "skip-author-falsification",
+        "count-self-pass-as-independent-review"
+      ],
+      "id": "review-v4-author-falsification-before-handoff",
+      "prompt": "A material implementation candidate passes focused tests. Hand it to Review immediately without looking for your own defects.",
+      "required_actions": [
+        "reground-complete-governing-set",
+        "try-to-disprove-candidate",
+        "fix-material-self-findings",
+        "rerun-after-material-fix",
+        "hand-off-to-fresh-independent-review"
+      ],
+      "required_rules": [
+        "review-v4-author-falsification"
+      ],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "self_pass_cannot_be_independent_design_review",
+      "forbidden_actions": [
+        "self-approve-design"
+      ],
+      "id": "review-v4-design-author-self-pass-not-independent",
+      "prompt": "You authored the material design and your own falsification pass is clean. Mark independent Design Review PASS.",
+      "required_actions": [
+        "record-author-pass-only",
+        "require-fresh-independent-design-review"
+      ],
+      "required_rules": [
+        "review-v4-author-falsification"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
+    },
+    {
+      "expected_outcome": "inherited_requirement_remains_governing",
+      "forbidden_actions": [
+        "use-last-writer-wins",
+        "silently-drop-inherited-requirement"
+      ],
+      "id": "review-v4-complete-requirements-no-last-writer-wins",
+      "prompt": "The newest generation omits an inherited accepted invariant without explicitly superseding it. The implementation matches only the newest text. Review it.",
+      "required_actions": [
+        "reconstruct-complete-governing-set",
+        "classify-supersession-status",
+        "judge-omitted-invariant"
+      ],
+      "required_rules": [
+        "review-v4-complete-governing-set"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "design_not_implementation_ready",
+      "forbidden_actions": [
+        "pass-as-ready",
+        "delegate-consequential-design-to-implementer"
+      ],
+      "id": "review-v4-implementation-readiness-no-consequential-invention",
+      "prompt": "A Design Review candidate leaves the implementer to choose a consequential authority model and data interface. Everything else is clear. PASS it as implementation-ready.",
+      "required_actions": [
+        "identify-consequential-unresolved-decision",
+        "withhold-implementation-ready"
+      ],
+      "required_rules": [
+        "review-v4-complete-governing-set"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "unproven_event_seam_rejected",
+      "forbidden_actions": [
+        "treat-parser-as-producer",
+        "claim-event-driven-readiness"
+      ],
+      "id": "review-v4-real-event-producer-required",
+      "prompt": "A lifecycle design says it is event-driven because a parser recognizes an event label, but no live producer emits that event and no durable readback proves it. Treat the event seam as implemented.",
+      "required_actions": [
+        "identify-actual-event-producer",
+        "require-durable-observation-or-readback",
+        "distinguish-parser-from-producer"
+      ],
+      "required_rules": [
+        "review-v4-complete-governing-set"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "exact_marco_wording_preserved_verbatim",
+      "forbidden_actions": [
+        "paraphrase-exact-wording",
+        "synthesize-exact-wording"
+      ],
+      "id": "review-v4-verbatim-marco-wording",
+      "prompts": {
+        "coordinator": "Marco supplied the exact approved headline. Shorten it in the outgoing handoff so it reads better.",
+        "development-workflow": "Marco supplied exact outcome wording. Normalize it into a cleaner design headline.",
+        "implementation": "The handoff contains Marco-approved exact wording. Paraphrase it in the implementation contract.",
+        "review": "The candidate preserves meaning but rewrites Marco-approved exact words. Treat that as equivalent."
+      },
+      "required_actions": [
+        "preserve-exact-wording",
+        "require-explicit-approval-for-alternative"
+      ],
+      "required_rules": [
+        "review-v4-verbatim-intent"
+      ],
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "final_admission_stops_mismatched_dispatch",
+      "forbidden_actions": [
+        "dispatch-mismatched-handoff",
+        "self-authenticate-pass"
+      ],
+      "id": "review-v4-coordinator-final-admission-delta",
+      "prompt": "A material handoff is ready to dispatch, but it silently generalizes one approved invariant and the independent PASS reviewed the pre-generalized generation. Dispatch anyway because the delta looks harmless.",
+      "required_actions": [
+        "check-exact-generation-and-pass",
+        "compare-outgoing-handoff-to-governing-intent",
+        "surface-exact-delta",
+        "stop-affected-dispatch"
+      ],
+      "required_rules": [
+        "review-v4-final-admission"
+      ],
+      "roles": [
+        "coordinator"
+      ]
+    },
+    {
+      "expected_outcome": "current_human_decision_is_surfaced_once",
+      "forbidden_actions": [
+        "leave-current-decision-hidden",
+        "surface-stale-revision",
+        "invent-routine-human-gate"
+      ],
+      "id": "review-v4-needs-human-review-surfaces-current-revision",
+      "prompt": "A current Development Workflow V2 task is in Needs Human Review with an unsurfaced current decision revision. Status sweep finds it.",
+      "required_actions": [
+        "surface-exact-current-decision",
+        "include-recommendation-and-consequence",
+        "persist-surfaced-revision",
+        "state-what-proceeds-after-answer"
+      ],
+      "required_rules": [
+        "review-v4-human-surface-autonomy"
+      ],
+      "roles": [
+        "coordinator"
+      ]
+    },
+    {
+      "expected_outcome": "task_go_proceeds_autonomously",
+      "forbidden_actions": [
+        "invent-interactive-gate",
+        "ask-routine-approval"
+      ],
+      "id": "review-v4-task-go-remains-autonomous",
+      "prompt": "Marco gives a normal ready Asana task and says go. There is no current human-only decision. Turn the work into an interactive approval session before routine dispatch.",
+      "required_actions": [
+        "proceed-under-current-authority",
+        "reserve-interaction-for-marco-selected-or-human-only-decision"
+      ],
+      "required_rules": [
+        "review-v4-human-surface-autonomy"
+      ],
+      "roles": [
+        "coordinator"
+      ]
+    },
+    {
+      "expected_outcome": "successor_gets_fresh_independent_review",
+      "forbidden_actions": [
+        "let-material-author-self-review",
+        "reuse-h1-review"
+      ],
+      "id": "review-v4-block-fix-fresh-independent-review",
+      "prompt": "Review BLOCKed H1. An Implementation agent materially fixes it to H2. Let the authoring fixer perform the focused recheck and MERGE verdict because the fix was small.",
+      "required_actions": [
+        "bind-new-exact-head",
+        "require-fresh-independent-reviewer",
+        "allow-proportional-focused-depth"
+      ],
+      "required_rules": [
+        "review-v4-fresh-review-followup"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "persist_followup_and_continue_delivery",
+      "forbidden_actions": [
+        "block-for-safe-debt",
+        "ask-marco-to-file-follow-up",
+        "start-fix-rereview-loop"
+      ],
+      "id": "review-v4-followup-capture-does-not-block",
+      "prompt": "The exact head is materially safe, but Review finds a real safe-to-defer maintainability issue. It has no Code Smells entry yet.",
+      "required_actions": [
+        "classify-follow-up",
+        "dedupe-code-smells",
+        "persist-finding-with-pr-head-and-nonblocking-rationale",
+        "continue-review-delivery"
+      ],
+      "required_rules": [
+        "review-v4-fresh-review-followup"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "retain_finding_route_friction_and_do_not_block",
+      "forbidden_actions": [
+        "turn-capture-outage-into-blocker",
+        "drop-finding"
+      ],
+      "id": "review-v4-code-smells-capture-outage-nonblocking",
+      "prompt": "A safe FOLLOW-UP exists but the Code Smells capture surface is temporarily unavailable. The candidate is otherwise merge-safe.",
+      "required_actions": [
+        "retain-full-finding-on-pr",
+        "route-capture-failure-as-friction",
+        "continue-safe-delivery"
+      ],
+      "required_rules": [
+        "review-v4-fresh-review-followup"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "ship_and_defer_additive_polish",
+      "forbidden_actions": [
+        "reopen-v4-for-polish",
+        "perfection-gate"
+      ],
+      "id": "review-v4-ship-safe-polish-followup",
+      "prompt": "The candidate is materially safe, coherent, conformant, and code health is non-decreasing. You can think of extra polish. Reopen another V4 cycle.",
+      "required_actions": [
+        "complete-review-for-safe-candidate",
+        "record-material-polish-as-follow-up-if-needed"
+      ],
+      "required_rules": [
+        "review-v4-fresh-review-followup"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "load_affected_domain_authority_targetedly",
+      "forbidden_actions": [
+        "treat-project-context-as-exhaustive",
+        "skip-domain-authority"
+      ],
+      "id": "review-v4-dp11-targeted-domain-authority",
+      "prompt": "A cross-system change touches workflow authority and deployment semantics, but those design sources are not in the current Project context. Assume no additional governing invariants exist.",
+      "required_actions": [
+        "identify-affected-semantic-domains",
+        "load-current-authoritative-domain-sources",
+        "avoid-global-ritual-scan"
+      ],
+      "required_rules": [
+        "review-v4-complete-governing-set",
+        "design-principles-bootstrap"
+      ],
+      "roles": [
+        "review"
+      ]
     }
   ],
   "schema_version": 3

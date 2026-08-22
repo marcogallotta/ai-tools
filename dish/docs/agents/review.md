@@ -102,6 +102,52 @@ For material Design Review that will require Marco approval, produce a concise h
 
 The goal is materially stronger Review without a perfection gate: challenge intent/spec drift, unnecessary complexity, false readiness, process-vs-substantive defects, compatibility, and recurring failure patterns proportionately, then stop when the actual Review question is adequately answered.
 
+## Review V4 governing contract
+
+The approved Review V4 outcome is, verbatim:
+
+> Review V4 must make material work self-review and fix before handoff, then use one fresh independent Review to prove the exact candidate preserves complete governing intent and invariants, is implementation-ready, uses real authority/event seams, and improves code health; humans intervene only for consequential decisions, exact Marco wording is preserved, routine correction stays agent-owned, and non-blocking findings become asynchronous follow-up rather than stopping delivery.
+
+Review V4 composes the Review V3 challenge contract above and preserves every still-applicable accepted G1–G9 requirement. It is not a last-writer-wins replacement. Reconstruct the complete governing requirement set before a material Design Review or Code Review conclusion: active direct Marco intent and amendments, the accepted generation, inherited accepted requirements, protected invariants/operator outcomes, current architecture/role authority, and explicit supersessions. Classify apparent conflicts as `COMPATIBLE`, `EXPLICITLY SUPERSEDED`, `TRUE CONFLICT`, or `FALSE CONFLICT`; never silently drop an older requirement merely because a newer generation mentions only part of the system.
+
+### Author falsification and independent Review
+
+Material research/design and Implementation candidates must arrive only after the author has completed the bounded author-falsification contract defined by the authoring role: re-ground exact governing authority and known blockers; try to disprove the candidate against the complete requirement/invariant set and realistic failure modes; prefer objective evidence; fix every material self-found defect; and rerun the falsification pass after any material fix. Stop after a clean pass or a genuine external/human/capability boundary. There is no fixed pass count or perfection target.
+
+Author falsification is quality control, never independent Review and never a Review verdict. A material candidate then gets one **fresh independent Review** of that exact generation/head by default. Add another independent reviewer only for a concrete high-consequence invariant, evidence/qualification boundary, or Marco request. A material correction after `BLOCK` creates a new candidate and requires a fresh independent reviewer even when the appropriate review depth is focused; freshness/independence does not imply a broad re-audit. An unchanged candidate with no new relevant evidence does not earn another Review merely to retry the verdict.
+
+### Intent completeness, verbatim wording, and delta control
+
+At initial material research/design/rebaseline, use high-recall targeted retrieval of the relevant direct-human source when available. Preserve a compact source-indexed Intent Coverage map with stable IDs/labels, source pointer/chronology, normalized meaning, and status `ACTIVE`, `EXPLICITLY SUPERSEDED`, `RESOLVED`, or `AMBIGUOUS`. Preserve exact words whenever wording itself is material. Raw chat remains cold provenance; the durable indexed coverage is the working authority projection.
+
+Classify material intent movement as `PRESERVE`, `REFINE`, `ADD`, `CHANGE`, or `REMOVE/SUPERSEDE`. `CHANGE` or `REMOVE/SUPERSEDE` of direct Marco intent requires explicit Marco approval. A direct-human source may repair an incomplete durable task baseline, but it does not become a parallel mutable lifecycle authority. If Marco supplies or approves exact wording for a headline, outcome, invariant, non-goal, or required phrase, preserve it **verbatim**. Do not normalize, compress, merge, improve, rewrite, paraphrase, synthesize, or “clean up” those words. An alternative requires the exact proposed delta, why it is needed, the material consequence, and explicit approval.
+
+### Material challenge and implementation readiness
+
+Before PASS, challenge premise and necessity, the smallest sufficient existing primitive, and whether the candidate universalizes a local need or collapses coordination, execution, authority, and completion into one mechanism. For a novel high-blast orchestration/lifecycle/authority/identity/queue/state-routing/control-plane mechanism, use a small independent comparator check—normally two to four relevant primary sources when applicable—as evidence, never as Dish authority. Do not add that research ritual to ordinary bounded changes.
+
+For every materially affected semantic domain, apply DP-11: load the current owning architecture/design authority even when that source is absent from the active Project context. Discovery is targeted to the affected domains, not a global ritual scan.
+
+A candidate is `IMPLEMENTATION READY` only when a fresh qualified implementer can execute it without inventing a consequential product, architecture, authority/trust, risk, lifecycle, data/interface, dependency/technology, or validation decision. Routine equivalent local implementation choices are allowed. A technically closed candidate may still wait for the one real human decision or external dependency; Design Review PASS does not fabricate Ready.
+
+When lifecycle, routing, readiness, or completion behavior changes, identify the real enter/exit events, actual event producers, durable observation/readback, operator value, and route-specific proof. A parser, label, fixture, future controller, disabled automation, or documentation claim is not a proven producer. Consume the current lifecycle owner instead of hard-coding competing transition semantics. Policy prose, transition code, tests, durable operator intent, and runtime claims must agree; green tests that certify a contradictory surface do not rescue the candidate.
+
+### Consequence-specific human steering and interaction
+
+Human steering is consequence-specific. Before detailed design freeze, surface a compact Marco checkpoint only when the mechanism materially determines operator experience, architecture/control-plane shape, authority/trust, irreversible compatibility, security/risk, product behavior, or major cost. Routine, reversible, agent-resolvable design stays agent-owned. Human Review is only the current concrete Marco-only decision that blocks the affected semantic scope; it is never generic ceremony for difficult work.
+
+Interactive collaboration exists only when Marco has selected it for that work. Ordinary Asana task + `go` is autonomous: agents execute the governed task without converting routine design/correction/dispatch into live question-and-answer. If local work is genuinely required, use the task-addressed durable local handoff/continuation rather than requiring live Marco interaction. Interrupt only for a real current human-only decision or another standing non-agent boundary.
+
+### Findings, code health, learning, and safe delivery
+
+For Code Review, a `BLOCKER` requires a concrete **why before merge** tied to governing intent/spec/invariant, a supported workflow regression, current serious correctness/data/security/concurrency/recovery/operational risk in the applicable environment, a material code-health regression unsafe or costly to defer, or missing/contradictory proof for a current required guarantee. A real bug, defense-in-depth opportunity, future-environment concern, or maintainability improvement is not automatically merge-blocking.
+
+`FOLLOW-UP` is a first-class successful Review outcome for safe-to-defer hardening, maintainability, documentation, diagnostics, future-environment work, broader audit, or pre-existing debt. Before completing Review, dedupe and persist each material non-blocking finding to the existing `Dish — Code Smells / Engineering Debt` surface under the contributor-base contract; include affected path/component, exact issue, why it matters, evidence/example, suggested next action, originating PR/head, and why it is non-blocking now or the activation trigger. This capture is agent-owned asynchronous follow-up: it does not ask Marco, dispatch a fix, create another Review cycle, or stop an otherwise safe delivery. If the capture surface is unavailable, retain the full finding on the PR and route the capture failure as Development Workflow friction; capture failure alone does not turn safe debt into a blocker.
+
+Where a Review escape or later correction is informative, classify it as `AUTHORING DEFECT`, `SELF-REVIEW ESCAPE`, `INDEPENDENT REVIEW ESCAPE`, `HANDOFF/IMPLEMENTATION DRIFT`, `CODE REVIEW ESCAPE`, `INTEGRATION/OPERATIONAL ESCAPE`, or `NEW EVIDENCE/LEGITIMATE INVALIDATION`, then feed the useful lesson into the existing learned-risk/regression mechanism rather than a new database or scorecard authority. Review-quality metrics may inform learning but never become Goodhart gates.
+
+Judge code health at a senior-engineering standard: the exact candidate must conform to governing intent, avoid current breakage, and leave material code health non-decreasing for the touched design. Code health does not override specification. Audit remains a broader independent safety net, not a substitute for current exact-candidate Review, and a stale Audit finding blocks the current candidate only after reconciliation. Ship once the candidate is materially safe, coherent, implementation-ready where applicable, and proven enough for its current phase. Additive polish becomes `FOLLOW-UP`; do not reopen Review V4 merely to chase perfection.
+
 ## Learned-risk routing corpus
 
 This corpus steers attention only. Select a risk only when the candidate matches its applicability evidence, apply its false-positive guard, and still perform an open-ended review. Refresh an entry when its named trigger occurs; otherwise preserve its evidence date rather than pretending freshness.
@@ -262,7 +308,7 @@ When a real local/manual action is required, write the complete exact-head hando
 
 If a fix is required, put the blocker and complete standalone fix-agent handoff on the PR: blocked PR/branch/head, failure mechanism, required change, scope/non-goals, invariants, expected evidence, and required new head SHA. The fix agent updates the existing PR unless Coordinator explicitly requires replacement. Record exactly one after-fix disposition: `FOCUSED RECHECK`, `MECHANICAL CHECK ONLY`, `DOMAIN DEEP RECHECK`, or `NORMAL MERGE REVIEW`. `DOMAIN DEEP RECHECK` (legacy `NEW SPECIALIST REVIEW`) stays inside this same Review workflow; it never hands off to a second AI reviewer.
 
-After an isolated blocker fix, normally perform a focused recheck on the new exact head rather than a fresh broad review. Reopen broader review only when the fix materially changes the previously accepted design or exposes a new merge-critical uncertainty.
+After an isolated blocker fix, a fresh independent reviewer normally performs a focused recheck on the new exact head. Freshness/independence is mandatory after material authorship; breadth remains proportional. Reopen broader review only when the fix materially changes the previously accepted design or exposes a new merge-critical uncertainty.
 
 ### Scope-amplification check
 
@@ -272,4 +318,4 @@ After two design/re-review cycles without implementation progress, require a sma
 
 ## Development friction and non-blocking debt
 
-Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.
+Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency. Every material `FOLLOW-UP` is deduped/persisted to the existing Code Smells surface with its originating PR/head and explicit non-blocking rationale or activation trigger, then Review continues. If capture is unavailable, preserve the complete finding on the PR and log that capture failure as Development Workflow friction; do not convert otherwise safe debt into a blocker. True current-task blockers stay on the active task/PR.

@@ -68,7 +68,18 @@ def decision_identity(*, task_gid: str, revision: str, question: str) -> str:
 def parse_decision_packet(task: Mapping[str, Any]) -> DecisionPacket | None:
     name = str(task.get("name") or "")
     notes = str(task.get("notes") or "")
-    if not name.startswith("MARCO DECISION —"):
+    memberships = task.get("memberships") or []
+    in_needs_human_review = any(
+        isinstance(m, Mapping)
+        and isinstance(m.get("section"), Mapping)
+        and str(m["section"].get("name") or "") == "Needs Human Review"
+        for m in memberships
+    )
+    # Review V4 permits the current Development Workflow V2 task to carry the
+    # decision packet directly while preserving the legacy MARCO DECISION task
+    # shape.  Section/title evidence prevents a stale packet on an external
+    # blocker from silently becoming a human decision.
+    if not name.startswith("MARCO DECISION —") and not in_needs_human_review:
         return None
     match = _DECISION_RE.match(notes)
     if match is None:
