@@ -119,6 +119,38 @@ def test_comment_round_trip_and_tamper_detection():
         raise AssertionError("tampered result was accepted")
 
 
+def test_comment_rejects_forged_base_identity():
+    result = {
+        "schema": cq.SCHEMA,
+        "head_sha": "a" * 40,
+        "target_base_sha": "b" * 40,
+        "comparison_base_sha": "c" * 40,
+        "pr_number": 242,
+        "outcome": "PASS",
+    }
+    result["result_digest"] = cq._digest(result)
+    body = cq.render_comment(result)
+    assert cq.extract_comment(
+        body,
+        expected_head="a" * 40,
+        expected_target_base="b" * 40,
+        expected_comparison_base="c" * 40,
+        expected_pr_number=242,
+    ) == result
+    try:
+        cq.extract_comment(
+            body,
+            expected_head="a" * 40,
+            expected_target_base="b" * 40,
+            expected_comparison_base="d" * 40,
+            expected_pr_number=242,
+        )
+    except cq.GateError as exc:
+        assert "comparison base is invalid" in str(exc)
+    else:
+        raise AssertionError("forged comparison-base identity was accepted")
+
+
 def test_disabled_policy_is_deterministic_without_analyzers(monkeypatch, tmp_path: Path):
     repo = tmp_path
     git(repo, "init", "-q")
@@ -150,12 +182,20 @@ def test_canonical_result_digest_ignores_runtime_timing():
     assert timing != {}
 
 
-def test_workflow_verifies_persisted_local_result_before_status():
+def test_workflow_separates_untrusted_evaluation_from_privileged_status():
     text = (ROOT / ".github" / "workflows" / "code-quality.yml").read_text()
+    verify, report = text.split("\n  report:\n", 1)
     assert "issue_comment:" in text
     assert "ready_for_review" in text
-    assert "verify-comment" in text
-    assert "Dish / code quality" in text
+    assert "statuses: write" not in verify
+    assert "statuses: write" in report
+    assert "persist-credentials: false" in verify
+    assert 'comparison_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")' in verify
+    assert 'if [[ "$target_base" != "$BASE_SHA" ]]' in verify
+    assert 'if [[ "$claimed_comparison" != "$comparison_base" ]]' in verify
+    assert "--expected-comparison-base" in verify
+    assert "Publish exact-head status without candidate execution" in report
+    assert "actions/checkout" not in report
 
 
 def test_python_size_pure_rename_keeps_base_identity(tmp_path: Path):

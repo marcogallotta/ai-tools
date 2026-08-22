@@ -72,13 +72,26 @@ def render_comment(result: dict[str, Any]) -> str:
     return f"<!-- dish-code-quality-result:v1 head={head} digest={digest} -->\n```json\n{json.dumps(result, sort_keys=True, separators=(',', ':'))}\n```\n\n— Dish Agent: Implementation | ChatGPT"
 
 
-def extract_comment(body: str, *, expected_head: str) -> dict[str, Any]:
+def extract_comment(
+    body: str,
+    *,
+    expected_head: str,
+    expected_target_base: str | None = None,
+    expected_comparison_base: str | None = None,
+    expected_pr_number: int | None = None,
+) -> dict[str, Any]:
     markers = MARKER_RE.findall(body); blocks = JSON_RE.findall(body)
     if len(markers) != 1 or len(blocks) != 1: raise GateError("code-quality comment must contain one marker and one JSON result")
     marker_head, marker_digest = markers[0]
     if marker_head != expected_head: raise GateError("code-quality comment head is stale")
     result = json.loads(blocks[0])
     if result.get("schema") != SCHEMA or result.get("head_sha") != expected_head: raise GateError("code-quality result identity is invalid")
+    if expected_target_base is not None and result.get("target_base_sha") != expected_target_base:
+        raise GateError("code-quality result target base is invalid")
+    if expected_comparison_base is not None and result.get("comparison_base_sha") != expected_comparison_base:
+        raise GateError("code-quality result comparison base is invalid")
+    if expected_pr_number is not None and result.get("pr_number") != expected_pr_number:
+        raise GateError("code-quality result PR identity is invalid")
     supplied = str(result.get("result_digest") or "")
     expected = _digest({k: v for k, v in result.items() if k != "result_digest"})
     if supplied != expected or marker_digest != expected: raise GateError("code-quality result digest mismatch")
@@ -90,7 +103,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     evaluate_cmd = sub.add_parser("evaluate"); evaluate_cmd.add_argument("--repo", default="."); evaluate_cmd.add_argument("--target-base", required=True); evaluate_cmd.add_argument("--head", required=True); evaluate_cmd.add_argument("--task-gid", required=True); evaluate_cmd.add_argument("--pr-number", type=int); evaluate_cmd.add_argument("--correction-round", type=int, default=0); evaluate_cmd.add_argument("--output", required=True)
     comment_cmd = sub.add_parser("render-comment"); comment_cmd.add_argument("--result", required=True)
-    verify_cmd = sub.add_parser("verify-comment"); verify_cmd.add_argument("--comment", required=True); verify_cmd.add_argument("--expected-head", required=True); verify_cmd.add_argument("--output", required=True)
+    verify_cmd = sub.add_parser("verify-comment"); verify_cmd.add_argument("--comment", required=True); verify_cmd.add_argument("--expected-head", required=True); verify_cmd.add_argument("--expected-target-base"); verify_cmd.add_argument("--expected-comparison-base"); verify_cmd.add_argument("--expected-pr-number", type=int); verify_cmd.add_argument("--output", required=True)
     args = parser.parse_args()
     try:
         if args.command == "evaluate":
@@ -101,7 +114,13 @@ def main() -> int:
         if args.command == "render-comment":
             print(render_comment(json.loads(Path(args.result).read_text(encoding="utf-8"))))
             return 0
-        result = extract_comment(Path(args.comment).read_text(encoding="utf-8"), expected_head=_sha(args.expected_head, "expected_head"))
+        result = extract_comment(
+            Path(args.comment).read_text(encoding="utf-8"),
+            expected_head=_sha(args.expected_head, "expected_head"),
+            expected_target_base=_sha(args.expected_target_base, "expected_target_base") if args.expected_target_base else None,
+            expected_comparison_base=_sha(args.expected_comparison_base, "expected_comparison_base") if args.expected_comparison_base else None,
+            expected_pr_number=args.expected_pr_number,
+        )
         Path(args.output).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return 0
     except (GateError, json.JSONDecodeError, OSError) as exc:
