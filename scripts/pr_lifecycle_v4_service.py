@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from typing import Any, Mapping
 
 
@@ -41,6 +42,7 @@ from codex_app_server_daemon import (  # noqa: E402
     RecoveringCodexDaemonAppServer,
 )
 from pr_lifecycle_v4 import (  # noqa: E402
+    DirtySnapshot,
     V4Reconciler,
     V4StateStore,
     WakeBridge,
@@ -165,6 +167,10 @@ class Runtime:
         self.reconcile_lock = threading.Lock()
         self.completion_lock = threading.Lock()
         self.completion_observers: set[str] = set()
+        self.projection_ready = threading.Event()
+        self.projection_bootstrap_pending = True
+        self.projection_boot_id = uuid.uuid4().hex
+        self.projection_error: str | None = "startup bootstrap pending"
         self.metrics_lock = threading.Lock()
         self.metrics = {
             "accepted_events": 0,
@@ -177,42 +183,69 @@ class Runtime:
 
     def baseline_current(self) -> dict[str, Any]:
         with self.reconcile_lock:
-            cases = self.authoritative_cases()
+            cases = self.authoritative_cases(DirtySnapshot(token=0, resources=()))
             baselined = self.store.baseline_current(cases, active_owners=frozenset({"Integrator"}))
         result = {"actionable_cases": len(cases), "baselined": baselined, "model_turns_started": 0}
         log("baseline", **result)
         return result
 
-    def authoritative_cases(self) -> list[dict[str, Any]]:
-        result = subprocess.run(
-            [
-                PYTHON,
-                str(REPO / "scripts/pr_lifecycle.py"),
-                "--repo",
-                "marcogallotta/ai-tools",
-                "--http-timeout",
-                "10",
-                "--projection-path",
-                str(PROJECTION),
-                "status",
-                "--format",
-                "json",
-            ],
-            cwd=REPO,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=1200,
-        )
+    def authoritative_cases(self, snapshot: DirtySnapshot) -> list[dict[str, Any]]:
+        command = [
+            PYTHON,
+            str(REPO / "scripts/pr_lifecycle.py"),
+            "--repo",
+            "marcogallotta/ai-tools",
+            "--http-timeout",
+            "10",
+            "--projection-path",
+            str(PROJECTION),
+            "--projection-boot-id",
+            self.projection_boot_id,
+        ]
+        if self.projection_bootstrap_pending:
+            command.append("--projection-bootstrap")
+        dirty_tasks = {
+            str(resource.get("resource_id") or ""): int(resource.get("token") or 0)
+            for resource in snapshot.resources
+            if resource.get("provider") == "asana"
+            and resource.get("resource_kind") == "task"
+            and str(resource.get("resource_id") or "")
+        }
+        for gid, token in sorted(dirty_tasks.items()):
+            command.extend(["--refresh-task-gid", gid, "--refresh-task-token", f"{gid}:{token}"])
+        command.extend(["status", "--format", "json"])
+        self.projection_ready.clear()
+        self.projection_error = "authoritative projection refresh in progress"
+        try:
+            result = subprocess.run(
+                command,
+                cwd=REPO,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+        except Exception as exc:
+            self.projection_error = f"authoritative lifecycle reread failed: {type(exc).__name__}: {exc}"
+            raise
+        for line in (result.stderr or "").splitlines():
+            if line.strip():
+                log("projection_reader", message=line[-2000:])
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
             suffix = f": {detail[-1000:]}" if detail else ""
-            raise RuntimeError(
-                f"authoritative lifecycle reread failed rc={result.returncode}{suffix}"
-            )
-        projection = read_projection(PROJECTION)
-        consumed = consume_projection(projection)
+            self.projection_error = f"authoritative lifecycle reread failed rc={result.returncode}{suffix}"
+            raise RuntimeError(self.projection_error)
+        try:
+            projection = read_projection(PROJECTION)
+            consumed = consume_projection(projection)
+        except Exception as exc:
+            self.projection_error = f"authoritative projection consumption failed: {type(exc).__name__}: {exc}"
+            raise
         self.audit.publish_report(consumed.report)
+        self.projection_bootstrap_pending = False
+        self.projection_error = None
+        self.projection_ready.set()
         return [dict(case) for case in consumed.actionable_cases]
 
     def record(self, **increments: int) -> None:
@@ -380,11 +413,13 @@ class Runtime:
         with self.metrics_lock:
             metrics = dict(self.metrics)
         return {
-            "status": "ok",
+            "status": "ok" if self.projection_ready.is_set() else "not_ready",
             "schema": "dish-pr-lifecycle-v4-health-v1",
             "thread_id": self.thread_id,
             "thread_status": thread.get("status") if isinstance(thread, Mapping) else "unknown",
             "dirty": len(self.store.snapshot_dirty().resources),
+            "projection_ready": self.projection_ready.is_set(),
+            "projection_error": self.projection_error,
             "metrics": metrics,
             "source_root": str(REPO),
             "state_path": str(self.store.path),
@@ -413,7 +448,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if self.path.rstrip("/") == "/healthz":
             try:
-                self.send_json(200, self.runtime.health())
+                health = self.runtime.health()
+                self.send_json(200 if health.get("status") == "ok" else 503, health)
             except Exception as exc:
                 self.send_json(503, {"status": "error", "error_type": type(exc).__name__})
             return

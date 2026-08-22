@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 from pathlib import Path
@@ -81,6 +81,36 @@ class ReadOnlyAsana:
     def add_comment(self, *args, **kwargs):
         self.writes.append((args, kwargs))
         raise AssertionError("pure observation must not write Asana")
+
+
+class CountingAsana(ReadOnlyAsana):
+    def __init__(self, *, completed=False, stories=None):
+        super().__init__(completed=completed)
+        self.task_reads = 0
+        self.story_reads = 0
+        self.story_values = list(stories or [])
+
+    def list_project_tasks(self, project_gid):
+        assert project_gid == PROJECT
+        return [{
+            "gid": TASK,
+            "name": "Lifecycle observation",
+            "notes": "",
+            "completed": self.completed,
+            "completed_at": NOW.isoformat() if self.completed else None,
+            "modified_at": NOW.isoformat(),
+            "memberships": [{"project": {"gid": PROJECT}, "section": {"gid": "section"}}],
+            "dependencies": [],
+        }]
+
+    def get_task(self, gid):
+        self.task_reads += 1
+        return super().get_task(gid)
+
+    def get_stories(self, gid):
+        assert gid == TASK
+        self.story_reads += 1
+        return list(self.story_values)
 
 
 class ReadOnlyEngine:
@@ -219,6 +249,111 @@ def test_configured_project_gid_fails_closed_when_malformed():
         )
 
 
+def test_warm_projection_reuses_complete_fingerprint_but_dirty_task_rereads():
+    asana = CountingAsana()
+    engine = ReadOnlyEngine(asana)
+    first, _ = pr_lifecycle._task_observation_cycle(engine, [lifecycle()], bootstrap=True)
+    assert (asana.task_reads, asana.story_reads) == (1, 1)
+
+    warm, _ = pr_lifecycle._task_observation_cycle(
+        engine, [lifecycle()], previous_tasks=first,
+    )
+    assert (asana.task_reads, asana.story_reads) == (1, 1)
+    assert warm[0]["provenance"]["stories"] == "cached-complete-story-history"
+
+    pr_lifecycle._task_observation_cycle(
+        engine, [lifecycle()], previous_tasks=warm, dirty_task_gids=[TASK],
+    )
+    assert (asana.task_reads, asana.story_reads) == (2, 2)
+
+    pr_lifecycle._task_observation_cycle(
+        engine, [lifecycle()], previous_tasks=warm, bootstrap=True,
+    )
+    assert (asana.task_reads, asana.story_reads) == (3, 3)
+
+
+def test_completed_project_row_is_retained_without_detail_or_story_reads():
+    asana = CountingAsana(completed=True)
+    tasks, _ = pr_lifecycle._task_observation_cycle(
+        ReadOnlyEngine(asana), [lifecycle(completed=True)], bootstrap=True,
+    )
+    assert tasks[0]["completed"] is True
+    assert tasks[0]["provenance"]["task"] == "asana-project-list-completed"
+    assert (asana.task_reads, asana.story_reads) == (0, 0)
+
+
+def test_warm_projection_recomputes_staleness_from_stable_attempt_basis():
+    asana = CountingAsana(stories=[{
+        "gid": "story-1",
+        "created_at": (NOW - timedelta(hours=23)).isoformat(),
+        "text": "DISPATCH ACCEPTED attempt_id=attempt-a",
+    }])
+    engine = ReadOnlyEngine(asana)
+    first, _ = pr_lifecycle._task_observation_cycle(engine, [lifecycle()], bootstrap=True)
+    assert first[0]["execution"]["stale"] is False
+    engine.now = lambda: NOW + timedelta(hours=2)
+    warm, _ = pr_lifecycle._task_observation_cycle(engine, [lifecycle()], previous_tasks=first)
+    assert warm[0]["execution"]["stale"] is True
+    assert warm[0]["execution"]["attempt_id"] == "attempt-a"
+    assert (asana.task_reads, asana.story_reads) == (1, 1)
+
+
+def test_active_task_budget_fails_before_any_detail_read():
+    class TwoTaskAsana(CountingAsana):
+        def list_project_tasks(self, project_gid):
+            first = super().list_project_tasks(project_gid)[0]
+            return [first, {**first, "gid": "1217593330664689"}]
+
+    asana = TwoTaskAsana()
+    with pytest.raises(pr_lifecycle.LifecycleError, match="active-task budget exceeded"):
+        pr_lifecycle._task_observation_cycle(
+            ReadOnlyEngine(asana), [lifecycle()], max_active_tasks=1,
+        )
+    assert (asana.task_reads, asana.story_reads) == (0, 0)
+
+
+@pytest.mark.parametrize("change", ["notes", "membership", "dependency"])
+def test_warm_fingerprint_change_forces_deep_read_without_modified_at_change(change):
+    class ChangedListing(CountingAsana):
+        def list_project_tasks(self, project_gid):
+            value = super().list_project_tasks(project_gid)[0]
+            if change == "notes":
+                value["notes"] = "changed"
+            elif change == "membership":
+                value["memberships"][0]["section"]["gid"] = "different-section"
+            else:
+                value["dependencies"] = [{"gid": "1217593330664690", "completed": False}]
+            return [value]
+
+    original = CountingAsana()
+    first, _ = pr_lifecycle._task_observation_cycle(
+        ReadOnlyEngine(original), [lifecycle()], bootstrap=True,
+    )
+    changed = ChangedListing()
+    pr_lifecycle._task_observation_cycle(
+        ReadOnlyEngine(changed), [lifecycle()], previous_tasks=first,
+    )
+    assert (changed.task_reads, changed.story_reads) == (1, 1)
+
+
+def test_removed_task_disappears_and_incompatible_cache_is_never_reused():
+    asana = CountingAsana()
+    first, _ = pr_lifecycle._task_observation_cycle(
+        ReadOnlyEngine(asana), [lifecycle()], bootstrap=True,
+    )
+    broken = [{**first[0], "execution_basis": {"schema": "wrong"}}]
+    pr_lifecycle._task_observation_cycle(
+        ReadOnlyEngine(asana), [lifecycle()], previous_tasks=broken,
+    )
+    assert (asana.task_reads, asana.story_reads) == (2, 2)
+
+    asana.list_project_tasks = lambda project_gid: []
+    removed, _ = pr_lifecycle._task_observation_cycle(
+        ReadOnlyEngine(asana), [lifecycle()], previous_tasks=first,
+    )
+    assert removed == []
+
+
 def test_status_projection_consumes_asana_observation_without_write(tmp_path, monkeypatch):
     asana = ReadOnlyAsana(completed=False)
     engine = ReadOnlyEngine(asana)
@@ -309,6 +444,108 @@ def test_status_projection_refuses_authority_movement_during_long_scan(tmp_path,
         "generation": "previous-trustworthy"
     }
     assert asana.writes == []
+
+
+def test_failed_bootstrap_cache_converges_without_repeating_deep_reads(tmp_path, monkeypatch):
+    asana = CountingAsana()
+    initial = lifecycle()
+    moved = lifecycle(state=pr_lifecycle.LifecycleState.MERGED)
+
+    class MovingEngine(ReadOnlyEngine):
+        def status(self, *, include_closed=False):
+            return [moved]
+
+    path = tmp_path / "projection.json"
+    args = SimpleNamespace(
+        projection_path=path,
+        repo="marcogallotta/ai-tools",
+        include_closed=False,
+        observation_project_gids=[PROJECT],
+        projection_bootstrap=True,
+        projection_boot_id="boot-a",
+        refresh_task_gids=[TASK],
+        refresh_task_tokens=[f"{TASK}:7"],
+    )
+    monkeypatch.setattr(pr_lifecycle, "_source_observation_cycle", lambda engine, values: {})
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine, **kwargs: ({}, {}))
+
+    with pytest.raises(pr_lifecycle.LifecycleError, match="authority changed during projection"):
+        pr_lifecycle._publish_projection(MovingEngine(asana), [initial], args, mutate_tasks=False)
+    assert (asana.task_reads, asana.story_reads) == (1, 1)
+    cache = json.loads(pr_lifecycle._refresh_cache_path(path).read_text(encoding="utf-8"))
+    assert cache["boot_id"] == "boot-a"
+    assert cache["dirty_task_tokens"] == {TASK: 7}
+
+    pr_lifecycle._publish_projection(ReadOnlyEngine(asana), [initial], args, mutate_tasks=False)
+    assert (asana.task_reads, asana.story_reads) == (1, 1)
+    assert path.exists()
+
+
+def test_bootstrap_cache_is_rejected_by_a_different_service_boot(tmp_path, monkeypatch):
+    asana = CountingAsana()
+    initial = lifecycle()
+    moved = lifecycle(state=pr_lifecycle.LifecycleState.MERGED)
+
+    class MovingEngine(ReadOnlyEngine):
+        def status(self, *, include_closed=False):
+            return [moved]
+
+    path = tmp_path / "projection.json"
+    args = SimpleNamespace(
+        projection_path=path,
+        repo="marcogallotta/ai-tools",
+        include_closed=False,
+        observation_project_gids=[PROJECT],
+        projection_bootstrap=True,
+        projection_boot_id="boot-a",
+        refresh_task_gids=[TASK],
+        refresh_task_tokens=[f"{TASK}:7"],
+    )
+    monkeypatch.setattr(pr_lifecycle, "_source_observation_cycle", lambda engine, values: {})
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine, **kwargs: ({}, {}))
+    with pytest.raises(pr_lifecycle.LifecycleError, match="authority changed during projection"):
+        pr_lifecycle._publish_projection(MovingEngine(asana), [initial], args, mutate_tasks=False)
+    assert (asana.task_reads, asana.story_reads) == (1, 1)
+
+    args.projection_boot_id = "boot-b"
+    pr_lifecycle._publish_projection(ReadOnlyEngine(asana), [initial], args, mutate_tasks=False)
+    assert (asana.task_reads, asana.story_reads) == (2, 2)
+
+
+def test_budget_exhaustion_retains_previous_atomic_projection(tmp_path, monkeypatch):
+    class SlowResponse:
+        status = 200
+        headers = {}
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b"{}"
+
+    path = tmp_path / "projection.json"
+    path.write_text('{"generation":"previous-trustworthy"}\n', encoding="utf-8")
+    args = SimpleNamespace(projection_path=path, repo="marcogallotta/ai-tools")
+    engine = ReadOnlyEngine(ReadOnlyAsana())
+    budget = pr_lifecycle.ObservationBudget(max_requests=10, max_seconds=5)
+    budget.started = budget.last_progress = 0
+    client = pr_lifecycle.JSONHTTPClient(timeout=10, budget=budget)
+    engine.github.http = client
+    times = iter([0.0, 0.0, 0.0, 6.0])
+    monkeypatch.setattr("pr_lifecycle_support.time.monotonic", lambda: next(times))
+    monkeypatch.setattr("pr_lifecycle_support.urlrequest.urlopen", lambda *args, **kwargs: SlowResponse())
+    def slow_final_read(engine, **kwargs):
+        engine.github.http.request("GET", "https://example.invalid/final")
+        return {}, {}
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", slow_final_read)
+
+    with pytest.raises(pr_lifecycle.ObservationBudgetError, match="wall budget exhausted"):
+        pr_lifecycle._publish_projection(
+            engine, [lifecycle()], args, mutate_tasks=False,
+        )
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "generation": "previous-trustworthy"
+    }
 
 
 def test_review_block_and_fix_in_progress_are_distinct_typed_states():

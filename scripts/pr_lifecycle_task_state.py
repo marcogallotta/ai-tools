@@ -8,7 +8,7 @@ never described as atomic CAS.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import re
@@ -394,15 +394,8 @@ def _attempt_id(text: str) -> str | None:
     return match.group("attempt") if match else None
 
 
-def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]], *, now: datetime | None = None) -> dict[str, Any]:
-    """Project durable execution evidence without converting staleness into takeover authority.
-
-    Dispatch invocation is not acceptance.  Once accepted, freshness is measured
-    from attempt-bound producer evidence using the task's priority-sensitive attention
-    clock.  Stale means attention/recovery is due; it never means the worker is dead
-    and never grants claim/worktree theft or semantic takeover authority.
-    """
-    now = now or datetime.now(timezone.utc)
+def execution_basis(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Extract stable execution evidence so time can be reduced without rereading Asana."""
     story_values = list(stories)
     hold = source_landing_hold(story_values)
     priority, execution_threshold, threshold_source = _task_priority(task)
@@ -422,7 +415,76 @@ def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]
             evidence.append({"timestamp": ts, "state": "DISPATCH REQUESTED", "kind": "requested", "attempt_id": attempt})
         elif "HANDOFF RECORDED" in upper or "HANDOFF PREPARED" in upper or "HANDOFF SENT" in upper:
             evidence.append({"timestamp": ts, "state": "HANDOFF RECORDED", "kind": "handoff", "attempt_id": attempt})
-    if not evidence:
+    evidence.sort(key=lambda item: item["timestamp"])
+    latest = evidence[-1] if evidence else None
+    accepted = None
+    freshness = None
+    if latest is not None and latest["kind"] in {"accepted", "producer"}:
+        accepted_values = [
+            item for item in evidence
+            if item["kind"] == "accepted" and item["timestamp"] <= latest["timestamp"]
+        ]
+        accepted = accepted_values[-1] if accepted_values else None
+        if accepted is not None and accepted.get("attempt_id") is not None:
+            candidates = [accepted]
+            candidates.extend(
+                item for item in evidence
+                if item["kind"] == "producer"
+                and accepted["timestamp"] <= item["timestamp"] <= latest["timestamp"]
+                and item.get("attempt_id") == accepted.get("attempt_id")
+            )
+            freshness = max(candidates, key=lambda item: item["timestamp"])
+    valid_until = None
+    if freshness is not None:
+        valid_until = freshness["timestamp"] + timedelta(seconds=execution_threshold)
+    elif latest is not None and latest["kind"] in {"requested", "handoff"}:
+        valid_until = latest["timestamp"] + timedelta(seconds=3600)
+
+    def stable(item: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        if item is None:
+            return None
+        return {**item, "timestamp": item["timestamp"].isoformat()}
+
+    return {
+        "schema": "dish-execution-basis-v2",
+        "priority": priority,
+        "attention_threshold_seconds": execution_threshold,
+        "attention_threshold_source": threshold_source,
+        "source_landing_hold": hold,
+        "latest_evidence": stable(latest),
+        "accepted_attempt_id": accepted.get("attempt_id") if accepted is not None else None,
+        "accepted_timestamp": accepted["timestamp"].isoformat() if accepted is not None else None,
+        "freshness_evidence": stable(freshness),
+        "freshness_timestamp": freshness["timestamp"].isoformat() if freshness is not None else None,
+        "valid_until": valid_until.isoformat() if valid_until is not None else None,
+    }
+
+
+def execution_truth_from_basis(basis: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    """Reduce stable evidence at the current instant; cached age is never authoritative."""
+    if basis.get("schema") != "dish-execution-basis-v2":
+        raise LifecycleError("execution basis schema is invalid")
+    now = now or datetime.now(timezone.utc)
+    priority = str(basis.get("priority") or "UNKNOWN")
+    execution_threshold = int(basis.get("attention_threshold_seconds") or _UNKNOWN_PRIORITY_STALE_SECONDS)
+    threshold_source = str(basis.get("attention_threshold_source") or "conservative-24h-default")
+    hold = dict(basis.get("source_landing_hold") or {})
+    def parsed(raw: Any, name: str) -> dict[str, Any] | None:
+        if raw is None:
+            return None
+        if not isinstance(raw, Mapping):
+            raise LifecycleError(f"execution basis {name} is invalid")
+        try:
+            timestamp = datetime.fromisoformat(str(raw.get("timestamp") or "").replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise LifecycleError("execution basis timestamp is invalid") from exc
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        return {**dict(raw), "timestamp": timestamp}
+
+    latest = parsed(basis.get("latest_evidence"), "latest evidence")
+    freshness_evidence = parsed(basis.get("freshness_evidence"), "freshness evidence")
+    if latest is None:
         return {
             "state": "NO DURABLE EXECUTION EVIDENCE",
             "stale": False,
@@ -440,8 +502,6 @@ def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]
             "source_landing_hold": hold,
         }
 
-    evidence.sort(key=lambda item: item["timestamp"])
-    latest = evidence[-1]
     ts = latest["timestamp"]
     state = str(latest["state"])
     age = max(0.0, (now - ts).total_seconds())
@@ -452,34 +512,20 @@ def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]
     active_attempt = None
 
     if latest["kind"] in {"accepted", "producer"}:
-        accepted = [
-            item
-            for item in evidence
-            if item["kind"] == "accepted" and item["timestamp"] <= ts
-        ]
-        latest_accepted = accepted[-1] if accepted else None
-
-        if latest_accepted is None:
+        accepted_timestamp = basis.get("accepted_timestamp")
+        if accepted_timestamp is None:
             state = "EXECUTION UNBOUND — ACCEPTED ATTEMPT IDENTITY REQUIRED"
             stale = True
             stale_kind = "WORKER_EXECUTION_STALE"
-        elif latest_accepted.get("attempt_id") is None:
+        elif basis.get("accepted_attempt_id") is None:
             state = "ACCEPTANCE UNBOUND — ATTEMPT IDENTITY REQUIRED"
             stale = True
             stale_kind = "WORKER_EXECUTION_STALE"
         else:
-            active_attempt = str(latest_accepted["attempt_id"])
-            freshness_candidates = [latest_accepted]
-            for item in evidence:
-                if item["kind"] != "producer":
-                    continue
-                if item["timestamp"] < latest_accepted["timestamp"] or item["timestamp"] > ts:
-                    continue
-                if item.get("attempt_id") != active_attempt:
-                    continue
-                freshness_candidates.append(item)
-
-            freshness = max(freshness_candidates, key=lambda item: item["timestamp"])
+            active_attempt = str(basis["accepted_attempt_id"])
+            if freshness_evidence is None:
+                raise LifecycleError("execution basis freshness evidence is missing")
+            freshness = freshness_evidence
             state = str(freshness["state"])
             freshness_age = max(0.0, (now - freshness["timestamp"]).total_seconds())
             if freshness_age > execution_threshold:
@@ -512,6 +558,11 @@ def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]
         "recovery_requires_fresh_attempt_generation": True,
         "source_landing_hold": hold,
     }
+
+
+def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]], *, now: datetime | None = None) -> dict[str, Any]:
+    """Project durable execution evidence without converting staleness into takeover authority."""
+    return execution_truth_from_basis(execution_basis(task, stories), now=now)
 
 
 def projection_comment(task_gid: str, projection: Mapping[str, Any]) -> str:
