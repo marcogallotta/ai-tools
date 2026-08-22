@@ -48,3 +48,5 @@ Do not manufacture urgency from repetition, age, or annoyance. A blocker require
 When code-touching work exposes material non-blocking engineering debt, use `Dish — Code Smells / Engineering Debt` (`1217443501022227`) as a capture surface, not a second execution authority. Check for a matching item first; update it when present, otherwise create one unprioritized `Inbox` item with affected path/component, issue, why it matters, concrete evidence/example, and suggested next action; then continue the assigned scope.
 
 Do not opportunistically fix unrelated debt, inflate priority, or move a blocker required for the active task away from its active task/PR. Current blockers remain on the active work surface.
+
+These two capture surfaces are legacy triage queues. The dedupe-first matching-item update / unprioritized `Inbox` create operations authorized above are bounded non-V2 capture writes; `asana-v2-project-mode.md` unregistered-project rules forbid applying V2 lifecycle semantics there, not these exact standing capture operations. This grants no broader task movement, priority, assignment, dispatch, or execution authority.
