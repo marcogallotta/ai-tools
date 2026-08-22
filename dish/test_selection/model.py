@@ -156,6 +156,19 @@ def load_policy_mappings(path: Path | None = None) -> tuple[list[str], list[dict
         raise PolicyError(f"cannot read test-selection policy {policy_path}: {exc}") from exc
 
 
+def policy_source_paths(path: Path | None = None) -> tuple[Path, ...]:
+    """Return every file whose bytes define the loaded policy."""
+    policy_path = (path or POLICY_PATH).resolve()
+    try:
+        value = policy_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PolicyError(f"cannot read test-selection policy {policy_path}: {exc}") from exc
+    shards = _index_shards(value, source=str(policy_path))
+    if shards is None:
+        return (policy_path,)
+    return (policy_path, *(policy_path.parent / shard for shard in shards))
+
+
 def load_policy(path: Path | None = None) -> dict[str, PolicyRow]:
     policy_path = (path or POLICY_PATH).resolve()
     _, rows = load_policy_mappings(policy_path)

@@ -66,6 +66,9 @@ def test_output_conforms_to_schema_and_is_deterministic():
         "ci/test-impact/edges.json",
         "ci/test-impact/replay.json",
         "dish/test_selection/ownership.csv",
+        "dish/test_selection/ownership/00.csv",
+        "dish/test_selection/ownership/01.csv",
+        "dish/test_selection/ownership/02.csv",
         "dish/test_selection/model.py",
         "dish/test_selection/planner.py",
     ]

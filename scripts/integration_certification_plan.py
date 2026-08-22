@@ -30,6 +30,7 @@ if str(ROOT / "scripts") not in sys.path:
 
 from test_selection.model import ALLOWED_LANES as DISH_ALLOWED_LANES  # noqa: E402
 from test_selection.model import PolicyError as DishPolicyError  # noqa: E402
+from test_selection.model import policy_source_paths as dish_policy_source_paths  # noqa: E402
 from test_selection.planner import build_plan as build_dish_plan  # noqa: E402
 from test_selection.planner import load_git_policy as load_dish_git_policy  # noqa: E402
 
@@ -218,7 +219,7 @@ def _policy_identity(repo_root: Path, policy_path: Path, schema_path: Path) -> d
         repo_root / "ci" / "test-impact" / "targets.json",
         repo_root / "ci" / "test-impact" / "edges.json",
         repo_root / "ci" / "test-impact" / "replay.json",
-        repo_root / "dish" / "test_selection" / "ownership.csv",
+        *dish_policy_source_paths(repo_root / "dish" / "test_selection" / "ownership.csv"),
         repo_root / "dish" / "test_selection" / "model.py",
         repo_root / "dish" / "test_selection" / "planner.py",
     )
