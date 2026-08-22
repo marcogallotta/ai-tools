@@ -29,6 +29,12 @@ flowchart LR
 
 Research/design becomes Implementation-ready only when its required decisions and pre-development review are durably satisfied. Implementation owns one task/branch lineage, publishes a real PR, finishes scoped evidence, and explicitly moves the PR from draft to review-ready. Review and ordinary exact-head CI may then proceed independently; pending CI is not a reason to delay semantic Review. A formal MERGE verdict begins gate evaluation rather than completing the task.
 
+Before a material design or Implementation semantic commitment, the acting role resolves available
+authoritative evidence and classifies any remaining understanding gap. A material unresolved
+assumption cannot become architecture or code; only the affected semantic path pauses. Routine
+bounded mechanics continue, and an irreducible Marco-only material fact is the only gap routed to
+Marco. This is a correctness invariant, not a new lifecycle state or approval gate.
+
 Integration uses the exact reviewed candidate and performs only authorized mechanical reconciliation. A changed head returns to fresh Review. Source landing is distinct from deployment, migration, activation, or operator acceptance; a task becomes complete only after its actual residual obligations are done.
 
 ## Invariants
@@ -39,10 +45,13 @@ Integration uses the exact reviewed candidate and performs only authorized mecha
 - CI ownership is classified before a failing candidate is modified.
 - Post-merge gates remain in their real phase and do not become source-merge blockers by proximity.
 - Detailed GitHub substates are not duplicated as an Asana lifecycle system.
+- Numeric confidence and green tests never substitute for the material understanding/evidence that
+  the disputed semantic requirement actually needs.
 
 ## Current anchors
 
 - [`../../agents/implementation.md`](../../agents/implementation.md)
+- [`../../agents/research.md`](../../agents/research.md)
 - [`../../agents/review.md`](../../agents/review.md)
 - [`../../agents/integration.md`](../../agents/integration.md)
 - [`../../../../scripts/pr_lifecycle.py`](../../../../scripts/pr_lifecycle.py)

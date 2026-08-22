@@ -216,6 +216,36 @@ def test_five_whys_preservation_rejects_coordinated_silent_deletion():
  with pytest.raises(kernels.KernelError,match='behavior scenario missing'):
   kernels.validate_preservation_inventory(s,missing_case,preservation)
 
+def test_epistemic_sufficiency_is_shared_triggered_and_behaviorally_registered():
+ m,s=kernels.load_canonical()
+ rule=next(x for x in s['shared_rules'] if x['id']=='epistemic-sufficiency')
+ assert rule['delivery']=={'mode':'TRIGGERED_READ','trigger':'substantial research / material semantic authoring'}
+ assert rule['action_boundaries']==['analysis','role-critical-write','handoff']
+ procedure=(DISH_ROOT/'docs'/'agents'/'research.md').read_text()
+ implementation=(DISH_ROOT/'docs'/'agents'/'implementation.md').read_text()
+ index=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
+ for token in ('RESOLVABLE FROM AUTHORITY/EVIDENCE','LOCAL-ONLY EVIDENCE REQUIRED','MARCO-ONLY MATERIAL UNKNOWN','NON-MATERIAL / SAFE DEFAULT','UNRESOLVED MATERIAL UNKNOWN','numeric confidence','green tests','plausible-but-wrong code'):
+  assert token in procedure
+ assert 'research.md#shared-sufficiency-invariant' in implementation
+ assert 'research.md' in index
+ for role in s['roles']:
+  rendered=kernels.render_role(m,s,role)
+  assert 'substantial research / material semantic authoring' in rendered
+  assert '`dish/docs/agents/research.md#Shared sufficiency invariant`' in rendered
+ expected={
+  'epistemic-implementation-self-service-answer',
+  'epistemic-implementation-marco-only-material-fact',
+  'epistemic-implementation-nonmaterial-choice-continues',
+  'epistemic-implementation-design-reality-contradiction',
+  'epistemic-implementation-takeover-preserves-gap',
+  'epistemic-implementation-green-tests-insufficient',
+  'epistemic-implementation-confidence-not-authority',
+ }
+ for scenario_id in expected:
+  scenario=_scenario(scenario_id)
+  assert scenario['roles']==['implementation']
+  assert scenario['required_rules']==['epistemic-sufficiency']
+
 def test_chatty_contract_is_canonical_in_root_and_projects_reference_it_after_startup():
  m,s=kernels.load_canonical(); rules=kernels.chatty_contract(s)
  assert any('STRESS MODE ACTIVATED' in x and 'sticky' in x for x in rules)
@@ -743,8 +773,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829'})
- assert set(versions)==expected and len(versions)==33
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd'})
+ assert set(versions)==expected and len(versions)==34
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
