@@ -97,8 +97,8 @@ def test_production_uses_authoritative_transaction_and_workflow_primitives():
 def test_coordinator_human_review_is_explicit_and_scoped_not_blanket():
     coordinator = (ROOT / "docs" / "agents" / "coordinator.md").read_text(encoding="utf-8")
 
-    assert "do not infer a standing Human Review gate solely because work is consequential" in coordinator
-    assert "explicit Marco-requested or task-specific human decision/review" in coordinator
+    assert "Do not infer a standing Human Review gate solely because work is difficult or consequential" in coordinator
+    assert "a current task-specific human decision/review" in coordinator
     assert "pending scoped input blocks only that named decision or operation" in coordinator
     assert "Never turn generic consequentiality into whole-PR human code review" in coordinator
     assert "always record `HUMAN REVIEW REQUIRED` or `HUMAN REVIEW NOT REQUIRED`" not in coordinator
