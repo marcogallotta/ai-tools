@@ -65,3 +65,9 @@ Marco's consequential decisions and constraints are authoritative for their scop
 **Bootstrap:** Real-host checks only for concrete CI gaps.
 
 Narrow real-machine or installed-environment certification is valid when a concrete authorized boundary genuinely cannot be exercised by repository CI or other supported automation. Name the exact capability and evidence it proves. Do not generalize that exception into blanket manual testing, rollout, canary, or activation gates, and do not claim broader assurance than the real-environment check actually establishes.
+
+## DP-11 — Working context is not the whole design estate
+
+**Bootstrap:** A role/Project is a working-context boundary, not an exhaustive design corpus.
+
+A role/Project is a working-context boundary, not an exhaustive design corpus. Before a material cross-system design, implementation decision, or Review conclusion, identify the affected semantic domains and load their current authoritative design/architecture sources. Absence from the current Project is never evidence that no governing design or invariant exists. Discovery should be targeted to affected domains rather than a ritual global scan.

@@ -45,7 +45,7 @@ Do not manufacture urgency from repetition, age, or annoyance. A blocker require
 
 ## Code-smell / engineering-debt logging
 
-When code-touching work exposes material non-blocking engineering debt, use `Dish — Code Smells / Engineering Debt` (`1217443501022227`) as a capture surface, not a second execution authority. Check for a matching item first; update it when present, otherwise create one unprioritized `Inbox` item with affected path/component, issue, why it matters, concrete evidence/example, and suggested next action; then continue the assigned scope.
+When code-touching work exposes material non-blocking engineering debt, use `Dish — Code Smells / Engineering Debt` (`1217443501022227`) as a capture surface, not a second execution authority. Check for a matching item first; update it when present, otherwise create one unprioritized `Inbox` item. Preserve at least: affected path/component; exact issue; why it matters; concrete evidence/example; suggested next action; originating PR/head when one exists; and why it is non-blocking now or the activation trigger. Then continue the assigned scope without asking Marco or creating a fix/re-review loop. If the Code Smells capture surface is unavailable, retain the complete finding on the active PR/task and log the capture failure through Development Workflow Friction; capture failure alone does not make otherwise safe debt blocking.
 
 Do not opportunistically fix unrelated debt, inflate priority, or move a blocker required for the active task away from its active task/PR. Current blockers remain on the active work surface.
 

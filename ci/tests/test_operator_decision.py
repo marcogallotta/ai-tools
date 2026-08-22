@@ -31,12 +31,15 @@ What happens immediately after approval: move to Ready
 
 
 class FakeAsana:
-    def __init__(self, *, name="MARCO DECISION — P1 — choose A or B", notes=NOTES):
+    def __init__(self, *, name="MARCO DECISION — P1 — choose A or B", notes=NOTES, section_name=None):
+        section = {"gid": BLOCKED}
+        if section_name is not None:
+            section["name"] = section_name
         self.task = {
             "gid": TASK,
             "name": name,
             "notes": notes,
-            "memberships": [{"section": {"gid": BLOCKED}}],
+            "memberships": [{"section": section}],
         }
         self.stories = []
         self.moves = 0
@@ -61,6 +64,15 @@ def test_external_blocker_is_not_parsed_as_marco_decision():
     asana = FakeAsana(name="BLOCKED — P1 — waiting on PR #95")
     assert parse_decision_packet(asana.get_task(TASK)) is None
     assert record_decision_surface(asana=asana, task_gid=TASK, now=NOW) is None
+
+
+def test_current_needs_human_review_task_can_carry_decision_packet_without_marco_decision_title():
+    asana = FakeAsana(
+        name="Review V4 — current task awaiting Marco decision",
+        section_name="Needs Human Review",
+    )
+    assert parse_decision_packet(asana.get_task(TASK)).decision_id == DID
+    assert record_decision_surface(asana=asana, task_gid=TASK, now=NOW) == "initial"
 
 
 def test_decision_packet_requires_marker_at_start_and_all_fields():

@@ -123,6 +123,12 @@ For every material mechanism, record target-environment requirements with `VERIF
 
 A later source-policy change creates bounded revalidation of materially affected **current** claims. Discover candidates by stable `source_id`, then confirm each hit against the current exact Review V2 generation before treating it as active. Independent Dish evidence or still-eligible support causes reassessment, not automatic invalidation. Historical generations are never rewritten, and any derived reverse-lookup cache/index is convenience only, never authority.
 
+## Review V4 material authoring discipline
+
+When this role authors material research/design/readiness content, it consumes the same Review V4 adversarial principles as independent Review; do not create a weaker role-local checklist. Before freezing or handing off a material candidate, reconstruct the complete governing requirement set and source-indexed Intent Coverage, preserve exact Marco wording verbatim, load current architecture/design authority for each affected semantic domain under DP-11, then run the bounded author-falsification pass: try to disprove the candidate, prefer objective evidence, fix every material self-found defect, and rerun after material fixes. A clean author pass is not independent Design Review; the exact candidate still requires a fresh independent Review when the lifecycle calls for one.
+
+Human steering is limited to consequential choices whose mechanism materially determines operator experience, architecture/control-plane shape, authority/trust, irreversible compatibility, security/risk, product behavior, or major cost. Routine and reversible design remains agent-owned. Interactive collaboration is used only when Marco has chosen an interactive session for that work; ordinary Asana task + `go` remains autonomous, including routine research/design/correction. A genuine human-only decision may interrupt only its affected scope.
+
 ## Canonical repository lifecycle
 
 Repository-changing Implementation/fix dispatch policy is defined once in the canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Development Workflow tooling and handoffs must consume that source rather than maintaining a parallel template.
