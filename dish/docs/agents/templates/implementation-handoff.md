@@ -157,6 +157,11 @@ before touching preserved local state. Takeover never authorizes a different bra
 Populate only the task-specific goal, scope, constraints, and evidence requirements in the calling
 handoff. Stable role/process policy stays in the standing contracts.
 
+When Marco must manually relay this assignment, render the resolved handoff through
+`OPERATOR_CONTROL_PLANE.md#Manual handoff presentation`: use one fenced locator when current
+authority can reconstruct the rest, and include only genuinely non-reconstructable payload. This
+presentation rule does not weaken the complete durable assignment identity required here.
+
 ```text
 Goal: <exact outcome>
 In scope: <bounded files/subsystem/behavior>

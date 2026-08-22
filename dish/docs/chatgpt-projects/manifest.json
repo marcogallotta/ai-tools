@@ -1,5 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-ae1ea8a3ef1a",
+  "canonical_version": "dish-chatgpt-projects-v2-69f3f14a3426",
   "change_history": [
     {
       "changes": [
@@ -6793,9 +6793,165 @@
       },
       "from_version": "dish-chatgpt-projects-v2-3ff60ea28ba4",
       "to_version": "dish-chatgpt-projects-v2-ae1ea8a3ef1a"
+    },
+    {
+      "changes": [
+        {
+          "action_boundaries": [
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "audit",
+            "coordinator",
+            "development-workflow",
+            "implementation",
+            "integration",
+            "postgresql-dark-launch",
+            "review",
+            "workflow"
+          ],
+          "rule_id": "manual-handoff-presentation",
+          "surface": "presentation"
+        },
+        {
+          "action_boundaries": [
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "renderer:chatty-contract",
+          "surface": "presentation"
+        }
+      ],
+      "from_renderer_fingerprint": "a0a7435d612bf64762c4015e699af3d885bd685d78a9eceb8fa6c4d327e54016",
+      "from_rule_fingerprints": {
+        "_roles": {
+          "audit": {
+            "asana-v2-project-registry": "1691c8dd2dc15e39f5808b318930276eda50bbaaf913a2f00bf109ccdbee478c",
+            "audit-asana-disposition": "f00baca370ae243b2275c6c23315ab196b076fed960057af039abee3f8c2ede0",
+            "audit-authority-boundary": "aac50205ed3c8ac26ddfd1cd0e32184ec28bb8db6c9921ba7452ad5fc1a5f8a1",
+            "audit-exact-baseline": "3a64235b443a09c07250c43499e23c13bcc7404331ba402844a17fa7b3ed5e18",
+            "audit-specialist-context": "1f18706d0812aac531f41e41d5fdd3dcfdd3cf6398d6c79d16e4cc579cc47354"
+          },
+          "coordinator": {
+            "asana-v2-project-registry": "1691c8dd2dc15e39f5808b318930276eda50bbaaf913a2f00bf109ccdbee478c",
+            "coordinator-check-everything": "0be2ae58fa92d66a043a9144af16233ebbf816812860d041702dd8777be7d389",
+            "coordinator-evidence-based-concurrency": "68000f3a848e037afc4b178b094bae1caef89e7c2bd69dd03c182c3cc5e4ad43",
+            "coordinator-live-scan": "0a5e865e772eaffcceed0d5c7ca49918395cd55d97b33e9364785ed49e636e7e",
+            "coordinator-no-implementation-integration": "5131e28f10a1b08733234c64aee75e3fd34682c70cdd8132ca400455bda605da",
+            "durable-review-state": "939683b2884b9cc2697a71de346b94e4501bb4f50a36ec68cb1dcc0a72c41d96",
+            "external-defect-admission": "0134b978cd299189b2165503d379a8e9927527a43b05fe57c7b1f34ee4c6da8d",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad",
+            "review-v3-handoff-fidelity": "e8a65c72dcda02f1faf81be5280c16920db21979ba439d1fed91f635b294d209",
+            "scope-amplification-checkpoint": "dc6ed559108207d441e5a0f11e86aa50b1e166ff97748797fececc7b4a7b7855"
+          },
+          "development-workflow": {
+            "development-workflow-boundary": "81e016ca3c070f049bd1714d1d6741f903175480903626e62091c9d85e67e951",
+            "development-workflow-concurrency-preflight": "a16a618801ed70b4311fd9159cf661ede090ae0af33a2ff491353ccb11f09fb1",
+            "development-workflow-context-preload": "82585e559876991424b840f617f5339474d4330732ac61c9898caf8dbee19d0c",
+            "development-workflow-design-review": "22153a1a4acdf9d031c15293407cdadbb6bd3f2f64c70a57cff3cf424d42b9ef",
+            "development-workflow-friction-triage": "e4408375fd5183c63055e65c854df65776aa7a6d9ba70345e64600a4298261c4",
+            "development-workflow-live-lane": "457832ab91acbfbd33c6e8e6fcf31bfb5cc1f5c7079f6e842a57dea35f43278a",
+            "durable-review-state": "939683b2884b9cc2697a71de346b94e4501bb4f50a36ec68cb1dcc0a72c41d96",
+            "external-defect-admission": "0134b978cd299189b2165503d379a8e9927527a43b05fe57c7b1f34ee4c6da8d",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad",
+            "scope-amplification-checkpoint": "dc6ed559108207d441e5a0f11e86aa50b1e166ff97748797fececc7b4a7b7855"
+          },
+          "implementation": {
+            "action-first-human-output": "5e7599dff7ba0eefdb4c125bbf8a96cf48c18dcd452c381512911cf308a70dfc",
+            "asana-v2-project-registry": "1691c8dd2dc15e39f5808b318930276eda50bbaaf913a2f00bf109ccdbee478c",
+            "external-defect-admission": "0134b978cd299189b2165503d379a8e9927527a43b05fe57c7b1f34ee4c6da8d",
+            "implementation-ci-failure-ownership": "d0c775ea0615eaebca2afbe9c545c5b50b8fecc34cafdb5fb675ae291ae2f557",
+            "implementation-durable-git": "8b413f057df279fb34de4b6defaaed71200bb863eec9dc14df8aeb53f7b96b07",
+            "implementation-host-aware-fix-routing": "9855f48a940625450a742fdd1ee65faad64ad595d097013b63d11806bf0776a5",
+            "implementation-manual-worker-block-fix": "05dcbc3c13742cd6e5e6ba4c8eb90cfb42bac3c3f0b030a47f083bf682b795e9",
+            "implementation-no-self-review-integration": "63cb01f253e328eb323d029f8be7a12fa176fe9c9b9dfcb067b5696cd8bc4f6b",
+            "implementation-remote-first-local-boundary": "b23a8c855cf3b5c3177709d0b0af0e46c0cdfde45463bba5e2fd6246e3bce787",
+            "publication-materializer-path": "31594a06d01c8ef3a41372d52871cf40e020d6c9bd10ecfab7b1acea07056104",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad",
+            "review-v3-handoff-consumption": "fd4bd0054ea6f7049a803b8f6aa4f5b025bfe3f75551dd41ae88b1cd00b07e10",
+            "scope-amplification-checkpoint": "dd72312fd34daedcaec66fc82cad06033b015962f5ff065aef8f2f8f1876d2b6"
+          },
+          "integration": {
+            "action-first-human-output": "5e7599dff7ba0eefdb4c125bbf8a96cf48c18dcd452c381512911cf308a70dfc",
+            "asana-v2-project-registry": "1691c8dd2dc15e39f5808b318930276eda50bbaaf913a2f00bf109ccdbee478c",
+            "integration-local-only": "aa5e383b85b6a38f0ce69beccec0e1f152cdf331e2f2e5abed9f917ee395c8ac",
+            "integration-local-work-classifier": "23e6efd90ccc99d4999b065803fe1be209bea9c066f61b3f825161f78d13086e",
+            "integration-mechanical-only": "ba200e1786c1d6c0c3502de28106148b3c569f8ba5933d9932025e79c4ea217c",
+            "integration-phase-separated-gates": "ba62208087f5a24452c6748443de9a4d651ef58ca0b332076d0a99cbe04d06fb",
+            "integration-post-merge-writeback": "a4318da9a59f9cff046e7d6921b9eb72c5b113ce2844596e40ba3ae46706eb14",
+            "integration-reviewed-head": "9768f9e6f7e7f636d882c1aa084b3cd652f1547c45c65b191f160608e1014e29",
+            "integration-standing-policy-readback": "66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad"
+          },
+          "postgresql-dark-launch": {
+            "asana-v2-project-registry": "1691c8dd2dc15e39f5808b318930276eda50bbaaf913a2f00bf109ccdbee478c",
+            "postgresql-domain-boundary": "d4f75c442e90a93317aea2d623c74c241b7a1dd1ec1401dadef612fcb8b23433",
+            "postgresql-live-lane": "ec8d50a7c189d7409d0c88e6326549a299ad59fd9e4363fc340a13b092236995",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad"
+          },
+          "review": {
+            "asana-v2-project-registry": "1691c8dd2dc15e39f5808b318930276eda50bbaaf913a2f00bf109ccdbee478c",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad",
+            "review-action-handoff": "8e2adabfe5130dce409c01eef620de2110114e5e1ecbd50693a7cd50270a6e3e",
+            "review-bundle-fallback": "82464564584238ab9eb9730c2d1aad0c25d230a1b21373117d2e4aa2b1a5114a",
+            "review-design-generation": "20cf4192bc77b4c34644408d46a674664a7c4a04f09cd83c1edc48673c1a8257",
+            "review-exact-head": "7a148644e6376a9b39ddd0d19ec448f6b880f0dc35372d507fa0276d9657e309",
+            "review-formal-comment": "8dbf6ee167c026d9187336f1f51d3a8ea22ea2a66e36477686693cf66e5b72bb",
+            "review-host-aware-independence-routing": "25434e1e18382cb420336c9c7bb90844a032383ad54fec3ff2e9c18c7f2c87dd",
+            "review-integration-boundary": "d33b76d9d70112444f98dd1da4864dece076528670c1ccde170552e500747954",
+            "review-manual-worker-block-transition": "8174f5145db95348992fd62ef9c17dc2a9811c6d1356205f96e77942f8c20008",
+            "review-no-fix": "79c3d749ed5450e948a5251ed9d6738237a05a1236fa4c77fdfba4de076b0404",
+            "review-phase-separated-gates": "3a5237d7381af1817b42d2324b98202cbf985f2efa1d2626e27133704f1b3a6b",
+            "review-post-block-correction": "14ff56a76406a6cd3231ce5793d1e53b7e0b94874c33d5b359665ebdc295ca3e",
+            "review-repository-context": "14bf874b84158ee54e952124d1ae302df3dc0c37cc84a8e1005d3bde2a97bfc6",
+            "review-v3-adversarial-quality": "576af285e1eb2b7bb5a978cbacf933ff6779298556d65c0b7219bb1e05bf29ec",
+            "review-v3-design-projection": "125995c433f48e7b81bf14b5dd0e918c5be93f33530da8129980b1dec627f0ee",
+            "review-v3-headline-intent": "060cd4fef4dd3bcaacd98358ae6b4091563438ef6989a47cbdd7bd8c588e6513",
+            "review-v3-semantic-grounding": "df4fd1d7b09770b5487274d82fecb268e37df3d93272d9497175a175b043fb3f",
+            "scope-amplification-checkpoint": "dd72312fd34daedcaec66fc82cad06033b015962f5ff065aef8f2f8f1876d2b6"
+          },
+          "workflow": {
+            "asana-v2-project-registry": "1691c8dd2dc15e39f5808b318930276eda50bbaaf913a2f00bf109ccdbee478c",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad",
+            "workflow-domain-boundary": "4c8ac1be546820eada644836a7b3cf2a9cc6df1130a18c6a93ce9b566482e2b8",
+            "workflow-live-lane": "a2df0dace4dea74e09b3b75b8d73bbf1b18d0a41d4c5cebfd32245821a96d6f0"
+          }
+        },
+        "_shared": {
+          "authenticated-account-provenance": "6008594629f990ebd572bcb02acc9199568fd356f370eaea6a620a18400c52c6",
+          "authority-separation": "0f8072fef1258740916ae05dc2bd74a40464c67a36833db4225ec76b14ebc848",
+          "canonical-version-gate": "e437de6bfdc1ee9add4801c57c9a210a03a9bc9769fdf58b0cd41a0c6e815c7e",
+          "decision-provenance": "427247c70ebb3fec2b469fde85eec0ca46f1637f13a46a965ea83425a9cfb436",
+          "design-principles-bootstrap": "dd2d6ce436f450d966ce00d7411ac5cca4e79e539844e29a7bb344df9f9012b7",
+          "development-workflow-asana-mode": "6726f6b36de964fea6843b4b0ad719c5dd19a218b4f35309f7b544e088a97fb9",
+          "epistemic-sufficiency": "f8d01ed5e6e7bc4fed5c626328c11293c44f4ad29c7f0ede7939d8c313822a09",
+          "fail-closed-authority": "a20e3adfab2d4be859460eaa2ae3c8e1ce79071b46732b4a328f1f3bc9a1aebb",
+          "fallback-surface": "c12f6e72cb8fc7dec335cc06f6cc36524204b17b9e3cf29493f77cbcfc5c1c32",
+          "fast-track-process-overlay": "1d4b011f7ac89fc8b9721836598e07e67da297e6d2ce4fd17cd9e7787bf482a8",
+          "five-whys-shared-method": "aa7bfc616d96491a5f595bbc9c7a8b535a9eb5edcf4f7baf82d8bf34d341d40c",
+          "live-authority": "7137afb79829e9985e9e6dd400270e1f01a8963324b32237bd745a53a965810b",
+          "no-direct-main": "8bdf0ab45d543f4be099fc90d05a4e77d1c44c51a891e9ce2d4184cae0a3da1b",
+          "objective-implementation-entry": "1b7b62fcc236c696db4da5ae0246636b188cd7680aabf74f9ffee1ca3173fd14",
+          "project-current-git-authority": "d7d04962bbb38365cf31af867e7c187fd6d7dde677ad6c5986d63f56e367d4ed",
+          "project-repository-routing": "8c2fab1732e702885e87353cad9a02f1768a4a7fb71b095ac7bc98e43906c341",
+          "repository-context-admission": "bef91c9d40a0db7630c541da9af51a8642f458d8a4781f9a6bc53de4d597b16e",
+          "repository-lifecycle": "98162a5b4e2eafccc613779cfb54b30884edfd1e8902c7f0755c61431afc38ed",
+          "role-contract-authority": "8cce5fa54df08a2f2ee53bf378ff9b40a92d1d57698c4213127a64b400c1528c",
+          "task-dismissal-history": "67920547cc14e4ba50881123d7356ad0e64a89fcb45799ee4f1da7bbc116c873",
+          "truthful-dispatch-liveness-language": "5043e7376237f2766b43b3dd8a44a26a00278a69f1633c2dddf82489aeb23826",
+          "worker-host-role-boundary": "45d06f78d367e6721c9db1d2aec9115af67b8525bf4896657c7f91bd470160a2",
+          "write-verification": "e7726aa1b5deb824691f146962a6e521a1de23d0ed664cae3896a414ec865e84"
+        }
+      },
+      "from_version": "dish-chatgpt-projects-v2-ae1ea8a3ef1a",
+      "to_version": "dish-chatgpt-projects-v2-69f3f14a3426"
     }
   ],
-  "current_transition_from": "dish-chatgpt-projects-v2-3ff60ea28ba4",
+  "current_transition_from": "dish-chatgpt-projects-v2-ae1ea8a3ef1a",
   "generated_profile_files": {
     "worker": "worker.md"
   },
@@ -6809,8 +6965,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "b0f7acee35b15fce8ead02a022134ac55ce6d73a223627e761307b3f1bd386be",
-  "kernel_identity_sha256": "ae1ea8a3ef1a3132d3d01650080230e172512e3fb4e249f659d6715c8d0b0724",
+  "generated_sha256": "66c40abc4d40607324658a7cfc3c5f432c468698c175bb50fc73b7b7b67d445e",
+  "kernel_identity_sha256": "69f3f14a3426959b1c08afd6fd6061c7085224c41861ef5460b07b2f9ff18a2c",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -6899,6 +7055,7 @@
       "dish-chatgpt-projects-v2-54041bbbc8d8",
       "dish-chatgpt-projects-v2-5d24af30193a",
       "dish-chatgpt-projects-v2-694190185f60",
+      "dish-chatgpt-projects-v2-69f3f14a3426",
       "dish-chatgpt-projects-v2-708fb9a9a9bc",
       "dish-chatgpt-projects-v2-712e3b16aa05",
       "dish-chatgpt-projects-v2-7644d9ed0518",
@@ -6926,6 +7083,6 @@
   },
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "b039b37f914ded8f602de78aaf50ad7ddf0c5568203e80d9c76a987854701d94",
+  "source_sha256": "237a6e3778aa28d30212e81f583febe2695b7e99325d10398845e407b653371b",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

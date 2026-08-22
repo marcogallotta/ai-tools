@@ -86,6 +86,29 @@ Where execution requires a fresh owning task, including an independent Audit rou
 
 `scripts/handoff_preflight.py` is a transport-neutral fail-closed validator for these already-resolved inputs. It never creates a task, changes standing role authority, or performs a prerequisite write.
 
+## Manual handoff presentation
+
+Only a genuinely manual relay gets presentation ceremony. Give Marco one immediately usable fenced
+copy block, with no duplicate preview or surrounding procedure. Prefer a locator that lets the
+receiver reconstruct current authority and evidence, for example `Review PR #245.`, `Implement task
+1217673638828680.`, or `Continue Implementation on PR #245 and fix the active CI failure.` Add only
+payload that the receiver cannot reconstruct.
+
+A non-reconstructable payload stays inline only when it has at most **8 non-empty lines** and at
+most **700 characters**; blank or whitespace-only lines do not count toward the line limit, while
+all characters count toward the character limit. Crossing either limit requires external transfer.
+For local Claude/Codex, write the complete current handoff to a private temporary file and put only
+its exact absolute path in the fenced block. For ChatGPT, use a supported transferable attachment or
+artifact; if none is available, report the exact transport-capability blocker without dumping the
+long payload or asking Marco to recreate a file.
+
+Each revised handoff replaces the previous one as a complete current artifact; never issue addenda
+that Marco or the receiver must merge. The receiver treats the handoff as normal input, silently
+grounds current role/authority/artifact, and does not treat the relay as authority. These rules
+change physical presentation only; existing role routing and whether a relay is necessary remain
+with their owning contracts. `scripts/handoff_preflight.py` provides the deterministic thresholds
+and host projection after relay necessity and authority are already resolved.
+
 ## Marco decisions versus external blockers
 
 Use `MARCO DECISION — <priority> — <decision>` only when Marco's judgment or approval is the missing authority. Use `BLOCKED — <priority> — <dependency>` for task, PR, environment, external-system, or other mechanically owned dependencies. Deferred future work belongs in Backlog; an actionable investigation belongs in Ready/In Progress rather than being presented as a Marco decision.

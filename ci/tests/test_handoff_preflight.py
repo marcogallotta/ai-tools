@@ -5,7 +5,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from handoff_preflight import (  # noqa: E402
+    HandoffHost,
+    HandoffPresentationKind,
     HandoffReadiness,
+    prepare_handoff_presentation,
     require_distinct_task_identities,
     validate_handoff,
 )
@@ -87,3 +90,116 @@ def test_independent_audit_rounds_require_distinct_task_identities():
         assert "distinct fresh task identities" in str(exc)
     else:
         raise AssertionError("expected duplicate task identity rejection")
+
+
+def test_locator_first_handoff_is_one_copy_block_without_payload_replay():
+    result = prepare_handoff_presentation(
+        payload="",
+        host=HandoffHost.CHATGPT,
+        manual_relay_required=True,
+        reconstructable_locator="Review PR #245.",
+    )
+    assert result.kind is HandoffPresentationKind.INLINE
+    assert result.copy_block == "```\nReview PR #245.\n```"
+
+
+def test_locator_preserves_non_reconstructable_delta_and_counts_combined_content():
+    delta = "Constraint: use unpublished fixture bytes."
+    inline = prepare_handoff_presentation(
+        payload=delta,
+        host=HandoffHost.CHATGPT,
+        manual_relay_required=True,
+        reconstructable_locator="Implement task 1217673638828680.",
+    )
+    assert inline.kind is HandoffPresentationKind.INLINE
+    assert inline.copy_block == (
+        "```\nImplement task 1217673638828680.\n"
+        "Constraint: use unpublished fixture bytes.\n```"
+    )
+
+    combined_over_limit = prepare_handoff_presentation(
+        payload="x" * 690,
+        host=HandoffHost.CHATGPT,
+        manual_relay_required=True,
+        reconstructable_locator="Review PR #247.",
+    )
+    assert combined_over_limit.kind is HandoffPresentationKind.BLOCKED
+    assert combined_over_limit.copy_block is None
+
+
+def test_inline_threshold_requires_both_limits_and_ignores_blank_lines():
+    exactly_eight_lines = "\n\n".join(["x" * 86] * 7 + ["x" * 84])
+    assert len(exactly_eight_lines) == 700
+    result = prepare_handoff_presentation(
+        payload=exactly_eight_lines,
+        host=HandoffHost.CHATGPT,
+        manual_relay_required=True,
+    )
+    assert result.kind is HandoffPresentationKind.INLINE
+
+    over_chars = prepare_handoff_presentation(
+        payload=exactly_eight_lines + "x",
+        host=HandoffHost.CHATGPT,
+        manual_relay_required=True,
+    )
+    assert over_chars.kind is HandoffPresentationKind.BLOCKED
+
+    over_lines = prepare_handoff_presentation(
+        payload="\n".join(["x"] * 9),
+        host=HandoffHost.CHATGPT,
+        manual_relay_required=True,
+    )
+    assert over_lines.kind is HandoffPresentationKind.BLOCKED
+
+
+def test_large_local_handoff_writes_exact_private_file_and_only_shows_path(tmp_path):
+    payload = "non-reconstructable\n" * 9
+    result = prepare_handoff_presentation(
+        payload=payload,
+        host=HandoffHost.LOCAL,
+        manual_relay_required=True,
+        reconstructable_locator="Implement task 1217673638828680.",
+        temp_directory=tmp_path,
+    )
+    assert result.kind is HandoffPresentationKind.LOCAL_FILE
+    assert result.file_path is not None and result.file_path.is_absolute()
+    assert result.file_path.read_text() == f"Implement task 1217673638828680.\n{payload}"
+    assert result.file_path.stat().st_mode & 0o777 == 0o600
+    assert result.copy_block == f"```\n{result.file_path}\n```"
+    assert payload not in result.copy_block
+
+
+def test_large_chatgpt_handoff_uses_supported_artifact_or_reports_capability_blocker():
+    payload = "non-reconstructable\n" * 9
+    transferred = []
+    attached = prepare_handoff_presentation(
+        payload=payload,
+        host=HandoffHost.CHATGPT,
+        manual_relay_required=True,
+        reconstructable_locator="Review PR #247.",
+        chatgpt_artifact_writer=lambda content: transferred.append(content)
+        or "Attached: complete-handoff.txt",
+    )
+    assert attached.kind is HandoffPresentationKind.CHATGPT_ARTIFACT
+    assert attached.copy_block == "```\nAttached: complete-handoff.txt\n```"
+    assert transferred == [f"Review PR #247.\n{payload}"]
+    assert payload not in attached.copy_block
+
+    blocked = prepare_handoff_presentation(
+        payload=payload,
+        host=HandoffHost.CHATGPT,
+        manual_relay_required=True,
+    )
+    assert blocked.kind is HandoffPresentationKind.BLOCKED
+    assert blocked.copy_block is None
+    assert "supported artifact" in blocked.reason
+
+
+def test_no_manual_relay_adds_no_presentation_ceremony():
+    result = prepare_handoff_presentation(
+        payload="unused",
+        host=HandoffHost.LOCAL,
+        manual_relay_required=False,
+    )
+    assert result.kind is HandoffPresentationKind.NONE
+    assert result.copy_block is None
