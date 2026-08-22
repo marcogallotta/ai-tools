@@ -200,15 +200,15 @@ class Runtime:
         ]
         if self.projection_bootstrap_pending:
             command.append("--projection-bootstrap")
-        dirty_tasks = sorted({
-            str(resource.get("resource_id") or "")
+        dirty_tasks = {
+            str(resource.get("resource_id") or ""): int(resource.get("token") or 0)
             for resource in snapshot.resources
             if resource.get("provider") == "asana"
             and resource.get("resource_kind") == "task"
             and str(resource.get("resource_id") or "")
-        })
-        for gid in dirty_tasks:
-            command.extend(["--refresh-task-gid", gid])
+        }
+        for gid, token in sorted(dirty_tasks.items()):
+            command.extend(["--refresh-task-gid", gid, "--refresh-task-token", f"{gid}:{token}"])
         command.extend(["status", "--format", "json"])
         self.projection_ready.clear()
         self.projection_error = "authoritative projection refresh in progress"

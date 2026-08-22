@@ -225,6 +225,10 @@ def _build_engine(
         for gid in [*args.observation_project_gids, *args.refresh_task_gids]:
             if not TASK_GID_RE.fullmatch(str(gid).strip()):
                 raise LifecycleError(f"invalid projection Asana GID: {gid!r}")
+        for value in args.refresh_task_tokens:
+            gid, separator, raw_token = str(value).partition(":")
+            if not separator or not TASK_GID_RE.fullmatch(gid) or not raw_token.isdigit():
+                raise LifecycleError(f"invalid projection dirty task token: {value!r}")
         if not 0 < args.projection_max_active_tasks <= 500:
             raise LifecycleError("projection active-task budget must be between 1 and 500")
         if not 0 < args.projection_max_requests <= 1000:
@@ -352,6 +356,53 @@ def _render_table(values: list[PRLifecycle]) -> str:
 
 def _notification_printer(message: str) -> None:
     print(message, file=sys.stderr)
+
+
+REFRESH_CACHE_SCHEMA = "dish-lifecycle-refresh-cache-v1"
+
+
+def _refresh_cache_path(projection_path: Path) -> Path:
+    return projection_path.with_name(projection_path.name + ".refresh-cache.json")
+
+
+def _read_refresh_cache(projection_path: Path, *, repository: str) -> dict[str, Any]:
+    path = _refresh_cache_path(projection_path)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if (
+        not isinstance(value, Mapping)
+        or value.get("schema") != REFRESH_CACHE_SCHEMA
+        or value.get("repository") != repository
+        or not isinstance(value.get("tasks"), list)
+        or not isinstance(value.get("dirty_task_tokens"), Mapping)
+    ):
+        return {}
+    return dict(value)
+
+
+def _write_refresh_cache(
+    projection_path: Path,
+    *,
+    repository: str,
+    tasks: list[dict[str, Any]],
+    dirty_task_tokens: Mapping[str, int],
+) -> None:
+    observed = {str(task.get("gid") or "") for task in tasks if task.get("gid")}
+    atomic_write(
+        _refresh_cache_path(projection_path),
+        {
+            "schema": REFRESH_CACHE_SCHEMA,
+            "repository": repository,
+            "tasks": tasks,
+            "dirty_task_tokens": {
+                str(gid): int(token)
+                for gid, token in dirty_task_tokens.items()
+                if str(gid) in observed
+            },
+        },
+    )
 
 
 def _task_observation_cycle(
@@ -741,16 +792,47 @@ def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args
             previous = read_projection(args.projection_path)
         except (OSError, ValueError):
             previous = {}
+    refresh_cache = _read_refresh_cache(args.projection_path, repository=args.repo)
+    cached_by_gid = {
+        str(task.get("gid") or ""): dict(task)
+        for task in previous.get("tasks") or []
+        if isinstance(task, Mapping) and task.get("gid")
+    }
+    for task in refresh_cache.get("tasks") or []:
+        if isinstance(task, Mapping) and task.get("gid"):
+            cached_by_gid[str(task["gid"])] = dict(task)
+    dirty_task_tokens: dict[str, int] = {}
+    for value in getattr(args, "refresh_task_tokens", ()):
+        gid, separator, raw_token = str(value).partition(":")
+        if not separator or not TASK_GID_RE.fullmatch(gid) or not raw_token.isdigit():
+            raise LifecycleError(f"invalid projection dirty task token: {value!r}")
+        dirty_task_tokens[gid] = max(dirty_task_tokens.get(gid, 0), int(raw_token))
+    cached_dirty_tokens = {
+        str(gid): int(token)
+        for gid, token in (refresh_cache.get("dirty_task_tokens") or {}).items()
+        if str(token).isdigit()
+    }
+    uncovered_dirty = {str(gid) for gid in getattr(args, "refresh_task_gids", ())}
+    uncovered_dirty.update(dirty_task_tokens)
+    for gid, token in dirty_task_tokens.items():
+        if cached_dirty_tokens.get(gid, -1) >= token:
+            uncovered_dirty.discard(gid)
     tasks, task_scope = _task_observation_cycle(
         engine,
         values,
         configured_projects=(
             () if mutate_tasks else getattr(args, "observation_project_gids", ())
         ),
-        previous_tasks=previous.get("tasks") or [],
-        dirty_task_gids=getattr(args, "refresh_task_gids", ()),
-        bootstrap=bool(getattr(args, "projection_bootstrap", False)),
+        previous_tasks=cached_by_gid.values(),
+        dirty_task_gids=uncovered_dirty,
+        bootstrap=bool(getattr(args, "projection_bootstrap", False)) and not bool(refresh_cache),
         max_active_tasks=int(getattr(args, "projection_max_active_tasks", 200)),
+    )
+    _write_refresh_cache(
+        args.projection_path,
+        repository=args.repo,
+        tasks=tasks,
+        dirty_task_tokens=dirty_task_tokens,
     )
     if mutate_tasks:
         _write_task_projection_comments(engine, tasks)
@@ -835,11 +917,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--projection-path", type=Path, help="atomic lifecycle JSON projection path")
     parser.add_argument(
         "--projection-bootstrap", action="store_true",
-        help="authoritatively deep-read every active task; required on service process start",
+        help="force a process-start projection build; deep-read active tasks without a compatible refresh cache",
     )
     parser.add_argument(
         "--refresh-task-gid", dest="refresh_task_gids", action="append", default=[],
         help="dirty Asana task that must bypass the warm fingerprint cache; repeatable",
+    )
+    parser.add_argument(
+        "--refresh-task-token", dest="refresh_task_tokens", action="append", default=[],
+        help="dirty Asana task and monotonic event token as GID:TOKEN; repeatable",
     )
     parser.add_argument("--projection-max-active-tasks", type=int, default=200)
     parser.add_argument("--projection-max-requests", type=int, default=600)

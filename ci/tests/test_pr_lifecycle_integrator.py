@@ -261,6 +261,7 @@ def test_service_bootstrap_and_dirty_task_are_forwarded_to_projection(monkeypatc
     command = commands[0]
     assert "--projection-bootstrap" in command
     assert command[command.index("--refresh-task-gid") + 1] == "1217762116932884"
+    assert command[command.index("--refresh-task-token") + 1] == "1217762116932884:0"
     assert runtime.projection_ready.is_set()
     assert runtime.projection_bootstrap_pending is False
 

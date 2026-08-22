@@ -446,6 +446,39 @@ def test_status_projection_refuses_authority_movement_during_long_scan(tmp_path,
     assert asana.writes == []
 
 
+def test_failed_bootstrap_cache_converges_without_repeating_deep_reads(tmp_path, monkeypatch):
+    asana = CountingAsana()
+    initial = lifecycle()
+    moved = lifecycle(state=pr_lifecycle.LifecycleState.MERGED)
+
+    class MovingEngine(ReadOnlyEngine):
+        def status(self, *, include_closed=False):
+            return [moved]
+
+    path = tmp_path / "projection.json"
+    args = SimpleNamespace(
+        projection_path=path,
+        repo="marcogallotta/ai-tools",
+        include_closed=False,
+        observation_project_gids=[PROJECT],
+        projection_bootstrap=True,
+        refresh_task_gids=[TASK],
+        refresh_task_tokens=[f"{TASK}:7"],
+    )
+    monkeypatch.setattr(pr_lifecycle, "_source_observation_cycle", lambda engine, values: {})
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine, **kwargs: ({}, {}))
+
+    with pytest.raises(pr_lifecycle.LifecycleError, match="authority changed during projection"):
+        pr_lifecycle._publish_projection(MovingEngine(asana), [initial], args, mutate_tasks=False)
+    assert (asana.task_reads, asana.story_reads) == (1, 1)
+    cache = json.loads(pr_lifecycle._refresh_cache_path(path).read_text(encoding="utf-8"))
+    assert cache["dirty_task_tokens"] == {TASK: 7}
+
+    pr_lifecycle._publish_projection(ReadOnlyEngine(asana), [initial], args, mutate_tasks=False)
+    assert (asana.task_reads, asana.story_reads) == (1, 1)
+    assert path.exists()
+
+
 def test_budget_exhaustion_retains_previous_atomic_projection(tmp_path, monkeypatch):
     class SlowResponse:
         status = 200
