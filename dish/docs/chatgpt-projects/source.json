@@ -276,6 +276,21 @@
         },
         {
           "action_boundaries": [
+            "design",
+            "dispatch",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "durable review-state classification"
+          },
+          "id": "review-v5-governance",
+          "impact": "additive",
+          "surface": "authority",
+          "text": "Review-governance changes require exact unsuperseded generation, independent Review, and exact Marco approval of its material delta pre-Implementation. Routine Review stays agent-owned; repairable metadata is not a semantic blocker. Contracts govern; tools check supplied classification/evidence/parity only."
+        },
+        {
+          "action_boundaries": [
             "status",
             "dispatch"
           ],
@@ -466,6 +481,22 @@
           "impact": "breaking",
           "surface": "lifecycle",
           "text": "Distinguish IMPLEMENTATION READY, AGENT REVIEW/RE-REVIEW, and HUMAN REVIEW/APPROVAL. Required review records exact question/baseline/dependency + durable Asana verdict. Chat-only review is incomplete and grants no Implementation/Integration."
+        },
+        {
+          "action_boundaries": [
+            "design",
+            "dispatch",
+            "handoff",
+            "role-critical-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "durable review-state classification"
+          },
+          "id": "review-v5-governance",
+          "impact": "additive",
+          "surface": "authority",
+          "text": "Review-governance changes require exact unsuperseded generation, independent Review, and exact Marco approval of its material delta pre-Implementation. Routine Review stays agent-owned; repairable metadata is not a semantic blocker. Contracts govern; tools check supplied classification/evidence/parity only."
         },
         {
           "action_boundaries": [
@@ -1174,6 +1205,20 @@
             "mode": "DIRECT_ALWAYS_ON"
           },
           "text": "Semantic Review reads live task, generation, handoff and architecture; resolve material understanding gaps before verdict. Judge spec, handoff and implementation conformance/correctness separately; signed intent/quantifiers/invariants outrank summaries/successors."
+        },
+        {
+          "action_boundaries": [
+            "review-write",
+            "role-critical-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / BLOCK"
+          },
+          "id": "review-v5-governance",
+          "impact": "additive",
+          "surface": "authority",
+          "text": "Review-governance changes require exact unsuperseded generation, independent Review, and exact Marco approval of its material delta pre-Implementation. Routine Review stays agent-owned; repairable metadata is not a semantic blocker. Contracts govern; tools check supplied classification/evidence/parity only."
         },
         {
           "id": "review-v3-adversarial-quality",

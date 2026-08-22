@@ -44,6 +44,10 @@ renaming, or selecting a generation by guesswork.
   review or re-review is next. This is pre-development semantic review, not GitHub PR Review.
 - **Needs Human Review** — the next required step is a genuine, task-specific Marco or other
   authorized-human decision supported by durable authority. Uncertainty and severity are not gates.
+  A semantic Review-governance change remains here after exact independent Design Review until
+  durable evidence binds Marco approval to the exact current unsuperseded generation and material
+  delta. Routine code review, mechanical semantic-parity work, and repairable metadata do not
+  acquire this gate merely because they touch Review surfaces.
 - **Waiting on Dependency** — a named unresolved external, cross-task, or system dependency blocks
   progress; record its owner, wake condition, and what follows.
 - **Ready** — current evidence affirmatively proves the task is dispatchable now.

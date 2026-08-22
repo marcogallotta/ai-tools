@@ -948,8 +948,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426','dish-chatgpt-projects-v2-b545b493a5cc','dish-chatgpt-projects-v2-7d10fa5d611e'})
- assert set(versions)==expected and len(versions)==41
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426','dish-chatgpt-projects-v2-b545b493a5cc','dish-chatgpt-projects-v2-7d10fa5d611e','dish-chatgpt-projects-v2-e2f141440ba7'})
+ assert set(versions)==expected and len(versions)==42
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
@@ -1029,7 +1029,7 @@ def test_design_principles_projection_is_derived_and_present_everywhere():
   assert rule['text'] in path.read_text(), role
 
 def test_malformed_unrelated_history_only_blocks_the_affected_action():
- m,s=kernels.load_canonical(); m=copy.deepcopy(m); edge=m['change_history'][-1]; old=edge['from_version']
+ m,s=kernels.load_canonical(); m=copy.deepcopy(m); edge=next(e for e in reversed(m['change_history']) if any(c.get('rule_id')=='coordinator-live-scan' for c in e['changes'])); old=edge['from_version']
  change=next(c for c in edge['changes'] if c.get('rule_id')=='coordinator-live-scan')
  change.pop('impact')
  unrelated=kernels.classify_project_drift(old,'integration','merge',manifest=m,source=s)
@@ -1069,19 +1069,19 @@ def test_historical_reclassification_has_machine_readable_provenance():
     kernels._validate_correction(change); corrected.append(change)
  assert corrected and all(c['historical_correction']['previous_impact']=='breaking' for c in corrected)
 
-def test_current_transition_blocks_only_its_proved_role_and_action_boundaries():
+def test_current_additive_transition_scopes_only_its_roles_and_action_boundaries():
  m,s=kernels.load_canonical(); parent=m['change_history'][-1]['from_version']
- boundaries={'startup','status','dispatch','handoff','role-critical-write','review-write','merge','analysis'}
+ boundaries={'startup','status','design','dispatch','handoff','role-critical-write','review-write','merge','analysis'}
  affected={
-  ('coordinator','status'),('coordinator','dispatch'),('coordinator','handoff'),
-  ('implementation','role-critical-write'),('implementation','handoff'),
-  ('review','review-write'),('review','handoff'),
+  ('coordinator','design'),('coordinator','dispatch'),('coordinator','handoff'),
+  ('development-workflow','design'),('development-workflow','dispatch'),('development-workflow','handoff'),('development-workflow','role-critical-write'),
+  ('review','review-write'),('review','role-critical-write'),
  }
  for role in s['roles']:
   for boundary in boundaries:
    d=kernels.classify_project_drift(parent,role,boundary,manifest=m,source=s)
    if (role,boundary) in affected:
-    assert d['state']=='hard_break' and d['block'] and d['resync_required'] and d['drift_level']==3, (role,boundary,d)
+    assert d['state']=='outdated' and not d['block'] and not d['resync_required'] and d['drift_level']==2, (role,boundary,d)
    else:
     assert d['state']=='outdated' and not d['block'] and not d['resync_required'], (role,boundary,d)
     assert d['drift_level']==1

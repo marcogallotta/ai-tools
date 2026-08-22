@@ -363,6 +363,16 @@ For this section, a generic `no Review authority` boundary means no semantic **C
 
 Research/design/readiness work must durably distinguish `IMPLEMENTATION READY` from `AGENT REVIEW`, `AGENT RE-REVIEW`, `HUMAN REVIEW`, and `HUMAN APPROVAL/DECISION`. A review-required task records the exact review question, baseline/artifact, and dependency needed to continue. The verdict is written back to Asana; a chat-only verdict is not review completion. A completed review does not itself grant Implementation, formal PR Review, Integration, merge, or runtime authority.
 
+[`review-governance.json`](review-governance.json) is a checked projection/index of Review V5; current standing contracts remain semantic authority. Development Workflow may use its bounded helper only after the governing role has supplied the semantic classification, and must treat contract/projection disagreement as parity failure rather than choosing an authority silently.
+
+<!-- review-governance-rule:RV5-HUMAN-01 -->
+A semantic Review-governance change requires an exact current design generation, fresh independent Design Review, exact durable Marco approval for that generation and material delta, and no later supersession before Implementation or activation.
+
+<!-- review-governance-rule:RV5-ROUTINE-01 -->
+Routine code correctness remains independent agent Review and does not create routine Marco PR review; repairable process metadata is repaired or routed without suppressing useful semantic inspection.
+
+When Human Review is genuinely next, project it first-class with exact generation/digest, the decision needed, decision-relevant delta, minimum evidence, options/tradeoffs when material, recommendation when defensible, and approve/reject/revise next states. A predecessor approval, actor metadata, or PASS-looking prose never clears a successor. Projection-only changes with exact semantic parity do not manufacture another Human Review.
+
 ## Shared-resource concurrency preflight
 
 Before changing shared infrastructure availability or capacity, identify concurrent producer classes and state the non-interference invariants before choosing a mechanism. Observing a quiet state is not isolation. Open capacity only when a mechanically enforced admission/fencing boundary keeps non-target producers unable to consume it for the whole operational window, or when Marco explicitly authorizes a stop-the-world override.

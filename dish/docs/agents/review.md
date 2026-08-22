@@ -14,6 +14,38 @@ For an ordinary merge review, answer whether this exact PR head introduces or pr
 
 Ordinary PRs get bounded high-signal review. Use a narrow specialist review only when correctness depends on a high-consequence invariant such as authority/canonical identity/replay, PostgreSQL concurrency/locking, destructive migration/recovery, security/trust/external effects, or irreversible release/cutover identity/fencing. PR size alone is not an escalation trigger.
 
+## Review V5 governance ratchet
+
+[`review-governance.json`](review-governance.json) is the machine-readable projection of the rules below. [`../../scripts/review_governance.py`](../../scripts/review_governance.py) checks its semantic digest, contract anchors, and mechanical evidence after the governing role has supplied a semantic classification. The projection and helper never replace this standing contract or Review judgment.
+
+<!-- review-governance-rule:RV5-AUTHORITY-01 -->
+Standing role contracts and accepted architecture remain semantic Review authority; this record is a checked projection/index, and disagreement is a parity failure rather than a precedence choice.
+
+<!-- review-governance-rule:RV5-HUMAN-01 -->
+A semantic Review-governance change requires an exact current design generation, fresh independent Design Review, exact durable Marco approval for that generation and material delta, and no later supersession before Implementation or activation.
+
+<!-- review-governance-rule:RV5-ROUTINE-01 -->
+Routine code correctness remains independent agent Review and does not create routine Marco PR review; repairable process metadata is repaired or routed without suppressing useful semantic inspection.
+
+<!-- review-governance-rule:RV5-TAXONOMY-01 -->
+Review distinguishes semantic/current-risk blockers, hard admission blockers, repairable process metadata, and follow-up/observation; only the first two prevent a formal pass, while repairable metadata never becomes positive evidence or a fake semantic blocker.
+
+The classification is about the current issue, not task priority or severity. A semantic/current-risk blocker means the candidate could be materially wrong, unsafe, or contrary to controlling intent. A hard admission blocker means exact candidate identity, governing scope, or required independence cannot be established. Repairable metadata is reconciled through its current owner without suppressing semantic inspection. Follow-ups and observations remain durable but non-blocking.
+
+<!-- review-governance-rule:RV5-HELPER-01 -->
+Mechanical Review-governance tooling receives an authorized semantic classification and may validate identity, independence, approval, supersession, digest, parity, admission, and reporting; it never infers consequence or blocker class from prose, paths, severity, or vocabulary.
+
+<!-- review-governance-rule:RV5-CONFORMANCE-01 -->
+Semantic Code Review challenges specification conformance, handoff fidelity, implementation conformance, and implementation correctness independently; green tests or fidelity to a drifted handoff cannot rescue another failed question.
+
+<!-- review-governance-rule:RV5-HEADLINE-01 -->
+An approved headline is the exact plain-English wording shown to and explicitly approved by Marco; explaining rejected jargon is not approval, and any wording change requires exact-word reapproval.
+
+<!-- review-governance-rule:RV5-TRIPWIRE-01 -->
+The structural tripwire covers only named Review-governance projection, admission, approval, and reporting primitives; wholly novel semantic side channels remain subject to independent semantic Review, with no claim of static completeness.
+
+The human-impact report is evidence: it names protected paths, base/head semantic digests, parity, supplied classification, and approval evidence. Paths and digest movement do not themselves decide that a change is semantic. Projection-only churn with exact semantic parity creates no Human Review; a genuine semantic change follows the ratchet above.
+
 ## Review discovery and identity
 
 Ordinary discovery considers only open PRs with GitHub `draft=false`. A draft PR is AUTHORING / NOT REVIEWABLE unless Marco explicitly requests exceptional early review. The native GitHub draft state is canonical; do not add a parallel review-ready label.

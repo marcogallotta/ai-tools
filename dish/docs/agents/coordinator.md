@@ -242,9 +242,17 @@ Marco is the only human driving the project. Request his judgment only when agen
 
 Do not escalate routine implementation/review uncertainty merely because it is difficult. Use another agent/specialist or obtain missing evidence when that can resolve the question.
 
-Until the canonical Human Review redesign is ratified, do not infer a standing Human Review gate solely because work is consequential, and do not require blanket `HUMAN REVIEW REQUIRED` / `HUMAN REVIEW NOT REQUIRED` classification. Human Review is a blocker only when current durable authority contains an explicit Marco-requested or task-specific human decision/review that names the exact question, artifact or decision scope, and lifecycle point it governs. Preserve that scoped request and its provenance exactly; pending scoped input blocks only that named decision or operation. Never turn generic consequentiality into whole-PR human code review or a late merge/activation blocker.
+[`review-governance.json`](review-governance.json) projects the current Review V5 governance ratchet; standing contracts remain semantic authority and the helper consumes, rather than invents, the governing semantic classification.
 
-Before treating an explicit scoped Human Review as satisfied, establish from durable evidence that an identifiable human actually reviewed the current question or artifact and adequately covered that named scope. Chat-only statements, workflow status, agent assertions, or authenticated-account attribution alone are insufficient. This is the rollback boundary only; it does not define the replacement Human Review process.
+<!-- review-governance-rule:RV5-HUMAN-01 -->
+A semantic Review-governance change requires an exact current design generation, fresh independent Design Review, exact durable Marco approval for that generation and material delta, and no later supersession before Implementation or activation.
+
+<!-- review-governance-rule:RV5-ROUTINE-01 -->
+Routine code correctness remains independent agent Review and does not create routine Marco PR review; repairable process metadata is repaired or routed without suppressing useful semantic inspection.
+
+Outside the Review-governance ratchet, classify the current decision rather than severity. Human Review is warranted for a consequential human-owned choice in design, intent, authority, product, security, or risk, or when current durable authority explicitly requires that exact human decision. It is not warranted for routine code correctness, ordinary implementation detail inside an approved solution envelope, mechanical evidence, style, maintainability preference, or repairable metadata. If a proposed classification would itself create a new mandatory policy boundary, route that boundary through the Review-governance ratchet rather than inferring it.
+
+Before treating Human Review as satisfied, recover durable evidence that Marco approved the exact current generation/question and material delta. Authenticated-account attribution, agent prose, section placement, or a stale predecessor approval is insufficient.
 
 Every human request must contain:
 

@@ -26,6 +26,18 @@ Final landing is a separately authorized local Integration action protected by a
 - Baseline-debt admission retains the failed raw evidence and requires the repository's typed proof boundary.
 - Review never merges; Integration never invents semantic fixes.
 
+## Review V5 governance projection
+
+<!-- review-governance-rule:RV5-AUTHORITY-01 -->
+Standing role contracts and accepted architecture remain semantic Review authority; this record is a checked projection/index, and disagreement is a parity failure rather than a precedence choice.
+
+The bounded [`review_governance.py`](../../../../dish/scripts/review_governance.py) helper validates the versioned [`review-governance.json`](../../agents/review-governance.json) projection and mechanically decidable generation, independent-Review, human-decision, supersession, digest, parity, admission, and report evidence after an authorized role supplies semantic classification. It is not a semantic reviewer or a lifecycle authority.
+
+The existing exact-path ownership map makes new in-scope files explicit. Changes to that map and every protected Review-governance executable/projection seam select one focused structural contract test, which rejects direct use of named governance decision, admission, approval, or report primitives outside the helper allowlist.
+
+<!-- review-governance-rule:RV5-TRIPWIRE-01 -->
+The structural tripwire covers only named Review-governance projection, admission, approval, and reporting primitives; wholly novel semantic side channels remain subject to independent semantic Review, with no claim of static completeness.
+
 ## Current anchors
 
 - [`../../agents/review.md`](../../agents/review.md)
