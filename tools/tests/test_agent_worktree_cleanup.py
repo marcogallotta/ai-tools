@@ -73,7 +73,9 @@ def test_cleanup_refuses_ignored_task_local_content_and_preserves_worktree(h: Ha
     ignored.write_text("only task-local copy\n", encoding="utf-8")
 
     assert git_out(h.wt(task), "status", "--porcelain=v1", "--untracked-files=all") == ""
-    assert git_out(h.wt(task), "ls-files", "--others", "--ignored", "--exclude-standard") == ignored.name
+    ignored_paths = git_out(h.wt(task), "ls-files", "--others", "--ignored", "--exclude-standard").splitlines()
+    assert ignored.name in ignored_paths
+    assert all(path == ignored.name or path.startswith("tools/.venv/") for path in ignored_paths)
 
     result = h.tool("cleanup", "--task", task, "--disposition", "closed", "--json", check=False)
     assert_error(result, "IGNORED_CONTENT_CLEANUP")

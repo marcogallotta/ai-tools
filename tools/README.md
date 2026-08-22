@@ -247,7 +247,19 @@ creation is reported only. Local-ahead owned work is normal; remote-ahead or div
 fail closed for explicit recovery. `--takeover` is only a provenance update after an explicit
 orchestration handoff; it does not infer that the previous agent died.
 
-`status` is local/read-only and does not contact origin.
+Successful `start`, `adopt`, and `resume` also preflight the owned worktree's repository tool runtime.
+The lifecycle creates `tools/.venv` inside that exact worktree from its tracked
+`tools/requirements.txt`; it never copies or symlinks another worktree's environment. A generated
+marker binds the runtime to the worktree path plus the requirements, bootstrap implementation, and
+bootstrap-interpreter identities. A valid matching runtime is reused, a source-HEAD-only change
+refreshes the marker without reinstalling dependencies, and a changed dependency/bootstrap/interpreter
+identity rebuilds the local runtime. `exec` repeats the preflight immediately before agent/test launch.
+Provisioning failure is reported as `PRELAUNCH_BOOTSTRAP_FAILED` with an exact `resume` retry and does
+not fall through to the requested command. The generated `tools/.venv` remains ignored runtime state;
+cleanup treats only that canonical directory as disposable while continuing to refuse other ignored
+worktree content.
+
+`status` is local/read-only and does not contact origin or provision tooling.
 
 ### Commit explicit task paths
 

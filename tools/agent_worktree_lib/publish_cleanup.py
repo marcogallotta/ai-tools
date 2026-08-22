@@ -19,6 +19,7 @@ from .state import TaskLock, atomic_write_json, clear_agent_reference, load_task
 from .operations import owner_agent_id
 from .ownership import invalidate_claim_after_head_movement, require_active_claim
 from .lineage import LINEAGE_ENV, record_lineage_head, terminalize_lineage
+from .tool_environment import CANONICAL_VENV_RELATIVE, preflight_tool_environment
 
 def _claimed_state(task_gid: str, runner: GitRunner, *, allow_head_moved_readback: bool = False) -> dict[str, Any]:
     state = load_task_state(task_gid)
@@ -148,7 +149,12 @@ def ignored_untracked_paths(runner: GitRunner, worktree) -> list[str]:
         "--exclude-standard",
         "-z",
     )
-    return [path for path in result.stdout.split("\0") if path]
+    canonical = CANONICAL_VENV_RELATIVE.as_posix()
+    return [
+        path
+        for path in result.stdout.split("\0")
+        if path and path != canonical and not path.startswith(canonical + "/")
+    ]
 
 
 def _checked_out_path(runner: GitRunner, repo, branch: str) -> str | None:
@@ -461,6 +467,9 @@ def command_exec(args: argparse.Namespace, runner: GitRunner) -> "NoReturn":
         command = command[1:]
     if not command:
         fail("EXEC_COMMAND_REQUIRED", "exec requires a command after --")
+    preflight_tool_environment(
+        task_gid=task_gid, agent_id=owner_agent_id(state), worktree=identity.path, head=identity.head
+    )
     os.chdir(identity.path)
     runner.close()
     os.execvp(command[0], command)
