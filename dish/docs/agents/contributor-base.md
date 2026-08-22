@@ -50,5 +50,3 @@ When code-touching work exposes material non-blocking engineering debt, use `Dis
 Do not opportunistically fix unrelated debt, inflate priority, or move a blocker required for the active task away from its active task/PR. Current blockers remain on the active work surface.
 
 These two capture surfaces are legacy triage queues. The dedupe-first matching-item update / unprioritized `Inbox` create operations authorized above are bounded non-V2 capture writes; `asana-v2-project-mode.md` unregistered-project rules forbid applying V2 lifecycle semantics there, not these exact standing capture operations. This grants no broader task movement, priority, assignment, dispatch, or execution authority.
-
-Development Workflow owns recurring queue hygiene: include both `Inbox` queues in fresh-start, re-grounding, status, and explicit triage sweeps; dedupe against active owning work; move only actually-triaged items to `Triaged` and completed fixes to `Done`. This is triage/routing ownership, not semantic implementation authority.

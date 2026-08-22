@@ -16,4 +16,5 @@ def test_local_role_index_projects_friction_and_debt_capture_contracts():
 
     assert "bounded non-V2 capture writes" in contributor
     assert "Bounded legacy capture writes" in asana_mode
-    assert "Development Workflow owns recurring queue hygiene" in contributor
+    assert "move or dispatch work under this shared capture exception" in asana_mode
+    assert "neither revokes that role-specific authority nor extends it to Code Smells" in asana_mode
