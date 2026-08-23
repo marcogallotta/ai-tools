@@ -1,4 +1,5 @@
 {
+  "exceptions": [],
   "gates": [
     {
       "current_version": 1,
@@ -23,6 +24,6 @@
       }
     }
   ],
-  "overlay_version": "fasttrack-r3",
-  "schema_version": 1
+  "registry_version": "fasttrack-r4",
+  "schema_version": 2
 }

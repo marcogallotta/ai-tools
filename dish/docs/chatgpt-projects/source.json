@@ -1664,10 +1664,10 @@
       "delivery": {
         "mode": "DIRECT_ALWAYS_ON"
       },
-      "id": "fast-track-process-overlay",
+      "id": "fast-track-standing-exceptions",
       "impact": "additive",
       "surface": "authority",
-      "text": "Fast-track: read triggered Procedure."
+      "text": "Standing gate exception: use current reviewed Git only; read the triggered Procedure."
     },
     {
       "action_boundaries": [

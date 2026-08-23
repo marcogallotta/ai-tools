@@ -16,6 +16,10 @@ Remote/hosted Implementation is the normal semantic authoring path. Local execut
 
 Marco owns outcomes, priorities, consequential design/risk/cost, and explicit exceptional authority. Agents own the authorized inner loop: grounding, diagnosis, retries, supported recovery, reconciliation, and routine technical choices. They interrupt Marco only when his answer materially changes the allowed or desirable path and current authority, evidence, and ordinary engineering judgment cannot resolve it.
 
+Marco approves the consequential scope of a standing gate exception once. Development Workflow owns
+its reviewed repository persistence and the required same-day P-CRITICAL debt-task creation/readback;
+Marco does not maintain parallel Project-settings policy or start a fresh chat to activate it.
+
 Fresh-authoring assignment identity follows the same boundary. When authoritative task, repository, and target facts determine the work and no lineage exists, orchestration/Implementation derives and records the canonical branch and exact base before mutation. The assignment tuple and worktree claim remain machine invariants; they are not an operator-supplied ceremony. Existing/resumed/fix/publication lineages remain bound to their durable branch/PR/head/base, and real owner/target/lineage/base contradictions still fail closed.
 
 Operator communication is an intent-first projection, not a mandatory status packet. Routine execution/status carries the smallest useful result or action. Design and Review lead with direction, then expose the alternatives, tradeoffs, risks, and evidence needed for the active judgment; RCA and requested deep dives retain the reasoning they need. Truth, safety, authority boundaries, and material caveats always remain, but empty owner/risk/action categories are not manufactured. Equivalent task or PR states collapse unless one changes Marco's decision or action, while durable PR/Asana/files/logs retain the complete evidence.

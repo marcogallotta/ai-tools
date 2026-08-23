@@ -105,7 +105,6 @@ def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_f
 
 def test_generated_kernels_current_bound_and_within_budget():
  m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==9
- overlay=kernels.project_settings_compatibility_overlay()
  fixture={'candidate_version':'dish-chatgpt-projects-test-g1','pr_number':1,'candidate_ref':'refs/pull/1/head','candidate_head':'a'*40,'candidate_manifest_sha256':'b'*64,'production_version':m['canonical_version']}
  for role,p in kernels.generated_paths(m,s).items():
   text=p.read_text(); assert len(text)<=m['max_project_settings_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text; assert 'PROJECT_CHANNEL: production' in text
@@ -113,12 +112,9 @@ def test_generated_kernels_current_bound_and_within_budget():
   assert 'Mismatch alone never blocks' in text and '?/3 integrity error' in text
   reports=[
    kernels.render_project_settings_payload(m,s,role),
-   kernels.render_project_settings_payload(m,s,role,overlay=overlay),
    kernels.render_project_settings_payload(m,s,role,channel='test',**fixture),
-   kernels.render_project_settings_payload(m,s,role,channel='test',overlay=overlay,**fixture),
   ]
   assert all(r['total_chars']<=m['max_project_settings_chars'] and r['remaining_chars']>=0 for r in reports)
-  assert reports[0]['overlay_chars']==0 and kernels.FAST_TRACK_OVERLAY_HEADER not in reports[0]['text']
  profile_paths=kernels.generated_profile_paths(m,s)
  assert profile_paths=={'worker': DISH_ROOT/'docs'/'chatgpt-projects'/'worker.md'}
  worker=profile_paths['worker'].read_text()
@@ -146,28 +142,20 @@ def test_git_first_startup_and_test_candidate_binding_are_explicit():
  with pytest.raises(kernels.KernelError,match='TEST candidate requires exact'):
   kernels.render_test_candidate(s,'review',candidate_version='x',pr_number=140,candidate_ref='refs/pull/140/head',candidate_head='bad',candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
 
-def test_project_settings_budget_rejects_false_green_test_and_overlay_compositions():
- m,s=kernels.load_canonical(); role='review'; prod=kernels.render_project_settings_payload(m,s,role); overlay=kernels.project_settings_compatibility_overlay()
+def test_project_settings_budget_rejects_false_green_test_payload():
+ m,s=kernels.load_canonical(); role='review'; prod=kernels.render_project_settings_payload(m,s,role)
  raw_test=kernels._render_test_candidate_kernel(s,role,candidate_version='test',pr_number=1,candidate_ref='refs/pull/1/head',candidate_head='1'*40,candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
  assert prod['total_chars']<len(raw_test)
  low=copy.deepcopy(m); low['max_project_settings_chars']=prod['total_chars']+1; low['project_settings_compatibility']=copy.deepcopy(m['project_settings_compatibility']); low['project_settings_compatibility'].update({'qualified_chars':low['max_project_settings_chars'],'basis':'empirical-project-save-load-readback','evidence_ref':'test:empirical'})
  with pytest.raises(kernels.ProjectSettingsOverflow) as exc:
   kernels.render_project_settings_payload(low,s,role,channel='test',candidate_version='test',pr_number=1,candidate_ref='refs/pull/1/head',candidate_head='1'*40,candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
  assert exc.value.report['base_kernel_chars']<=low['max_project_settings_chars']<exc.value.report['total_chars']
- overlay_limit=prod['total_chars']+1; low['max_project_settings_chars']=overlay_limit; low['project_settings_compatibility']['qualified_chars']=overlay_limit
- with pytest.raises(kernels.ProjectSettingsOverflow) as exc:
-  kernels.render_project_settings_payload(low,s,role,overlay=overlay)
- assert exc.value.report['overlay_chars']>0 and exc.value.report['excess_chars']>0
 
-def test_project_settings_actual_variable_values_are_checked_without_truncation():
+def test_project_settings_actual_test_values_are_checked_without_truncation():
  m,s=kernels.load_canonical(); role='review'; long_ref='refs/pull/140/head-'+'x'*1400
  with pytest.raises(kernels.ProjectSettingsOverflow) as exc:
   kernels.render_test_candidate(s,role,candidate_version='dish-chatgpt-projects-test-candidate',pr_number=140,candidate_ref=long_ref,candidate_head='1'*40,candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
  assert exc.value.report['channel']=='test' and exc.value.report['total_chars']>m['max_project_settings_chars']
- long_overlay=kernels.project_settings_compatibility_overlay(); long_overlay['reason']='r'*1400
- with pytest.raises(kernels.ProjectSettingsOverflow) as exc:
-  kernels.render_project_settings_payload(m,s,role,overlay=long_overlay)
- assert exc.value.report['overlay_chars']>1400
 
 def test_project_settings_budget_change_requires_bound_evidence():
  m,_=kernels.load_canonical(); assert kernels.project_settings_policy(m)==8000; assert 'max_kernel_chars' not in m
@@ -948,8 +936,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426','dish-chatgpt-projects-v2-b545b493a5cc','dish-chatgpt-projects-v2-7d10fa5d611e','dish-chatgpt-projects-v2-e2f141440ba7','dish-chatgpt-projects-v2-0df88a899342'})
- assert set(versions)==expected and len(versions)==43
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426','dish-chatgpt-projects-v2-b545b493a5cc','dish-chatgpt-projects-v2-7d10fa5d611e','dish-chatgpt-projects-v2-e2f141440ba7','dish-chatgpt-projects-v2-0df88a899342','dish-chatgpt-projects-v2-cc1f983adfec'})
+ assert set(versions)==expected and len(versions)==44
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
@@ -1069,20 +1057,13 @@ def test_historical_reclassification_has_machine_readable_provenance():
     kernels._validate_correction(change); corrected.append(change)
  assert corrected and all(c['historical_correction']['previous_impact']=='breaking' for c in corrected)
 
-def test_current_additive_transition_scopes_only_its_roles_and_action_boundaries():
+def test_current_standing_exception_transition_is_additive_for_every_role():
  m,s=kernels.load_canonical(); parent=m['change_history'][-1]['from_version']
  boundaries={'startup','status','design','dispatch','handoff','role-critical-write','review-write','merge','analysis'}
- affected={
-  ('implementation','role-critical-write'),('implementation','status'),('implementation','handoff'),
- }
  for role in s['roles']:
   for boundary in boundaries:
    d=kernels.classify_project_drift(parent,role,boundary,manifest=m,source=s)
-   if (role,boundary) in affected:
-    assert d['state']=='outdated' and not d['block'] and not d['resync_required'] and d['drift_level']==2, (role,boundary,d)
-   else:
-    assert d['state']=='outdated' and not d['block'] and not d['resync_required'], (role,boundary,d)
-    assert d['drift_level']==1
+   assert d['state']=='outdated' and not d['block'] and not d['resync_required'] and d['drift_level']==2, (role,boundary,d)
 
 def test_generated_digest_integrity_is_strict_only_for_current_generation():
  m,s=kernels.load_canonical(); current=kernels.classify_project_drift(m['canonical_version'],'review','status',manifest=m,source=s,actual_generated_sha256='wrong')

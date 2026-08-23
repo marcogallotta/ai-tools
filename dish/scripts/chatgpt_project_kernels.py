@@ -10,8 +10,9 @@ MANIFEST_PATH=PROJECT_DIR/'manifest.json'; EVALS_PATH=PROJECT_DIR/'evals.json'; 
 STANDING_INVARIANTS_PATH=DISH_ROOT/'docs'/'agents'/'standing-invariants.json'
 FAST_TRACK_GATE_REGISTRY_PATH=PROJECT_DIR/'fast-track-gates.json'
 CLAUDE_OPERATOR_STYLE_PATH=REPO_ROOT/'.claude'/'output-styles'/'dish-operator.md'
-FAST_TRACK_OVERLAY_VERSION='fasttrack-r3'
-FAST_TRACK_OVERLAY_HEADER='MARCO OVERRIDE — FAST-TRACK PROCESS'
+FAST_TRACK_REGISTRY_VERSION='fasttrack-r4'
+DEVELOPMENT_WORKFLOW_PROJECT_GID='1217419962189616'
+FAST_TRACK_FOLLOW_UP_PRIORITY='P-CRITICAL'
 PROJECT_SETTINGS_INITIAL_COMPATIBILITY_CHARS=8000
 PROJECT_SETTINGS_CHANGE_EVIDENCE=('empirical-project-save-load-readback','official-project-limit')
 REPOSITORY_CONTEXT_ROLES=('audit','coordinator','development-workflow','implementation','integration','postgresql-dark-launch','review','workflow')
@@ -42,7 +43,7 @@ class ProjectSettingsOverflow(KernelError):
   super().__init__(
    f"Project settings overflow role={report['role']} channel={report['channel']} "
    f"base_kernel_chars={report['base_kernel_chars']} test_metadata_delta_chars={report['test_metadata_delta_chars']} "
-   f"overlay_chars={report['overlay_chars']} total_chars={report['total_chars']} "
+   f"total_chars={report['total_chars']} "
    f"ceiling_chars={report['max_project_settings_chars']} excess_chars={report['excess_chars']}"
   )
 
@@ -54,9 +55,9 @@ def _read_json(p:Path)->dict[str,Any]:
 def _h(b:bytes)->str:return hashlib.sha256(b).hexdigest()
 def _semantic_json_hash(v):return _h(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode())
 
-def fast_track_gate_registry():
+def _fast_track_registry():
  raw=_read_json(FAST_TRACK_GATE_REGISTRY_PATH)
- if raw.get('schema_version')!=1 or raw.get('overlay_version')!=FAST_TRACK_OVERLAY_VERSION or not isinstance(raw.get('gates'),list): raise KernelError('fast-track gate registry schema/version mismatch')
+ if raw.get('schema_version')!=2 or raw.get('registry_version')!=FAST_TRACK_REGISTRY_VERSION or not isinstance(raw.get('gates'),list) or not isinstance(raw.get('exceptions'),list): raise KernelError('fast-track gate registry schema/version mismatch')
  out={}
  for gate in raw['gates']:
   if not isinstance(gate,dict): raise KernelError('fast-track gate entries must be objects')
@@ -68,43 +69,34 @@ def fast_track_gate_registry():
   digest='sha256:'+_semantic_json_hash(semantic)
   if entry.get('semantic_digest')!=digest: raise KernelError(f'fast-track gate {gid}@{current} semantic digest mismatch; material changes require a new gate version')
   out[gid]={'id':gid,'current_version':current,'semantic_digest':digest,'waives':list(entry['waives']),'retains':list(entry['retains'])}
- return out
+ exceptions={}
+ for value in raw['exceptions']:
+  if not isinstance(value,dict): raise KernelError('fast-track exception entries must be objects')
+  gid=str(value.get('gate_id','')).strip(); version=value.get('gate_version'); digest=str(value.get('gate_semantic_digest','')).strip().lower(); state=str(value.get('state','')).strip().upper(); expiry=value.get('expiry'); condition=value.get('condition'); decision=value.get('marco_decision'); activations=value.get('activations'); current=str(value.get('current_activation_id','')).strip() or None
+  if gid not in out or gid in exceptions or not isinstance(version,int) or version<=0 or not re.fullmatch(r'sha256:[0-9a-f]{64}',digest) or state not in {'ACTIVE','INACTIVE'} or (expiry is not None and not str(expiry).strip()) or (condition is not None and not str(condition).strip()): raise KernelError(f'invalid fast-track exception {gid!r}')
+  if not isinstance(decision,dict) or set(decision)!={'task_gid','story_gid','decided_at','decision'} or any(not str(decision[k]).strip() for k in decision): raise KernelError(f'fast-track exception {gid} requires exact Marco decision provenance')
+  _fast_track_datetime(decision['decided_at'],'Marco decision')
+  if not isinstance(activations,list) or not activations: raise KernelError(f'fast-track exception {gid} requires activation history')
+  normalized=[]; ids=set()
+  for activation in activations:
+   if not isinstance(activation,dict) or set(activation)!={'activation_id','activated_on','follow_up'}: raise KernelError(f'fast-track exception {gid} has invalid activation record')
+   aid=str(activation['activation_id']).strip(); activated_on=str(activation['activated_on']).strip(); follow=activation['follow_up']
+   if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}',aid) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}',activated_on):
+    raise KernelError(f'fast-track exception {gid} has invalid activation identity/date')
+   try: datetime.fromisoformat(activated_on)
+   except ValueError as e: raise KernelError(f'fast-track activation {aid} has invalid activated_on') from e
+   if aid in ids or not isinstance(follow,dict) or set(follow)!={'task_gid','project_gid','priority','due_on','read_back_at','evidence_ref','gate_ref','marco_decision_ref','objective'}: raise KernelError(f'fast-track exception {gid} has invalid activation/follow-up identity')
+   ids.add(aid)
+   expected_gate_ref=f'{gid}@{version}:{digest}'; expected_decision_ref=f"asana:task:{str(decision['task_gid']).strip()}#story:{str(decision['story_gid']).strip()}"
+   if str(follow['project_gid'])!=DEVELOPMENT_WORKFLOW_PROJECT_GID or str(follow['priority'])!=FAST_TRACK_FOLLOW_UP_PRIORITY or str(follow['due_on'])!=activated_on or not re.fullmatch(r'[0-9]+',str(follow['task_gid'])) or not str(follow['evidence_ref']).strip() or str(follow['gate_ref'])!=expected_gate_ref or str(follow['marco_decision_ref'])!=expected_decision_ref or str(follow['objective'])!='remove-or-narrow-or-replace-with-source-fix': raise KernelError(f'fast-track activation {aid} lacks valid same-day P-CRITICAL Development Workflow follow-up evidence')
+   if _fast_track_datetime(follow['read_back_at'],'follow-up readback').date().isoformat()!=activated_on: raise KernelError(f'fast-track activation {aid} follow-up was not read back on activation day')
+   normalized.append({'activation_id':aid,'activated_on':activated_on,'follow_up':{k:str(follow[k]).strip() for k in follow}})
+  if state=='ACTIVE' and (current is None or current!=normalized[-1]['activation_id']): raise KernelError(f'active fast-track exception {gid} must bind its newest activation')
+  if state=='INACTIVE' and current is not None: raise KernelError(f'inactive fast-track exception {gid} cannot bind an activation')
+  exceptions[gid]={'gate_id':gid,'gate_version':version,'gate_semantic_digest':digest,'state':state,'expiry':None if expiry is None else str(expiry).strip(),'condition':None if condition is None else str(condition).strip(),'marco_decision':{k:str(decision[k]).strip() for k in decision},'activations':normalized,'current_activation_id':current}
+ return {'gates':out,'exceptions':exceptions}
 
-def canonical_fast_track_overlay(value):
- if not isinstance(value,dict): raise KernelError('fast-track overlay must be an object')
- version=str(value.get('version','')).strip(); state=str(value.get('state','')).strip().upper(); generation=str(value.get('generation','')).strip(); scope=value.get('scope'); gate_semantics=value.get('gate_semantics'); expiry=value.get('expiry'); reason=str(value.get('reason','')).strip()
- if version!=FAST_TRACK_OVERLAY_VERSION or state not in {'ACTIVE','INACTIVE'} or not generation or not isinstance(scope,list) or not scope or any(not isinstance(x,str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*@[1-9][0-9]*',x.strip()) for x in scope) or not isinstance(gate_semantics,dict) or (expiry is not None and not str(expiry).strip()): raise KernelError('invalid fast-track overlay fields')
- scope=sorted(set(x.strip() for x in scope))
- if set(gate_semantics)!=set(scope): raise KernelError('fast-track overlay gate semantics must exactly bind scope')
- normalized_semantics={}
- for key in scope:
-  digest=str(gate_semantics[key]).strip().lower()
-  if not re.fullmatch(r'sha256:[0-9a-f]{64}',digest): raise KernelError(f'fast-track overlay gate semantic digest invalid for {key}')
-  normalized_semantics[key]=digest
- return {'version':version,'state':state,'generation':generation,'scope':scope,'gate_semantics':normalized_semantics,'expiry':None if expiry is None else str(expiry).strip(),'reason':reason}
-
-def parse_fast_track_overlay_block(text):
- raw=str(text)
- if raw.count(FAST_TRACK_OVERLAY_HEADER)!=1: raise KernelError('Project settings must contain exactly one fast-track reserved header')
- tail=raw.split(FAST_TRACK_OVERLAY_HEADER,1)[1].lstrip()
- try:value,end=json.JSONDecoder().raw_decode(tail)
- except json.JSONDecodeError as e: raise KernelError(f'invalid fast-track overlay JSON: {e}') from e
- return canonical_fast_track_overlay(value)
-
-def fast_track_overlay_digest(value): return 'sha256:'+_semantic_json_hash(canonical_fast_track_overlay(value))
-
-def render_fast_track_overlay_block(value):
- overlay=canonical_fast_track_overlay(value)
- payload={k:overlay[k] for k in ('version','state','generation','scope','gate_semantics')}
- if overlay['expiry'] is not None: payload['expiry']=overlay['expiry']
- if overlay['reason']: payload['reason']=overlay['reason']
- return FAST_TRACK_OVERLAY_HEADER+'\n'+json.dumps(payload,ensure_ascii=False,separators=(',',':'))
-
-def project_settings_compatibility_overlay():
- registry=fast_track_gate_registry()
- if not registry: raise KernelError('fast-track compatibility fixture requires a current gate')
- gid=sorted(registry)[0]; gate=registry[gid]; scope=f"{gid}@{gate['current_version']}"
- return {'version':FAST_TRACK_OVERLAY_VERSION,'state':'ACTIVE','generation':'g1','scope':[scope],'gate_semantics':{scope:gate['semantic_digest']},'expiry':None,'reason':''}
+def fast_track_gate_registry(): return _fast_track_registry()['gates']
 
 def project_settings_policy(manifest):
  if 'max_kernel_chars' in manifest: raise KernelError('manifest.max_kernel_chars is retired; use max_project_settings_chars')
@@ -127,22 +119,22 @@ def _fast_track_datetime(value,label):
  if parsed.tzinfo is None: raise KernelError(f'fast-track {label} datetime must be timezone-aware')
  return parsed
 
-def fast_track_use(value,*,gate_id,gate_version,task,candidate,action,raw_evidence,now=None):
- overlay=canonical_fast_track_overlay(value)
- if overlay['state']!='ACTIVE': raise KernelError('fast-track overlay is inactive')
- if overlay['expiry'] is not None:
+def fast_track_use(*,gate_id,gate_version,task,candidate,action,raw_evidence,now=None,current_chat_revoked=False,condition_evidence=None):
+ if current_chat_revoked: raise KernelError('fast-track exception is revoked in the current chat')
+ registry=_fast_track_registry(); gid=str(gate_id).strip(); gate=registry['gates'].get(gid); exception=registry['exceptions'].get(gid)
+ if not isinstance(gate_version,int) or gate is None or gate['current_version']!=gate_version: raise KernelError('fast-track gate is unknown, stale, or materially changed')
+ if exception is None: raise KernelError('no active standing exception for fast-track gate')
+ if exception['state']!='ACTIVE': raise KernelError('fast-track exception is inactive')
+ if exception['gate_version']!=gate_version or exception['gate_semantic_digest']!=gate['semantic_digest']: raise KernelError('fast-track gate is unknown, stale, or materially changed')
+ if exception['expiry'] is not None:
   current=datetime.now(timezone.utc) if now is None else (now if isinstance(now,datetime) else _fast_track_datetime(now,'now'))
   if current.tzinfo is None: raise KernelError('fast-track now datetime must be timezone-aware')
-  if _fast_track_datetime(overlay['expiry'],'expiry')<=current: raise KernelError('fast-track overlay generation is expired')
- registry=fast_track_gate_registry(); gid=str(gate_id).strip(); gate=registry.get(gid)
- if not isinstance(gate_version,int) or gate is None or gate['current_version']!=gate_version: raise KernelError('fast-track gate is unknown, stale, or materially changed')
- scope_key=f'{gid}@{gate_version}'
- if scope_key not in overlay['scope']: raise KernelError('fast-track gate is outside captured overlay scope')
- authorized_semantic_digest=overlay['gate_semantics'][scope_key]
- if authorized_semantic_digest!=gate['semantic_digest']: raise KernelError('fast-track gate is unknown, stale, or materially changed')
+  if _fast_track_datetime(exception['expiry'],'expiry')<=current: raise KernelError('fast-track exception is expired')
+ if exception['condition'] is not None and not str(condition_evidence or '').strip(): raise KernelError('fast-track exception condition requires current evidence')
  task=str(task).strip(); candidate=str(candidate).strip(); action=str(action).strip(); raw_evidence=str(raw_evidence).strip()
  if not task or not candidate or not action or not raw_evidence: raise KernelError('fast-track use requires exact task/candidate/action/raw evidence')
- return {'marker':'GATE WAIVED BY MARCO OVERRIDE','overlay_generation':overlay['generation'],'overlay_digest':fast_track_overlay_digest(overlay),'gate_id':gid,'gate_version':gate_version,'gate_semantic_digest':authorized_semantic_digest,'task':task,'candidate':candidate,'action':action,'raw_evidence':raw_evidence}
+ activation=exception['activations'][-1]
+ return {'marker':'GATE WAIVED BY MARCO OVERRIDE','registry_version':FAST_TRACK_REGISTRY_VERSION,'gate_id':gid,'gate_version':gate_version,'gate_semantic_digest':gate['semantic_digest'],'activation_id':activation['activation_id'],'marco_decision':exception['marco_decision'],'follow_up_task_gid':activation['follow_up']['task_gid'],'condition':exception['condition'],'condition_evidence':None if exception['condition'] is None else str(condition_evidence).strip(),'task':task,'candidate':candidate,'action':action,'raw_evidence':raw_evidence}
 
 def role_index_contracts()->set[str]:
  out=set()
@@ -388,7 +380,7 @@ def _render_test_candidate_kernel(s,role,*,candidate_version,pr_number,candidate
  if startup not in text: raise KernelError('TEST candidate startup replacement failed')
  return text.replace(startup,test_startup,1)
 
-def render_project_settings_payload(m,s,role,*,channel='production',overlay=None,candidate_version=None,pr_number=None,candidate_ref=None,candidate_head=None,candidate_manifest_sha256=None,production_version=None):
+def render_project_settings_payload(m,s,role,*,channel='production',candidate_version=None,pr_number=None,candidate_ref=None,candidate_head=None,candidate_manifest_sha256=None,production_version=None):
  limit=project_settings_policy(m)
  if role not in s.get('roles',{}): raise KernelError(f'unknown role {role!r}')
  if channel=='production':
@@ -398,20 +390,18 @@ def render_project_settings_payload(m,s,role,*,channel='production',overlay=None
   base_kernel=render_role_with_version(s,role,str(candidate_version).strip())
   base=_render_test_candidate_kernel(s,role,**identity); base_kernel_chars=len(base_kernel); test_delta=len(base)-base_kernel_chars
  else: raise KernelError(f'unsupported Project settings channel {channel!r}')
- text=base; overlay_chars=0
- if overlay is not None:
-  block=render_fast_track_overlay_block(overlay); suffix='\n'+block; text+=suffix; overlay_chars=len(suffix)
+ text=base
  total=len(text); remaining=limit-total; report={
   'text':text,'role':role,'channel':channel,'base_kernel_chars':base_kernel_chars,'test_metadata_delta_chars':test_delta,
-  'overlay_chars':overlay_chars,'total_chars':total,'max_project_settings_chars':limit,
+  'total_chars':total,'max_project_settings_chars':limit,
   'remaining_chars':max(remaining,0),'excess_chars':max(-remaining,0),
  }
  if total>limit: raise ProjectSettingsOverflow(report)
  return report
 
-def render_test_candidate(s,role,*,candidate_version,pr_number,candidate_ref,candidate_head,candidate_manifest_sha256,production_version,manifest=None,overlay=None):
+def render_test_candidate(s,role,*,candidate_version,pr_number,candidate_ref,candidate_head,candidate_manifest_sha256,production_version,manifest=None):
  m=_read_json(MANIFEST_PATH) if manifest is None else manifest
- return render_project_settings_payload(m,s,role,channel='test',overlay=overlay,candidate_version=candidate_version,pr_number=pr_number,candidate_ref=candidate_ref,candidate_head=candidate_head,candidate_manifest_sha256=candidate_manifest_sha256,production_version=production_version)['text']
+ return render_project_settings_payload(m,s,role,channel='test',candidate_version=candidate_version,pr_number=pr_number,candidate_ref=candidate_ref,candidate_head=candidate_head,candidate_manifest_sha256=candidate_manifest_sha256,production_version=production_version)['text']
 
 def kernel_identity(s):
  repository_config(s); b=bytearray()
@@ -425,7 +415,7 @@ def kernel_identity(s):
 def _rule_fingerprint(x):return _h(json.dumps({k:x.get(k) for k in ('id','text','impact','surface','action_boundaries')},sort_keys=True,separators=(',',':')).encode())
 def rule_fingerprints(s):return {r:{x['id']:_rule_fingerprint(x) for x in effective_rules(s,r)} for r in s['roles']}
 def renderer_fingerprint():
- return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,DESIGN_BLOCK_START,DESIGN_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(design_principles_rule),inspect.getsource(shared_rules),inspect.getsource(_design_principles_block),inspect.getsource(_render_role_index_design_principles),inspect.getsource(_render_chatty_lines),inspect.getsource(_render_project_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_trigger_destinations),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(profile_specs),inspect.getsource(render_profile_with_version),inspect.getsource(_render_test_candidate_kernel),inspect.getsource(render_fast_track_overlay_block),inspect.getsource(project_settings_policy),inspect.getsource(render_project_settings_payload),inspect.getsource(render_test_candidate),inspect.getsource(kernel_identity))).encode())
+ return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,DESIGN_BLOCK_START,DESIGN_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(design_principles_rule),inspect.getsource(shared_rules),inspect.getsource(_design_principles_block),inspect.getsource(_render_role_index_design_principles),inspect.getsource(_render_chatty_lines),inspect.getsource(_render_project_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_trigger_destinations),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(profile_specs),inspect.getsource(render_profile_with_version),inspect.getsource(_render_test_candidate_kernel),inspect.getsource(project_settings_policy),inspect.getsource(render_project_settings_payload),inspect.getsource(render_test_candidate),inspect.getsource(kernel_identity))).encode())
 def _impact(c):
  x=str(c.get('impact','')).strip()
  if x not in {'compatible','additive','breaking'}: raise KernelError(f"explicit transition impact required for {c.get('rule_id','<unknown>')!r}")
@@ -772,12 +762,10 @@ def generated_profile_paths(m,s):
  return {k:PROJECT_DIR/str(files[k]) for k in profiles}
 def render_all(*,check):
  m,s=load_canonical(); out=[]; _render_root_instructions(s,check=check); _render_claude_operator_style(s,check=check); _render_role_index_design_principles(s,check=check)
- overlay=project_settings_compatibility_overlay(); fixture={'candidate_version':'dish-chatgpt-projects-test-g1','pr_number':1,'candidate_ref':'refs/pull/1/head','candidate_head':'a'*40,'candidate_manifest_sha256':'b'*64,'production_version':m['canonical_version']}
+ fixture={'candidate_version':'dish-chatgpt-projects-test-g1','pr_number':1,'candidate_ref':'refs/pull/1/head','candidate_head':'a'*40,'candidate_manifest_sha256':'b'*64,'production_version':m['canonical_version']}
  for r,p in generated_paths(m,s).items():
   production=render_project_settings_payload(m,s,r); text=production['text']; n=production['total_chars']
-  render_project_settings_payload(m,s,r,overlay=overlay)
   render_project_settings_payload(m,s,r,channel='test',**fixture)
-  render_project_settings_payload(m,s,r,channel='test',overlay=overlay,**fixture)
   if check:
    if not p.is_file() or p.read_text()!=text: raise KernelError(f'generated kernel differs: {p}')
   else:p.write_text(text)
@@ -1015,7 +1003,8 @@ def version_status(project_version,role_key,action_boundary):
  suffix='; refresh Project settings when convenient' if d['drift_level']==2 else ''
  return True,f"{d['indicator']} — continue under current repository authority{suffix}"
 def command_check():
- m,s=load_canonical(); validate_topology(s); standing=validate_standing_invariants(s); rr=render_all(check=True); ee=validate_eval_contracts(); print(f"canonical_version={m['canonical_version']}"); print(f"kernel_identity_sha256={m['kernel_identity_sha256']}")
+ m,s=load_canonical(); validate_topology(s); standing=validate_standing_invariants(s); fast_track=_fast_track_registry(); rr=render_all(check=True); ee=validate_eval_contracts(); print(f"canonical_version={m['canonical_version']}"); print(f"kernel_identity_sha256={m['kernel_identity_sha256']}")
+ print(f"PASS fast-track-registry gates={len(fast_track['gates'])} exceptions={len(fast_track['exceptions'])}")
  for x in standing: print(f'PASS standing-invariant {x}')
  for r,n in rr: print(f'PASS kernel {r}: {n} chars')
  for x in ee: print(f'PASS eval-contract {x}')
