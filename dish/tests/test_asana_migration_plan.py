@@ -42,6 +42,22 @@ def task(**overrides):
 
 
 class PlannerClassificationTests(unittest.TestCase):
+    def test_target_sections_match_complete_v2_lifecycle(self):
+        self.assertEqual(
+            planner.TARGET_SECTIONS,
+            [
+                "Needs Processing",
+                "Needs Research",
+                "Needs Agentic Review",
+                "Needs Human Review",
+                "Waiting on Dependency",
+                "Ready",
+                "Under Development",
+                "Needs Post-Merge Rollout",
+                "Done",
+            ],
+        )
+
     def classify(self, value, prs=None):
         return planner.classify_target(value, prs or [], {})
 

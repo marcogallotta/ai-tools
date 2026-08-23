@@ -78,6 +78,7 @@ TARGET_SECTIONS = [
     "Waiting on Dependency",
     "Ready",
     "Under Development",
+    "Needs Post-Merge Rollout",
     "Done",
 ]
 RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"

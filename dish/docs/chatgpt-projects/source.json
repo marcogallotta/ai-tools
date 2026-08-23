@@ -154,7 +154,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
+          "text": "Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`."
         }
       ]
     },
@@ -343,7 +343,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
+          "text": "Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`."
         },
         {
           "id": "review-v3-handoff-fidelity",
@@ -764,7 +764,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
+          "text": "Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`."
         },
         {
           "id": "review-v3-handoff-consumption",
@@ -948,7 +948,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
+          "text": "Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`."
         }
       ]
     },
@@ -1016,7 +1016,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
+          "text": "Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`."
         }
       ]
     },
@@ -1207,7 +1207,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
+          "text": "Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`."
         },
         {
           "id": "review-v3-semantic-grounding",
@@ -1367,7 +1367,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
+          "text": "Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`."
         }
       ]
     }
@@ -1679,7 +1679,7 @@
       "id": "development-workflow-asana-mode",
       "impact": "additive",
       "surface": "safety",
-      "text": "`1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero."
+      "text": "`1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; exact V2 identity survives known missing structure. Block/repair only its dependent action, with exact-schema readback. Unknown generation/conflict stays bounded fail-closed. V2 fields also apply `structured-task-fields.md`."
     }
   ],
   "profiles": {

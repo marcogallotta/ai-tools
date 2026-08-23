@@ -17,22 +17,33 @@ Match names and section names exactly, without case folding, prefix matching, or
   `Backlog`, `Ready`, `In Progress`, `Review / Integration`, `Done`, and `Blocked / Decision`.
   A service-created non-lifecycle section such as `Untitled section` may coexist. Any V2-only
   lifecycle section makes the state contradictory.
-- `Dish — Development Workflow v2` is **V2** only when all V2 lifecycle sections exist:
-  `Needs Processing`, `Needs Research`, `Needs Agentic Review`, `Needs Human Review`,
-  `Waiting on Dependency`, `Ready`, `Under Development`, `Needs Post-Merge Rollout`, and `Done`.
-  No legacy-only lifecycle section may remain.
+- `Dish — Development Workflow v2` is **V2**. Exact GID/name establishes the lifecycle generation;
+  the nine canonical sections are `Needs Processing`, `Needs Research`, `Needs Agentic Review`,
+  `Needs Human Review`, `Waiting on Dependency`, `Ready`, `Under Development`,
+  `Needs Post-Merge Rollout`, and `Done`.
 - `Dish — Development Workflow v3` is **V3-UNSUPPORTED** under this generation.
 - Any other name, including another version such as `v4`, is **UNKNOWN**.
 
-Missing sections, both-generation lifecycle sections, an unreadable complete section list, or a
-name/structure mismatch is **CONTRADICTORY**. Never infer mode from one task's membership.
+Never infer mode from one task's membership. After V2 identity is established, structural health is
+**V2_COMPLETE** when all nine sections exist exactly once with readable required fields;
+**V2_DEGRADED_KNOWN** when known sections/fields are missing but all present meanings are unique,
+unambiguous, and free of legacy/V2 collision; or **V2_CONTRADICTORY** for duplicate, mixed,
+unreadable, or otherwise unsafe meanings.
 
 LEGACY permits only its existing lifecycle and never creates V2 sections opportunistically. V2
 permits only the V2 lifecycle and never recreates legacy sections. V3-UNSUPPORTED performs zero
 governed mutation and returns
-`PROJECT MODE V3 REQUIRES UPDATED PROJECT SETTINGS / GPT ACTION PROTOCOL`. UNKNOWN or
-CONTRADICTORY performs zero governed mutation and reports the exact mismatch without repairing,
-renaming, or selecting a generation by guesswork.
+`PROJECT MODE V3 REQUIRES UPDATED PROJECT SETTINGS / GPT ACTION PROTOCOL`. UNKNOWN performs zero
+governed mutation and reports the exact mismatch without selecting a generation by guesswork.
+
+`V2_DEGRADED_KNOWN` never bricks the project. Operations using only present valid structure,
+including comments and unrelated task/field writes, continue under normal role authority. When the
+requested operation needs missing structure, deterministically repair it only if the acting
+role/tool owns that exact repair and the canonical schema is fully known; authoritatively reread
+the complete structure before continuing. Missing custom-field structure is repairable only when
+its exact type/options are canonical and supported. Otherwise block only that operation and surface
+one repair owner/debt. `V2_CONTRADICTORY` likewise fails closed only the operation whose lifecycle
+or field meaning is unsafe; unrelated safe work continues.
 
 ## V2 lifecycle meanings
 

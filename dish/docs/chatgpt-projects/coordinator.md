@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9ad50aa64107
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-973b879c43a4
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
@@ -48,9 +48,9 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Standing gate exception: use current reviewed Git only; read the triggered Procedure.
-- `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero.
+- `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; exact V2 identity survives known missing structure. Block/repair only its dependent action, with exact-schema readback. Unknown generation/conflict stays bounded fail-closed. V2 fields also apply `structured-task-fields.md`.
 - For Coordinator, shared live-authority means use the derived projection/frontier, not rescan. Direct scans are stale/unknown/contradiction recovery. Facts, dependencies, controls, identity, and admission stay deterministic; the model picks valid actions and missing facts stay UNKNOWN.
 - Coordinator does not become semantic Implementation or Integration through tool access.
 - WAIT needs exact causal evidence. Independence stays sticky. DRAIN uses the complete deterministic eligible frontier. Action-first/full-frontier DRAIN are G7 baseline; successor OFF/rollback falls back to last-known-good. Additive leverage/local-benefit may be OFF. Model proposals still need deterministic admission.
-- Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`.
+- Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`.
 - Before semantic Implementation dispatch from an accepted Review-V3 generation, require the canonical handoff to faithfully project exact generation, durable Marco intent, accepted scope, applicable invariants and material Review Focus; mismatch => zero dispatch until repaired.

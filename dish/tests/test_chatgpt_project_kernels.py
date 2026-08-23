@@ -451,6 +451,8 @@ def test_development_workflow_asana_mode_behavior_matrix_is_registered():
   'development-workflow-asana-priority-absent',
   'development-workflow-asana-historical-final-stamp',
   'development-workflow-asana-stale-session-fresh-read',
+  'development-workflow-asana-v2-degraded-present-write',
+  'development-workflow-asana-v2-degraded-target-repair',
   'development-workflow-structured-fields-raw-intake',
   'development-workflow-structured-fields-owner-transfer',
   'development-workflow-structured-fields-version-successor',
@@ -466,6 +468,14 @@ def test_development_workflow_asana_mode_behavior_matrix_is_registered():
   assert scenario['required_rules']==['development-workflow-asana-mode']
   assert 'perform-governed-asana-mutation' not in scenario['forbidden_actions'] or 'abort' in scenario_id
  assert 'all nine V2 lifecycle sections' in _scenario('development-workflow-asana-v2-mode')['prompt']
+ degraded=_scenario('development-workflow-asana-v2-degraded-present-write')
+ assert 'perform-authorized-present-structure-write' in degraded['required_actions']
+ assert 'globally-stop-governed-mutation' in degraded['forbidden_actions']
+ repair=_scenario('development-workflow-asana-v2-degraded-target-repair')
+ assert repair['required_actions'][-1]=='perform-original-transition-only-after-readback'
+ contradiction=_scenario('development-workflow-asana-contradiction-abort')
+ assert {'block-only-unsafe-lifecycle-transition','allow-unrelated-safe-comment'}<=set(contradiction['required_actions'])
+ assert 'globally-stop-governed-mutation' in contradiction['forbidden_actions']
 
 def test_asana_v2_project_registry_rule_excludes_development_workflow_and_reaches_other_governed_roles():
  m,s=kernels.load_canonical()
@@ -480,7 +490,7 @@ def test_asana_v2_project_registry_rule_excludes_development_workflow_and_reache
  legacy_rule=next(x for x in kernels.shared_rules(s) if x['id']=='development-workflow-asana-mode')
  assert legacy_rule['action_boundaries']==['asana-development-workflow-mutation']
  registry=(DISH_ROOT/'docs'/'agents'/'asana-v2-project-mode.md').read_text()
- for token in ('1217404747383060','1217382473444945','unregistered','only from the live project name'):
+ for token in ('1217404747383060','1217382473444945','unregistered','only from the live project name','V2_DEGRADED_KNOWN','block only the operation'):
   assert token in registry
  for token in ('lifecycle_state','v2-governed','structural-repair-pending','migration-pending'):
   assert token not in registry
@@ -494,7 +504,13 @@ def test_asana_v2_project_registry_rule_excludes_development_workflow_and_reache
 
 def test_asana_v2_project_registry_behavior_matrix_is_registered():
  expected={
-  'asana-v2-project-registry-postgresql-contradictory-sections',
+  'asana-v2-project-registry-postgresql-degraded-present-transition',
+  'asana-v2-project-registry-degraded-unrelated-field-write',
+  'asana-v2-project-registry-degraded-target-repair',
+  'asana-v2-project-registry-degraded-target-no-repair-authority',
+  'asana-v2-project-registry-duplicate-meaning-contradictory',
+  'asana-v2-project-registry-ambiguous-repair-write',
+  'asana-v2-project-registry-complete-unchanged',
   'asana-v2-project-registry-coordinator-legacy-bare-name',
   'asana-v2-project-registry-unknown-version-stop-and-flag',
   'asana-v2-project-registry-unregistered-project-refusal',
@@ -503,8 +519,14 @@ def test_asana_v2_project_registry_behavior_matrix_is_registered():
   scenario=_scenario(scenario_id)
   assert scenario['required_rules']==['asana-v2-project-registry']
   assert 'development-workflow' not in scenario['roles']
-  assert 'perform-governed-asana-mutation' in scenario['forbidden_actions']
- assert '1217404747383060' in _scenario('asana-v2-project-registry-postgresql-contradictory-sections')['prompt']
+ assert '1217404747383060' in _scenario('asana-v2-project-registry-postgresql-degraded-present-transition')['prompt']
+ assert 'perform-authorized-present-structure-transition' in _scenario('asana-v2-project-registry-postgresql-degraded-present-transition')['required_actions']
+ assert 'perform-authorized-unrelated-write' in _scenario('asana-v2-project-registry-degraded-unrelated-field-write')['required_actions']
+ assert 'authoritatively-read-back-complete-section-list' in _scenario('asana-v2-project-registry-degraded-target-repair')['required_actions']
+ assert 'allow-unrelated-safe-work' in _scenario('asana-v2-project-registry-degraded-target-no-repair-authority')['required_actions']
+ assert 'block-only-ambiguous-lifecycle-write' in _scenario('asana-v2-project-registry-duplicate-meaning-contradictory')['required_actions']
+ assert 'retry-only-if-readback-proves-no-effect' in _scenario('asana-v2-project-registry-ambiguous-repair-write')['required_actions']
+ assert 'perform-authorized-ordinary-v2-transition' in _scenario('asana-v2-project-registry-complete-unchanged')['required_actions']
  assert '1217382473444945' in _scenario('asana-v2-project-registry-coordinator-legacy-bare-name')['prompt']
  unknown_version=_scenario('asana-v2-project-registry-unknown-version-stop-and-flag')
  assert 'v3' in unknown_version['prompt']
@@ -936,8 +958,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426','dish-chatgpt-projects-v2-b545b493a5cc','dish-chatgpt-projects-v2-7d10fa5d611e','dish-chatgpt-projects-v2-e2f141440ba7','dish-chatgpt-projects-v2-0df88a899342','dish-chatgpt-projects-v2-cc1f983adfec'})
- assert set(versions)==expected and len(versions)==44
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426','dish-chatgpt-projects-v2-b545b493a5cc','dish-chatgpt-projects-v2-7d10fa5d611e','dish-chatgpt-projects-v2-e2f141440ba7','dish-chatgpt-projects-v2-0df88a899342','dish-chatgpt-projects-v2-cc1f983adfec','dish-chatgpt-projects-v2-9ad50aa64107'})
+ assert set(versions)==expected and len(versions)==45
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
@@ -1057,13 +1079,14 @@ def test_historical_reclassification_has_machine_readable_provenance():
     kernels._validate_correction(change); corrected.append(change)
  assert corrected and all(c['historical_correction']['previous_impact']=='breaking' for c in corrected)
 
-def test_current_standing_exception_transition_is_additive_for_every_role():
+def test_current_degraded_topology_transition_is_additive_only_at_asana_boundaries():
  m,s=kernels.load_canonical(); parent=m['change_history'][-1]['from_version']
- boundaries={'startup','status','design','dispatch','handoff','role-critical-write','review-write','merge','analysis'}
  for role in s['roles']:
-  for boundary in boundaries:
-   d=kernels.classify_project_drift(parent,role,boundary,manifest=m,source=s)
-   assert d['state']=='outdated' and not d['block'] and not d['resync_required'] and d['drift_level']==2, (role,boundary,d)
+  boundary='asana-development-workflow-mutation' if role=='development-workflow' else 'asana-governed-project-mutation'
+  d=kernels.classify_project_drift(parent,role,boundary,manifest=m,source=s)
+  assert d['state']=='outdated' and not d['block'] and not d['resync_required'] and d['drift_level']==2, (role,boundary,d)
+  unrelated=kernels.classify_project_drift(parent,role,'merge',manifest=m,source=s)
+  assert unrelated['state']=='outdated' and not unrelated['block'] and unrelated['drift_level']==1, (role,unrelated)
 
 def test_generated_digest_integrity_is_strict_only_for_current_generation():
  m,s=kernels.load_canonical(); current=kernels.classify_project_drift(m['canonical_version'],'review','status',manifest=m,source=s,actual_generated_sha256='wrong')
