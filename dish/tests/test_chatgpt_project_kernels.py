@@ -797,9 +797,16 @@ def test_pcritical_closeout_is_shared_action_scoped_and_authority_preserving():
   rules={rule['id']:rule for rule in kernels.effective_rules(source,role)}
   closeout=rules['pcritical-closeout']
   assert closeout['impact']=='additive'
-  assert closeout['delivery']=={'mode':'DIRECT_ALWAYS_ON'}
+  assert closeout['delivery']=={
+   'mode':'TRIGGERED_READ',
+   'trigger':'execution / dispatch / PR liveness status / P-CRITICAL',
+  }
   assert {'priority-write','triage','dispatch','status'}==set(closeout['action_boundaries'])
-  assert closeout['text']=='P-CRITICAL: close now.'
+  assert 'same control flow' in closeout['text']
+  assert 'exactly one truthful path' in closeout['text']
+  assert 'authoritative readback' in closeout['text']
+  assert 'Never park it in Ready/passive Needs Research' in closeout['text']
+  assert 'invent priority, or expand role authority' in closeout['text']
 
  base=(DISH_ROOT/'docs'/'agents'/'contributor-base.md').read_text()
  index=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
@@ -809,6 +816,8 @@ def test_pcritical_closeout_is_shared_action_scoped_and_authority_preserving():
  assert 'Every role also applies' in index and 'P-CRITICAL closeout' in index
  assert 'before lower-priority dispatch' in coordinator
  assert 'not a new\nlifecycle phase or authority source' in lifecycle
+ provenance=(DISH_ROOT/'docs'/'agents'/'operator-provenance.md').read_text()
+ assert '## P\n' in provenance and 'contributor-base.md#p-critical-closeout' in provenance
 
  assert 'dispatch-authorized-implementation-same-control-flow' in scenarios['pcritical-coordinator-created-closeout']['required_actions']
  assert 'dispatch-agent' in scenarios['pcritical-audit-authoritative-route']['forbidden_actions']

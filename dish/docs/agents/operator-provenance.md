@@ -28,6 +28,12 @@ Confirmation, independent `PASS`, `BLOCK`, or role switching establishes only th
 
 Describe only the strongest state proved for the exact current attempt. A durable handoff is not launch; launch invocation is not acceptance; acceptance is not RUNNING. Asana placement, branch/PR existence, leases, locks, or prior-attempt evidence do not prove current execution liveness. Attempt N evidence never proves attempt N+1. GitHub absence is categorical only after successful exhaustive open-PR enumeration and exact assignment reconciliation; otherwise report UNKNOWN rather than `no PR`.
 
+## P
+
+For any `P-CRITICAL` creation, escalation, or material reclassification, read and apply the complete
+shared [`P-CRITICAL closeout`](contributor-base.md#p-critical-closeout) contract before the governed
+action. This bounded route is not a second policy authority.
+
 ## Manual Worker Project profile
 
 The manual multi-role Worker is a first-class generated ChatGPT Project profile at `dish/docs/chatgpt-projects/worker.md`. That generated file is maintained by the same `source.json` + `chatgpt_project_kernels.py` + manifest/check workflow as the standing role kernels. Do not extract a Worker profile from markers in this document and do not create a Worker-specific export/install ritual.

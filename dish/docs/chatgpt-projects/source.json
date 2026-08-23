@@ -32,8 +32,9 @@
       "authorized fallback / blocked operation": [
         "dish/docs/agents/contributor-base.md#Authorized fallback gate"
       ],
-      "execution / dispatch / PR liveness status": [
-        "dish/docs/agents/operator-provenance.md#Execution-state truth"
+      "execution / dispatch / PR liveness status / P-CRITICAL": [
+        "dish/docs/agents/operator-provenance.md#Execution-state truth",
+        "dish/docs/agents/operator-provenance.md#P"
       ],
       "external/current-main defect while pursuing an existing objective": [
         "dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission"
@@ -1541,12 +1542,13 @@
         "status"
       ],
       "delivery": {
-        "mode": "DIRECT_ALWAYS_ON"
+        "mode": "TRIGGERED_READ",
+        "trigger": "execution / dispatch / PR liveness status / P-CRITICAL"
       },
       "id": "pcritical-closeout",
       "impact": "additive",
       "surface": "lifecycle",
-      "text": "P-CRITICAL: close now."
+      "text": "A valid P-CRITICAL creation, escalation, or material reclassification is not complete at the priority write. In that same control flow, establish exactly one truthful path: active bounded Research/Design for a material unknown; authorized Implementation/dispatch; one exact blocker, dependency, or human decision with owner and wake condition; or durable routing to the current orchestration owner with authoritative readback. Never park it in Ready/passive Needs Research, invent priority, or expand role authority."
     },
     {
       "action_boundaries": [
@@ -1650,7 +1652,7 @@
       ],
       "delivery": {
         "mode": "TRIGGERED_READ",
-        "trigger": "execution / dispatch / PR liveness status"
+        "trigger": "execution / dispatch / PR liveness status / P-CRITICAL"
       },
       "id": "truthful-dispatch-liveness-language",
       "impact": "additive",
