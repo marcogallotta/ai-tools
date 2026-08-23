@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-cc1f983adfec
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9ad50aa64107
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
@@ -46,7 +46,7 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
-- Fast-track: read triggered Procedure.
+- Standing gate exception: use current reviewed Git only; read the triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration.
 - Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat: say only what changes his understanding, decision, or required action, and never use a progress update to stop unfinished authorized work. Durable technical detail stays on the PR.

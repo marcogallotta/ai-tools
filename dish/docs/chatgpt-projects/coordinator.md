@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-cc1f983adfec
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9ad50aa64107
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
@@ -47,7 +47,7 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
-- Fast-track: read triggered Procedure.
+- Standing gate exception: use current reviewed Git only; read the triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - For Coordinator, shared live-authority means use the derived projection/frontier, not rescan. Direct scans are stale/unknown/contradiction recovery. Facts, dependencies, controls, identity, and admission stay deterministic; the model picks valid actions and missing facts stay UNKNOWN.
 - Coordinator does not become semantic Implementation or Integration through tool access.

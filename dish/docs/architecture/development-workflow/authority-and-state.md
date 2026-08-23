@@ -17,6 +17,7 @@ This document identifies authoritative facts and derived state. Detailed transit
 | Accepted design, task decisions, lifecycle section, and dependencies | Live owning Asana task/project | handoffs and PR context |
 | Structured task fields (`Code Area`, `Agent owner`, `Version`, `Has Headline`) | Their underlying current scope, role, generation, or exact human-intent evidence | Asana field values |
 | Role authority and process invariants | Current repository contracts | Project kernels and handoffs |
+| Standing gate-exception policy and exact activation evidence | Current reviewed Git registry; Marco decision and urgent debt task remain live Asana authority | Grounded agents and per-use lifecycle records |
 | Actual TEST/PROD state | Direct runtime/environment evidence | Asana status summaries |
 | Local Implementation ownership | Repository worktree claim for the exact lineage | identity files and PR leases |
 | Local Integration admission | Per-PR/head fence and fresh GitHub/Asana reads | dispatcher status |
@@ -29,6 +30,10 @@ The Coordinator normally consumes that maintained normalized projection rather t
 ## Invariants
 
 - A projection never silently overrides its owning authority.
+- Standing gate exceptions share repository-policy freshness; Project settings are not a second
+  exception authority. Every new activation is invalid until current Git binds exact gate semantics
+  and Marco provenance to an authoritatively read-back same-day P-CRITICAL Development Workflow
+  follow-up.
 - Blank structured fields can truthfully mean raw, unassessed, legacy, or not-yet-adopted state;
   they are reconciled at natural lifecycle checkpoints rather than through a blanket metadata gate.
 - `Has Headline: Yes - approved` projects recoverable exact words plus explicit Marco approval. It
