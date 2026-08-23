@@ -1535,6 +1535,21 @@
     },
     {
       "action_boundaries": [
+        "priority-write",
+        "triage",
+        "dispatch",
+        "status"
+      ],
+      "delivery": {
+        "mode": "DIRECT_ALWAYS_ON"
+      },
+      "id": "pcritical-closeout",
+      "impact": "additive",
+      "surface": "lifecycle",
+      "text": "P-CRITICAL: close now."
+    },
+    {
+      "action_boundaries": [
         "*"
       ],
       "delivery": {

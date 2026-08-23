@@ -4,6 +4,11 @@ This is the canonical router for standing Dish agent roles. Root `CLAUDE.md` poi
 
 All repository-modifying roles inherit [`contributor-base.md`](contributor-base.md). Specialist contracts add their own scope and authority rules.
 
+Every role also applies contributor-base's shared [`P-CRITICAL closeout`](contributor-base.md#p-critical-closeout)
+invariant after existing authority establishes that priority. This cross-role reference does not
+make a read-only role repository-modifying or expand any role's mutation, dispatch, or priority
+authority.
+
 ### Repository capture bootstrap
 
 For repository-modifying work, the contributor-base capture contracts remain canonical and must survive host/session re-grounding. When non-blocking development friction or material code debt appears: **notice -> dedupe -> log/update -> continue**. Exact capture targets are Development Workflow Friction `1217443500915644` and Code Smells / Engineering Debt `1217443501022227`; active blockers stay on their active task/PR. This is a high-salience delivery projection, not a second policy authority.

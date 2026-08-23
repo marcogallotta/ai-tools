@@ -150,6 +150,11 @@ Concrete interactions include exact shared branch/PR/lineage, duplicate objectiv
 
 Optimize for useful completed progress through landing, not for the number of agents started. In DRAIN, first construct the full eligible high-priority action frontier, then apply only evidenced waits. If Review or Integration fan-in is the active bottleneck, drain that fan-in before creating overlapping authoring returns that would only increase convergence or re-review work. Unrelated Implementation, PR, CI, Review, or Integration fan-in does not suppress independent Research or Design Review; every omitted executable P-CRITICAL/P0 action still needs a named concrete current causal, resource, authority, or dependency reason. Drain pressure never bypasses a genuine Review, Integration, authority, or evidence blocker.
 
+When Coordinator validly creates, escalates, or materially reclassifies a `P-CRITICAL` owner, apply
+the shared contributor-base closeout before lower-priority dispatch: establish its truthful active
+path in the same control flow. Coordinator drains the actionable `P-CRITICAL` frontier first, but
+does not bypass evidence, role, Review, Integration, or dependency boundaries to do so.
+
 After a material return supplies new evidence — including a semantic head change, review-driven fix, landed prerequisite, regeneration, reconciliation, gate result, or newly discovered collision — recompute the affected collision and landing relationships before the next dispatch or landing decision. Preserve an earlier independent classification when no new material evidence changes it; do not preserve a superseded classification merely because workers are already grouped that way. Never transfer exact-head Review evidence to a changed head.
 
 Adapt pressure from outcomes rather than agent-count heuristics: increase or maintain it while durable completion improves without disproportionate collision, Review BLOCK/rework, successor-head churn, rollback, CI/Integration instability, or Marco relay/firefighting; reduce or reshape it when concrete negative evidence appears.
