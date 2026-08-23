@@ -76,6 +76,7 @@ PRIMITIVES = (
     "ReconstructedReviewV2Evidence(",
     "ReviewGovernanceDecision(",
     "evaluate_admission(",
+    "resolve_review_v2_admission(",
     "render_human_impact_report(",
     "HumanDecisionProvenance(",
     "human_decision_mapping(",
@@ -241,13 +242,12 @@ This execution does not remember or recover material authorship of G8.
         "_authoritative_task_stories",
         lambda task_gid: tuple(stories) if task_gid == TASK else (),
     )
-    evidence = governance.resolve_review_v2_evidence(
-        refs=governance.ReviewV2AuthorityRefs(
-            task_gid=TASK,
-            generation_story_gid="1002",
-            independent_review_story_gid="1004",
-        )
+    refs = governance.ReviewV2AuthorityRefs(
+        task_gid=TASK,
+        generation_story_gid="1002",
+        independent_review_story_gid="1004",
     )
+    evidence = governance.resolve_review_v2_evidence(refs=refs)
     classification = governance.AuthorizedClassification(
         classification="SEMANTIC_REVIEW_GOVERNANCE_CHANGE",
         authorized_by_role="Review",
@@ -256,7 +256,7 @@ This execution does not remember or recover material authorship of G8.
         governance_semantic_sha256=projection["semantic_sha256"],
         material_delta_set_sha256=DELTA_SHA,
     )
-    return classification, evidence
+    return classification, evidence, refs
 
 
 def _classification(projection, value):
@@ -277,10 +277,10 @@ def test_projection_digest_and_standing_contract_parity():
 
 def test_real_story_shape_uses_canonical_review_v2_and_exact_four_part_identity(monkeypatch):
     projection = governance.load_projection(REPO_ROOT)
-    classification, evidence = _story_bundle(monkeypatch, projection)
-    decision = governance.evaluate_admission(
+    classification, evidence, refs = _story_bundle(monkeypatch, projection)
+    decision = governance.resolve_review_v2_admission(
+        refs=refs,
         classification=classification,
-        evidence=evidence,
         projection=projection,
     )
     assert decision.admission == "ELIGIBLE_TO_CONTINUE"
@@ -334,9 +334,33 @@ def test_fabricated_canonical_dataclasses_and_bytes_cannot_issue_admission_evide
             decision_payloads={fabricated_decision.decision_ref: b"fabricated"},
             source_refs=("asana-story:invented",),
         )
+    fabricated_review = governance.RecoveredIndependentDesignReview(
+        identity=fabricated_generation.identity,
+        review_ref="asana-story:9998",
+        review_sha256="b" * 64,
+        reviewer_identity="fabricated reviewer",
+        _seal=governance._REVIEW_SEAL,
+    )
+    fabricated_evidence = governance.ReconstructedReviewV2Evidence(
+        generation=fabricated_generation,
+        reconstruction_state=State.MARCO_APPROVED,
+        valid_event_gids=(fabricated_approval.event_gid,),
+        current_approval_event=fabricated_approval,
+        current_human_decision=fabricated_decision,
+        independent_review=fabricated_review,
+        source_refs=("asana-story:invented",),
+        repairable_provenance_event_gids=(),
+        blocking_contradictions=(),
+        _seal=governance._EVIDENCE_SEAL,
+    )
+    with pytest.raises(TypeError):
+        governance.evaluate_admission(
+            classification=classification,
+            evidence=fabricated_evidence,
+            projection=projection,
+        )
     decision = governance.evaluate_admission(
         classification=classification,
-        evidence=fabricated_generation,
         projection=projection,
     )
     assert decision.admission == "MECHANICAL_EVIDENCE_BLOCKED"
@@ -361,17 +385,21 @@ def test_direct_construction_of_sealed_reconstruction_is_rejected():
 
 def test_missing_approval_needs_human_review_but_corrupt_claim_is_blocked(monkeypatch):
     projection = governance.load_projection(REPO_ROOT)
-    classification, missing = _story_bundle(monkeypatch, projection, include_approval=False)
-    result = governance.evaluate_admission(
+    classification, missing, refs = _story_bundle(
+        monkeypatch,
+        projection,
+        include_approval=False,
+    )
+    result = governance.resolve_review_v2_admission(
+        refs=refs,
         classification=classification,
-        evidence=missing,
         projection=projection,
     )
     assert result.admission == "NEEDS_HUMAN_REVIEW"
-    _, corrupt = _story_bundle(monkeypatch, projection, corrupt_payload=True)
-    result = governance.evaluate_admission(
+    _, corrupt, refs = _story_bundle(monkeypatch, projection, corrupt_payload=True)
+    result = governance.resolve_review_v2_admission(
+        refs=refs,
         classification=classification,
-        evidence=corrupt,
         projection=projection,
     )
     assert result.admission == "MECHANICAL_EVIDENCE_BLOCKED"
@@ -379,7 +407,7 @@ def test_missing_approval_needs_human_review_but_corrupt_claim_is_blocked(monkey
 
 def test_superseded_generation_is_not_current(monkeypatch):
     projection = governance.load_projection(REPO_ROOT)
-    classification, evidence = _story_bundle(monkeypatch, projection)
+    classification, evidence, _ = _story_bundle(monkeypatch, projection)
     generation = evidence.generation
     superseded = Event(
         event_gid="superseded",
@@ -389,10 +417,10 @@ def test_superseded_generation_is_not_current(monkeypatch):
         actor="Dish Agent: Development Workflow",
         successor_generation_id="review-v5-g9",
     )
-    _, rebuilt = _story_bundle(monkeypatch, projection, extra_events=(superseded,))
-    result = governance.evaluate_admission(
+    _, rebuilt, refs = _story_bundle(monkeypatch, projection, extra_events=(superseded,))
+    result = governance.resolve_review_v2_admission(
+        refs=refs,
         classification=classification,
-        evidence=rebuilt,
         projection=projection,
     )
     assert result.admission == "MECHANICAL_EVIDENCE_BLOCKED"
@@ -439,10 +467,10 @@ def test_wrong_rule_and_projection_parity_fail_closed():
 
 def test_human_impact_report_names_canonical_sources(monkeypatch):
     projection = governance.load_projection(REPO_ROOT)
-    classification, evidence = _story_bundle(monkeypatch, projection)
-    decision = governance.evaluate_admission(
+    classification, evidence, refs = _story_bundle(monkeypatch, projection)
+    decision = governance.resolve_review_v2_admission(
+        refs=refs,
         classification=classification,
-        evidence=evidence,
         projection=projection,
     )
     report = governance.render_human_impact_report(

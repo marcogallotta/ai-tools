@@ -586,10 +586,13 @@ def evaluate_admission(
     *,
     classification: AuthorizedClassification,
     projection: Mapping[str, Any],
-    evidence: ReconstructedReviewV2Evidence | None = None,
     parity_failures: Sequence[str] = (),
 ) -> ReviewGovernanceDecision:
-    """Evaluate admission from semantic input plus canonical reconstructed evidence."""
+    """Evaluate classes that do not consume human-decision evidence.
+
+    Human-required admission is deliberately unavailable on this surface: only
+    ``resolve_review_v2_admission`` may retrieve authority and issue that result.
+    """
     _validate_classification(classification, projection)
     reasons: list[str] = []
     if classification.governance_semantic_sha256 != projection.get("semantic_sha256"):
@@ -603,7 +606,46 @@ def evaluate_admission(
     elif classification.classification in ELIGIBLE_CLASSIFICATIONS:
         admission, sufficient = "ELIGIBLE_TO_CONTINUE", True
     else:
-        admission, sufficient, failures = _human_required_admission(classification, evidence)
+        admission, sufficient = "MECHANICAL_EVIDENCE_BLOCKED", False
+        reasons.append("the authoritative Asana admission resolver is required")
+    return ReviewGovernanceDecision(
+        classification.classification,
+        classification.evidence_ref,
+        classification.governing_rule_id,
+        admission,
+        sufficient,
+        tuple(reasons),
+    )
+
+
+def resolve_review_v2_admission(
+    *,
+    refs: ReviewV2AuthorityRefs,
+    classification: AuthorizedClassification,
+    projection: Mapping[str, Any],
+    parity_failures: Sequence[str] = (),
+) -> ReviewGovernanceDecision:
+    """Issue admission after retrieving human-review authority inside the resolver."""
+    _validate_classification(classification, projection)
+    if classification.classification not in HUMAN_REQUIRED_CLASSIFICATIONS:
+        return evaluate_admission(
+            classification=classification,
+            projection=projection,
+            parity_failures=parity_failures,
+        )
+    reasons: list[str] = []
+    if classification.governance_semantic_sha256 != projection.get("semantic_sha256"):
+        reasons.append("semantic digest does not match the checked projection")
+    if parity_failures:
+        reasons.append("standing contract and Review-governance projection disagree")
+    if reasons:
+        admission, sufficient = "MECHANICAL_EVIDENCE_BLOCKED", False
+    else:
+        evidence = resolve_review_v2_evidence(refs=refs)
+        admission, sufficient, failures = _human_required_admission(
+            classification,
+            evidence,
+        )
         reasons.extend(failures)
     return ReviewGovernanceDecision(
         classification.classification,
