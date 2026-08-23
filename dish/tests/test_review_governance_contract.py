@@ -128,7 +128,7 @@ def _story_bundle(
     generation_record = {
         "schema": "dish-design-generation:v1",
         **identity,
-        "predecessor_generation_id": "review-v5-g7",
+        "predecessor_generation_id": None,
         "canonical_snapshot_ref": "asana-story:1001",
         "created_at": "2026-08-22T20:04:58.001Z",
         "created_by": "Dish Agent: Development Workflow | ChatGPT",
@@ -458,6 +458,7 @@ def test_durable_successor_generation_makes_approved_predecessor_non_current(mon
     )
     assert rebuilt.blocking_contradictions == (
         "later-successor-generation:review-v5-g9",
+        "lineage-current-leaf:review-v5-g9",
     )
     assert "asana-story:1020" in rebuilt.source_refs
     result = governance.resolve_review_v2_admission(

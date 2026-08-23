@@ -29,6 +29,7 @@ from review_design_lineage import (  # noqa: E402
     digest,
     parse_record_envelope,
     reconstruct,
+    validate_lineage,
 )
 
 SCHEMA = "dish-review-governance:v1"
@@ -262,6 +263,7 @@ def _reconstruct_review_v2_evidence(
     independent_review: RecoveredIndependentDesignReview,
     source_refs: Sequence[str],
     successor_generation_ids: Sequence[str] = (),
+    lineage_contradictions: Sequence[str] = (),
 ) -> ReconstructedReviewV2Evidence:
     """Use canonical Review V2 types/reconstruction; reject invented wrapper schemas."""
     if digest(canonical_snapshot_payload) != generation.canonical_sha256:
@@ -307,6 +309,7 @@ def _reconstruct_review_v2_evidence(
         f"later-successor-generation:{generation_id}"
         for generation_id in sorted(set(successor_generation_ids))
     )
+    blocking.extend(sorted(set(lineage_contradictions)))
 
     return ReconstructedReviewV2Evidence(
         generation=generation,
@@ -422,6 +425,59 @@ def _direct_successor_generation_ids(
     return tuple(sorted(set(successors)))
 
 
+def _lineage_currentness(
+    *,
+    generation: Generation,
+    records: Sequence[Generation | Event | HumanDecisionProvenance],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Validate the recovered lineage and require the named generation to be its leaf."""
+    generations = [
+        record
+        for record in records
+        if isinstance(record, Generation) and record.task_gid == generation.task_gid
+    ]
+    states = {
+        record.generation_id: reconstruct(
+            record,
+            [
+                event
+                for event in records
+                if isinstance(event, Event) and event.identity == record.identity
+            ],
+            {},
+        )
+        for record in generations
+    }
+    contradictions = [
+        f"lineage-{problem.code}:{problem.source}"
+        for problem in validate_lineage(generations, states)
+    ]
+    parent_ids = {
+        record.predecessor_generation_id
+        for record in generations
+        if record.predecessor_generation_id is not None
+    }
+    leaf_ids = sorted(
+        {
+            record.generation_id
+            for record in generations
+            if record.generation_id not in parent_ids
+        }
+    )
+    if len(leaf_ids) != 1:
+        contradictions.append("lineage-current-leaf:not-unique")
+    elif leaf_ids[0] != generation.generation_id:
+        contradictions.append(f"lineage-current-leaf:{leaf_ids[0]}")
+    successors = sorted(
+        {
+            record.generation_id
+            for record in generations
+            if record.predecessor_generation_id == generation.generation_id
+        }
+    )
+    return tuple(successors), tuple(contradictions)
+
+
 def resolve_review_v2_evidence(
     *,
     refs: ReviewV2AuthorityRefs,
@@ -481,11 +537,17 @@ def resolve_review_v2_evidence(
         if isinstance(record, HumanDecisionProvenance)
         and record.identity == generation.identity
     ]
-    successor_generation_ids = _direct_successor_generation_ids(
+    durable_successor_ids = _direct_successor_generation_ids(
         generation=generation,
         records=records,
         payloads=payloads,
     )
+    successor_generation_ids, lineage_contradictions = _lineage_currentness(
+        generation=generation,
+        records=records,
+    )
+    if successor_generation_ids != durable_successor_ids:
+        raise GovernanceError("Review V2 successor recovery disagrees with durable authority")
 
     if generation.canonical_snapshot is not None:
         snapshot_payload = generation.canonical_snapshot.encode()
@@ -555,6 +617,7 @@ def resolve_review_v2_evidence(
         independent_review=independent,
         source_refs=tuple(sorted(source_refs)),
         successor_generation_ids=successor_generation_ids,
+        lineage_contradictions=lineage_contradictions,
     )
 
 
