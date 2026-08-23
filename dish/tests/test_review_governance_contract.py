@@ -115,6 +115,7 @@ def _story_bundle(
     include_approval=True,
     corrupt_payload=False,
     extra_events=(),
+    extra_generations=(),
 ):
     snapshot = b"sanitized exact Review V5 G8 canonical snapshot"
     canonical_sha = _sha(snapshot)
@@ -234,6 +235,16 @@ This execution does not remember or recover material authorship of G8.
             {
                 "gid": str(1000 + index),
                 "text": json.dumps(lineage.event_mapping(event), separators=(",", ":")),
+                "resource_subtype": "comment_added",
+            }
+        )
+    for index, generation in enumerate(extra_generations, start=20):
+        stories.append(
+            {
+                "gid": str(1000 + index),
+                "text": json.dumps(
+                    lineage.generation_mapping(generation), separators=(",", ":")
+                ),
                 "resource_subtype": "comment_added",
             }
         )
@@ -424,6 +435,40 @@ def test_superseded_generation_is_not_current(monkeypatch):
         projection=projection,
     )
     assert result.admission == "MECHANICAL_EVIDENCE_BLOCKED"
+
+
+def test_durable_successor_generation_makes_approved_predecessor_non_current(monkeypatch):
+    projection = governance.load_projection(REPO_ROOT)
+    classification, evidence, _ = _story_bundle(monkeypatch, projection)
+    successor_snapshot = "sanitized exact Review V5 G9 canonical snapshot"
+    successor = Generation(
+        task_gid=TASK,
+        generation_id="review-v5-g9",
+        predecessor_generation_id=evidence.generation.generation_id,
+        canonical_sha256=_sha(successor_snapshot.encode()),
+        relevant_repo_baseline=BASELINE,
+        created_at="2026-08-22T22:00:00Z",
+        created_by="Dish Agent: Development Workflow | ChatGPT",
+        canonical_snapshot=successor_snapshot,
+    )
+    _, rebuilt, refs = _story_bundle(
+        monkeypatch,
+        projection,
+        extra_generations=(successor,),
+    )
+    assert rebuilt.blocking_contradictions == (
+        "later-successor-generation:review-v5-g9",
+    )
+    assert "asana-story:1020" in rebuilt.source_refs
+    result = governance.resolve_review_v2_admission(
+        refs=refs,
+        classification=classification,
+        projection=projection,
+    )
+    assert result.admission == "MECHANICAL_EVIDENCE_BLOCKED"
+    assert result.reasons == (
+        "the approved Review V2 generation has a durable later successor",
+    )
 
 
 @pytest.mark.parametrize("value", sorted(governance.ELIGIBLE_CLASSIFICATIONS))

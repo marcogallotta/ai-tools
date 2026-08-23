@@ -261,6 +261,7 @@ def _reconstruct_review_v2_evidence(
     decision_payloads: Mapping[str, bytes],
     independent_review: RecoveredIndependentDesignReview,
     source_refs: Sequence[str],
+    successor_generation_ids: Sequence[str] = (),
 ) -> ReconstructedReviewV2Evidence:
     """Use canonical Review V2 types/reconstruction; reject invented wrapper schemas."""
     if digest(canonical_snapshot_payload) != generation.canonical_sha256:
@@ -302,6 +303,10 @@ def _reconstruct_review_v2_evidence(
             blocking.append(f"{contradiction.code}:{contradiction.source}")
     if invalid_decision_refs and approval is None:
         blocking.extend(f"unrecovered-decision:{ref}" for ref in sorted(invalid_decision_refs))
+    blocking.extend(
+        f"later-successor-generation:{generation_id}"
+        for generation_id in sorted(set(successor_generation_ids))
+    )
 
     return ReconstructedReviewV2Evidence(
         generation=generation,
@@ -384,6 +389,39 @@ def _asana_story_gid(reference: str, *, exact_decision_payload: bool = False) ->
     return match.group(1)
 
 
+def _direct_successor_generation_ids(
+    *,
+    generation: Generation,
+    records: Sequence[Generation | Event | HumanDecisionProvenance],
+    payloads: Mapping[str, bytes],
+) -> tuple[str, ...]:
+    """Return durable, digest-valid children that make ``generation`` non-current."""
+    successors: list[str] = []
+    for record in records:
+        if not isinstance(record, Generation):
+            continue
+        if (
+            record.task_gid != generation.task_gid
+            or record.predecessor_generation_id != generation.generation_id
+        ):
+            continue
+        if record.canonical_snapshot is not None:
+            snapshot_payload = record.canonical_snapshot.encode()
+        else:
+            assert record.canonical_snapshot_ref is not None
+            snapshot_gid = _asana_story_gid(record.canonical_snapshot_ref)
+            try:
+                snapshot_payload = payloads[snapshot_gid]
+            except KeyError as exc:
+                raise GovernanceError(
+                    "successor snapshot story is not a member of the exact Asana task"
+                ) from exc
+        if digest(snapshot_payload) != record.canonical_sha256:
+            raise GovernanceError("successor canonical snapshot digest disagrees with Review V2")
+        successors.append(record.generation_id)
+    return tuple(sorted(set(successors)))
+
+
 def resolve_review_v2_evidence(
     *,
     refs: ReviewV2AuthorityRefs,
@@ -443,6 +481,11 @@ def resolve_review_v2_evidence(
         if isinstance(record, HumanDecisionProvenance)
         and record.identity == generation.identity
     ]
+    successor_generation_ids = _direct_successor_generation_ids(
+        generation=generation,
+        records=records,
+        payloads=payloads,
+    )
 
     if generation.canonical_snapshot is not None:
         snapshot_payload = generation.canonical_snapshot.encode()
@@ -489,9 +532,16 @@ def resolve_review_v2_evidence(
         snapshot_ref,
     }
     for gid, payload in payloads.items():
+        payload_records = parse_record_envelope(payload)
         if any(
             getattr(record, "identity", None) == generation.identity
-            for record in parse_record_envelope(payload)
+            or (
+                isinstance(record, Generation)
+                and record.task_gid == generation.task_gid
+                and record.generation_id in successor_generation_ids
+                and record.predecessor_generation_id == generation.generation_id
+            )
+            for record in payload_records
         ):
             source_refs.add(f"asana-story:{gid}")
     source_refs.update(decision_payloads)
@@ -504,6 +554,7 @@ def resolve_review_v2_evidence(
         decision_payloads=decision_payloads,
         independent_review=independent,
         source_refs=tuple(sorted(source_refs)),
+        successor_generation_ids=successor_generation_ids,
     )
 
 
@@ -540,6 +591,15 @@ def _human_required_admission(
             "MECHANICAL_EVIDENCE_BLOCKED",
             False,
             ("canonical reconstructed Review V2 evidence is required",),
+        )
+    if any(
+        contradiction.startswith("later-successor-generation:")
+        for contradiction in evidence.blocking_contradictions
+    ):
+        return (
+            "MECHANICAL_EVIDENCE_BLOCKED",
+            False,
+            ("the approved Review V2 generation has a durable later successor",),
         )
     if evidence.blocking_contradictions:
         return (
