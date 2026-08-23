@@ -14,6 +14,8 @@ Design Review evaluates an exact frozen design generation when the governing wor
 
 Ordinary CI certifies the exact PR source head selected from the formal Review event, not a synthetic merge commit. [The shared gate predicate](../../../../scripts/pr_gate.py) combines current PR metadata, formal exact-head Review, status evidence, and applicable local certification into a deterministic Integration predicate. CI still pending does not delay semantic Review. CI failure authorizes a fix only after ownership is classified as PR-owned; unrelated/current-main/infrastructure failures remain visible without mutating the candidate.
 
+Code-quality admission is author-first. When policy is enabled on either the exact base or candidate head, Implementation must persist exactly one acceptable `dish-code-quality-result-v1` for the current head before ready-for-Review state. Implementation finalization and lifecycle/Review discovery share that predicate; CI verification cannot create the missing author result. A successor head invalidates the result.
+
 Final landing is a separately authorized local Integration action protected by a per-PR/head fence and fresh GitHub/Asana reads. Mechanical reconciliation that changes the head still requires an exact-head recheck; any semantic choice returns to Implementation and substantive Review.
 
 ## Invariants

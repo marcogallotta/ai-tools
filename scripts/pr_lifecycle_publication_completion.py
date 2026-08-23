@@ -11,6 +11,8 @@ from typing import Any, Mapping, Protocol, Sequence
 from pr_lifecycle_support import AUTHORING_EVIDENCE_PENDING_RE, FULL_SHA_RE, LifecycleError
 from installed_host_cert import EVIDENCE as INSTALLED_HOST_CERT_EVIDENCE, requirement_for_files, status_from_comments
 from pr_lifecycle_owner import task_ids_from_pr
+from code_quality_admission import github_admission
+from code_quality_common import GateError as CodeQualityError
 
 EXACT_BYTE_HANDOFF = "EXACT-BYTE HANDOFF"
 FRESH_AUTHORING_REQUIRED = "FRESH AUTHORING REQUIRED"
@@ -301,6 +303,9 @@ def _pre_review_blocker_reason(
         return "current publication blocker remains on the PR"
 
     try:
+        quality = github_admission(github, dict(pr), github.get_comments(snapshot["number"]))
+        if not quality.allowed:
+            return f"local code-quality evidence remains pending: {quality.reason}"
         requirement = requirement_for_files(github.get_pr_files(snapshot["number"]))
         if requirement is not None:
             head = pr.get("head") if isinstance(pr, Mapping) else None
@@ -319,7 +324,7 @@ def _pre_review_blocker_reason(
                     f"{INSTALLED_HOST_CERT_EVIDENCE} remains pending: "
                     f"{status.error or 'certificate missing'}"
                 )
-    except (LifecycleError, AttributeError) as exc:
+    except (LifecycleError, AttributeError, CodeQualityError) as exc:
         return f"pre-Review blocker evaluation failed: {exc}"
     return None
 

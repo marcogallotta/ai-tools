@@ -4,6 +4,8 @@ from __future__ import annotations
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
 from installed_host_cert import EVIDENCE as INSTALLED_HOST_CERT_EVIDENCE, requirement_for_files, status_from_comments
+from code_quality_admission import github_admission
+from code_quality_common import GateError as CodeQualityError
 from pr_lifecycle_helpers import (
     _integration_order_reason, _lease_json, _mergeability_reason,
     _pr_base, _pr_branch, _pr_number, _pr_title, _pr_url,
@@ -163,6 +165,25 @@ class LifecycleInspectMixin:
                 "hook/config/install-wiring candidate requires exact-head installed-host Implementation evidence: "
                 + str(host_cert_status.error or "certificate missing")
             )
+            lifecycle.human_action = None
+            return lifecycle
+
+        try:
+            quality = github_admission(self.github, current, comments)
+        except (LifecycleError, CodeQualityError) as exc:
+            quality = None
+            quality_error = str(exc)
+        else:
+            quality_error = quality.reason
+        if quality is None or not quality.allowed:
+            lifecycle = implementation_continuation_lifecycle(
+                base_kwargs=base_kwargs,
+                evidence="exact-head local code-quality result",
+                review_class=review_class,
+                lease_payload=lease_payload,
+                implementation_active=bool(active_by_phase.get("implementation")),
+            )
+            lifecycle.residual_reason = f"Review admission refused: {quality_error}"
             lifecycle.human_action = None
             return lifecycle
 

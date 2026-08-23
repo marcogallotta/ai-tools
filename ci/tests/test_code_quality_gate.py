@@ -167,6 +167,24 @@ def test_disabled_policy_is_deterministic_without_analyzers(monkeypatch, tmp_pat
     assert timings == {}
 
 
+def test_activation_head_is_enforced_monotonically(monkeypatch, tmp_path: Path):
+    repo = tmp_path
+    git(repo, "init", "-q")
+    (repo / "ci").mkdir(); (repo / "scripts").mkdir()
+    template = 'version=1\nenabled={enabled}\ntask_gid="1"\nmax_quality_correction_rounds=2\nlocal_p95_target_seconds=10.0\n[python_size]\nmax_nonblank_lines=500\n[tracked_files]\nmanageability_bytes=100000\noperational_hard_bytes=200000\nsource_extensions=[".py"]\nlikely_generated_extensions=[".db"]\ngenerated_registry="ci/code-quality-generated.json"\n[ruff]\nversion="0"\nselect=[]\n[pyright]\nversion="0"\ntype_checking_mode="basic"\ninclude=[]\nnonblocking_rules=[]\n[jscpd]\nversion="0"\nmode="mild"\nmin_lines=10\nmin_tokens=80\nscan_paths=[]\nignore=[]\n'
+    (repo / "ci" / "code-quality.toml").write_text(template.format(enabled="false"))
+    (repo / "ci" / "code-quality-generated.json").write_text('{"schema":"dish-code-quality-generated-registry-v1","entries":[]}')
+    base = commit(repo, "disabled")
+    (repo / "ci" / "code-quality.toml").write_text(template.format(enabled="true"))
+    head = commit(repo, "activate")
+    monkeypatch.setattr(cq, "exact_changed_paths", lambda *a, **k: ("ci/code-quality.toml",))
+    monkeypatch.setattr(cq, "_run_analyzers", lambda *a, **k: ({}, [], {}))
+    result, _ = cq.evaluate(repo, target_base=base, head=head, task_gid="1")
+    assert result["effective_enabled"] is True
+    assert result["policy_source_sha"] == head
+    assert result["outcome"] == "PASS"
+
+
 def test_policy_select_excludes_preview_b909():
     import tomllib
     current = tomllib.loads((ROOT / "ci" / "code-quality.toml").read_text())

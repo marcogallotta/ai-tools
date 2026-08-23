@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from code_quality_admission import exact_head_admission
+
 REQUIRED_CERTIFICATION_CONTEXT = "Dish / exact-head certification"
 REQUIRED_CERTIFICATION_WORKFLOW_PATH = ".github/workflows/ci.yml"
 # Compatibility names used by lifecycle/external-dependency records while Stage E converges terminology.
@@ -87,12 +89,28 @@ def pr_head_sha(pr: dict[str, Any]) -> str:
     return _head_sha(pr)
 
 
-def is_review_discoverable(pr: dict[str, Any], *, allow_draft: bool = False) -> bool:
+def is_review_discoverable(
+    pr: dict[str, Any], *, allow_draft: bool = False,
+    comments: list[dict[str, Any]] | None = None,
+    base_policy: bytes | str | None = None,
+    head_policy: bytes | str | None = None,
+) -> bool:
     if _state(pr) != "open":
         return False
     if _draft(pr) and not allow_draft:
         return False
-    return True
+    if comments is None:
+        return True
+    base = pr.get("base") if isinstance(pr.get("base"), dict) else {}
+    admission = exact_head_admission(
+        comments=comments,
+        head=_head_sha(pr),
+        target_base=str(base.get("sha") or pr.get("baseRefOid") or ""),
+        pr_number=_pr_number(pr),
+        base_policy=base_policy,
+        head_policy=head_policy,
+    )
+    return admission.allowed
 
 
 def review_verdict(body: Any) -> str | None:
@@ -387,6 +405,9 @@ def _parser() -> argparse.ArgumentParser:
     review = sub.add_parser("review-ready", help="test ordinary Review discoverability")
     review.add_argument("--pr-json", required=True)
     review.add_argument("--allow-draft", action="store_true")
+    review.add_argument("--comments-json", required=True)
+    review.add_argument("--base-policy", required=True)
+    review.add_argument("--head-policy", required=True)
     integration = sub.add_parser("integration", help="verify exact reviewed head certification")
     integration.add_argument("--pr-json", required=True)
     integration.add_argument("--reviewed-head", required=True)
@@ -401,8 +422,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pr = _load_json(args.pr_json)
         if args.command == "review-ready":
+            loaded = json.loads(Path(args.comments_json).read_text(encoding="utf-8"))
+            comments = loaded if isinstance(loaded, list) else loaded.get("comments")
+            if not isinstance(comments, list):
+                raise GateError("comments JSON must be a list or contain comments[]")
             result = {
-                "discoverable": is_review_discoverable(pr, allow_draft=args.allow_draft),
+                "discoverable": is_review_discoverable(
+                    pr,
+                    allow_draft=args.allow_draft,
+                    comments=comments,
+                    base_policy=Path(args.base_policy).read_bytes(),
+                    head_policy=Path(args.head_policy).read_bytes(),
+                ),
                 "draft": _draft(pr), "head_sha": _head_sha(pr), "state": _state(pr),
             }
             print(json.dumps(result, sort_keys=True))

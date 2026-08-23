@@ -1,6 +1,8 @@
 name: Dependency bundle artifact mirror
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
@@ -9,32 +11,83 @@ on:
         description: Existing dependency-bundle Release tag to mirror
         required: true
         type: string
+      locator_sha:
+        description: Exact commit to receive the trusted discovery status
+        required: true
+        type: string
+      bundle_id:
+        description: Expected immutable bundle identity
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read
+  statuses: write
 
 jobs:
   mirror:
     name: Mirror authoritative dependency bundle
     if: >-
+      github.event_name == 'push' ||
       (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'dependency-bundle-')) ||
       (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'dependency-bundle-'))
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
       - name: Resolve immutable asset names
         id: meta
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG_INPUT: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          LOCATOR_INPUT: ${{ inputs.locator_sha }}
+          BUNDLE_INPUT: ${{ inputs.bundle_id }}
+          RELEASE_TARGET: ${{ github.event.release.target_commitish }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [[ "$EVENT_NAME" == push ]]; then
+            python3 scripts/dependency_bundle.py expected --repo-root "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"
+            bundle_id=$(python3 scripts/dependency_bundle.py expected --repo-root "$GITHUB_WORKSPACE")
+            RELEASE_TAG="dependency-bundle-$bundle_id"
+            locator_sha="$GITHUB_SHA"
+          else
+            RELEASE_TAG=$RELEASE_TAG_INPUT
+            bundle_id="${RELEASE_TAG#dependency-bundle-}"
+            if [[ "$EVENT_NAME" == release ]]; then
+              locator_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TARGET" --jq .sha)
+            else
+              locator_sha=$LOCATOR_INPUT
+            fi
+            if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+              [[ "$bundle_id" == "$BUNDLE_INPUT" ]]
+            fi
+          fi
           bundle_id="${RELEASE_TAG#dependency-bundle-}"
           test -n "$bundle_id"
+          [[ "$locator_sha" =~ ^[0-9a-f]{40}$ ]]
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "bundle_id=$bundle_id" >> "$GITHUB_OUTPUT"
+          echo "locator_sha=$locator_sha" >> "$GITHUB_OUTPUT"
           echo "archive_name=$bundle_id.tar.gz" >> "$GITHUB_OUTPUT"
           echo "checksum_name=$bundle_id.tar.gz.sha256" >> "$GITHUB_OUTPUT"
           echo "manifest_name=$bundle_id.manifest.json" >> "$GITHUB_OUTPUT"
+
+      - name: Publish pending exact locator
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCATOR_SHA: ${{ steps.meta.outputs.locator_sha }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$LOCATOR_SHA" \
+            -f state=pending -f context='Dish / dependency bundle' \
+            -f description='Verifying immutable dependency bundle mirror' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Download Release authority
         shell: bash
@@ -64,6 +117,8 @@ jobs:
           ARCHIVE_NAME: ${{ steps.meta.outputs.archive_name }}
           CHECKSUM_NAME: ${{ steps.meta.outputs.checksum_name }}
           MANIFEST_NAME: ${{ steps.meta.outputs.manifest_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          LOCATOR_SHA: ${{ steps.meta.outputs.locator_sha }}
         run: |
           set -euo pipefail
           cd dependency-bundle-mirror
@@ -77,10 +132,11 @@ jobs:
 
           manifest = json.loads(Path(os.environ["MANIFEST_NAME"]).read_text(encoding="utf-8"))
           assert manifest["bundle_id"] == os.environ["BUNDLE_ID"], manifest["bundle_id"]
+          if os.environ.get("EVENT_NAME") == "workflow_dispatch":
+              assert manifest["built_from_commit"] == os.environ["LOCATOR_SHA"]
           print(manifest["bundle_id"])
           PY
           rm archive-manifest.json
-
       - name: Upload matching Actions artifact mirror
         uses: actions/upload-artifact@v7
         with:
@@ -88,3 +144,30 @@ jobs:
           path: dependency-bundle-mirror
           if-no-files-found: error
           retention-days: 90
+
+      - name: Verify unique live artifact and publish success locator
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_ID: ${{ steps.meta.outputs.bundle_id }}
+          LOCATOR_SHA: ${{ steps.meta.outputs.locator_sha }}
+        run: |
+          set -euo pipefail
+          artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts")
+          [[ $(jq --arg name "$BUNDLE_ID" '[.artifacts[] | select(.name == $name and .expired == false)] | length' <<<"$artifacts") == 1 ]]
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$LOCATOR_SHA" \
+            -f state=success -f context='Dish / dependency bundle' \
+            -f description="Immutable bundle $BUNDLE_ID verified" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Publish failed exact locator
+        if: failure() && steps.meta.outputs.locator_sha != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCATOR_SHA: ${{ steps.meta.outputs.locator_sha }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$LOCATOR_SHA" \
+            -f state=failure -f context='Dish / dependency bundle' \
+            -f description='Dependency bundle mirror failed closed' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

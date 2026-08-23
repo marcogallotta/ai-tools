@@ -104,10 +104,24 @@ def _nonblank_lines(data: bytes | None, path: str) -> int | None:
 
 def _load_policy(repo: Path, comparison_base: str, head: str) -> tuple[dict[str, Any], str, str, bool]:
     path = "ci/code-quality.toml"
-    raw = _git_file(repo, comparison_base, path)
-    bootstrap = raw is None
-    source = head if bootstrap else comparison_base
-    raw = _git_file(repo, source, path)
+    base_raw = _git_file(repo, comparison_base, path)
+    head_raw = _git_file(repo, head, path)
+    bootstrap = base_raw is None
+    raw = base_raw
+    source = comparison_base
+    # Enabling is monotonic across the authoring boundary: an activation PR must
+    # satisfy the gate it introduces, while a candidate disable cannot bypass an
+    # already-enabled base. Other policy changes remain base-authoritative.
+    if bootstrap:
+        raw, source = head_raw, head
+    elif head_raw is not None:
+        try:
+            base_value = tomllib.loads(base_raw.decode("utf-8"))
+            head_value = tomllib.loads(head_raw.decode("utf-8"))
+        except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+            raise GateError("code-quality policy is not valid UTF-8 TOML") from exc
+        if not bool(base_value.get("enabled")) and bool(head_value.get("enabled")):
+            raw, source = head_raw, head
     if raw is None:
         raise GateError("code-quality policy is missing from both comparison base and head")
     try:

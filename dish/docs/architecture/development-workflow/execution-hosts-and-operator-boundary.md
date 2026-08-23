@@ -14,6 +14,8 @@ Semantic role and execution host are separate. ChatGPT uses connected GitHub/Asa
 
 Remote/hosted Implementation is the normal semantic authoring path. Local authoring requires proof of an unavailable remote source/publication capability and bounded exhausted fallbacks. Native tests remain `TESTS ONLY`; sudo, systemd, devices, and installed runtime access remain `LOCAL SYSTEM ACCESS`. Elapsed time and convenience do not change those classes.
 
+ChatGPT dependency bootstrap is connector-closed: exact main plus the expected immutable dependency-bundle identity resolves one trusted commit-status locator, one default-branch mirror run, and one live artifact. Release bytes remain authority. A new bundle needed by an unlanded PR is requested through a bounded issue event and produced by trusted default-branch tooling without executing candidate code; no human run/artifact-ID relay or uploaded environment is part of this path.
+
 Marco owns outcomes, priorities, consequential design/risk, and explicit exceptional authority. Agents own routine mechanics. Durable PR/Asana surfaces carry full agent-to-agent context; Marco-facing communication carries only the outcome, decision/action, material risk, and next owner needed at operator altitude.
 
 ## Invariants
