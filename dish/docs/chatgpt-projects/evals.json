@@ -5321,6 +5321,44 @@
       "roles": ["implementation"]
     },
     {
+      "expected_outcome": "unrelated_target_movement_does_not_mutate_active_authoring",
+      "forbidden_actions": [
+        "fetch-because-target-moved",
+        "rebase-or-merge-unrelated-target",
+        "replace-authoring-branch-or-base",
+        "churn-task-state",
+        "narrate-sync-cycle-to-marco"
+      ],
+      "id": "implementation-active-authoring-ignores-unrelated-target-movement",
+      "prompt": "Implementation pinned fresh base A and began authoring. The target branch then moved through unrelated commits B, C, and D while the task branch remained healthy. Continue the authorized implementation.",
+      "required_actions": [
+        "preserve-base-a-and-current-lineage",
+        "treat-b-c-d-as-informational",
+        "continue-authoring-with-zero-target-driven-mutation"
+      ],
+      "required_rules": ["implementation-stable-authoring-base"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "justified_reconciliation_occurs_once_without_restarting_target_chase",
+      "forbidden_actions": [
+        "skip-proven-dependency-reconciliation",
+        "reconcile-again-for-later-unrelated-movement",
+        "start-continuous-polling",
+        "narrate-sync-cycle-to-marco"
+      ],
+      "id": "implementation-active-authoring-reconciles-only-proven-boundary",
+      "prompt": "Implementation pinned fresh base A. Target movement B is unrelated. Commit C contains a concrete dependency required by the accepted task, so Implementation deliberately reconciles C once. The target later moves to unrelated D while authoring remains healthy.",
+      "required_actions": [
+        "ignore-unrelated-b",
+        "reconcile-concrete-dependency-c-once",
+        "ignore-unrelated-d-after-reconciliation",
+        "continue-authoring-without-sync-loop"
+      ],
+      "required_rules": ["implementation-stable-authoring-base"],
+      "roles": ["implementation"]
+    },
+    {
       "expected_outcome": "existing_pr_lineage_cannot_be_regenerated",
       "forbidden_actions": ["derive-new-branch", "create-replacement-pr", "discard-durable-base-or-head"],
       "id": "implementation-start-existing-pr-no-rederive",

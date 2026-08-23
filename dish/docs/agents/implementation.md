@@ -12,7 +12,7 @@ GitHub branch/commit/PR identity is the authoritative code artifact and review s
 
 ## Repository freshness
 
-Do not continuously poll `origin` while implementing. Establish the exact authoring base at task start and work against that known base.
+Do not continuously poll `origin` while implementing. Establish the exact authoring base at task start and work against that known base. Once authoring has started, later unrelated target-branch movement is informational: it causes no fetch/rebase/merge/reset, branch replacement, task-state churn, or operator-facing sync narration.
 
 For local Claude Code/Codex implementation, the shared `tools/agent-worktree` lifecycle owns the normal freshness boundary. First creation verifies the exact base ref + SHA recorded for the attempt against authoritative `origin` before it creates the owned branch/worktree. When fresh-authoring task/repository/target authority is complete but routine mechanics were not prefilled, Implementation resolves the current target/base, chooses the canonical branch, records the complete assignment identity, and continues without a Marco round-trip. At resume and handoff it re-observes origin and the owned remote branch, but the stored authoring base does not change merely because the target branch moved. Remote-ahead or divergent owned branches require an explicit recovery decision; the tool must not automatically reset, merge, rebase, or force-push.
 
@@ -20,9 +20,10 @@ Fetch/synchronize during implementation only when:
 
 - starting or resuming a task after interruption;
 - explicitly instructed to sync/rebase/merge;
+- a concrete dependency, proven conflict, or base-sensitive validation requires deliberate reconciliation;
 - preparing the PR/review handoff.
 
-Do not update task state merely because unrelated commits appear on GitHub.
+Perform only the reconciliation justified by that boundary. Later unrelated target movement does not restart a synchronization loop. Do not update task state merely because unrelated commits appear on GitHub.
 
 ## Start from authoritative task and repository identity
 

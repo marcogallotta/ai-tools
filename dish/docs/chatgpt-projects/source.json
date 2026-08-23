@@ -686,6 +686,21 @@
         {
           "action_boundaries": [
             "role-critical-write",
+            "status",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "fresh implementation routing"
+          },
+          "id": "implementation-stable-authoring-base",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Pin fresh authoring base once. Unrelated target movement is informational: no sync, base replacement, task churn, or narration. Reconcile only for a concrete dependency, instruction/handoff, proven conflict/base-sensitive check, or PR/Review; later unrelated movement does not restart it."
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
             "handoff"
           ],
           "delivery": {

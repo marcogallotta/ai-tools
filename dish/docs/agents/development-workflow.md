@@ -270,7 +270,8 @@ Repository freshness must be deterministic:
 - fail closed on wrong-worktree identity, remote-ahead, divergence, or recovery ambiguity rather than silently resetting/merging/rebasing/force-pushing semantic changes;
 - publish only the explicit owned branch refspec and verify the remote owned head equals local `HEAD`;
 - revalidate before PR/review handoff and report stored base, local implementation head, remote owned head, and current target head separately;
-- do not continuously chase unrelated moving `main` during active authoring.
+- after the fresh authoring base is pinned, treat unrelated moving `main` as informational: do not dispatch or narrate repeated fetch/rebase/merge/reset cycles, replace the branch, or churn task state;
+- allow one deliberate reconciliation only for a concrete dependency, explicit lifecycle handoff/instruction, proven conflict or base-sensitive validation, or the PR/Review boundary; later unrelated movement does not restart the loop.
 
 Local refs/checkouts are caches. GitHub remains source/history authority.
 
