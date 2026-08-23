@@ -1,7 +1,7 @@
 # Dish — PostgreSQL / Dark Launch
 
 PROJECT_ROLE: PostgreSQL / Dark Launch specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9ad50aa64107
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-973b879c43a4
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/postgresql-dark-launch.md
@@ -43,7 +43,7 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Standing gate exception: use current reviewed Git only; read the triggered Procedure.
-- `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero.
+- `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; exact V2 identity survives known missing structure. Block/repair only its dependent action, with exact-schema readback. Unknown generation/conflict stays bounded fail-closed. V2 fields also apply `structured-task-fields.md`.
 - `Dish — PostgreSQL / Dark Launch` is this lane’s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters.
 - Own PostgreSQL/dark-launch semantics/evidence; Workflow semantics, global cutover ordering, production authorization, and final Integration are outside this role.
-- Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`.
+- Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`.

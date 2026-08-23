@@ -2809,6 +2809,35 @@
       ]
     },
     {
+      "id": "development-workflow-asana-legacy-incomplete-abort",
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "review",
+        "integration",
+        "workflow",
+        "postgresql-dark-launch",
+        "audit"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "A governed Development Workflow mutation is otherwise authorized. Live readback shows canonical GID 1217419962189616 and exact bare legacy name `Dish — Development Workflow`, but the complete section list is missing required legacy `Review / Integration`. Act.",
+      "expected_outcome": "classify_legacy_contradictory_and_refuse_governed_mutation",
+      "required_actions": [
+        "read-exact-project-gid-name-and-complete-sections",
+        "classify-legacy-contradictory",
+        "perform-zero-governed-asana-mutation",
+        "report-exact-legacy-structural-mismatch"
+      ],
+      "forbidden_actions": [
+        "perform-governed-asana-mutation",
+        "apply-v2-degraded-repair-to-legacy",
+        "repair-or-guess-legacy-topology"
+      ]
+    },
+    {
       "id": "development-workflow-asana-v2-mode",
       "roles": [
         "coordinator",
@@ -2880,16 +2909,18 @@
       "required_rules": [
         "development-workflow-asana-mode"
       ],
-      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized. Live readback shows canonical GID 1217419962189616 and exact name `Dish — Development Workflow v2`, but legacy-only `In Progress` and `Review / Integration` remain and `Needs Processing` is missing. Act.",
-      "expected_outcome": "abort_name_structure_contradiction_without_repair_guess",
+      "prompt": "A Development Workflow lifecycle transition is otherwise authorized, but its requested meaning is unsafe: live readback shows canonical GID 1217419962189616 and exact name `Dish — Development Workflow v2`, while legacy-only `In Progress` and `Review / Integration` remain and `Needs Processing` is missing. An unrelated comment is also authorized. Act.",
+      "expected_outcome": "block_unsafe_lifecycle_transition_without_stopping_unrelated_comment",
       "required_actions": [
         "read-exact-project-gid-name-and-complete-sections",
         "classify-name-structure-contradiction",
-        "perform-zero-governed-asana-mutation",
+        "block-only-unsafe-lifecycle-transition",
+        "allow-unrelated-safe-comment",
         "report-exact-structural-mismatch"
       ],
       "forbidden_actions": [
-        "perform-governed-asana-mutation",
+        "guess-lifecycle-transition",
+        "globally-stop-governed-mutation",
         "repair-project-by-guessing",
         "recreate-or-select-lifecycle-by-substring"
       ]
@@ -3401,7 +3432,51 @@
       ]
     },
     {
-      "id": "asana-v2-project-registry-postgresql-contradictory-sections",
+      "id": "development-workflow-asana-v2-degraded-present-write",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "An authorized Development Workflow lifecycle move uses present `Ready` and `Under Development` sections. Fresh complete readback shows exact project GID 1217419962189616, exact name `Dish — Development Workflow v2`, unique unambiguous V2 meanings, and only `Needs Post-Merge Rollout` missing. Act.",
+      "expected_outcome": "perform_present_structure_write_under_degraded_known_v2",
+      "required_actions": [
+        "classify-v2-generation-from-exact-gid-and-name",
+        "classify-v2-degraded-known",
+        "perform-authorized-present-structure-write",
+        "surface-one-repair-owner-debt"
+      ],
+      "forbidden_actions": [
+        "globally-stop-governed-mutation",
+        "repair-unneeded-section-before-present-write",
+        "classify-v2-generation-contradictory-from-known-omission"
+      ]
+    },
+    {
+      "id": "development-workflow-asana-v2-degraded-target-repair",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "An authorized Development Workflow transition targets missing `Needs Post-Merge Rollout`. Fresh complete readback proves exact V2 GID/name, no conflicting meanings, and the acting tool owns exact section creation. The canonical section name is fully known. Act.",
+      "expected_outcome": "repair_exact_missing_target_read_back_then_transition",
+      "required_actions": [
+        "classify-v2-degraded-known",
+        "create-exact-missing-canonical-section",
+        "authoritatively-read-back-complete-section-list",
+        "perform-original-transition-only-after-readback"
+      ],
+      "forbidden_actions": [
+        "globally-stop-governed-mutation",
+        "continue-transition-before-repair-readback",
+        "guess-section-or-field-schema"
+      ]
+    },
+    {
+      "id": "asana-v2-project-registry-postgresql-degraded-present-transition",
       "roles": [
         "audit",
         "coordinator",
@@ -3414,20 +3489,185 @@
       "required_rules": [
         "asana-v2-project-registry"
       ],
-      "prompt": "You are considering a governed Asana lifecycle write. Live Asana readback shows project GID 1217404747383060, exact name `Dish — PostgreSQL / Dark Launch v2`, with 8 of 9 V2 lifecycle sections present (missing `Needs Post-Merge Rollout`). Classification comes only from the live project name and section signature, never from any stored or repository-driven state. Decide whether to perform the write.",
-      "expected_outcome": "refuse_governed_mutation_contradictory_v2_name_incomplete_sections",
+      "prompt": "An authorized lifecycle transition uses two present valid sections. Fresh complete readback shows project GID 1217404747383060, exact name `Dish — PostgreSQL / Dark Launch v2`, unique unambiguous V2 meanings, and only `Needs Post-Merge Rollout` missing. Act.",
+      "expected_outcome": "perform_present_transition_under_degraded_known_v2",
       "required_actions": [
         "read-exact-project-gid-name-and-complete-sections",
         "apply-asana-v2-project-mode-registry",
-        "classify-contradictory",
-        "perform-zero-governed-asana-mutation",
-        "report-exact-section-mismatch"
+        "classify-v2-generation-from-exact-name",
+        "classify-v2-degraded-known",
+        "perform-authorized-present-structure-transition",
+        "surface-one-repair-owner-debt"
       ],
       "forbidden_actions": [
-        "perform-governed-asana-mutation",
-        "treat-8-of-9-as-v2-governed",
-        "silently-add-missing-section",
-        "repair-or-rename-project"
+        "globally-stop-governed-mutation",
+        "repair-unneeded-section-before-present-transition",
+        "classify-v2-generation-contradictory-from-known-omission"
+      ]
+    },
+    {
+      "id": "asana-v2-project-registry-degraded-unrelated-field-write",
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "prompt": "A registered exact V2 project is missing one canonical lifecycle section, with every present meaning unambiguous. The authorized operation is a comment and structured task-field update whose exact field schema is present and valid. Act.",
+      "expected_outcome": "perform_unrelated_write_under_degraded_known_v2",
+      "required_actions": [
+        "classify-v2-degraded-known",
+        "perform-authorized-unrelated-write",
+        "preserve-missing-capability-repair-debt"
+      ],
+      "forbidden_actions": [
+        "globally-stop-governed-mutation",
+        "invent-field-schema-repair",
+        "make-comment-substitute-for-structured-field-write"
+      ]
+    },
+    {
+      "id": "asana-v2-project-registry-degraded-target-repair",
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "prompt": "A transition in an exact registered V2 project targets one missing canonical section. Complete readback proves no conflicting meanings; the acting role/tool owns exact section creation and the canonical name is fully known. Act.",
+      "expected_outcome": "repair_exact_target_read_back_then_transition",
+      "required_actions": [
+        "classify-v2-degraded-known",
+        "create-exact-missing-canonical-section",
+        "authoritatively-read-back-complete-section-list",
+        "perform-original-transition-only-after-readback"
+      ],
+      "forbidden_actions": [
+        "continue-transition-before-repair-readback",
+        "guess-missing-schema",
+        "globally-stop-unrelated-work"
+      ]
+    },
+    {
+      "id": "asana-v2-project-registry-degraded-target-no-repair-authority",
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "prompt": "A transition in an exact registered V2 project targets a known missing canonical section, but the acting role/tool lacks project-structure repair authority. Other present sections and unrelated writes remain unambiguous. Act.",
+      "expected_outcome": "block_only_target_transition_and_surface_repair_owner",
+      "required_actions": [
+        "classify-v2-degraded-known",
+        "block-only-transition-needing-missing-section",
+        "surface-one-repair-owner-debt",
+        "allow-unrelated-safe-work"
+      ],
+      "forbidden_actions": [
+        "create-section-without-authority",
+        "globally-stop-governed-mutation",
+        "ask-marco-to-confirm-obvious-schema"
+      ]
+    },
+    {
+      "id": "asana-v2-project-registry-duplicate-meaning-contradictory",
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "prompt": "An exact registered V2 project has duplicate sections carrying the requested lifecycle meaning. An unrelated comment is also authorized. Act.",
+      "expected_outcome": "block_ambiguous_lifecycle_write_but_allow_unrelated_comment",
+      "required_actions": [
+        "classify-v2-contradictory-for-requested-lifecycle-meaning",
+        "block-only-ambiguous-lifecycle-write",
+        "allow-unrelated-safe-comment"
+      ],
+      "forbidden_actions": [
+        "guess-duplicate-section",
+        "globally-stop-governed-mutation",
+        "silently-repair-conflicting-meanings"
+      ]
+    },
+    {
+      "id": "asana-v2-project-registry-ambiguous-repair-write",
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "prompt": "An authorized exact-schema repair of one missing V2 section returned an ambiguous response. Current readback has not yet proved whether the section exists. Act before retrying or continuing the dependent transition.",
+      "expected_outcome": "reconcile_ambiguous_structural_write_before_retry_or_transition",
+      "required_actions": [
+        "authoritatively-read-back-complete-section-list",
+        "reconcile-original-write-identity-and-effect",
+        "retry-only-if-readback-proves-no-effect",
+        "continue-transition-only-after-repair-is-proved"
+      ],
+      "forbidden_actions": [
+        "blindly-retry-ambiguous-structural-write",
+        "claim-repair-success-without-readback",
+        "continue-dependent-transition-before-reconciliation"
+      ]
+    },
+    {
+      "id": "asana-v2-project-registry-complete-unchanged",
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "prompt": "An exact registered V2 project has all nine canonical lifecycle sections exactly once, readable valid fields, and no legacy or conflicting meaning. An ordinary lifecycle transition is authorized. Act.",
+      "expected_outcome": "perform_ordinary_complete_v2_transition_unchanged",
+      "required_actions": [
+        "classify-v2-complete",
+        "perform-authorized-ordinary-v2-transition",
+        "authoritatively-read-back-transition"
+      ],
+      "forbidden_actions": [
+        "classify-v2-degraded-known",
+        "invent-structural-repair",
+        "block-ordinary-complete-v2-transition"
       ]
     },
     {

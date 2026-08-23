@@ -6,7 +6,7 @@ complete a task in a project registered below. Read-only inspection may continue
 is refused.
 
 This doc does not replace [`development-workflow-asana-mode.md`](development-workflow-asana-mode.md).
-That file remains the standalone, unmodified authority that existing ChatGPT Development Workflow
+That file remains the standalone authority that existing ChatGPT Development Workflow
 sessions already read directly; it stays in force until those sessions are confirmed replaced and a
 separate follow-up task retires or forwards it. This doc is the authority for every other governed
 project, and the shared reference point for the general V2 mechanics.
@@ -60,16 +60,40 @@ For a registered row's base name, the live project name is one of exactly three 
 
 - **Live name equals the base name, with no version suffix** — **LEGACY**. Zero governed V2
   mutation.
-- **Live name equals `<base name> v2`** — **V2**, subject to the section-signature check below: all
-  nine V2 lifecycle sections must exist and no legacy-only section may remain. A match is full V2
-  mutation authority; a mismatch is **CONTRADICTORY** — zero mutation, report the exact mismatch
-  without repairing, renaming, or guessing.
+- **Live name equals `<base name> v2`** — **V2**. The exact registered GID/name establishes the
+  lifecycle generation; structural health is classified separately as described below.
 - **Live name equals `<base name> v` followed by anything other than `2`** (`v3`, `v4`, or any
   other value) — **STOP**. Zero governed mutation. Explicitly flag it to Marco and ask what to do.
   Do not guess the new generation's rules and do not fall back to applying V2 rules to it.
 
 Any other live name (malformed suffix, or not matching the base name at all) is **UNKNOWN**: zero
 governed mutation, report the exact mismatch without repairing, renaming, or guessing.
+
+### V2 structural health and action scope
+
+After exact V2 generation identity is established, classify the freshly read complete sections and
+fields separately:
+
+- **V2_COMPLETE** — all nine canonical lifecycle sections exist exactly once, required field
+  structures are readable, and no legacy-only or conflicting lifecycle meaning remains.
+- **V2_DEGRADED_KNOWN** — one or more known canonical sections or fields are missing, but every
+  present lifecycle meaning is unique and unambiguous and there is no legacy/V2 collision.
+- **V2_CONTRADICTORY** — lifecycle meanings are duplicated, mixed across generations, impossible
+  to map safely, or the complete structure required by the exact action cannot be read. An unknown
+  or malformed custom-field schema is also contradictory for an operation that depends on it.
+
+`V2_DEGRADED_KNOWN` never means project-wide zero mutation. An operation that uses only present,
+valid structures proceeds under its normal role authority; this includes comments and task/field
+writes unrelated to the missing capability. If the requested operation needs missing structure,
+repair only when the acting role/tool owns that exact structural repair and the canonical schema is
+fully known. Create an exact missing section or supported exact field structure, authoritatively
+reread the complete structure, and only then continue the original operation. Never guess a field
+type, options, or lifecycle meaning.
+
+If exact repair authority/capability is unavailable, block only the operation that needs the
+missing structure and surface one repair owner/debt record; unrelated safe work continues.
+`V2_CONTRADICTORY` fails closed only the lifecycle/field operation whose semantics are unsafe.
+Unknown generations and unregistered projects retain their separate bounded refusal rules.
 
 ## V2 lifecycle meanings
 

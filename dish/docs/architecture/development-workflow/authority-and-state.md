@@ -30,6 +30,11 @@ The Coordinator normally consumes that maintained normalized projection rather t
 ## Invariants
 
 - A projection never silently overrides its owning authority.
+- Exact registered Asana project identity and structural health are separate facts. A known missing
+  canonical capability degrades only operations that require it; present unambiguous capabilities
+  remain usable. Exact owned repair requires complete canonical schema plus authoritative readback.
+  Unknown generations, conflicting meanings, and unreadable authority still fail closed at the
+  affected boundary.
 - Standing gate exceptions share repository-policy freshness; Project settings are not a second
   exception authority. Every new activation is invalid until current Git binds exact gate semantics
   and Marco provenance to an authoritatively read-back same-day P-CRITICAL Development Workflow

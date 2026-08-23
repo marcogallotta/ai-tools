@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9ad50aa64107
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-973b879c43a4
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
@@ -45,9 +45,9 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Standing gate exception: use current reviewed Git only; read the triggered Procedure.
-- `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero.
+- `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; exact V2 identity survives known missing structure. Block/repair only its dependent action, with exact-schema readback. Unknown generation/conflict stays bounded fail-closed. V2 fields also apply `structured-task-fields.md`.
 - Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.
 - Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.
 - Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT, connector, and GitHub Actions landing are forbidden.
 - Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat: say only what changes his understanding, decision, or required action, and never use a progress update to stop unfinished authorized work. Durable technical detail stays on the PR.
-- Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`.
+- Other Dish Asana projects: exact registered GID/name sets generation. `asana-v2-project-mode.md`: known missing structure degrades only its dependent action; owned repair needs exact schema + readback. Unknown version, unregistered project, or conflict stays bounded fail-closed. V2 fields use `structured-task-fields.md`.
