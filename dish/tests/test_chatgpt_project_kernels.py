@@ -432,6 +432,7 @@ def test_development_workflow_asana_mode_guard_reaches_every_project_and_worker(
 def test_development_workflow_asana_mode_behavior_matrix_is_registered():
  expected={
   'development-workflow-asana-legacy-mode',
+  'development-workflow-asana-legacy-incomplete-abort',
   'development-workflow-asana-v2-mode',
   'development-workflow-asana-v3-abort',
   'development-workflow-asana-contradiction-abort',
@@ -468,6 +469,9 @@ def test_development_workflow_asana_mode_behavior_matrix_is_registered():
   assert scenario['required_rules']==['development-workflow-asana-mode']
   assert 'perform-governed-asana-mutation' not in scenario['forbidden_actions'] or 'abort' in scenario_id
  assert 'all nine V2 lifecycle sections' in _scenario('development-workflow-asana-v2-mode')['prompt']
+ legacy_incomplete=_scenario('development-workflow-asana-legacy-incomplete-abort')
+ assert 'classify-legacy-contradictory' in legacy_incomplete['required_actions']
+ assert 'apply-v2-degraded-repair-to-legacy' in legacy_incomplete['forbidden_actions']
  degraded=_scenario('development-workflow-asana-v2-degraded-present-write')
  assert 'perform-authorized-present-structure-write' in degraded['required_actions']
  assert 'globally-stop-governed-mutation' in degraded['forbidden_actions']

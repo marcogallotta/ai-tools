@@ -24,6 +24,11 @@ Match names and section names exactly, without case folding, prefix matching, or
 - `Dish — Development Workflow v3` is **V3-UNSUPPORTED** under this generation.
 - Any other name, including another version such as `v4`, is **UNKNOWN**.
 
+For the bare legacy name, any missing required legacy section, unreadable complete section list,
+duplicate lifecycle meaning, or legacy/V2 collision is **LEGACY_CONTRADICTORY**. It permits zero
+governed mutation and reports the exact mismatch without repairing or guessing; legacy topology is
+not covered by the V2 degraded-repair rule.
+
 Never infer mode from one task's membership. After V2 identity is established, structural health is
 **V2_COMPLETE** when all nine sections exist exactly once with readable required fields;
 **V2_DEGRADED_KNOWN** when known sections/fields are missing but all present meanings are unique,

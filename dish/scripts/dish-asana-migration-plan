@@ -36,6 +36,7 @@ Target sections:
   Waiting on Dependency
   Ready
   Under Development
+  Needs Post-Merge Rollout
   Done
 Non-applicable reconciliation outcome:
   RECONCILIATION_REQUIRED

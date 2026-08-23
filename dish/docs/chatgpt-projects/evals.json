@@ -2809,6 +2809,35 @@
       ]
     },
     {
+      "id": "development-workflow-asana-legacy-incomplete-abort",
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "review",
+        "integration",
+        "workflow",
+        "postgresql-dark-launch",
+        "audit"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "A governed Development Workflow mutation is otherwise authorized. Live readback shows canonical GID 1217419962189616 and exact bare legacy name `Dish — Development Workflow`, but the complete section list is missing required legacy `Review / Integration`. Act.",
+      "expected_outcome": "classify_legacy_contradictory_and_refuse_governed_mutation",
+      "required_actions": [
+        "read-exact-project-gid-name-and-complete-sections",
+        "classify-legacy-contradictory",
+        "perform-zero-governed-asana-mutation",
+        "report-exact-legacy-structural-mismatch"
+      ],
+      "forbidden_actions": [
+        "perform-governed-asana-mutation",
+        "apply-v2-degraded-repair-to-legacy",
+        "repair-or-guess-legacy-topology"
+      ]
+    },
+    {
       "id": "development-workflow-asana-v2-mode",
       "roles": [
         "coordinator",

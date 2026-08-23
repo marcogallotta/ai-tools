@@ -43,20 +43,24 @@ def task(**overrides):
 
 class PlannerClassificationTests(unittest.TestCase):
     def test_target_sections_match_complete_v2_lifecycle(self):
-        self.assertEqual(
-            planner.TARGET_SECTIONS,
-            [
-                "Needs Processing",
-                "Needs Research",
-                "Needs Agentic Review",
-                "Needs Human Review",
-                "Waiting on Dependency",
-                "Ready",
-                "Under Development",
-                "Needs Post-Merge Rollout",
-                "Done",
-            ],
-        )
+        expected = [
+            "Needs Processing",
+            "Needs Research",
+            "Needs Agentic Review",
+            "Needs Human Review",
+            "Waiting on Dependency",
+            "Ready",
+            "Under Development",
+            "Needs Post-Merge Rollout",
+            "Done",
+        ]
+        self.assertEqual(planner.TARGET_SECTIONS, expected)
+
+        policy = planner.__doc__.split("Target sections:\n", 1)[1].split(
+            "Non-applicable reconciliation outcome:", 1
+        )[0]
+        documented = [line.strip() for line in policy.splitlines() if line.strip()]
+        self.assertEqual(documented, planner.TARGET_SECTIONS)
 
     def classify(self, value, prs=None):
         return planner.classify_target(value, prs or [], {})
