@@ -33,6 +33,26 @@ Keep fallback discovery bounded to the relevant action surface. Declare a blocke
 
 Do not invent new workflow mechanisms, coordination state, or authority boundaries without explicit approval. Record dependencies and blockers instead of silently adapting process.
 
+## P-CRITICAL closeout
+
+After existing Marco or deterministic priority authority validly creates, escalates, or materially
+reclassifies work as `P-CRITICAL`, the durable priority write is not completion. In that same
+control flow, establish exactly one truthful next path:
+
+- begin active bounded Research/Design when one material unknown prevents safe execution;
+- begin authorized Implementation or dispatch when the work is sufficiently specified and the
+  acting role owns that action;
+- record one exact blocker, external dependency, or human decision with its owner and wake
+  condition; or
+- durably route the work to the current owning Coordinator, Lifecycle, or orchestration role and
+  authoritatively read that route back.
+
+`Ready`, passive `Needs Research`, label-only status, or create-and-stop is not a closeout for valid
+`P-CRITICAL` work. A role without next-action authority routes; the priority never grants
+Coordinator, Implementation, Review, Integration, merge, production, dispatch, assignment, or
+priority authority. Finding producers do not infer `P-CRITICAL` from severity, repetition, age, or
+vocabulary; the rule begins only after existing priority authority establishes the value.
+
 ## Evidence
 
 Do not claim validation, merge, deployment, or runtime state without authoritative evidence. Follow the assigned role contract for required evidence and handoff.

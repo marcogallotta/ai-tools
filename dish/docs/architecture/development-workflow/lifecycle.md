@@ -42,6 +42,12 @@ departure is reconciled by shrinking, routing a genuinely necessary expansion th
 design authority, or separating adjacent ownership before further expansion. Metrics are tripwires,
 not gates, and trivial changes acquire no mandatory planning artifact.
 
+An authoritatively established `P-CRITICAL` priority is an immediate closeout obligation, not a new
+lifecycle phase or authority source. The same control flow must start authorized execution/dispatch
+or active bounded research, record one exact owned blocker/dependency/human decision, or durably
+route to the current orchestration owner with readback. Passive Ready/Needs Research placement is
+not sufficient, and the label never grants authority the acting role did not already hold.
+
 Integration uses the exact reviewed candidate and performs only authorized mechanical reconciliation. A changed head returns to fresh Review. Source landing is distinct from deployment, migration, activation, or operator acceptance; a task becomes complete only after its actual residual obligations are done.
 
 ## Invariants
@@ -56,6 +62,8 @@ Integration uses the exact reviewed candidate and performs only authorized mecha
   the disputed semantic requirement actually needs.
 - Scope projections and solution envelopes never replace the governing intent/specification, and an
   authoring trajectory check never replaces final semantic Review.
+- Valid P-CRITICAL filing/reclassification cannot end as label-only or passive queue placement;
+  unproven criticality is never invented and role authority remains unchanged.
 
 ## Current anchors
 

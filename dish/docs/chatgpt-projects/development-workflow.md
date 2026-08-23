@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-973b879c43a4
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-e362c2877698
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -16,7 +16,7 @@ Triggered policy reads (before the governed action):
 - Worker dispatch / phase cutover -> `ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile`
 - actor attribution / approval / decision provenance -> `dish/docs/agents/operator-provenance.md#Decision provenance`
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
-- execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
+- execution / dispatch / PR liveness status / P-CRITICAL -> `dish/docs/agents/operator-provenance.md#Execution-state truth` + `#P`
 - external/current-main defect while pursuing an existing objective -> `dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission`
 - manual relay -> `CLAUDE.md#Work chat`
 - fast-track -> `dish/docs/agents/fast-track-process.md#Procedure`
