@@ -116,6 +116,9 @@ def _story_bundle(
     corrupt_payload=False,
     extra_events=(),
     extra_generations=(),
+    extra_human_decisions=(),
+    extra_stories=(),
+    generation_predecessor_id=None,
 ):
     snapshot = b"sanitized exact Review V5 G8 canonical snapshot"
     canonical_sha = _sha(snapshot)
@@ -128,7 +131,7 @@ def _story_bundle(
     generation_record = {
         "schema": "dish-design-generation:v1",
         **identity,
-        "predecessor_generation_id": None,
+        "predecessor_generation_id": generation_predecessor_id,
         "canonical_snapshot_ref": "asana-story:1001",
         "created_at": "2026-08-22T20:04:58.001Z",
         "created_by": "Dish Agent: Development Workflow | ChatGPT",
@@ -248,6 +251,17 @@ This execution does not remember or recover material authorship of G8.
                 "resource_subtype": "comment_added",
             }
         )
+    for index, decision in enumerate(extra_human_decisions, start=30):
+        stories.append(
+            {
+                "gid": str(1000 + index),
+                "text": json.dumps(
+                    lineage.human_decision_mapping(decision), separators=(",", ":")
+                ),
+                "resource_subtype": "comment_added",
+            }
+        )
+    stories.extend(extra_stories)
     monkeypatch.setattr(
         governance,
         "_authoritative_task_stories",
@@ -470,6 +484,85 @@ def test_durable_successor_generation_makes_approved_predecessor_non_current(mon
     assert result.reasons == (
         "the approved Review V2 generation has a durable later successor",
     )
+
+
+def test_dispatched_predecessor_without_reopen_blocks_approved_child(monkeypatch):
+    projection = governance.load_projection(REPO_ROOT)
+    predecessor_snapshot = "sanitized exact Review V5 G7 canonical snapshot"
+    predecessor = Generation(
+        task_gid=TASK,
+        generation_id="review-v5-g7",
+        predecessor_generation_id=None,
+        canonical_sha256=_sha(predecessor_snapshot.encode()),
+        relevant_repo_baseline=BASELINE,
+        created_at="2026-08-22T18:00:00Z",
+        created_by="Dish Agent: Development Workflow | ChatGPT",
+        canonical_snapshot=predecessor_snapshot,
+    )
+    predecessor_decision_text = "Marco approves exact sanitized G7."
+    predecessor_decision_ref = "asana-story:1040#exact-decision-payload"
+    predecessor_decision_sha = _sha(predecessor_decision_text.encode())
+    predecessor_decision = HumanDecisionProvenance(
+        identity=predecessor.identity,
+        decision_ref=predecessor_decision_ref,
+        decision_sha256=predecessor_decision_sha,
+        decision_kind="MARCO_APPROVAL",
+        decided_by="Marco",
+        material_delta_set_sha256=DELTA_SHA,
+    )
+    predecessor_events = (
+        Event(
+            event_gid="g7-created",
+            event_type=EventType.CREATED,
+            identity=predecessor.identity,
+            occurred_at="2026-08-22T18:00:00Z",
+            actor="Dish Agent: Development Workflow | ChatGPT",
+        ),
+        Event(
+            event_gid="g7-approved",
+            event_type=EventType.MARCO_APPROVED,
+            identity=predecessor.identity,
+            occurred_at="2026-08-22T18:01:00Z",
+            actor="Dish Agent: Development Workflow | ChatGPT",
+            material_delta_set_sha256=DELTA_SHA,
+            human_decision_ref=predecessor_decision_ref,
+            human_decision_sha256=predecessor_decision_sha,
+        ),
+        Event(
+            event_gid="g7-dispatched",
+            event_type=EventType.DISPATCHED,
+            identity=predecessor.identity,
+            occurred_at="2026-08-22T18:02:00Z",
+            actor="Dish Agent: Development Workflow | ChatGPT",
+        ),
+    )
+    decision_story = {
+        "gid": "1040",
+        "text": (
+            "MARCO HUMAN DECISION — APPROVED\n\n"
+            f"Exact decision payload:\n{predecessor_decision_text}\n\n"
+            "Decision SHA-256: durable-record-value"
+        ),
+        "resource_subtype": "comment_added",
+    }
+    classification, evidence, refs = _story_bundle(
+        monkeypatch,
+        projection,
+        extra_events=predecessor_events,
+        extra_generations=(predecessor,),
+        extra_human_decisions=(predecessor_decision,),
+        extra_stories=(decision_story,),
+        generation_predecessor_id=predecessor.generation_id,
+    )
+    assert "lineage-dispatched-successor-without-reopen:review-v5-g8" in (
+        evidence.blocking_contradictions
+    )
+    result = governance.resolve_review_v2_admission(
+        refs=refs,
+        classification=classification,
+        projection=projection,
+    )
+    assert result.admission == "MECHANICAL_EVIDENCE_BLOCKED"
 
 
 @pytest.mark.parametrize("value", sorted(governance.ELIGIBLE_CLASSIFICATIONS))

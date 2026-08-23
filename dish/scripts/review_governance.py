@@ -429,6 +429,7 @@ def _lineage_currentness(
     *,
     generation: Generation,
     records: Sequence[Generation | Event | HumanDecisionProvenance],
+    human_decisions: Mapping[str, HumanDecisionProvenance],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Validate the recovered lineage and require the named generation to be its leaf."""
     generations = [
@@ -444,7 +445,7 @@ def _lineage_currentness(
                 for event in records
                 if isinstance(event, Event) and event.identity == record.identity
             ],
-            {},
+            human_decisions,
         )
         for record in generations
     }
@@ -476,6 +477,33 @@ def _lineage_currentness(
         }
     )
     return tuple(successors), tuple(contradictions)
+
+
+def _recovered_human_decisions(
+    *,
+    records: Sequence[Generation | Event | HumanDecisionProvenance],
+    payloads: Mapping[str, bytes],
+) -> dict[str, HumanDecisionProvenance]:
+    """Recover only task-member decision payloads whose exact bytes match their digest."""
+    recovered: dict[str, HumanDecisionProvenance] = {}
+    for record in records:
+        if not isinstance(record, HumanDecisionProvenance):
+            continue
+        try:
+            decision_gid = _asana_story_gid(
+                record.decision_ref,
+                exact_decision_payload=True,
+            )
+            decision_payload = extract_exact_decision_payload(payloads[decision_gid])
+        except (GovernanceError, KeyError):
+            continue
+        if digest(decision_payload) != record.decision_sha256:
+            continue
+        prior = recovered.get(record.decision_ref)
+        if prior is not None and prior != record:
+            raise GovernanceError("conflicting Review V2 human-decision provenance")
+        recovered[record.decision_ref] = record
+    return recovered
 
 
 def resolve_review_v2_evidence(
@@ -526,6 +554,10 @@ def resolve_review_v2_evidence(
         for payload in payloads.values()
         for record in parse_record_envelope(payload)
     ]
+    recovered_human_decisions = _recovered_human_decisions(
+        records=records,
+        payloads=payloads,
+    )
     events = [
         record
         for record in records
@@ -545,6 +577,7 @@ def resolve_review_v2_evidence(
     successor_generation_ids, lineage_contradictions = _lineage_currentness(
         generation=generation,
         records=records,
+        human_decisions=recovered_human_decisions,
     )
     if successor_generation_ids != durable_successor_ids:
         raise GovernanceError("Review V2 successor recovery disagrees with durable authority")
