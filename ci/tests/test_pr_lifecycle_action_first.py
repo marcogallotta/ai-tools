@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
 import importlib.util
+import json
 
 import pytest
 import test_pr_lifecycle as base
@@ -348,25 +349,50 @@ def _fast_track_module():
     return module
 
 
-def test_worker_omitted_packet_override_sensitive_action_uses_live_fast_track_gate(omitted_packet_state):
+def test_worker_omitted_packet_override_sensitive_action_uses_live_fast_track_gate(
+    omitted_packet_state, tmp_path, monkeypatch
+):
     gh, _ = omitted_packet_state
     assert len(gh.comments) >= 64
     ft = _fast_track_module()
     gate = ft.fast_track_gate_registry()["repository-context-bundle-witness"]
     version = int(gate["current_version"])
     semantic = gate["semantic_digest"]
-    scope = f"repository-context-bundle-witness@{version}"
-    overlay = {
-        "version": "fasttrack-r3",
+    registry = json.loads(ft.FAST_TRACK_GATE_REGISTRY_PATH.read_text())
+    registry["exceptions"] = [{
+        "gate_id": "repository-context-bundle-witness",
+        "gate_version": version,
+        "gate_semantic_digest": semantic,
         "state": "ACTIVE",
-        "generation": "worker-omitted-packet-eval",
-        "scope": [scope],
-        "gate_semantics": {scope: semantic},
         "expiry": None,
-        "reason": "bounded omitted-packet qualification",
-    }
+        "condition": None,
+        "marco_decision": {
+            "task_gid": "1217599491860900",
+            "story_gid": "1217747798724121",
+            "decided_at": "2026-08-17T18:00:00+00:00",
+            "decision": "Approve the exact standing exception with its corrective-action safeguard.",
+        },
+        "activations": [{
+            "activation_id": "worker-omitted-packet-eval",
+            "activated_on": "2026-08-18",
+            "follow_up": {
+                "task_gid": "1217999000000031",
+                "project_gid": ft.DEVELOPMENT_WORKFLOW_PROJECT_GID,
+                "priority": "P-CRITICAL",
+                "due_on": "2026-08-18",
+                "read_back_at": "2026-08-18T08:05:00+00:00",
+                "evidence_ref": "asana:task:1217999000000031@readback",
+                "gate_ref": f"repository-context-bundle-witness@{version}:{semantic}",
+                "marco_decision_ref": "asana:task:1217599491860900#story:1217747798724121",
+                "objective": "remove-or-narrow-or-replace-with-source-fix",
+            },
+        }],
+        "current_activation_id": "worker-omitted-packet-eval",
+    }]
+    registry_path = tmp_path / "fast-track-gates.json"
+    registry_path.write_text(json.dumps(registry))
+    monkeypatch.setattr(ft, "FAST_TRACK_GATE_REGISTRY_PATH", registry_path)
     use = ft.fast_track_use(
-        overlay,
         gate_id="repository-context-bundle-witness",
         gate_version=version,
         task="1217591724565043",
@@ -376,9 +402,11 @@ def test_worker_omitted_packet_override_sensitive_action_uses_live_fast_track_ga
         now=datetime(2026, 8, 18, tzinfo=timezone.utc),
     )
     assert use["marker"] == "GATE WAIVED BY MARCO OVERRIDE"
+    assert use["follow_up_task_gid"] == "1217999000000031"
+    registry["exceptions"][0].update(state="INACTIVE", current_activation_id=None)
+    registry_path.write_text(json.dumps(registry))
     with pytest.raises(ft.KernelError, match="inactive"):
         ft.fast_track_use(
-            {**overlay, "state": "INACTIVE"},
             gate_id="repository-context-bundle-witness",
             gate_version=version,
             task="1217591724565043",
