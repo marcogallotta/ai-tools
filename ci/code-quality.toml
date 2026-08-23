@@ -1,5 +1,5 @@
 version = 1
-enabled = true
+enabled = false
 task_gid = "1217743999805836"
 max_quality_correction_rounds = 2
 local_p95_target_seconds = 10.0
