@@ -65,7 +65,7 @@ def test_codex_adapter_honors_per_call_workdir(
         {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
-            "cwd": str(protected_repo["unrelated"]),
+            "cwd": str(protected_repo["primary"]),
             "tool_input": {
                 "command": "git switch agent/fail",
                 "workdir": str(protected_repo["primary"]),
@@ -77,6 +77,31 @@ def test_codex_adapter_honors_per_call_workdir(
     assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
+def test_codex_adapter_is_silent_outside_ai_tools_even_for_ai_tools_workdir(
+    codex_protected_checkout, protected_repo, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        codex_protected_checkout.protected_checkout,
+        "DEFAULT_PROTECTED_CHECKOUT_ROOT",
+        str(protected_repo["primary"]),
+    )
+    decision = run_adapter(
+        codex_protected_checkout,
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "cwd": str(protected_repo["unrelated"]),
+            "tool_input": {
+                "command": "git switch agent/fail",
+                "workdir": str(protected_repo["primary"]),
+            },
+        },
+        monkeypatch,
+        capsys,
+    )
+    assert decision is None
+
+
 def test_codex_hooks_config_is_user_level_and_hard_deny_adapter(hooks_dir):
     config = json.loads((hooks_dir.parent / "codex" / "hooks.json").read_text())
     entries = config["hooks"]["PreToolUse"]
@@ -84,7 +109,7 @@ def test_codex_hooks_config_is_user_level_and_hard_deny_adapter(hooks_dir):
     assert entry["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"
 
 
-def test_codex_adapter_denies_branch_change_in_registered_active_task_worktree(
+def test_codex_adapter_is_silent_in_registered_worktree_outside_ai_tools(
     codex_protected_checkout, protected_repo, monkeypatch, capsys, tmp_path
 ):
     import subprocess
@@ -126,7 +151,4 @@ def test_codex_adapter_denies_branch_change_in_registered_active_task_worktree(
         monkeypatch,
         capsys,
     )
-    output = decision["hookSpecificOutput"]
-    assert output["permissionDecision"] == "deny"
-    assert "12345" in output["permissionDecisionReason"]
-    assert "task-owned branch is fixed" in output["permissionDecisionReason"]
+    assert decision is None

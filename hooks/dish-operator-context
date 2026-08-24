@@ -7,6 +7,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from codex_hook_scope import applies
+
 STYLE = Path(__file__).resolve().parents[1] / ".claude" / "output-styles" / "dish-operator.md"
 
 
@@ -25,7 +28,7 @@ def main() -> int:
         if not isinstance(payload, dict):
             raise ValueError("hook input must be a JSON object")
         event = str(payload.get("hook_event_name") or payload.get("hookEventName") or "")
-        if event != "SessionStart":
+        if event != "SessionStart" or not applies(payload):
             return 0
         body = _style_body(STYLE.read_text(encoding="utf-8"))
         print(

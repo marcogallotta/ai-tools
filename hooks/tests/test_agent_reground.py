@@ -261,6 +261,19 @@ def test_stale_pretool_invocation_is_non_blocking(agent_reground, monkeypatch, c
     assert capsys.readouterr().out == ""
 
 
+def test_compaction_hook_is_silent_outside_ai_tools(agent_reground, monkeypatch, capsys):
+    payload = {
+        "hook_event_name": "SessionStart",
+        "source": "compact",
+        "session_id": "session-1",
+        "cwd": "/tmp/unrelated",
+    }
+    monkeypatch.setattr(agent_reground.sys, "stdin", io.StringIO(json.dumps(payload)))
+
+    assert agent_reground.main([]) == 0
+    assert capsys.readouterr().out == ""
+
+
 def test_unidentified_codex_session_never_synthesizes_development_workflow_identity(
     agent_reground, tmp_path, monkeypatch
 ):

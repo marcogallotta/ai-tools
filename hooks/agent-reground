@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from codex_hook_scope import applies
+
 EXPECTED_REPOSITORY = "marcogallotta/ai-tools"
 SCHEMA_VERSION = 1
 ASANA_TOOL = Path.home().resolve() / ".local" / "bin" / "asana"
@@ -638,6 +641,8 @@ def main(argv: list[str] | None = None) -> int:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             raise RegroundError("hook input must be a JSON object")
+        if not applies(payload):
+            return 0
         event = hook_event(payload)
         agent_id, host = resolve_agent_id(payload)
         if event == "SessionStart" and payload.get("source") == "compact":

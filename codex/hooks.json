@@ -1,5 +1,5 @@
 {
-  "description": "Dish operator interaction context, protected-checkout enforcement, and post-compaction re-grounding.",
+  "description": "ai-tools-scoped Dish operator context, protected-checkout enforcement, and post-compaction re-grounding.",
   "hooks": {
     "SessionStart": [
       {

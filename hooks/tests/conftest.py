@@ -33,8 +33,19 @@ def destructive_op_guard():
 
 
 @pytest.fixture
-def codex_protected_checkout():
-    return load_hook_module("codex-protected-checkout")
+def codex_protected_checkout(monkeypatch):
+    module = load_hook_module("codex-protected-checkout")
+
+    def applies_to_fixture_repo(payload):
+        cwd = payload.get("cwd")
+        if not cwd:
+            return False
+        root = pathlib.Path(module.protected_checkout.DEFAULT_PROTECTED_CHECKOUT_ROOT).resolve()
+        resolved = pathlib.Path(cwd).resolve()
+        return resolved == root or root in resolved.parents
+
+    monkeypatch.setattr(module, "applies", applies_to_fixture_repo)
+    return module
 
 
 @pytest.fixture

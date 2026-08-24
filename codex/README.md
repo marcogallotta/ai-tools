@@ -1,8 +1,9 @@
 # Codex local-agent hooks
 
-`hooks.json` is a user-level Codex hook because the Dish operator context,
-protected-checkout enforcement, and post-compaction re-grounding must be
-available even when a session starts elsewhere. The operator `SessionStart`
+`hooks.json` is installed at user level because Codex has no project-local hook
+configuration. Every adapter immediately exits unless the session CWD is
+`~/ai-tools` or one of its descendants, so Dish policy and enforcement never
+apply to unrelated repositories. The operator `SessionStart`
 entry invokes `~/.local/bin/dish-operator-context`, so exact-head certification
 can bind both the user hook definition and the operator-policy adapter to the
 same candidate worktree. `SessionStart(source=compact)` invokes

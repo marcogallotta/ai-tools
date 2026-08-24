@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+AI_TOOLS_CWD = str(Path.home().resolve() / "ai-tools")
 HOOK = ROOT / "hooks" / "dish-operator-context"
 STYLE = ROOT / ".claude" / "output-styles" / "dish-operator.md"
 CODEX_README = ROOT / "codex" / "README.md"
@@ -21,7 +22,9 @@ def _style_body() -> str:
 def test_codex_session_start_injects_same_operator_policy():
     proc = subprocess.run(
         [sys.executable, str(HOOK)],
-        input=json.dumps({"hook_event_name": "SessionStart", "source": "startup"}),
+        input=json.dumps(
+            {"hook_event_name": "SessionStart", "source": "startup", "cwd": AI_TOOLS_CWD}
+        ),
         text=True,
         capture_output=True,
         check=False,
@@ -51,7 +54,9 @@ def test_operator_adapter_symlink_resolves_policy_from_candidate(tmp_path):
     adapter.symlink_to(HOOK)
     proc = subprocess.run(
         [sys.executable, str(adapter)],
-        input=json.dumps({"hook_event_name": "SessionStart", "source": "startup"}),
+        input=json.dumps(
+            {"hook_event_name": "SessionStart", "source": "startup", "cwd": AI_TOOLS_CWD}
+        ),
         text=True,
         capture_output=True,
         check=False,
@@ -82,6 +87,20 @@ def test_operator_context_hook_ignores_non_session_events():
     proc = subprocess.run(
         [sys.executable, str(HOOK)],
         input=json.dumps({"hook_event_name": "PreToolUse"}),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+
+
+def test_operator_context_hook_ignores_sessions_outside_ai_tools():
+    proc = subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=json.dumps(
+            {"hook_event_name": "SessionStart", "source": "startup", "cwd": "/tmp/unrelated"}
+        ),
         text=True,
         capture_output=True,
         check=False,
