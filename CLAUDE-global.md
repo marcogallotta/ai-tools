@@ -95,6 +95,8 @@ a failed push, then fetches to verify whether the commit landed. If it remains u
 local commit as an open task and escalate the exact error. Do not rebase, merge, amend, force-push,
 bypass hooks, or modify credentials or Git configuration to resolve the failure unilaterally.
 
+Agents may use `dish-admin --profile test`; production administration is Marco-only.
+
 ## Documentation complexity budgets
 
 Protocol usability is itself a protection. Judge these docs by conceptual complexity — branches,
