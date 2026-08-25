@@ -12,7 +12,13 @@ from dish_pg.frontend_detail_query import FrontendDetailQuery, TaskDetailIneligi
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from dish_service.frontend_detail import FrontendDetailConfig, FrontendDetailService
 from dish_service.frontend_tokens import route_identity
-from tests.support.postgresql.core import NOW, _bootstrap_registry, _next, core_db
+from tests.support.postgresql.core import (
+    NOW,
+    _activate_role_only_registry_revision,
+    _bootstrap_registry,
+    _next,
+    core_db,
+)
 
 SECRET = b"stage-4-detail-query-secret-is-at-least-32-bytes"
 
@@ -92,6 +98,46 @@ def test_detail_uses_canonical_workflow_role_name_for_import_placeholder(core_db
     assert payload["section_label"] == "Research Queue"
 
 
+def test_detail_keeps_placement_from_prior_registry_revision(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0032_imported_operation_history",
+            section_workflow_role="imported-section-1217084794163035",
+        )
+        imported = _import(
+            session,
+            ids,
+            context,
+            title="Registry detail survivor",
+            asana_gid="4004",
+        )
+        revised_registry = _activate_role_only_registry_revision(
+            session,
+            ids,
+            context,
+            workflow_role="research_queue",
+        )
+        placement = session.get(
+            models.CurrentTaskSectionPlacement,
+            (context["generation_id"], imported.task_id),
+        )
+        assert placement is not None
+        assert placement.registry_version_id == context["registry_version_id"]
+        assert placement.registry_version_id != revised_registry
+
+    with session_scope(factory) as session:
+        payload = _service(session).present(
+            _service(session).capture(_route(imported.task_id))
+        )
+
+    assert payload["title"] == "Registry detail survivor"
+    assert payload["section_label"] == "Research Queue"
+
+
 def test_detail_query_rejects_completed_task_after_route_resolution(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
@@ -107,6 +153,5 @@ def test_detail_query_rejects_completed_task_after_route_resolution(core_db) -> 
             completed=True,
         )
 
-    with session_scope(factory) as session:
-        with pytest.raises(TaskDetailIneligible):
-            _service(session).capture(_route(imported.task_id))
+    with session_scope(factory) as session, pytest.raises(TaskDetailIneligible):
+        _service(session).capture(_route(imported.task_id))

@@ -212,7 +212,6 @@ class FrontendDetailQuery:
                 and_(
                     models.CurrentTaskSectionPlacement.generation_id == generation_id,
                     models.CurrentTaskSectionPlacement.task_id == models.DishTask.task_id,
-                    models.CurrentTaskSectionPlacement.registry_version_id == registry_version_id,
                 ),
             )
             .join(

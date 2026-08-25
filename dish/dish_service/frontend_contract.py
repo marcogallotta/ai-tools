@@ -10,7 +10,7 @@ import unicodedata
 from dataclasses import dataclass
 
 FRONTEND_CONTRACT_VERSION = "dish-frontend-v1"
-BOARD_QUERY_CONTRACT_VERSION = "frontend-board-query-v1"
+BOARD_QUERY_CONTRACT_VERSION = "frontend-board-query-v2"
 DETAIL_QUERY_CONTRACT_VERSION = "frontend-detail-query-v1"
 NORMALIZATION_CONTRACT_VERSION = "frontend-normalization-v1-candidate"
 RENDERER_CONTRACT_VERSION = "frontend-renderer-v1"
