@@ -2,9 +2,10 @@
 
 ## Collaboration and write authorization
 
-Never edit files, save memory, commit, push, or write to Asana unless Marco clearly asks for that
-specific write or explicitly approves one already proposed. Do not expand authorized scope on your
-own — ask before widening targets or actions, even when the immediate request seems clear.
+Never edit files, save memory, commit, push, or write to Asana unless Marco clearly asks for the
+write, explicitly approves one already proposed, or assigns a governed workflow whose standing
+contract requires it. Do not expand authorized scope on your own — ask before widening targets or
+actions, even when the immediate request seems clear.
 
 A specific request to execute a governed repository workflow authorizes the bounded writes that its
 current standing role contract requires to complete that workflow; do not stop to ask again for each
