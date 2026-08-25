@@ -3175,13 +3175,19 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             execution.execution_id,
             call.now,
         )
-        return {
+        data = {
             "dish_id": str(task.task_id),
             "task_id": str(task.task_id),
             "completed": True,
             "completion_reason": reason,
             "completion_state": "cooked" if reason == "cooked" else "archived",
         }
+        if reason == "archive" and call.principal_class == "admin":
+            data.update({
+                "system_reason": "admin_archive",
+                "authority_mode": "postgresql",
+            })
+        return data
 
     def _reopen_planning(self, call, generation, _binding, execution, task, _operation) -> dict[str, Any]:
         assert task is not None

@@ -57,6 +57,7 @@ class CommandDefinition:
     action_exposed: bool = False
     description: str = ""
     workflow_action: str | None = None
+    admin_exposed: bool = False
 
 
 def _current_action(
@@ -65,6 +66,7 @@ def _current_action(
     *,
     task_required: bool,
     operation_required: bool,
+    admin_exposed: bool = False,
 ) -> CommandDefinition:
     """Project current Action identity/replay policy into the PG target metadata."""
 
@@ -77,6 +79,7 @@ def _current_action(
         operation_required=operation_required,
         action_exposed=True,
         workflow_action=current.workflow_action,
+        admin_exposed=admin_exposed,
     )
 
 
@@ -102,7 +105,13 @@ COMMAND_DEFINITIONS = {
         _current_action(SAFE_RECLAIM_COMMAND, "R", task_required=True, operation_required=True),
         CommandDefinition("attention", "Q", "admin", False, False, False),
         CommandDefinition("holds", "Q", "admin", False, False, False),
-        _current_action(INSPECT_COMMAND, "E", task_required=True, operation_required=True),
+        _current_action(
+            INSPECT_COMMAND,
+            "E",
+            task_required=True,
+            operation_required=True,
+            admin_exposed=True,
+        ),
         _current_action(START_COMMAND, "L", task_required=True, operation_required=False),
         _current_action(PREPARE_COMMAND, "L", task_required=True, operation_required=True),
         _current_action(APPROVE_COMMAND, "L", task_required=True, operation_required=True),
@@ -125,7 +134,9 @@ COMMAND_DEFINITIONS = {
         CommandDefinition("abandon-operation", "R", "admin", True, True, True),
         CommandDefinition("reconcile-abandonment", "R", "admin", True, True, True),
         CommandDefinition("cooked", "L", "agent", True, True, False),
-        CommandDefinition("archive", "L", "agent", True, True, False),
+        CommandDefinition(
+            "archive", "L", "agent", True, True, False, admin_exposed=True
+        ),
         CommandDefinition("reopen-planning", "L", "admin", True, True, False),
         CommandDefinition("reopen", "R", "admin", True, True, True, workflow_action="reopen"),
         CommandDefinition("supply-evidence", "R", "admin", True, True, True, workflow_action="supply-evidence"),
@@ -148,7 +159,7 @@ ACTION_COMMANDS = tuple(
 ADMIN_COMMANDS = tuple(
     name
     for name, definition in COMMAND_DEFINITIONS.items()
-    if definition.principal == "admin" or definition.principal == "historical"
+    if definition.principal in {"admin", "historical"} or definition.admin_exposed
 )
 RETAINED_COMMANDS = tuple(
     name for name, definition in COMMAND_DEFINITIONS.items() if definition.retained

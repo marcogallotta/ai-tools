@@ -821,7 +821,60 @@ def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
             section_reference=context["section_id"]
         )
         assert after_page.items == ()
+
+
+def test_archive_alone_accepts_private_admin_principal_without_projection(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        before_projection_count = session.scalar(
+            select(func.count()).select_from(tx.ProjectionOutboxEvent)
+        )
+
+        archived = port.execute(
+            _call(
+                "archive",
+                run_id=run_id,
+                request_id=_next(ids),
+                principal="admin",
+                arguments={"task_id": str(task_id), "confirmed": True},
+            )
+        )
+
+        assert definition_for("archive").admin_exposed is True
+        assert definition_for("inspect").admin_exposed is True
+        assert definition_for("cooked").admin_exposed is False
+        assert archived.ok is True
+        assert archived.data["completion_state"] == "archived"
+        assert archived.data["system_reason"] == "admin_archive"
+        assert archived.data["authority_mode"] == "postgresql"
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionOutboxEvent)
+        ) == before_projection_count
         assert session.get(models.DishTask, task_id) is not None
+
+
+def test_archive_admin_principal_cannot_bypass_confirmation(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        result = _port(session, ids).execute(
+            _call(
+                "archive",
+                run_id=run_id,
+                request_id=_next(ids),
+                principal="admin",
+                arguments={"task_id": str(task_id)},
+            )
+        )
+
+        assert result.code == "CONFIRMATION_REQUIRED"
+        assert PostgresReadModel(
+            session, cursor_secret=b"r" * 32
+        ).task_view(task_id).completed is False
 
 
 def test_newly_created_incomplete_archive_reason_remains_active_not_archived(

@@ -100,6 +100,21 @@ def build_parser() -> JsonArgumentParser:
     )
     inspect_admin.add_argument("dish", metavar="DISH", help=_dish_target_help)
 
+    archive = subparsers.add_parser(
+        _admin_name("archive"),
+        help=argparse.SUPPRESS,
+        description="archive one resting Dish without deleting or rewriting its history",
+    )
+    archive.add_argument("dish", metavar="DISH", help=_dish_target_help)
+    archive.add_argument(
+        "--request-id",
+        help="replay the exact interrupted archive request UUID",
+    )
+    archive.add_argument(
+        "--yes", dest="confirmed", action="store_true",
+        help="confirm archive without an interactive prompt",
+    )
+
     queue = subparsers.add_parser(
         _admin_name("queue"),
         help="work through everything currently waiting for Marco",
@@ -1124,6 +1139,26 @@ def main(
                 and sys.stdin.isatty()
                 and sys.stdout.isatty()
             )
+            archive_preflight_complete = False
+            if command == "archive" and not parsed.get("confirmed") and interactive_terminal:
+                preflight = app.execute(
+                    "archive", dish=parsed["dish"], confirmed=False
+                )
+                if preflight.get("ok") or preflight.get("code") != "CONFIRMATION_REQUIRED":
+                    result = preflight
+                    archive_preflight_complete = True
+                else:
+                    preflight_data = (
+                        preflight.get("data")
+                        if isinstance(preflight.get("data"), dict)
+                        else {}
+                    )
+                    prompt = str(preflight_data.get("confirmation_prompt") or "").strip()
+                    answer = _prompt_review(input, prompt).lower()
+                    if answer not in {"y", "yes"}:
+                        print("Archive cancelled; no Dish was changed.")
+                        return 0
+                    parsed["confirmed"] = True
             if command in {"kill-all", "kill-all-expired"} and not parsed.get("confirmed") and interactive_terminal:
                 scope = "all currently leased Dish runs" if command == "kill-all" else "all Dish runs with expired leases"
                 answer = _prompt_review(
@@ -1134,7 +1169,9 @@ def main(
                     print("No Dish runs were killed.")
                     return 0
                 parsed["confirmed"] = True
-            if command in {"queue", "issues", "attention"} and interactive_terminal:
+            if archive_preflight_complete:
+                pass
+            elif command in {"queue", "issues", "attention"} and interactive_terminal:
                 interactive_exit = _interactive_issues(app, arguments=arguments)
                 result = None
             elif command == "review-queue" and interactive_terminal:
