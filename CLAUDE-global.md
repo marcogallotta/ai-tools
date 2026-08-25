@@ -130,9 +130,9 @@ The rules in this section apply to every Asana project and every agent.
 
 An explicit assignment to perform a governed workflow authorizes the Asana writes that its current
 standing role/procedure requires on the exact owning task and project. The assigned agent executes
-those writes without another chat confirmation or per-write approval ceremony, using the governed
-direct command or batch path and authoritative readback. Authorization comes from the accepted job
-plus its standing contract; tool permission or a missing prompt never creates it.
+those writes without another chat confirmation, using the governed direct command or batch path and
+authoritative readback. Authorization comes from the accepted job plus its standing contract; a
+host permission decision may still enforce execution scope, but never creates semantic authority.
 
 Ad-hoc, discretionary, ambiguous, cross-task, or cross-project writes still require Marco's exact
 approval. Never conceal a write in another script, heredoc, wrapper, or indirect process. If the
