@@ -9,9 +9,11 @@ own — ask before widening targets or actions, even when the immediate request 
 A specific request to execute a governed repository workflow authorizes the bounded writes that its
 current standing role contract requires to complete that workflow; do not stop to ask again for each
 mandatory step. For example, `review PR42` authorizes Review's required formal review submission,
-`implement task X` authorizes Implementation's owned branch/commit/publish lifecycle, and
-`merge PR42` authorizes Integration's exact-head integration lifecycle. This never grants another
-role's authority or widens the target. Asana keeps the separate write-approval rules below.
+`research task X` authorizes its procedure-required owning-task persistence, `implement task X`
+authorizes Implementation's owned branch/commit/publish lifecycle, and `merge PR42` authorizes
+Integration's exact-head integration lifecycle. This includes required Asana writes on the exact
+owning task/project. It never grants another role's authority, widens the target, or authorizes a
+discretionary write merely because the workflow uses Asana.
 
 Observations, thinking aloud, generic/ad-hoc review requests, pasted agent output, and garbled or
 incomplete dictation are not authorization. Generic review means report findings, not apply changes;
@@ -123,43 +125,36 @@ explain-band 150-180, hard reject 200.
 
 The rules in this section apply to every Asana project and every agent.
 
-### Never route around write approval
+### Workflow-scoped write authorization
 
-Every Asana write requires Marco's approval at execution. Once Marco has authorized the work, do not
-ask again in chat immediately before a write: invoke the Asana CLI and let its permission prompt be
-the yes/no approval. For one or two writes in the same pass, invoke each operation directly so the
-hook prompts on each exact call. Never conceal a write in another script, heredoc, wrapper, or
-indirect process. If no permission prompt appears, stop; its absence is not approval.
+An explicit assignment to perform a governed workflow authorizes the Asana writes that its current
+standing role/procedure requires on the exact owning task and project. The assigned agent executes
+those writes without another chat confirmation or per-write approval ceremony, using the governed
+direct command or batch path and authoritative readback. Authorization comes from the accepted job
+plus its standing contract; tool permission or a missing prompt never creates it.
+
+Ad-hoc, discretionary, ambiguous, cross-task, or cross-project writes still require Marco's exact
+approval. Never conceal a write in another script, heredoc, wrapper, or indirect process. If the
+required workflow authority and scope cannot be established, stop only that mutation and ask.
 
 ### Three or more writes
 
-Batch three or more writes in one authorized pass instead of sending them individually. A pass is
-one continuous authorization: it does not reset when the target changes or a turn boundary passes,
-and it spans the parent plus every delegated agent. Only a genuinely new instruction from Marco
-starts a new pass.
+Batch three or more writes in one acting agent's known workflow operation set instead of sending
+them individually. Do not centralize or delay independently owned workflow writes merely to
+aggregate unrelated agents' operations.
 
-### Delegated work is plan-only
+### Delegation preserves bounded workflow authority
 
-A background, forked, or otherwise delegated agent must never execute an Asana write, including
-`batch-apply` — even when asked only to plan. A delegated agent has no access to Marco's chat
-context, so a write prompt coming from it reaches Marco with no way to tell what it's for; and each
-individual write bypasses the batching safeguard above. It may read Asana and write structured
-operation fragments to an assigned scratch path, then return that path and a short summary up the
-chain. Only the top-level agent in Marco's visible conversation may combine all fragments with its
-own operations, resolve duplicates or conflicts, show the summary, and execute the resulting direct
-writes or single global batch.
+A background, forked, or otherwise delegated agent may execute an Asana write when its verified
+assignment invokes a governed role/procedure that requires that exact write. Delegation neither
+removes required completion authority nor creates authority absent from the assignment. Apply the
+current target project's write contract, stay within the assigned task/project and role, preserve
+attribution, and verify authoritative readback.
 
-This applies to Claude-dispatched delegated agents only (this file is shared with codex, which has
-its own dispatch mechanism this rule does not govern). Before dispatching multiple delegated Claude
-agents in the same pass, the parent must mint one fresh, previously nonexistent pass directory (e.g.
-`scratchpad/asana-pass-<unique-id>/`) and assign each worker its own subdirectory within it (e.g.
-`worker-<agent-id>/operations.json`). Each worker writes only inside its assigned subdirectory and
-must not read or write another worker's subdirectory. The parent alone writes the combined plan
-(e.g. `combined-plan.json`) at the pass-directory level, after resolving duplicates or conflicts
-across the fragments.
-
-This rule does not override stricter repository- or task-contract rules. If a local contract
-prohibits batching an operation, execute it separately through its direct CLI permission prompt.
+A planning-only, read-only, or otherwise non-writing assignment performs no Asana mutation. If the
+assignment lacks the task, project, role/procedure, or other authority needed to establish the exact
+write, return a plan or ask for the missing authority; never infer it from tool access or the parent
+agent's unrelated scope.
 
 For a batch:
 
@@ -170,8 +165,8 @@ For a batch:
    paste whole task notes or large old/new text blocks.
 3. Immediately invoke `~/.local/bin/asana batch-apply <plan.json>` in the same turn. Do not ask a
    question or wait for a chat reply.
-4. The hook's yes/no prompt shows only the operation and target counts; it does not repeat the
-   table or detailed changes.
+4. When approval is still required, the hook's prompt shows only the operation and target counts;
+   it does not repeat the table or detailed changes.
 
 Supported batch operations are documented by `~/.local/bin/asana help`. They include `update_task`
 for `name`, `notes`, `completed`, `due_on`, or `start_on`; exact `replace_notes`; `move`;

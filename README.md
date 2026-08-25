@@ -26,7 +26,8 @@ asana batch-apply <plan.json>                 # multi-step plans in one pass
 ```
 
 Gets and sets notes, moves tasks between sections, creates tasks and subtasks, and adds comments.
-Reads the API token from `~/.config/asana-cli/.env`. Every write goes through a hook prompt.
+Reads the API token from `~/.config/asana-cli/.env`. The hook allows mechanically proven routine
+writes on an agent's exact active task; unscoped or discretionary writes still require approval.
 
 **`dish/`** — the `dish` protocol tool: the one validated path for writing protocol-governed
 dish-task notes to Asana. Live multi-agent use runs through the laptop-hosted `dish-service`;
