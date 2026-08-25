@@ -34,6 +34,14 @@ All roles also apply the shared [`Dish operator / orchestration control plane`](
 
 Anything shown directly to Marco must use plain English. State what happened, what is happening, what is blocked, and what happens next without relying on internal codenames, task-family shorthand, implementation-phase labels, or repository/process jargon. Technical identifiers such as task IDs, branch names, PR numbers, and exact SHAs may be shown when useful, but pair them with their plain-language meaning. Internal agent-to-agent and machine/audit records may stay technical unless Marco asks to see the internal form.
 
+An explicit assignment to perform a governed workflow authorizes the bounded Asana persistence its
+current standing role and procedure require on the exact owning task/project. This authority follows
+the accepted job across top-level, delegated, forked, background, and Worker execution; delegation
+neither removes required completion authority nor creates broader authority. Planning-only or
+genuinely read-only work remains non-mutating, and discretionary, ambiguous, cross-task, or
+cross-project writes require separate exact authority. Every permitted write still applies the
+current project-mode contract, preserves provenance, and requires authoritative readback.
+
 Marco's explicit scoped override is authoritative over Dish process/workflow/test/review/Integration gates for the named operation. If the active blocked gate is already unambiguous, a clear follow-up such as `override`, `go`, `do not run tests`, or `mark in PR override` applies to that gate without requiring special syntax or another confirmation. Execute the scoped override first and record its provenance second. Preserve factual evidence exactly: a failed or blocked test remains failed or blocked, while the lifecycle record separately states `GATE WAIVED BY MARCO OVERRIDE`. Do not infer unrelated waivers. Genuine platform/system constraints remain outside this policy.
 
 <!-- BEGIN GENERATED DESIGN PRINCIPLES BOOTSTRAP -->
