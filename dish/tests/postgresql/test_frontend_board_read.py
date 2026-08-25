@@ -10,12 +10,12 @@ import pytest
 from sqlalchemy import event, select
 
 from dish_pg import models
+from dish_pg import stage3_models as wf
+from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
 from dish_pg.frontend_board_query import FrontendBoardQuery
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from dish_pg.transition import ProjectionService
-from dish_pg import stage3_models as wf
-from dish_pg import stage5_models as tx
 from dish_pg.workflow import WorkflowAuthorityService
 from dish_service.frontend_board import (
     BoardCapacityExceeded,
@@ -28,14 +28,20 @@ from dish_service.frontend_contract import (
     WORKFLOW_PRESENTATION_LABEL_MAX_LENGTH,
 )
 from dish_service.frontend_tokens import route_identity
-from tests.support.postgresql.core import NOW, _bootstrap_registry, _next, core_db
+from tests.support.postgresql.core import (
+    NOW,
+    _activate_role_only_registry_revision,
+    _bootstrap_registry,
+    _next,
+    core_db,
+)
 from tests.support.postgresql.workflow import (
     _admit,
     _execution,
-    _next as _workflow_next,
     _register_run,
     workflow_db,
 )
+from tests.support.postgresql.workflow import _next as _workflow_next
 
 SECRET = b"stage-3-board-test-secret-is-at-least-32-bytes"
 
@@ -226,6 +232,49 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
         assert _task_route(completed.task_id) not in returned
         assert _task_route(retired.task_id) not in returned
         assert _task_route(nonmember.task_id) not in returned
+
+
+def test_board_and_search_keep_placement_from_prior_registry_revision(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0032_imported_operation_history",
+            section_workflow_role="imported-section-1217084794163035",
+        )
+        imported = _import_title(
+            session,
+            ids,
+            context,
+            title="Registry survivor",
+            asana_gid="1099",
+        )
+        revised_registry = _activate_role_only_registry_revision(
+            session,
+            ids,
+            context,
+            workflow_role="research_queue",
+        )
+        placement = session.get(
+            models.CurrentTaskSectionPlacement,
+            (context["generation_id"], imported.task_id),
+        )
+        assert placement is not None
+        assert placement.registry_version_id == context["registry_version_id"]
+        assert placement.registry_version_id != revised_registry
+
+    with session_scope(factory) as session:
+        service = _service(session)
+        board = service.bootstrap()
+        assert board["sections"][0]["section_label"] == "Research Queue"
+        assert [card["task_id"] for card in board["sections"][0]["cards"]] == [
+            _task_route(imported.task_id)
+        ]
+        assert [item["task_id"] for item in service.search("survivor")["results"]] == [
+            _task_route(imported.task_id)
+        ]
 
 
 

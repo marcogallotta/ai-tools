@@ -580,8 +580,6 @@ class FrontendBoardQuery:
                 and_(
                     models.CurrentTaskSectionPlacement.generation_id == context.generation_id,
                     models.CurrentTaskSectionPlacement.task_id == task_id,
-                    models.CurrentTaskSectionPlacement.registry_version_id
-                    == context.registry_version_id,
                 ),
             )
             .join(

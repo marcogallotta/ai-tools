@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from alembic import command
@@ -13,12 +13,15 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg import models
-from dish_pg.database import session_scope
 from dish_pg.release_history import (
     EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
     EXACT_REVOCATION_SOURCE_CONTRACT,
 )
-from dish_pg.repositories import AuthorityRepository, ContractBindingRepository, RegistryRepository
+from dish_pg.repositories import (
+    AuthorityRepository,
+    ContractBindingRepository,
+    RegistryRepository,
+)
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from tests.support.postgresql.certification import postgresql_dsn
 
@@ -28,6 +31,8 @@ NOW = datetime(2026, 8, 1, 19, 0, tzinfo=timezone.utc)
 HASH_A = "a" * 64
 HASH_B = "b" * 64
 HASH_C = "c" * 64
+HASH_D = "d" * 64
+
 
 def _uuid_stream() -> Iterator[uuid.UUID]:
     for value in range(1, 1000):
@@ -257,6 +262,72 @@ def _bootstrap_registry(
         "section_id": section_id,
         "registry_version_id": registry_version_id,
     }
+
+
+def _activate_role_only_registry_revision(
+    session: Session,
+    ids: Iterator[uuid.UUID],
+    context: dict[str, uuid.UUID],
+    *,
+    workflow_role: str,
+) -> uuid.UUID:
+    """Revise registry metadata without fabricating a new placement event."""
+    current = session.get(models.ActiveSectionRegistry, context["generation_id"])
+    source = session.get(
+        models.SectionRegistryEntry,
+        (context["registry_version_id"], context["section_id"]),
+    )
+    source_version = session.get(
+        models.SectionRegistryVersion, context["registry_version_id"]
+    )
+    assert current is not None
+    assert source is not None
+    assert source_version is not None
+
+    registry_version_id = _next(ids)
+    registry = RegistryRepository(session)
+    registry.add_registry_version(
+        models.SectionRegistryVersion(
+            registry_version_id=registry_version_id,
+            generation_id=context["generation_id"],
+            version_number=source_version.version_number + 1,
+            import_run_id=context["import_run_id"],
+            contract_binding_id=context["binding_id"],
+            registry_sha256=HASH_D,
+            created_at=NOW,
+        ),
+        [
+            models.SectionRegistryEntry(
+                registry_version_id=registry_version_id,
+                section_id=source.section_id,
+                ordinal=source.ordinal,
+                display_name=source.display_name,
+                workflow_role=workflow_role,
+            )
+        ],
+    )
+    activation_id = _next(ids)
+    revision = current.registry_revision + 1
+    registry.activate_registry(
+        activation=models.SectionRegistryActivation(
+            registry_activation_id=activation_id,
+            generation_id=context["generation_id"],
+            registry_version_id=registry_version_id,
+            activation_route="import",
+            import_run_id=context["import_run_id"],
+            command_execution_id=None,
+            registry_revision=revision,
+            activated_at=NOW,
+        ),
+        current=models.ActiveSectionRegistry(
+            generation_id=context["generation_id"],
+            registry_version_id=registry_version_id,
+            registry_activation_id=activation_id,
+            registry_revision=revision,
+            updated_at=NOW,
+        ),
+    )
+    return registry_version_id
 
 
 def _import_one(
