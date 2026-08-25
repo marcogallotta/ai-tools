@@ -14,6 +14,16 @@ Standing role contracts contain stable policy so task handoffs can stay short an
 
 For exact-reviewed-PR-head integration, local integration certification, commit/promotion to `main`, push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract in `dish/docs/agents/integration.md`. Integration V1-A final landing is local Claude/Codex only; ChatGPT connector-native Integration/merge is not an authorized fallback. Implementation/fix agents do not inherit final integration authority merely because they produced the implementation.
 
+## Git
+
+For a registered Dish implementation/fix worktree, use the repository-owned lifecycle: commit with
+`tools/agent-worktree commit --task <gid> -m <message> -- <explicit paths...>` and publish separately
+with `tools/agent-worktree publish --task <gid>`. Raw `git add`, `git commit`, `git push`, branch
+switching, and the generic `git-commit` wrapper are not mutation paths for an active Dish task.
+
+Outside a registered Dish task worktree, follow the generic Git policy in the global agent
+instructions (`~/.claude/CLAUDE.md`) unchanged.
+
 ## Marco-facing workflow policy
 
 Anything shown directly to Marco must explain the workflow state and next action in plain English rather than relying on internal codenames or unexplained process shorthand. Technical IDs may be included when useful, but they do not carry the meaning by themselves.
