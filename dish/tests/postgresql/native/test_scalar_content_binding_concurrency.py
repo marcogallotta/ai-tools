@@ -29,6 +29,7 @@ def _wait_for_row_lock(
     observer_connection,
     *,
     backend_pid: int,
+    blocking_backend_pid: int,
     future: Future[object],
     timeout: float = 20.0,
 ) -> None:
@@ -37,11 +38,14 @@ def _wait_for_row_lock(
         if future.done():
             future.result()
             raise AssertionError("content transaction committed before execution-row serialization")
-        wait_event_type = observer_connection.execute(
-            text("SELECT wait_event_type FROM pg_stat_activity WHERE pid=:pid"),
-            {"pid": backend_pid},
+        blocked_by_updater = observer_connection.execute(
+            text(
+                "SELECT CAST(:blocker AS integer) = "
+                "ANY(pg_blocking_pids(CAST(:blocked AS integer)))"
+            ),
+            {"blocked": backend_pid, "blocker": blocking_backend_pid},
         ).scalar_one()
-        if wait_event_type == "Lock":
+        if blocked_by_updater:
             return
         time.sleep(0.01)
     raise AssertionError("content transaction did not block on the execution-row lock")
@@ -198,12 +202,16 @@ def test_command_content_insert_serializes_with_concurrent_binding_update(
         backend_pid = content_connection.execute(
             text("SELECT pg_backend_pid()")
         ).scalar_one()
+        blocking_backend_pid = binding_connection.execute(
+            text("SELECT pg_backend_pid()")
+        ).scalar_one()
 
         with ThreadPoolExecutor(max_workers=1) as pool:
             content_commit = pool.submit(content_transaction.commit)
             _wait_for_row_lock(
                 observer_connection,
                 backend_pid=backend_pid,
+                blocking_backend_pid=blocking_backend_pid,
                 future=content_commit,
             )
             binding_transaction.commit()
