@@ -46,9 +46,7 @@ def test_frozen_command_inventory_matches_current_surfaces() -> None:
     baseline = _baseline()
 
     assert list(ACTION_COMMANDS) == baseline["action_commands"]
-    # Archive is an explicitly post-baseline private-admin addition. Preserve the
-    # independent Stage A evidence artifact rather than rewriting its history.
-    assert sorted(set(ADMIN_COMMANDS) - {"archive"}) == sorted(baseline["admin_commands"])
+    assert sorted(ADMIN_COMMANDS) == sorted(baseline["admin_commands"])
 
     expected_treatments = set(baseline["action_commands"]) | set(baseline["admin_commands"])
     expected_treatments.add("planning-intent-settlement")
