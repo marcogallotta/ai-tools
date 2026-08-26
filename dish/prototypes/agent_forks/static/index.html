@@ -31,7 +31,7 @@
 <div id="layout">
   <aside><div id="tree"></div></aside>
   <main>
-    <div id="agentHead"><h2 id="title">Select an agent</h2><button id="stop" class="danger" hidden>Stop</button></div>
+    <div id="agentHead"><h2 id="title">Select an agent</h2><button id="stop" class="danger" title="Discard this reply when it finishes; the adapter process keeps running" hidden>Discard result</button></div>
     <div id="messages" class="empty">Create or select a conversation.</div>
     <div id="composer" hidden><textarea id="input" placeholder="Message this agent"></textarea><div class="stack"><button onclick="send(false)">Send</button><button onclick="send(true)">Redirect</button></div></div>
   </main>

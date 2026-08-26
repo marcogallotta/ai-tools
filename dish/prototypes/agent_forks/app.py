@@ -213,6 +213,8 @@ class Prototype:
             output = self.adapter.run(prompt, history)
         except Exception as exc:  # disposable UI should surface adapter failures
             output = f"Adapter error: {exc}"
+        # A discarded generation may still complete at the adapter boundary;
+        # Store.finish ignores its result rather than terminating the process.
         self.store.finish(branch_id, generation, output)
 
 

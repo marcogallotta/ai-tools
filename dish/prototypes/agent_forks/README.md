@@ -10,7 +10,7 @@ python3 app.py
 
 Open <http://127.0.0.1:8765>. Data is restored from `data/events.jsonl` after restart.
 
-The built-in adapter is a delayed deterministic stub so running/stopped, stop, redirect, fork,
+The built-in adapter is a delayed deterministic stub so running/stopped, discard, redirect, fork,
 comparison, and restart behavior can be tested without provider setup. To use a real local agent,
 set one command that reads this JSON from stdin:
 
@@ -29,8 +29,10 @@ Interaction model:
 - **New conversation** creates a directly addressable root agent.
 - **fork** on any message creates a child with history only through that message.
 - Parent and child append to separate histories after the fork.
-- **Stop** invalidates the selected branch's in-flight reply.
-- **Redirect** invalidates an in-flight reply, adds a new instruction, and starts a replacement reply.
+- **Discard result** marks the selected branch stopped and ignores its in-flight reply when it
+  finishes. It does not terminate a live adapter subprocess, which continues to completion.
+- **Redirect** discards an in-flight reply, adds a new instruction, and starts a replacement reply.
+  It likewise does not terminate the superseded adapter subprocess.
 - Check branches in the right panel to compare their latest assistant outputs.
 - The left tree shows ancestry and a green dot while a branch is running.
 

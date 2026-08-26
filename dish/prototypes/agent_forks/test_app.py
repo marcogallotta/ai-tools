@@ -64,7 +64,7 @@ class PrototypeTest(unittest.TestCase):
         child = self.store.fork(root["id"], first["id"], "Child")
         self.assertEqual(["first"], [message["text"] for message in child["messages"]])
 
-    def test_stop_discards_in_flight_output(self):
+    def test_discard_ignores_in_flight_output(self):
         root = self.store.create("Root")
         self.app = Prototype(self.store, Adapter(delay=0.05))
         self.app.send(root["id"], "slow")
