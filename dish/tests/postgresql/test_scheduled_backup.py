@@ -914,6 +914,41 @@ def test_health_reports_latest_age_destination_and_freshness(
     assert result["off_device_destination"] == str(off_root)
 
 
+def test_health_keeps_existing_matching_v1_report_compatible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off-device"
+    local_root.mkdir(exist_ok=True)
+    completed = datetime(2026, 8, 13, 6, 0, tzinfo=timezone.utc)
+    report_dir, report = _write_success_report(
+        local_root=local_root,
+        off_root=off_root,
+        backup_id="20260813T060000Z-deadbeef",
+        completed_at=completed,
+    )
+    report.pop("artifact_ok")
+    report.pop("schema_policy")
+    backup._atomic_json(
+        report_dir / "backup-report.json", backup._with_report_sha256(report)
+    )
+    monkeypatch.setattr(backup, "_prepare_roots", lambda config: (local_root, off_root))
+    real_regular = backup._regular_file
+
+    def regular(path: Path, *, label: str) -> SimpleNamespace:
+        metadata = real_regular(path, label=label)
+        device = 2 if path.parent == off_root else 1
+        return SimpleNamespace(st_dev=device, st_size=metadata.st_size, st_mode=metadata.st_mode)
+
+    monkeypatch.setattr(backup, "_regular_file", regular)
+
+    result = backup.health(config, now=completed + timedelta(hours=1))
+
+    assert result["ok"] is True
+    assert result["schema_policy"] == backup._schema_policy("0038_head", "0038_head")
+
+
 def test_health_fails_for_stale_backup_or_newer_failed_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
