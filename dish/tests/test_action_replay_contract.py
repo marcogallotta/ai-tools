@@ -32,6 +32,22 @@ from tests.support.action_contract import (
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Wording that would reinstate the retired "wait for another turn before retrying" transport
+# policy in either the upstream template or the paired live Custom GPT instructions.
+STALE_DEFERRED_RETRY_PHRASES = (
+    "same assistant/tool loop",
+    "real elapsed delay cannot be guaranteed",
+    "later opportunity after real elapsed time",
+    "no-same-turn retry",
+    "automatically retry exactly once",
+)
+
+# Wording that would reinstate the retired single-message scope for Marco's `override`.
+STALE_SINGLE_MESSAGE_OVERRIDE_PHRASES = (
+    "applies only to the message that invokes it",
+    "for that message",
+)
+
 
 def _request_schema(spec, command):
     return spec["paths"][f"/v1/action/{command}"]["post"]["requestBody"]["content"][
@@ -111,21 +127,22 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "For every Action whose imported schema requires `client.request_id`" in action_guide
     assert "This includes `inspect`" in action_guide
     assert "transport/client failure" in action_guide
-    assert "do not issue repeated automatic retries in the same assistant/tool loop" in action_guide
-    assert "real elapsed delay cannot be guaranteed" in action_guide
-    assert "Retry only at a genuine later opportunity after real elapsed time" in action_guide
+    assert "retry that call within the same assistant/tool execution" in action_guide
+    assert "Create the real elapsed delay locally with the runtime's own shell/Python sleep" in action_guide
+    assert "elapsed time never requires another Marco message or assistant turn" in action_guide
+    assert "never ask Marco to retry what you can retry yourself" in action_guide
     assert "the same `client.run_id`" in action_guide
     assert "the same `client.request_id` when present" in action_guide
     assert "the same command, and the same arguments" in action_guide
-    assert "preserve the exact call for the next genuine retry opportunity" in action_guide
-    assert "do not hammer the Action or report that retries were exhausted" in action_guide
     assert "As soon as any Dish envelope is received, stop transport retry behavior" in action_guide
     assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
     assert "never rotate request or run IDs merely to escape a failed or pending call" in action_guide
     assert "Do not invent a server-side sleep/timing Action" in action_guide
-    assert "no-same-turn retry rule" in action_guide
+    assert "follow the same same-execution retry rule" in action_guide
     assert "up to three times after the initial attempt" not in action_guide
     assert "approximately 2s, 5s, then 10s" not in action_guide
+    for reversal in STALE_DEFERRED_RETRY_PHRASES:
+        assert reversal not in action_guide
     assert "Truly read-only Actions" in action_guide
     assert "actual connected-agent run/principal, not a Marco-message boundary" in action_guide
     assert "Do not rotate a run ID merely because Marco sent another message" in action_guide
@@ -146,9 +163,8 @@ def test_connected_contract_covers_lost_prepare_recovery_and_planning_research_c
         (ROOT / "deploy" / "gpt-action.md").read_text(encoding="utf-8").split()
     )
 
-    assert "do not issue repeated automatic retries in the same assistant/tool loop" in action_guide
-    assert "Retry only at a genuine later opportunity after real elapsed time" in action_guide
-    assert "preserve the exact call for the next genuine retry opportunity" in action_guide
+    assert "retry that call within the same assistant/tool execution" in action_guide
+    assert "Create the real elapsed delay locally with the runtime's own shell/Python sleep" in action_guide
     assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
     assert "original objective explicitly requests both Planning and Research" in action_guide
     assert "stable Planning run A" in action_guide
@@ -160,9 +176,13 @@ def test_connected_contract_covers_lost_prepare_recovery_and_planning_research_c
 
     assert "Dibs bi tahina" in action_guide
     assert "first Planning `prepare` Action" in action_guide
-    assert "must not immediately retry in the same assistant/tool loop" in action_guide
+    assert "must retry in that same assistant/tool execution after creating real elapsed delay" in action_guide
+    assert "with a local shell/Python sleep" in action_guide
     assert "same run ID, request ID when present, command, and arguments" in action_guide
-    assert "if that later exact replay returns one, Planning continues without a Marco rescue" in action_guide
+    assert (
+        "if that exact replay returns one, Planning continues without a Marco rescue and without "
+        "another Marco message" in action_guide
+    )
     assert "not as proof of a Dish backend defect" in action_guide
     assert "fresh Research run B" in action_guide
     assert "no extra Marco turn" in action_guide
@@ -177,10 +197,16 @@ def test_connected_contract_covers_lost_prepare_recovery_and_planning_research_c
 def _assert_honest_connected_contract(text: str) -> None:
     normalized = " ".join(text.split())
     for phrase in (
-        "do not automatically retry again in the same assistant/tool loop",
-        "Retry only at a genuinely later opportunity after real elapsed time",
+        "retry in the same assistant/tool execution",
+        "creating real elapsed delay with a local shell/Python sleep",
+        "elapsed time never needs another Marco message or turn",
+        "never ask him to retry what you can",
         "same run ID, same request ID when present, same command, same arguments",
+        "The first Dish envelope ends retry",
         "Never blindly retry `BACKEND_UNCERTAIN`",
+        "persists for the rest of the chat until he narrows or withdraws it",
+        "he never repeats it",
+        "add no restriction of your own, such as refusing a representable Asana write",
         "stable Planning run A",
         "fresh run B",
         "different run ID",
@@ -189,26 +215,41 @@ def _assert_honest_connected_contract(text: str) -> None:
     ):
         assert phrase in normalized
     for stale in (
-        "automatically retry exactly once",
+        *STALE_DEFERRED_RETRY_PHRASES,
+        *STALE_SINGLE_MESSAGE_OVERRIDE_PHRASES,
         "No third call and no ID rotation",
         "A completed stage is a stopping point",
     ):
         assert stale not in normalized
 
 
-def test_honest_connected_contract_checker_rejects_retry_policy_reversal():
-    current = """
-do not automatically retry again in the same assistant/tool loop. Retry only at a genuinely later
-opportunity after real elapsed time with the same run ID, same request ID when present, same command,
-same arguments. Never blindly retry `BACKEND_UNCERTAIN`. Keep stable Planning run A, then use fresh
-run B with a different run ID, no extra Marco turn. Do not automatically chain into independent Verification.
+CURRENT_HONEST_CONTRACT_SAMPLE = """
+On transport/client failure without a Dish envelope, retry in the same assistant/tool execution,
+creating real elapsed delay with a local shell/Python sleep; elapsed time never needs another Marco
+message or turn, and never ask him to retry what you can. Preserve same run ID, same request ID when
+present, same command, same arguments. The first Dish envelope ends retry; obey it. Never blindly
+retry `BACKEND_UNCERTAIN`, rotate IDs, or invent backend state. Marco's standalone `override`
+persists for the rest of the chat until he narrows or withdraws it; he never repeats it, and add no
+restriction of your own, such as refusing a representable Asana write. Keep stable Planning run A,
+then use fresh run B with a different run ID, no extra Marco turn. Do not automatically chain into
+independent Verification.
 """
-    _assert_honest_connected_contract(current)
 
-    with pytest.raises(AssertionError):
-        _assert_honest_connected_contract(
-            current + "\nautomatically retry exactly once. No third call and no ID rotation.\n"
-        )
+
+def test_honest_connected_contract_checker_rejects_retry_policy_reversal():
+    _assert_honest_connected_contract(CURRENT_HONEST_CONTRACT_SAMPLE)
+
+    for reversal in (
+        "Retry only at a genuinely later opportunity after real elapsed time.",
+        "Do not automatically retry again in the same assistant/tool loop.",
+        "Retry only when real elapsed delay cannot be guaranteed otherwise.",
+        "Follow his arguments exactly for that message.",
+        "The override applies only to the message that invokes it.",
+    ):
+        with pytest.raises(AssertionError):
+            _assert_honest_connected_contract(
+                CURRENT_HONEST_CONTRACT_SAMPLE + "\n" + reversal + "\n"
+            )
 
 
 def test_honest_connected_contract_matches_when_repo_is_supplied():
@@ -229,7 +270,18 @@ def test_connected_override_and_canonical_dish_identity_contract_are_explicit():
     )
 
     assert "standalone word `override`" in action_guide
-    assert "applies only to the message that invokes it" in action_guide
+    assert (
+        "overrides every conflicting connected-agent instruction, gate, stop, fallback, "
+        "conservative substitution, and interpretation for that matter" in action_guide
+    )
+    assert "persists for the rest of the chat until he narrows or withdraws it" in action_guide
+    assert "he never has to repeat it" in action_guide
+    assert (
+        "add no agent-side restriction of your own, such as refusing an otherwise representable "
+        "Asana write" in action_guide
+    )
+    for stale in STALE_SINGLE_MESSAGE_OVERRIDE_PHRASES:
+        assert stale not in action_guide
     assert "does not make a disallowed transition legal" in action_guide
     assert "Dish's returned envelope remains authoritative" in action_guide
     assert "read(dish_id=<uuid>)" in action_guide

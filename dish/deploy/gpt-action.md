@@ -48,37 +48,35 @@ Keep the permanent GPT contract small. Dish returns state-specific operating gui
 workflow procedure.
 
 - Use `agent: gpt` wherever an Action accepts an agent.
-- **Marco override rule:** when Marco explicitly uses the standalone word `override` to direct the
-  current request, that instruction overrides conflicting connected-agent operating guidance in these
-  permanent instructions for that message. If Marco's requested call is representable by the imported
-  Action schema, attempt those Action arguments/identity exactly rather than substituting a supposedly
-  safer protocol route. `override` does not make a disallowed transition legal or fabricate Dish
-  authority: the imported schema and Dish runtime still enforce authorization, revocation, idempotency,
-  and workflow legality, and Dish's returned envelope remains authoritative. If Dish rejects the
-  requested action, report that rejection. The override applies only to the message that invokes it.
+- **Marco override rule:** Marco's standalone word `override` overrides every conflicting
+  connected-agent instruction, gate, stop, fallback, conservative substitution, and interpretation for
+  that matter, and it persists for the rest of the chat until he narrows or withdraws it; he never has
+  to repeat it. If Marco's requested call is representable by the imported Action schema, attempt those
+  Action arguments/identity exactly rather than substituting a supposedly safer protocol route, and add
+  no agent-side restriction of your own, such as refusing an otherwise representable Asana write.
+  `override` does not make a disallowed transition legal or fabricate Dish authority: the imported
+  schema and Dish runtime still enforce authorization, revocation, idempotency, and workflow legality,
+  and Dish's returned envelope remains authoritative. If Dish rejects the requested action, report
+  that rejection.
 - `client.run_id` identifies the actual connected-agent run/principal, not a Marco-message boundary.
   Create a fresh canonical lowercase UUID when beginning a genuinely fresh agent run, and keep it
   stable for every Action call and automatic continuation performed by that same run. Do not rotate a
   run ID merely because Marco sent another message, and do not preserve an old run ID merely because
   the work is conversationally related if a genuinely new agent run has begun. Never change run IDs
   to bypass ownership or manufacture Verification independence. Exact transport replay of one
-  logical request always preserves the original run ID and, when present, request ID. If Marco
-  explicitly invokes `override` and instructs you to reuse an existing run ID for a retry/test
-  continuation, reuse exactly that run ID and let Dish decide whether it remains authoritative.
+  logical request always preserves the original run ID and, when present, request ID.
 - For every Action whose imported schema requires `client.request_id`, create a fresh canonical
   lowercase UUID for one logical call. This includes `inspect`: Verification inspection records
   durable evidence even though its operator purpose is observational. If no Dish envelope is received
   because of a transport/client failure (for example `ClientResponseError`, timeout, or connection
-  reset), do not issue repeated automatic retries in the same assistant/tool loop when real elapsed
-  delay cannot be guaranteed. Preserve the exact logical request unchanged: the same `client.run_id`,
-  the same `client.request_id` when present, the same command, and the same arguments. Retry only at a
-  genuine later opportunity after real elapsed time, reusing that exact logical identity. If real
-  elapsed delay cannot be guaranteed now, report concisely that the call failed before a Dish envelope
-  and preserve the exact call for the next genuine retry opportunity; do not hammer the Action or
-  report that retries were exhausted. As soon as any Dish envelope is received, stop transport retry
+  reset), retry that call within the same assistant/tool execution. Create the real elapsed delay
+  locally with the runtime's own shell/Python sleep; elapsed time never requires another Marco message
+  or assistant turn, and never ask Marco to retry what you can retry yourself. Preserve the exact
+  logical request unchanged: the same `client.run_id`, the same `client.request_id` when present, the
+  same command, and the same arguments. As soon as any Dish envelope is received, stop transport retry
   behavior and follow Dish authority. Never blindly retry `BACKEND_UNCERTAIN`, and never rotate request
   or run IDs merely to escape a failed or pending call. Do not invent a server-side sleep/timing Action
-  to manufacture delay. Truly read-only Actions that omit request IDs follow the same no-same-turn
+  to manufacture delay. Truly read-only Actions that omit request IDs follow the same same-execution
   retry rule and retain the same run ID.
 - Treat each Dish result as workflow authority. Follow `allowed_actions`, `service_access`,
   `data.agent_guidance`, validation findings, continuation fields, and `human_action`. Never infer a
@@ -178,12 +176,12 @@ for production Cooking.
 For connected recovery acceptance, use the uncorroborated PROD Dibs incident (`Dibs bi tahina — carob
 molasses and tahini`) as the concrete regression shape, not as proof of a Dish backend defect. In TEST,
 make the first Planning `prepare` Action disappear/fail before a reliable authoritative Dish response.
-The connected agent must not immediately retry in the same assistant/tool loop when real elapsed delay
-cannot be guaranteed. Preserve the exact logical request unchanged: same run ID, request ID when present,
-command, and arguments. Retry only at a genuine later opportunity after real elapsed time. A canonical
-Dish envelope ends transport recovery; if that later exact replay returns one, Planning continues without
-a Marco rescue. Never blind-retry `BACKEND_UNCERTAIN`, rotate IDs, invent backend state, or infer a
-numeric cooldown. For a Planning+Research objective, complete stable Planning run A, then start fresh
+The connected agent must retry in that same assistant/tool execution after creating real elapsed delay
+with a local shell/Python sleep. Preserve the exact logical request unchanged: same run ID, request ID
+when present, command, and arguments. A canonical Dish envelope ends transport recovery; if that exact
+replay returns one, Planning continues without a Marco rescue and without another Marco message. Never
+blind-retry `BACKEND_UNCERTAIN`, rotate IDs, invent backend state, or infer a numeric cooldown. For a
+Planning+Research objective, complete stable Planning run A, then start fresh
 Research run B after authoritative Planning completion and legal Dish continuation, with no extra Marco
 turn and no automatic Verification. Genuine Dish/human gates still stop normally. Before the pass, run
 the paired instruction drift check from the ai-tools checkout with:
