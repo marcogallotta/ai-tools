@@ -276,6 +276,7 @@ tests/test_action_model_validation.py,test,1,4,isolated-test,,,none,,exact chang
 tests/test_action_surface.py,test,1,4,isolated-test; smoke-owned,,,none,,exact changed test/module; smoke,,
 tests/test_actor_lease_attempt_context.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_admin_bulk_kill.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
+tests/test_admin_archive.py,test,1,4,isolated-test; authority,,,none,,exact changed test/module; focused authority/identity,,
 tests/test_admin_inspect_verbose.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_admin_review_queue_human_output.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_admin_task_target_resolution.py,test,1,4,isolated-test,,,none,,exact changed test/module,,

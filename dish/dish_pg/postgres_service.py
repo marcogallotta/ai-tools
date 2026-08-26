@@ -21,7 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
-from dish_tool.results import error_envelope
+from dish_tool.results import error_envelope, result_envelope
 
 from . import models
 from . import stage3_models as wf
@@ -35,10 +35,11 @@ from .command_contract import (
     validate_postgres_action_request,
 )
 from .command_port import CommandCall, CommandPortError, CommandResult, PostgresCommandPort
+from .command_port_common import task_reference_from_dish
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .frontend_board_query import FrontendBoardQuery
 from .openapi import postgres_action_openapi
-from .read_model import InvalidCursor, PostgresReadModel
+from .read_model import InvalidCursor, PostgresReadModel, ReadModelError
 from .workflow import RequestIdentityConflict, WorkflowAuthorityError
 
 
@@ -58,7 +59,7 @@ _ADMIN_EXPOSED_COMMANDS = frozenset(
 _AGENT_EXPOSED_COMMANDS = frozenset(
     name
     for name, definition in COMMAND_DEFINITIONS.items()
-    if definition.retained and name not in _ADMIN_EXPOSED_COMMANDS
+    if definition.retained and definition.principal not in {"admin", "historical"}
 )
 
 
@@ -800,6 +801,124 @@ class PostgresRuntimeService:
                 "command is not exposed to the PostgreSQL admin surface",
                 rule="admin_command_forbidden",
             )
+        if command == "inspect":
+            reference = task_reference_from_dish(str(arguments.get("dish") or ""))
+            if reference is None:
+                return error_envelope(
+                    command,
+                    DishRuleError(
+                        "INVALID_ARGUMENT", "Dish reference is required",
+                        rule="dish_target_required",
+                    ),
+                )
+            try:
+                with session_scope(self._session_maker) as session:
+                    view = PostgresReadModel(
+                        session, cursor_secret=self._cursor_secret
+                    ).task_view(reference)
+            except ReadModelError as exc:
+                return error_envelope(
+                    command,
+                    DishRuleError(
+                        "NOT_FOUND", str(exc), rule="admin_dish_target_not_found"
+                    ),
+                )
+            return result_envelope(
+                command=command,
+                state=view.completion_state,
+                data={
+                    "dish_id": str(view.task_id),
+                    "task_title": view.title,
+                    "status": view.completion_state,
+                    "completion_state": view.completion_state,
+                    "completed": view.completed,
+                    "operation_id": (
+                        None if view.operation_id is None else str(view.operation_id)
+                    ),
+                    "operation_phase": view.operation_phase,
+                },
+            )
+        if command == "archive" and arguments.get("confirmed") is not True:
+            reference = task_reference_from_dish(str(arguments.get("dish") or ""))
+            if reference is None:
+                return error_envelope(
+                    command,
+                    DishRuleError(
+                        "INVALID_ARGUMENT", "Dish reference is required",
+                        rule="dish_target_required",
+                    ),
+                )
+            try:
+                with session_scope(self._session_maker) as session:
+                    view = PostgresReadModel(
+                        session, cursor_secret=self._cursor_secret
+                    ).task_view(reference)
+            except ReadModelError as exc:
+                return error_envelope(
+                    command,
+                    DishRuleError(
+                        "NOT_FOUND", str(exc), rule="admin_dish_target_not_found"
+                    ),
+                )
+            if view.completion_state == "archived":
+                return result_envelope(
+                    command=command,
+                    state="archived",
+                    data={
+                        "dish_id": str(view.task_id),
+                        "task_title": view.title,
+                        "completion_state": "archived",
+                        "already_archived": True,
+                        "request_id": request_id,
+                    },
+                )
+            if view.completed:
+                result = error_envelope(
+                    command,
+                    DishRuleError(
+                        "TASK_NOT_ACTIVE",
+                        "Archive requires an incomplete active Dish",
+                        rule="archive_task_not_active",
+                    ),
+                )
+                result["data"].update({
+                    "dish_id": str(view.task_id),
+                    "task_title": view.title,
+                })
+                return result
+            if view.operation_id is not None:
+                result = error_envelope(
+                    command,
+                    DishRuleError(
+                        "TASK_NOT_RESTING",
+                        "Archive requires a resting Dish with no open workflow operation",
+                        rule="archive_task_not_resting",
+                        details={"open_operation_id": str(view.operation_id)},
+                    ),
+                )
+                result["data"].update({
+                    "dish_id": str(view.task_id),
+                    "task_title": view.title,
+                })
+                return result
+            result = error_envelope(
+                command,
+                DishRuleError(
+                    "CONFIRMATION_REQUIRED",
+                    "Archive confirmation is required; no task mutation was performed.",
+                    rule="archive_confirmation_required",
+                ),
+            )
+            result["data"].update({
+                "dish_id": str(view.task_id),
+                "task_title": view.title,
+                "request_id": request_id,
+                "confirmation_prompt": (
+                    f"Archive \u201c{view.title}\u201d ({view.task_id})? It will leave "
+                    "active/search views; all history will be preserved. [y/N]"
+                ),
+            })
+            return result
         return self._execute_command(
             command,
             arguments,

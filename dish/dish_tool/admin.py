@@ -31,7 +31,7 @@ from .database import (
 from .invocation_audit import record_invocation_audit
 from .operation_execution import recover_command_guidance
 from .transactions import immediate_transaction, savepoint_transaction
-from .errors import DishRuleError
+from .errors import BackendFailure, DishRuleError
 from .admin_command_spec import RESOLVED_OPERATION_TARGET_COMMANDS
 from .results import error_envelope, result_envelope
 from .human_actions import PromptField, exact_action, relay_text, template_action
@@ -571,6 +571,311 @@ def _admin_inspect_task_title(backend: Any, task_gid: str) -> str:
     return str(raw.get("name") or "")
 
 
+def _archive_audit_evidence(
+    conn: sqlite3.Connection, *, task_gid: str
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        """SELECT event_id,details,created_at FROM audit_events
+             WHERE task_gid=? AND event_type='dish-admin.archive' AND result_ok=1
+             ORDER BY created_at DESC,event_id DESC LIMIT 1""",
+        (task_gid,),
+    ).fetchone()
+    if row is None:
+        return None
+    details = _json_object(row["details"])
+    return {
+        "event_id": row["event_id"],
+        "created_at": row["created_at"],
+        "details": details if isinstance(details, Mapping) else {},
+    }
+
+
+def _task_project_gids(raw: Mapping[str, Any]) -> frozenset[str]:
+    projects = raw.get("projects") or []
+    if not isinstance(projects, list):
+        raise DishRuleError(
+            "VALIDATION_FAILED", "task projects are malformed",
+            rule="task_projects_malformed",
+        )
+    gids: set[str] = set()
+    for project in projects:
+        if not isinstance(project, Mapping):
+            raise DishRuleError(
+                "VALIDATION_FAILED", "task project entry is malformed",
+                rule="task_projects_malformed",
+            )
+        gid = str(project.get("gid") or "").strip()
+        if not gid:
+            raise DishRuleError(
+                "VALIDATION_FAILED", "task project identity is malformed",
+                rule="task_projects_malformed",
+            )
+        gids.add(gid)
+    return frozenset(gids)
+
+
+def _read_archive_task(backend: Any, *, task_gid: str) -> dict[str, Any]:
+    raw = backend.read_task(task_gid)
+    if str(raw.get("gid") or "").strip() != task_gid:
+        raise DishRuleError(
+            "INTERNAL_ERROR", "backend returned the wrong task",
+            rule="backend_response_malformed",
+        )
+    if not isinstance(raw.get("name"), str) or not isinstance(raw.get("notes"), str):
+        raise DishRuleError(
+            "VALIDATION_FAILED", "task content is malformed",
+            rule="task_content_malformed",
+        )
+    _task_project_gids(raw)
+    return raw
+
+
+def _assert_archive_resting(
+    conn: sqlite3.Connection,
+    *,
+    task_gid: str,
+    operation_id: str | None,
+    request_id: str | None,
+) -> None:
+    blockers: dict[str, Any] = {}
+    if operation_id is not None:
+        blockers["open_operation_id"] = operation_id
+    lease = conn.execute(
+        """SELECT lease_id FROM service_leases
+             WHERE task_gid=? AND released_at IS NULL
+             ORDER BY acquired_at DESC LIMIT 1""",
+        (task_gid,),
+    ).fetchone()
+    if lease is not None:
+        blockers["active_lease_id"] = lease["lease_id"]
+    proposal = conn.execute(
+        """SELECT proposal_id FROM semantic_proposals
+             WHERE task_gid=? AND status IN ('pending','approved','claimed')
+             ORDER BY created_at DESC LIMIT 1""",
+        (task_gid,),
+    ).fetchone()
+    if proposal is not None:
+        blockers["semantic_proposal_id"] = proposal["proposal_id"]
+    unresolved_effect = conn.execute(
+        """SELECT operation.operation_id
+             FROM operations AS operation
+             WHERE operation.task_gid=? AND (
+                 EXISTS (SELECT 1 FROM write_attempts AS attempt
+                          WHERE attempt.operation_id=operation.operation_id
+                            AND attempt.outcome IN ('started','uncertain'))
+                 OR EXISTS (SELECT 1 FROM movement_attempts AS attempt
+                             WHERE attempt.operation_id=operation.operation_id
+                               AND attempt.outcome IN ('started','uncertain'))
+             ) ORDER BY operation.created_at DESC LIMIT 1""",
+        (task_gid,),
+    ).fetchone()
+    if unresolved_effect is not None:
+        blockers["unresolved_effect_operation_id"] = unresolved_effect["operation_id"]
+    parameters: list[Any] = [task_gid]
+    request_filter = ""
+    if request_id:
+        request_filter = " AND request_id!=?"
+        parameters.append(request_id)
+    pending_request = conn.execute(
+        """SELECT request_id,command FROM service_requests
+             WHERE task_gid=? AND status IN ('pending','uncertain')
+               AND resolved_at IS NULL"""
+        + request_filter
+        + " ORDER BY created_at DESC LIMIT 1",
+        tuple(parameters),
+    ).fetchone()
+    if pending_request is not None:
+        blockers["service_request_id"] = pending_request["request_id"]
+        blockers["service_request_command"] = pending_request["command"]
+    if blockers:
+        raise DishRuleError(
+            "TASK_NOT_RESTING",
+            "Archive requires a resting Dish with no unresolved workflow authority",
+            rule="archive_task_not_resting",
+            details=blockers,
+        )
+
+
+def _archive_final_state(
+    raw: Mapping[str, Any],
+    *,
+    task_gid: str,
+    title: str,
+    notes: str,
+    cooking_project_gid: str,
+    history_project_gid: str,
+) -> bool:
+    try:
+        projects = _task_project_gids(raw)
+    except DishRuleError:
+        return False
+    return bool(
+        str(raw.get("gid") or "").strip() == task_gid
+        and raw.get("name") == title
+        and raw.get("notes") == notes
+        and bool(raw.get("completed"))
+        and history_project_gid in projects
+        and cooking_project_gid not in projects
+    )
+
+
+def _command_archive(
+    self,
+    *,
+    trace: AdminTrace,
+    dish: str,
+    confirmed: bool = False,
+) -> dict[str, Any]:
+    """Archive one resting Dish while preserving its task content and history."""
+    if self.backend is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR", "admin archive requires backend access",
+            rule="admin_archive_unavailable",
+        )
+    target = resolve_admin_dish_target(self.conn, dish)
+    task_gid = str(target["task_gid"])
+    trace.task_gid = task_gid
+    trace.state = "resting"
+    prior_archive = _archive_audit_evidence(self.conn, task_gid=task_gid)
+    raw = _read_archive_task(self.backend, task_gid=task_gid)
+    title = str(raw["name"])
+    dish_id = target["dish_id"]
+    if prior_archive is not None:
+        trace.state = "archived"
+        return result_envelope(
+            command="archive", task_gid=task_gid, state="archived",
+            data={
+                "dish_id": dish_id, "task_gid": task_gid, "task_title": title,
+                "completion_state": "archived", "already_archived": True,
+                "archive_evidence": prior_archive,
+            },
+        )
+
+    from .constants import COOKING_HISTORY_PROJECT_GID, COOKING_PROJECT_GID
+    history_gid = COOKING_HISTORY_PROJECT_GID
+    if not history_gid or history_gid == COOKING_PROJECT_GID:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "Cooking History must be configured as a distinct project before archiving",
+            rule="cooking_history_project_invalid",
+            retryable=False,
+        )
+    if bool(raw.get("completed")) or COOKING_PROJECT_GID not in _task_project_gids(raw):
+        raise DishRuleError(
+            "TASK_NOT_ACTIVE", "Archive requires an incomplete active Dish",
+            rule="archive_task_not_active",
+        )
+    _assert_archive_resting(
+        self.conn, task_gid=task_gid, operation_id=target.get("operation_id"),
+        request_id=self.invocation_request_id,
+    )
+    if not confirmed:
+        return result_envelope(
+            command="archive", ok=False, code="CONFIRMATION_REQUIRED",
+            task_gid=task_gid, state="resting",
+            data={
+                "message": "Archive confirmation is required; no task mutation was performed.",
+                "dish_id": dish_id, "task_gid": task_gid, "task_title": title,
+                "confirmation_prompt": (
+                    f"Archive \u201c{title}\u201d ({dish_id})? It will leave active/search views; "
+                    "all history will be preserved. [y/N]"
+                ),
+            },
+        )
+
+    with immediate_transaction(self.conn, "admin_archive"):
+        target = resolve_admin_dish_target(self.conn, dish)
+        if str(target["task_gid"]) != task_gid:
+            raise DishRuleError(
+                "CONFLICT", "Dish identity changed before archive admission",
+                rule="archive_target_drift",
+            )
+        _assert_archive_resting(
+            self.conn, task_gid=task_gid, operation_id=target.get("operation_id"),
+            request_id=self.invocation_request_id,
+        )
+        before = _read_archive_task(self.backend, task_gid=task_gid)
+        if bool(before.get("completed")) or COOKING_PROJECT_GID not in _task_project_gids(before):
+            raise DishRuleError(
+                "TASK_NOT_ACTIVE", "Archive requires an incomplete active Dish",
+                rule="archive_task_not_active",
+            )
+        if before.get("name") != title or before.get("notes") != raw.get("notes"):
+            raise DishRuleError(
+                "CONFLICT", "Dish content changed while archive confirmation was pending",
+                rule="archive_content_drift",
+            )
+        notes = str(before["notes"])
+        trace.audit_details.update({
+            "request_id": self.invocation_request_id,
+            "system_reason": "admin_archive",
+            "authority_mode": "asana",
+            "prior_state": {
+                "completed": False,
+                "project_gids": sorted(_task_project_gids(before)),
+                "title": title,
+            },
+        })
+        completed_confirmed = False
+        try:
+            self.backend.update_task_completed(task_gid=task_gid, completed=True)
+            completed_confirmed = True
+            self.backend.add_task_to_project(task_gid=task_gid, project_gid=history_gid)
+            self.backend.remove_task_from_project(
+                task_gid=task_gid, project_gid=COOKING_PROJECT_GID
+            )
+            after = _read_archive_task(self.backend, task_gid=task_gid)
+        except DishRuleError as exc:
+            try:
+                observed = _read_archive_task(self.backend, task_gid=task_gid)
+            except DishRuleError:
+                observed = None
+            if observed is not None and _archive_final_state(
+                observed, task_gid=task_gid, title=title, notes=notes,
+                cooking_project_gid=COOKING_PROJECT_GID,
+                history_project_gid=history_gid,
+            ):
+                after = observed
+            elif (
+                isinstance(exc, BackendFailure)
+                and exc.phase == "pre_send"
+                and not completed_confirmed
+            ):
+                raise
+            else:
+                raise BackendFailure(
+                    "BACKEND_UNCERTAIN",
+                    "archive effects could not be confirmed from an authoritative reread",
+                    retryable=False,
+                    details={
+                        "task_gid": task_gid,
+                        "partial_application": "archive_effects_started",
+                        "failed_rule": exc.rule,
+                    },
+                ) from exc
+        if not _archive_final_state(
+            after, task_gid=task_gid, title=title, notes=notes,
+            cooking_project_gid=COOKING_PROJECT_GID,
+            history_project_gid=history_gid,
+        ):
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "archive final state was not confirmed by authoritative reread",
+                retryable=False,
+                details={"task_gid": task_gid, "partial_application": "archive_effects_started"},
+            )
+
+    trace.state = "archived"
+    return result_envelope(
+        command="archive", task_gid=task_gid, state="archived",
+        data={
+            "dish_id": dish_id, "task_gid": task_gid, "task_title": title,
+            "completion_state": "archived", "already_archived": False,
+            "system_reason": "admin_archive",
+        },
+    )
+
+
 def _command_inspect(
     self,
     *,
@@ -601,12 +906,16 @@ def _command_inspect(
     operation_id = target.get("operation_id")
     if operation_id is None:
         task_title = _admin_inspect_task_title(self.backend, str(target["task_gid"]))
+        archive_evidence = _archive_audit_evidence(
+            self.conn, task_gid=str(target["task_gid"])
+        )
         confirmed_status = _confirmed_resting_status(
             self.conn, str(target["task_gid"])
         )
-        ready_to_cook = confirmed_status == "ready"
+        archived = archive_evidence is not None
+        ready_to_cook = not archived and confirmed_status == "ready"
         trace.submission_id = None
-        trace.state = "resting"
+        trace.state = "archived" if archived else "resting"
         data = {
             "dish_id": target["dish_id"],
             "task_title": task_title,
@@ -614,13 +923,22 @@ def _command_inspect(
             "asana_url": f"https://app.asana.com/0/0/{target['task_gid']}",
             "operation_id": None,
             "operation_kind": None,
-            "status": "resting",
+            "status": "archived" if archived else "resting",
+            "completion_state": "archived" if archived else None,
+            "archive_evidence": archive_evidence,
             "phase": None,
             "confirmed_task_status": confirmed_status,
             "ready_to_cook": ready_to_cook,
-            "waiting_for": "cooking" if ready_to_cook else "the next requested Dish workflow",
+            "waiting_for": (
+                "nothing; this Dish is archived"
+                if archived
+                else "cooking" if ready_to_cook
+                else "the next requested Dish workflow"
+            ),
             "problem": (
-                "This Dish is ready to cook."
+                "This Dish is archived; its history and exact identity are preserved."
+                if archived
+                else "This Dish is ready to cook."
                 if ready_to_cook
                 else "This Dish has no open workflow operation."
             ),
@@ -647,7 +965,7 @@ def _command_inspect(
             command="inspect",
             task_gid=target["task_gid"],
             submission_id=None,
-            state="resting",
+            state="archived" if archived else "resting",
             data=data,
         )
 
@@ -4567,6 +4885,7 @@ CURRENT_ADMIN_COMMAND_HANDLERS = {
     "review-approve": _command_review_approve,
     "review-reject": _command_review_reject,
     "inspect": _command_inspect,
+    "archive": _command_archive,
     "migrate": _step5_admin_migrate,
     "reopen-planning": _step5_admin_reopen_planning,
     "reopen": _step8_admin_reopen,

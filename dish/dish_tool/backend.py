@@ -691,6 +691,30 @@ class AsanaBackend:
                 },
             )
 
+    def add_task_to_project(self, *, task_gid: str, project_gid: str) -> None:
+        """Request one project membership; the archive transaction rereads it."""
+        import asana
+
+        self.call(
+            asana.TasksApi(self.client()).add_project_for_task,
+            {"data": {"project": project_gid}},
+            task_gid,
+            {},
+            context=f"task {task_gid} project {project_gid} addition",
+        )
+
+    def remove_task_from_project(self, *, task_gid: str, project_gid: str) -> None:
+        """Request project removal; the archive transaction rereads it."""
+        import asana
+
+        self.call(
+            asana.TasksApi(self.client()).remove_project_for_task,
+            {"data": {"project": project_gid}},
+            task_gid,
+            {},
+            context=f"task {task_gid} project {project_gid} removal",
+        )
+
     def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None:
         """Place a task in a section after the caller resolves live state."""
 

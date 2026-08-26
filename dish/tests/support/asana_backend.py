@@ -95,6 +95,7 @@ class StatefulAsanaBackend:
         section_gid: str,
         completed: bool = False,
         modified_at: str = "now",
+        project_gids: Iterable[str] | None = None,
     ) -> None:
         self._tasks[task_gid] = {
             "title": title,
@@ -102,6 +103,7 @@ class StatefulAsanaBackend:
             "section_gid": section_gid,
             "completed": completed,
             "modified_at": modified_at,
+            "project_gids": set(project_gids or (self.project_gid,)),
         }
 
     def _bump_modified_at(self, task_gid: str) -> None:
@@ -143,7 +145,10 @@ class StatefulAsanaBackend:
     @property
     def writes(self) -> int:
         return sum(
-            call.operation in {"create_bare_task", "update_task_content", "update_task_completed"}
+            call.operation in {
+                "create_bare_task", "update_task_content", "update_task_completed",
+                "add_task_to_project", "remove_task_from_project",
+            }
             for call in self._calls
         )
 
@@ -204,6 +209,7 @@ class StatefulAsanaBackend:
                 {"gid": gid, "name": item["title"], "completed": item["completed"]}
                 for gid, item in self._tasks.items()
                 if item["section_gid"] == section_gid
+                and self.project_gid in item["project_gids"]
             ]
             start = int(cursor) if cursor else 0
             page = matches[start : start + self.section_tasks_page_size]
@@ -227,12 +233,20 @@ class StatefulAsanaBackend:
             "notes": item["notes"],
             "completed": item["completed"],
             "modified_at": item["modified_at"],
-            "projects": [{"gid": self.project_gid}],
+            "projects": [
+                {"gid": project_gid}
+                for project_gid in sorted(item["project_gids"])
+            ],
             "memberships": [
                 {
-                    "project": {"gid": self.project_gid},
-                    "section": {"gid": item["section_gid"]},
+                    "project": {"gid": project_gid},
+                    "section": (
+                        {"gid": item["section_gid"]}
+                        if project_gid == self.project_gid
+                        else None
+                    ),
                 }
+                for project_gid in sorted(item["project_gids"])
             ],
             "_dish_version_evidence": {
                 "source": "test.modified_at",
@@ -285,3 +299,21 @@ class StatefulAsanaBackend:
             self._bump_modified_at(task_gid)
 
         self._invoke("move_task_to_section", arguments, effect)
+
+    def add_task_to_project(self, *, task_gid: str, project_gid: str) -> None:
+        arguments = {"task_gid": task_gid, "project_gid": project_gid}
+
+        def effect() -> None:
+            self._task(task_gid)["project_gids"].add(project_gid)
+            self._bump_modified_at(task_gid)
+
+        self._invoke("add_task_to_project", arguments, effect)
+
+    def remove_task_from_project(self, *, task_gid: str, project_gid: str) -> None:
+        arguments = {"task_gid": task_gid, "project_gid": project_gid}
+
+        def effect() -> None:
+            self._task(task_gid)["project_gids"].discard(project_gid)
+            self._bump_modified_at(task_gid)
+
+        self._invoke("remove_task_from_project", arguments, effect)

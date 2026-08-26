@@ -142,6 +142,17 @@ Other. Semantic proposals retain exact governed before/after bundles. The queue 
 interactions directly, but approval/application authority remains in the existing review commands and
 workflow policy.
 
+`archive <dish>` is a hidden private-admin lifecycle command, never an Action/OpenAPI capability.
+It has no operator-supplied reason: the durable invocation provenance records
+`system_reason=admin_archive`. In the SQLite/Asana authority it requires confirmation, a resting
+incomplete Dish, and a distinct configured Cooking History project; it then marks the task complete,
+adds Cooking History, removes Cooking last, and confirms preserved identity from an exact reread.
+In PostgreSQL authority the same private admin command is a narrow additional principal for the
+existing agent-owned `archive` semantic. Agent exposure and semantics remain unchanged, and the
+PostgreSQL path creates no Asana projection. The private admin transport also retains exact-ID
+`inspect` as a PostgreSQL-local read so an archived Dish remains diagnosable after it leaves active
+and title-search views; this does not widen the agent/Action inspect contract.
+
 ## Failure, replay, recovery, and concurrency
 
 Mutation request identity/replay is handled by the shared replay mechanism. A connected client may

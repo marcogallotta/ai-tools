@@ -222,3 +222,33 @@ def test_project_task_listing_requests_placement_fields_and_returns_cursor(monke
     assert "memberships.section.gid" in captured["opts"]["opt_fields"]
     assert "memberships.section.name" in captured["opts"]["opt_fields"]
     assert captured["kwargs"]["_request_timeout"] == ASANA_REQUEST_TIMEOUT
+
+
+@pytest.mark.smoke
+def test_project_membership_mutations_use_generated_sdk_contract(monkeypatch):
+    import asana
+
+    captured: list[tuple[str, dict[str, Any], str, dict[str, Any]]] = []
+
+    class TasksApi:
+        def __init__(self, _client):
+            pass
+
+        def add_project_for_task(self, body, task_gid, opts, **_kwargs):
+            captured.append(("add", body, task_gid, opts))
+            return {"data": {}}
+
+        def remove_project_for_task(self, body, task_gid, opts, **_kwargs):
+            captured.append(("remove", body, task_gid, opts))
+            return {"data": {}}
+
+    monkeypatch.setattr(asana, "TasksApi", TasksApi)
+    backend = AsanaBackend(api_client=object())
+
+    backend.add_task_to_project(task_gid="task", project_gid="history")
+    backend.remove_task_from_project(task_gid="task", project_gid="cooking")
+
+    assert captured == [
+        ("add", {"data": {"project": "history"}}, "task", {}),
+        ("remove", {"data": {"project": "cooking"}}, "task", {}),
+    ]

@@ -205,6 +205,7 @@ def test_current_dispatch_contract_is_explicit_and_complete():
         "record-human-decision", "resolved", "authorize-governed-change", "discard",
         "abandon-operation", "reconcile-abandonment", "holds", "inspect",
         "review-queue", "review-inspect", "review-approve", "review-reject",
+        "archive",
     }
     assert all(callable(handler) for handler in CURRENT_COMMAND_HANDLERS.values())
     assert all(callable(handler) for handler in CURRENT_ADMIN_COMMAND_HANDLERS.values())

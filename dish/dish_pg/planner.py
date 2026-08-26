@@ -101,6 +101,8 @@ class EffectAdjudication:
 
 
 def _principal_matches(definition: CommandDefinition, principal_class: str) -> bool:
+    if principal_class == "admin" and definition.admin_exposed:
+        return True
     if definition.principal == "reader":
         return principal_class in {"agent", "admin", "verification", "reader"}
     if definition.principal == "agent":
@@ -211,6 +213,18 @@ def plan_command(
             recovery_guidance={"abandonment_id": snapshot.open_abandonment_id},
         )
     if intent.command_name in {"cooked", "archive"}:
+        if (
+            intent.command_name == "archive"
+            and intent.principal_class == "admin"
+            and intent.arguments.get("confirmed") is not True
+        ):
+            return CommandPlan(
+                definition=definition,
+                legal=False,
+                result_code="CONFIRMATION_REQUIRED",
+                fence=snapshot.fence,
+                audit_event_type="archive_confirmation_rejected",
+            )
         if snapshot.completed is not False:
             return CommandPlan(
                 definition=definition,

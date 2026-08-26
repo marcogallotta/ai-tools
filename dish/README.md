@@ -127,6 +127,7 @@ needs:
 ```sh
 DISH_HONEST_PATH=/home/marco/honest-pantry
 DISH_COOKING_PROJECT_GID=<Cooking project gid>
+DISH_COOKING_HISTORY_PROJECT_GID=<Cooking History project gid>
 DISH_DB_PATH=<environment-specific database>
 DISH_SERVICE_BACKUP_DIR=<environment-specific backup directory>
 DISH_SERVICE_BIND=127.0.0.1
