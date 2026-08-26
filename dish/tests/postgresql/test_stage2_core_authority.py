@@ -94,6 +94,8 @@ def test_stage2_migration_renders_postgresql_constraints_and_guards() -> None:
     assert "dish_reject_immutable_authority" in rendered
     assert "dish_validate_active_registry_pointer" in rendered
     assert "dish_validate_scalar_state" in rendered
+    assert "task_content_versions_scalar_source_validate" in rendered
+    assert "CREATE TRIGGER current_task_project_memberships_validate" in rendered
     assert "task_external_aliases_identity_update" in rendered
 
 
@@ -113,7 +115,41 @@ def test_stage2_alembic_upgrade_reaches_head_from_empty_database(tmp_path: Path)
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
+            triggers = {
+                row[0]
+                for row in connection.execute(
+                    text(
+                        "SELECT name FROM sqlite_master WHERE type='trigger' "
+                        "AND (name LIKE 'dish_states_%' "
+                        "OR name LIKE 'dish_mutation_receipts_%' "
+                        "OR name LIKE 'task_membership_heads_%' "
+                        "OR name LIKE 'task_content_versions_%' "
+                        "OR name LIKE 'verification_inspection_%' "
+                        "OR name='dish_tasks_creation_provenance_immutable' "
+                        "OR name='projection_outbox_events_authority_insert' "
+                        "OR name LIKE 'current_task_project_memberships_validate_%')"
+                    )
+                )
+            }
         assert revision == "0042_scalar_dish_state"
+        assert {
+            "dish_states_validate_insert",
+            "dish_states_validate_update",
+            "dish_states_identity_immutable",
+            "dish_states_delete_forbidden",
+            "dish_mutation_receipts_immutable_update",
+            "dish_mutation_receipts_immutable_delete",
+            "task_membership_heads_identity_immutable",
+            "task_membership_heads_delete_forbidden",
+            "task_content_versions_scalar_source_validate",
+            "task_content_versions_immutable_update",
+            "task_content_versions_immutable_delete",
+            "verification_inspection_placement_validate",
+            "dish_tasks_creation_provenance_immutable",
+            "projection_outbox_events_authority_insert",
+            "current_task_project_memberships_validate_insert",
+            "current_task_project_memberships_validate_update",
+        }.issubset(triggers)
     finally:
         engine.dispose()
 
@@ -208,6 +244,230 @@ def test_scalar_noop_writes_no_receipt(core_db) -> None:
         assert session.scalar(
             select(func.count()).select_from(models.DishMutationReceipt)
         ) == 1
+
+
+def test_ordinary_initial_scalar_authority_must_use_v1_all_domain_receipt(core_db) -> None:
+    factory, ids = core_db
+    with pytest.raises(IntegrityError, match="invalid initial DishState authority"):
+        with session_scope(factory) as session:
+            context = _bootstrap_registry(session, ids)
+            task_id = _next(ids)
+            content_id = _next(ids)
+            session.add(
+                models.DishTask(
+                    task_id=task_id,
+                    existence_state="ordinary",
+                    creation_route="import",
+                    import_run_id=context["import_run_id"],
+                    command_execution_id=None,
+                    created_at=NOW,
+                    retired_at=None,
+                )
+            )
+            session.flush()
+            session.add(
+                models.DishMutationReceipt(
+                    generation_id=context["generation_id"],
+                    task_id=task_id,
+                    dish_version=2,
+                    source_route="import",
+                    import_run_id=context["import_run_id"],
+                    command_execution_id=None,
+                    content_changed=True,
+                    placement_changed=True,
+                    completion_changed=True,
+                    occurred_at=NOW,
+                )
+            )
+            session.flush()
+            session.add(
+                models.ContentVersion(
+                    content_version_id=content_id,
+                    generation_id=context["generation_id"],
+                    task_id=task_id,
+                    representation_kind="document",
+                    title="Invalid non-v1 initial content",
+                    body="Invalid\n---\nStatus: ready\n",
+                    identity_scheme="legacy-sha256-v1",
+                    content_identity="d" * 64,
+                    creator_route="import",
+                    import_run_id=context["import_run_id"],
+                    command_execution_id=None,
+                    predecessor_content_version_id=None,
+                    contract_binding_id=context["binding_id"],
+                    created_dish_version=2,
+                    created_at=NOW,
+                )
+            )
+            session.flush()
+            session.add(
+                models.DishState(
+                    generation_id=context["generation_id"],
+                    task_id=task_id,
+                    current_content_version_id=content_id,
+                    section_id=context["section_id"],
+                    registry_version_id=context["registry_version_id"],
+                    completed=False,
+                    completion_reason="imported",
+                    dish_version=2,
+                    placement_version=2,
+                    completion_version=2,
+                    updated_at=NOW,
+                )
+            )
+            session.flush()
+
+
+def test_current_membership_pointer_must_match_exact_event(core_db) -> None:
+    factory, ids = core_db
+    with pytest.raises(IntegrityError, match="current project membership pointer is invalid"):
+        with session_scope(factory) as session:
+            context = _bootstrap_registry(session, ids)
+            imported = _import_one(session, ids, context)
+            membership = session.scalar(
+                select(models.CurrentTaskProjectMembership).where(
+                    models.CurrentTaskProjectMembership.generation_id
+                    == context["generation_id"],
+                    models.CurrentTaskProjectMembership.task_id == imported.task_id,
+                )
+            )
+            assert membership is not None
+            membership.is_member = False
+            session.flush()
+
+
+def test_command_content_binding_must_match_its_execution(core_db) -> None:
+    factory, ids = core_db
+    with pytest.raises(IntegrityError, match="content creation receipt mismatch"):
+        with session_scope(factory) as session:
+            context = _bootstrap_registry(session, ids)
+            imported = _import_one(session, ids, context)
+            state = session.get(
+                models.DishState, (context["generation_id"], imported.task_id)
+            )
+            assert state is not None
+            mismatched_binding_id = _next(ids)
+            ContractBindingRepository(session).add(
+                models.HonestContractBinding(
+                    binding_id=mismatched_binding_id,
+                    binding_kind="task_schema",
+                    source_identity="honest-pantry@task-schema-mismatch",
+                    dish_release="dish-42619b9",
+                    honest_release="honest-1",
+                    protocol_release="protocol-1",
+                    protocol_sha256="d" * 64,
+                    schema_release="schema-mismatch",
+                    schema_sha256="e" * 64,
+                    migration_id=None,
+                    source_schema_version=None,
+                    target_schema_version=None,
+                    migration_metadata_sha256=None,
+                    source_ids={"fixture": "binding-mismatch"},
+                    provenance={"fixture": True},
+                    resolved_at=NOW,
+                )
+            )
+            run_id, request_id, execution_id = _next(ids), _next(ids), _next(ids)
+            session.add(
+                wf.ServiceRun(
+                    run_id=run_id,
+                    generation_id=context["generation_id"],
+                    owner_id="binding-test",
+                    agent="service",
+                    capability_digest=b"b" * 32,
+                    bootstrap_id=None,
+                    status="active",
+                    registered_at=NOW,
+                    retired_at=None,
+                )
+            )
+            session.flush()
+            session.add(
+                wf.ServiceRequest(
+                    request_id=request_id,
+                    generation_id=context["generation_id"],
+                    run_id=run_id,
+                    owner_id="binding-test",
+                    principal_class="service",
+                    command_name="binding-test",
+                    canonical_payload_sha256="f" * 64,
+                    canonical_payload={"fixture": "binding-test"},
+                    protocol_release="protocol-1",
+                    dish_release="dish-42619b9",
+                    admitted_at=NOW,
+                )
+            )
+            session.flush()
+            session.add(
+                wf.CommandExecution(
+                    execution_id=execution_id,
+                    generation_id=context["generation_id"],
+                    request_id=request_id,
+                    task_id=imported.task_id,
+                    operation_id=None,
+                    command_name="binding-test",
+                    transaction_profile="L",
+                    canonical_intent={"fixture": "binding-test"},
+                    pinned_inputs={"now": NOW.isoformat()},
+                    contract_binding_id=context["binding_id"],
+                    status="pending",
+                    claim_owner=None,
+                    claim_token=None,
+                    claim_expires_at=None,
+                    execution_revision=1,
+                    admitted_at=NOW,
+                    terminal_at=None,
+                )
+            )
+            session.flush()
+            session.add(
+                models.DishMutationReceipt(
+                    generation_id=context["generation_id"],
+                    task_id=imported.task_id,
+                    dish_version=2,
+                    source_route="command_execution",
+                    import_run_id=None,
+                    command_execution_id=execution_id,
+                    content_changed=True,
+                    placement_changed=False,
+                    completion_changed=False,
+                    occurred_at=NOW,
+                )
+            )
+            session.flush()
+            session.add(
+                models.ContentVersion(
+                    content_version_id=_next(ids),
+                    generation_id=context["generation_id"],
+                    task_id=imported.task_id,
+                    representation_kind="document",
+                    title="Wrong binding",
+                    body="Wrong binding\n---\nStatus: ready\n",
+                    identity_scheme="legacy-sha256-v1",
+                    content_identity="f" * 64,
+                    creator_route="command_execution",
+                    import_run_id=None,
+                    command_execution_id=execution_id,
+                    predecessor_content_version_id=state.current_content_version_id,
+                    contract_binding_id=mismatched_binding_id,
+                    created_dish_version=2,
+                    created_at=NOW,
+                )
+            )
+            session.flush()
+
+
+def test_abandonment_baseline_content_fk_is_generation_and_task_exact() -> None:
+    constraint = next(
+        item
+        for item in wf.AbandonmentAttempt.__table__.foreign_key_constraints
+        if item.name == "fk_abandonment_exact_baseline_content"
+    )
+    assert tuple(column.name for column in constraint.columns) == (
+        "generation_id",
+        "task_id",
+        "baseline_content_version_id",
+    )
 
 
 def test_multi_domain_scalar_mutation_writes_one_receipt_and_one_version(core_db) -> None:

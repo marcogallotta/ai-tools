@@ -30,7 +30,8 @@ from sqlalchemy import (
     event,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.schema import DDL
 
 NAMING_CONVENTION = {
@@ -963,8 +964,10 @@ _install_sqlite_immutability_triggers()
 
 def _install_sqlite_scalar_authority_triggers() -> None:
     dish_task = Base.metadata.tables["dish_tasks"]
+    content_version = Base.metadata.tables["task_content_versions"]
     dish_state = Base.metadata.tables["dish_states"]
     membership_head = Base.metadata.tables["task_membership_heads"]
+    current_membership = Base.metadata.tables["current_task_project_memberships"]
 
     event.listen(
         dish_task,
@@ -997,7 +1000,28 @@ def _install_sqlite_scalar_authority_triggers() -> None:
         "((r.source_route = 'import' AND r.import_run_id IS cv.import_run_id "
         "AND cv.creator_route = 'import') OR "
         "(r.source_route = 'command_execution' AND r.command_execution_id IS cv.command_execution_id "
-        "AND cv.creator_route = 'command_execution'))"
+        "AND cv.creator_route = 'command_execution' AND EXISTS ("
+        "SELECT 1 FROM command_executions ce WHERE ce.execution_id=cv.command_execution_id "
+        "AND ce.generation_id=cv.generation_id AND ce.task_id=cv.task_id "
+        "AND ce.contract_binding_id=cv.contract_binding_id)))"
+    )
+    event.listen(
+        content_version,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER task_content_versions_scalar_source_validate "
+            "BEFORE INSERT ON task_content_versions WHEN NOT EXISTS ("
+            "SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
+            "AND r.task_id=NEW.task_id AND r.dish_version=NEW.created_dish_version "
+            "AND r.content_changed=1 AND ((r.source_route='import' "
+            "AND NEW.creator_route='import' AND r.import_run_id IS NEW.import_run_id) OR "
+            "(r.source_route='command_execution' AND NEW.creator_route='command_execution' "
+            "AND r.command_execution_id IS NEW.command_execution_id AND EXISTS ("
+            "SELECT 1 FROM command_executions ce WHERE ce.execution_id=NEW.command_execution_id "
+            "AND ce.generation_id=NEW.generation_id AND ce.task_id=NEW.task_id "
+            "AND ce.contract_binding_id=NEW.contract_binding_id)))) "
+            "BEGIN SELECT RAISE(ABORT, 'content creation receipt mismatch'); END"
+        ).execute_if(dialect="sqlite"),
     )
     event.listen(
         dish_state,
@@ -1017,6 +1041,22 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "AND r.dish_version=cv.created_dish_version WHERE cv.generation_id=NEW.generation_id "
             "AND cv.task_id=NEW.task_id AND cv.content_version_id=NEW.current_content_version_id "
             "AND r.content_changed=1 AND " + source_match + ") OR "
+            "NOT EXISTS (SELECT 1 FROM authority_generations g WHERE g.generation_id=NEW.generation_id "
+            "AND (g.creation_reason='destructive_restore' OR (NEW.dish_version=1 "
+            "AND NEW.placement_version=1 AND NEW.completion_version=1 "
+            "AND EXISTS (SELECT 1 FROM task_content_versions cv WHERE "
+            "cv.generation_id=NEW.generation_id AND cv.task_id=NEW.task_id "
+            "AND cv.content_version_id=NEW.current_content_version_id "
+            "AND cv.created_dish_version=1)))) OR "
+            "EXISTS (SELECT 1 FROM dish_mutation_receipts r "
+            "JOIN task_content_versions cv ON cv.generation_id=NEW.generation_id "
+            "AND cv.task_id=NEW.task_id AND cv.content_version_id=NEW.current_content_version_id "
+            "WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id "
+            "AND r.dish_version IN (NEW.dish_version, NEW.placement_version, "
+            "NEW.completion_version, cv.created_dish_version) AND ("
+            "r.content_changed <> (r.dish_version=cv.created_dish_version) OR "
+            "r.placement_changed <> (r.dish_version=NEW.placement_version) OR "
+            "r.completion_changed <> (r.dish_version=NEW.completion_version))) OR "
             "NOT EXISTS (SELECT 1 FROM section_registry_entries e WHERE e.registry_version_id=NEW.registry_version_id "
             "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)) OR "
             "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
@@ -1026,6 +1066,23 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "BEGIN SELECT RAISE(ABORT, 'invalid initial DishState authority'); END"
         ).execute_if(dialect="sqlite"),
     )
+    for operation in ("INSERT", "UPDATE"):
+        event.listen(
+            current_membership,
+            "after_create",
+            DDL(
+                f"CREATE TRIGGER current_task_project_memberships_validate_{operation.lower()} "
+                f"BEFORE {operation} ON current_task_project_memberships WHEN NOT EXISTS ("
+                "SELECT 1 FROM task_project_membership_events e "
+                "WHERE e.membership_event_id=NEW.latest_event_id "
+                "AND e.generation_id=NEW.generation_id AND e.task_id=NEW.task_id "
+                "AND e.project_id=NEW.project_id "
+                "AND e.membership_revision=NEW.membership_revision "
+                "AND ((e.event_kind='joined' AND NEW.is_member=1) "
+                "OR (e.event_kind='left' AND NEW.is_member=0))) "
+                "BEGIN SELECT RAISE(ABORT, 'current project membership pointer is invalid'); END"
+            ).execute_if(dialect="sqlite"),
+        )
     event.listen(
         dish_state,
         "after_create",
@@ -1061,5 +1118,39 @@ def _install_sqlite_scalar_authority_triggers() -> None:
 
 
 _install_sqlite_scalar_authority_triggers()
+
+
+@event.listens_for(Session, "before_commit")
+def _validate_sqlite_active_registry_bindings(session: Session) -> None:
+    """Emulate the deferred PostgreSQL registry-final-state guard on SQLite."""
+    bind = session.get_bind()
+    if bind.dialect.name != "sqlite":
+        return
+    connection = session.connection()
+    tables = {
+        row[0]
+        for row in connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('dish_states','active_section_registries','section_registry_entries')"
+        )
+    }
+    if tables != {"dish_states", "active_section_registries", "section_registry_entries"}:
+        return
+    session.flush()
+    mismatch = connection.exec_driver_sql(
+        "SELECT 1 FROM dish_states s "
+        "LEFT JOIN active_section_registries a ON a.generation_id=s.generation_id "
+        "WHERE a.generation_id IS NULL OR a.registry_version_id<>s.registry_version_id "
+        "OR (s.section_id IS NOT NULL AND NOT EXISTS ("
+        "SELECT 1 FROM section_registry_entries e "
+        "WHERE e.registry_version_id=s.registry_version_id AND e.section_id=s.section_id)) "
+        "LIMIT 1"
+    ).first()
+    if mismatch is not None:
+        raise IntegrityError(
+            "DishState registry binding is not transaction-final",
+            params=None,
+            orig=RuntimeError("DishState registry binding is not transaction-final"),
+        )
 
 CORE_TABLE_NAMES = tuple(Base.metadata.tables)

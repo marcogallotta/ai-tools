@@ -235,7 +235,16 @@ def _create_downstream_tables() -> None:
         sa.ForeignKeyConstraint(["source_lease_id"], ["service_leases.lease_id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["source_cycle_id"], ["verification_cycles.cycle_id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["source_run_id"], ["service_runs.run_id"], ondelete="RESTRICT"),
-        sa.ForeignKeyConstraint(["baseline_content_version_id"], ["task_content_versions.content_version_id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["generation_id", "task_id", "baseline_content_version_id"],
+            [
+                "task_content_versions.generation_id",
+                "task_content_versions.task_id",
+                "task_content_versions.content_version_id",
+            ],
+            name="fk_abandonment_exact_baseline_content",
+            ondelete="RESTRICT",
+        ),
         sa.ForeignKeyConstraint(["request_id"], ["service_requests.request_id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["command_execution_id"], ["command_executions.execution_id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["successor_operation_id"], ["workflow_operations.operation_id"], ondelete="RESTRICT"),
@@ -311,6 +320,11 @@ def _install_postgresql_guards() -> None:
             "FOR EACH ROW EXECUTE FUNCTION dish_reject_scalar_identity_change()"
         )
     op.execute(
+        "CREATE TRIGGER current_task_project_memberships_validate "
+        "BEFORE INSERT OR UPDATE ON current_task_project_memberships "
+        "FOR EACH ROW EXECUTE FUNCTION dish_validate_current_membership()"
+    )
+    op.execute(
         """
         CREATE OR REPLACE FUNCTION dish_reject_creation_provenance_change()
         RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
@@ -332,10 +346,44 @@ def _install_postgresql_guards() -> None:
     )
     op.execute(
         """
+        CREATE OR REPLACE FUNCTION dish_validate_content_creation_receipt()
+        RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+              FROM dish_mutation_receipts r
+              LEFT JOIN command_executions e
+                ON e.execution_id=NEW.command_execution_id
+               AND e.generation_id=NEW.generation_id
+               AND e.task_id=NEW.task_id
+             WHERE r.generation_id=NEW.generation_id
+               AND r.task_id=NEW.task_id
+               AND r.dish_version=NEW.created_dish_version
+               AND r.content_changed
+               AND ((r.source_route='import' AND NEW.creator_route='import'
+                     AND r.import_run_id=NEW.import_run_id)
+                 OR (r.source_route='command_execution'
+                     AND NEW.creator_route='command_execution'
+                     AND r.command_execution_id=NEW.command_execution_id
+                     AND e.contract_binding_id=NEW.contract_binding_id))
+          ) THEN
+            RAISE EXCEPTION 'content creation receipt mismatch';
+          END IF;
+          RETURN NEW;
+        END; $$
+        """
+    )
+    op.execute(
+        "CREATE CONSTRAINT TRIGGER task_content_versions_scalar_source_validate "
+        "AFTER INSERT ON task_content_versions DEFERRABLE INITIALLY DEFERRED "
+        "FOR EACH ROW EXECUTE FUNCTION dish_validate_content_creation_receipt()"
+    )
+    op.execute(
+        """
         CREATE OR REPLACE FUNCTION dish_validate_scalar_state()
         RETURNS trigger LANGUAGE plpgsql AS $$
         DECLARE receipt dish_mutation_receipts%ROWTYPE;
         DECLARE content task_content_versions%ROWTYPE;
+        DECLARE generation_reason text;
         BEGIN
           SELECT * INTO receipt FROM dish_mutation_receipts
            WHERE generation_id=NEW.generation_id AND task_id=NEW.task_id
@@ -358,6 +406,28 @@ def _install_postgresql_guards() -> None:
            WHERE generation_id=NEW.generation_id AND task_id=NEW.task_id
              AND content_version_id=NEW.current_content_version_id;
           IF content.content_version_id IS NULL THEN RAISE EXCEPTION 'DishState content missing'; END IF;
+          IF TG_OP='INSERT' THEN
+            SELECT creation_reason INTO generation_reason FROM authority_generations
+             WHERE generation_id=NEW.generation_id;
+            IF generation_reason IS DISTINCT FROM 'destructive_restore'
+               AND (NEW.dish_version <> 1 OR NEW.placement_version <> 1
+                 OR NEW.completion_version <> 1 OR content.created_dish_version <> 1)
+            THEN RAISE EXCEPTION 'ordinary initial DishState must use version 1'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM dish_mutation_receipts r
+               WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id
+                 AND r.dish_version IN (
+                   NEW.dish_version, NEW.placement_version,
+                   NEW.completion_version, content.created_dish_version
+                 )
+                 AND (r.content_changed IS DISTINCT FROM
+                        (r.dish_version=content.created_dish_version)
+                   OR r.placement_changed IS DISTINCT FROM
+                        (r.dish_version=NEW.placement_version)
+                   OR r.completion_changed IS DISTINCT FROM
+                        (r.dish_version=NEW.completion_version))
+            ) THEN RAISE EXCEPTION 'initial DishState receipt effects are not sparse-current'; END IF;
+          END IF;
           IF TG_OP='UPDATE' AND receipt.content_changed
              AND content.created_dish_version <> NEW.dish_version
           THEN RAISE EXCEPTION 'DishState content occurrence is not current'; END IF;
@@ -472,6 +542,257 @@ def _install_postgresql_guards() -> None:
     )
 
 
+def _install_sqlite_guards() -> None:
+    for table in (
+        "task_content_versions",
+        "dish_mutation_receipts",
+        "task_execution_fences",
+        "verification_inspection_occurrences",
+    ):
+        op.execute(f"DROP TRIGGER IF EXISTS {table}_immutable_update")
+        op.execute(f"DROP TRIGGER IF EXISTS {table}_immutable_delete")
+        op.execute(
+            f"CREATE TRIGGER {table}_immutable_update BEFORE UPDATE ON {table} "
+            "BEGIN SELECT RAISE(ABORT, 'immutable authority row'); END"
+        )
+        op.execute(
+            f"CREATE TRIGGER {table}_immutable_delete BEFORE DELETE ON {table} "
+            "BEGIN SELECT RAISE(ABORT, 'immutable authority row'); END"
+        )
+    op.execute(
+        "CREATE TRIGGER dish_tasks_creation_provenance_immutable "
+        "BEFORE UPDATE OF task_id, creation_route, import_run_id, command_execution_id, created_at "
+        "ON dish_tasks BEGIN SELECT RAISE(ABORT, 'DishTask creation provenance is immutable'); END"
+    )
+    for table in ("dish_states", "task_membership_heads"):
+        op.execute(
+            f"CREATE TRIGGER {table}_identity_immutable BEFORE UPDATE OF generation_id, task_id "
+            f"ON {table} BEGIN SELECT RAISE(ABORT, '{table} identity is immutable'); END"
+        )
+        op.execute(
+            f"CREATE TRIGGER {table}_delete_forbidden BEFORE DELETE ON {table} "
+            f"BEGIN SELECT RAISE(ABORT, '{table} cannot be deleted'); END"
+        )
+    op.execute(
+        """
+        CREATE TRIGGER task_content_versions_scalar_source_validate
+        BEFORE INSERT ON task_content_versions WHEN NOT EXISTS (
+          SELECT 1 FROM dish_mutation_receipts r
+           WHERE r.generation_id=NEW.generation_id
+             AND r.task_id=NEW.task_id
+             AND r.dish_version=NEW.created_dish_version
+             AND r.content_changed=1
+             AND ((r.source_route='import' AND NEW.creator_route='import'
+                   AND r.import_run_id IS NEW.import_run_id)
+               OR (r.source_route='command_execution'
+                   AND NEW.creator_route='command_execution'
+                   AND r.command_execution_id IS NEW.command_execution_id
+                   AND EXISTS (
+                     SELECT 1 FROM command_executions ce
+                      WHERE ce.execution_id=NEW.command_execution_id
+                        AND ce.generation_id=NEW.generation_id
+                        AND ce.task_id=NEW.task_id
+                        AND ce.contract_binding_id=NEW.contract_binding_id)))
+        ) BEGIN SELECT RAISE(ABORT, 'content creation receipt mismatch'); END
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER dish_states_validate_insert
+        BEFORE INSERT ON dish_states WHEN
+          NOT EXISTS (
+            SELECT 1 FROM dish_mutation_receipts r
+             WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id
+               AND r.dish_version=NEW.dish_version
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM dish_mutation_receipts r
+             WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id
+               AND r.dish_version=NEW.placement_version AND r.placement_changed=1
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM dish_mutation_receipts r
+             WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id
+               AND r.dish_version=NEW.completion_version AND r.completion_changed=1
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM task_content_versions cv
+            JOIN dish_mutation_receipts r
+              ON r.generation_id=cv.generation_id AND r.task_id=cv.task_id
+             AND r.dish_version=cv.created_dish_version
+             WHERE cv.generation_id=NEW.generation_id AND cv.task_id=NEW.task_id
+               AND cv.content_version_id=NEW.current_content_version_id
+               AND r.content_changed=1
+               AND ((r.source_route='import' AND cv.creator_route='import'
+                     AND r.import_run_id IS cv.import_run_id)
+                 OR (r.source_route='command_execution'
+                     AND cv.creator_route='command_execution'
+                     AND r.command_execution_id IS cv.command_execution_id
+                     AND EXISTS (
+                       SELECT 1 FROM command_executions ce
+                        WHERE ce.execution_id=cv.command_execution_id
+                          AND ce.generation_id=cv.generation_id
+                          AND ce.task_id=cv.task_id
+                          AND ce.contract_binding_id=cv.contract_binding_id)))
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM authority_generations g
+             WHERE g.generation_id=NEW.generation_id
+               AND (g.creation_reason='destructive_restore'
+                 OR (NEW.dish_version=1 AND NEW.placement_version=1
+                   AND NEW.completion_version=1 AND EXISTS (
+                     SELECT 1 FROM task_content_versions cv
+                      WHERE cv.generation_id=NEW.generation_id
+                        AND cv.task_id=NEW.task_id
+                        AND cv.content_version_id=NEW.current_content_version_id
+                        AND cv.created_dish_version=1)))
+          )
+          OR EXISTS (
+            SELECT 1 FROM dish_mutation_receipts r
+            JOIN task_content_versions cv
+              ON cv.generation_id=NEW.generation_id AND cv.task_id=NEW.task_id
+             AND cv.content_version_id=NEW.current_content_version_id
+             WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id
+               AND r.dish_version IN (
+                 NEW.dish_version, NEW.placement_version,
+                 NEW.completion_version, cv.created_dish_version
+               )
+               AND (r.content_changed <> (r.dish_version=cv.created_dish_version)
+                 OR r.placement_changed <> (r.dish_version=NEW.placement_version)
+                 OR r.completion_changed <> (r.dish_version=NEW.completion_version))
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM section_registry_entries e
+             WHERE e.registry_version_id=NEW.registry_version_id
+               AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM dish_mutation_receipts r
+             WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id
+               AND r.dish_version=NEW.completion_version
+               AND ((r.source_route='import' AND NEW.completion_reason='imported')
+                 OR (r.source_route='command_execution'
+                   AND NEW.completion_reason IN ('cooked','archive','reopen_planning')))
+          )
+        BEGIN SELECT RAISE(ABORT, 'invalid initial DishState authority'); END
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER dish_states_validate_update
+        BEFORE UPDATE ON dish_states WHEN
+          NEW.dish_version <> OLD.dish_version + 1
+          OR NOT EXISTS (
+            SELECT 1 FROM dish_mutation_receipts r
+             WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id
+               AND r.dish_version=NEW.dish_version
+               AND r.content_changed=(NEW.current_content_version_id IS NOT OLD.current_content_version_id)
+               AND r.placement_changed=(NEW.placement_version<>OLD.placement_version)
+               AND r.completion_changed=(NEW.completion_version<>OLD.completion_version)
+          )
+          OR (NEW.placement_version=OLD.placement_version
+            AND (NEW.section_id IS NOT OLD.section_id
+              OR NEW.registry_version_id<>OLD.registry_version_id))
+          OR (NEW.placement_version<>OLD.placement_version
+            AND NEW.placement_version<>NEW.dish_version)
+          OR (NEW.completion_version=OLD.completion_version
+            AND (NEW.completed<>OLD.completed
+              OR NEW.completion_reason<>OLD.completion_reason))
+          OR (NEW.completion_version<>OLD.completion_version
+            AND NEW.completion_version<>NEW.dish_version)
+          OR NOT EXISTS (
+            SELECT 1 FROM task_content_versions cv
+            JOIN dish_mutation_receipts r
+              ON r.generation_id=cv.generation_id AND r.task_id=cv.task_id
+             AND r.dish_version=cv.created_dish_version
+             WHERE cv.generation_id=NEW.generation_id AND cv.task_id=NEW.task_id
+               AND cv.content_version_id=NEW.current_content_version_id
+               AND (NEW.current_content_version_id=OLD.current_content_version_id
+                 OR cv.created_dish_version=NEW.dish_version)
+               AND r.content_changed=1
+               AND ((r.source_route='import' AND cv.creator_route='import'
+                     AND r.import_run_id IS cv.import_run_id)
+                 OR (r.source_route='command_execution'
+                     AND cv.creator_route='command_execution'
+                     AND r.command_execution_id IS cv.command_execution_id
+                     AND EXISTS (
+                       SELECT 1 FROM command_executions ce
+                        WHERE ce.execution_id=cv.command_execution_id
+                          AND ce.generation_id=cv.generation_id
+                          AND ce.task_id=cv.task_id
+                          AND ce.contract_binding_id=cv.contract_binding_id)))
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM section_registry_entries e
+             WHERE e.registry_version_id=NEW.registry_version_id
+               AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM dish_mutation_receipts r
+             WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id
+               AND r.dish_version=NEW.completion_version
+               AND ((r.source_route='import' AND NEW.completion_reason='imported')
+                 OR (r.source_route='command_execution'
+                   AND NEW.completion_reason IN ('cooked','archive','reopen_planning')))
+          )
+        BEGIN SELECT RAISE(ABORT, 'invalid DishState transition'); END
+        """
+    )
+    membership_pointer_when = """
+        WHEN NOT EXISTS (
+          SELECT 1 FROM task_project_membership_events e
+           WHERE e.membership_event_id=NEW.latest_event_id
+             AND e.generation_id=NEW.generation_id AND e.task_id=NEW.task_id
+             AND e.project_id=NEW.project_id
+             AND e.membership_revision=NEW.membership_revision
+             AND ((e.event_kind='joined' AND NEW.is_member=1)
+               OR (e.event_kind='left' AND NEW.is_member=0))
+        ) BEGIN SELECT RAISE(ABORT, 'current project membership pointer is invalid'); END
+    """
+    for operation in ("INSERT", "UPDATE"):
+        op.execute(
+            f"CREATE TRIGGER current_task_project_memberships_validate_{operation.lower()} "
+            f"BEFORE {operation} ON current_task_project_memberships "
+            f"{membership_pointer_when}"
+        )
+    op.execute(
+        """
+        CREATE TRIGGER verification_inspection_placement_validate
+        BEFORE INSERT ON verification_inspection_occurrences WHEN NOT EXISTS (
+          SELECT 1 FROM dish_mutation_receipts r
+          JOIN dish_states s
+            ON s.generation_id=r.generation_id AND s.task_id=r.task_id
+           WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id
+             AND r.dish_version=NEW.placement_version AND r.placement_changed=1
+             AND s.placement_version=NEW.placement_version
+             AND s.section_id=NEW.section_id
+             AND s.registry_version_id=NEW.registry_version_id
+        ) BEGIN SELECT RAISE(ABORT, 'inspection placement occurrence mismatch'); END
+        """
+    )
+    op.execute("DROP TRIGGER IF EXISTS projection_outbox_events_authority_insert")
+    op.execute(
+        """
+        CREATE TRIGGER projection_outbox_events_authority_insert
+        BEFORE INSERT ON projection_outbox_events WHEN NOT EXISTS (
+          SELECT 1 FROM projection_epochs e
+          JOIN authority_generations g ON g.generation_id=e.generation_id
+          JOIN dish_states h ON h.generation_id=e.generation_id
+            AND h.task_id=NEW.task_id
+           WHERE e.projection_epoch_id=NEW.projection_epoch_id
+             AND e.generation_id=NEW.generation_id
+             AND e.status='active' AND g.status='active'
+        ) OR (NEW.source_route='command' AND NOT EXISTS (
+          SELECT 1 FROM command_executions x
+           WHERE x.execution_id=NEW.command_execution_id
+             AND x.generation_id=NEW.generation_id
+             AND x.task_id=NEW.task_id
+             AND x.status IN ('claimed','committed')
+        )) BEGIN SELECT RAISE(ABORT, 'projection outbox authority mismatch'); END
+        """
+    )
+
+
 def upgrade() -> None:
     _require_empty_authority()
     with op.batch_alter_table("command_executions") as batch:
@@ -530,10 +851,19 @@ def upgrade() -> None:
     _create_downstream_tables()
     if op.get_bind().dialect.name == "postgresql":
         _install_postgresql_guards()
+    else:
+        _install_sqlite_guards()
 
 
 def downgrade() -> None:
     _require_empty_authority()
+    dialect = op.get_bind().dialect.name
+    if dialect == "sqlite":
+        # This trigger lives on projection_outbox_events, so SQLite does not remove it
+        # when dish_states is dropped. Earlier SQLite migrations did not install the
+        # metadata-only predecessor trigger, so removing it restores their exact schema.
+        op.execute("DROP TRIGGER IF EXISTS projection_outbox_events_authority_insert")
+        op.execute("DROP TRIGGER IF EXISTS dish_tasks_creation_provenance_immutable")
     for table in (
         "verification_inspection_occurrences",
         "abandonment_attempts",
@@ -637,7 +967,6 @@ def downgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("generation_id", "task_id"),
     )
-    dialect = op.get_bind().dialect.name
     wanted = {
         "task_execution_fences",
         "verification_inspection_occurrences",

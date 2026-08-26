@@ -11,7 +11,7 @@ from dish_pg import reservation_models as reservations
 from dish_pg import stage5_models as tx
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
-from dish_pg.repositories import RegistryRepository
+from dish_pg.repositories import DishRepository, RegistryRepository, ScalarMutationSource
 from dish_pg.test_generation_rollover import (
     CREATION_REASON,
     TEST_DATABASE_NAME,
@@ -110,6 +110,35 @@ def _install_verification_queue(factory, ids, context) -> uuid.UUID:
             )
         )
         session.flush()
+        states = session.scalars(
+            select(models.DishState)
+            .where(models.DishState.generation_id == context["generation_id"])
+            .order_by(models.DishState.task_id)
+        ).all()
+        for state in states:
+            head = session.get(
+                models.TaskMembershipHead,
+                (context["generation_id"], state.task_id),
+            )
+            assert head is not None
+            mutation = DishRepository(
+                session, uuid_factory=lambda: _next(ids)
+            ).begin_scalar_mutation(
+                generation_id=context["generation_id"],
+                task_id=state.task_id,
+                expected_dish_version=state.dish_version,
+                expected_membership_revision=head.membership_revision,
+                source=ScalarMutationSource(
+                    route="import",
+                    import_run_id=context["import_run_id"],
+                    occurred_at=NOW,
+                ),
+            )
+            mutation.place(
+                section_id=state.section_id,
+                registry_version_id=version_id,
+            )
+            mutation.finalize()
         current.registry_version_id = version_id
         current.registry_activation_id = activation_id
         current.registry_revision = 2

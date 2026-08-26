@@ -29,6 +29,7 @@ from dish_pg.recovery_control import (
 from dish_pg.recovery_rehydration import RecoveryQualificationSpec
 from dish_pg.release import ALEMBIC_HEAD
 from dish_pg.read_model import PostgresReadModel, ReadModelError
+from dish_pg.repositories import DishRepository, ScalarMutationSource
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import (
     MutationAdmissionClosed,
@@ -36,7 +37,7 @@ from dish_pg.workflow import (
     StaleAuthorityError,
     WorkflowAuthorityService,
 )
-from tests.support.postgresql.core import NOW, _bootstrap_registry, _next, core_db
+from tests.support.postgresql.core import HASH_C, NOW, _bootstrap_registry, _next, core_db
 from tests.support.postgresql.workflow import (
     NOW as WORKFLOW_NOW,
     _admit,
@@ -463,6 +464,54 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             session, ids, context, task_id, dish_release=generation.dish_release
         )
         candidate = service._candidate(candidate_id)
+        predecessor_state = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        predecessor_membership_head = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
+        )
+        assert predecessor_state is not None and predecessor_membership_head is not None
+        mutation = DishRepository(
+            session, uuid_factory=lambda: _next(ids)
+        ).begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            expected_dish_version=predecessor_state.dish_version,
+            expected_membership_revision=predecessor_membership_head.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
+                import_run_id=context["import_run_id"],
+                occurred_at=WORKFLOW_NOW + timedelta(minutes=5),
+            ),
+        )
+        mutation.replace_content(
+            title="[ready] Recovery marker replacement",
+            body="Replacement body\n---\nStatus: ready\n",
+            identity_scheme="legacy-sha256-v1",
+            content_identity=HASH_C,
+            contract_binding_id=context["binding_id"],
+            predecessor_content_version_id=predecessor_state.current_content_version_id,
+        )
+        assert mutation.finalize().dish_version == 2
+        session.refresh(predecessor_state)
+        mutation = DishRepository(
+            session, uuid_factory=lambda: _next(ids)
+        ).begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            expected_dish_version=predecessor_state.dish_version,
+            expected_membership_revision=predecessor_membership_head.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
+                import_run_id=context["import_run_id"],
+                occurred_at=WORKFLOW_NOW + timedelta(minutes=6),
+            ),
+        )
+        mutation.place(
+            section_id=predecessor_state.section_id,
+            registry_version_id=predecessor_state.registry_version_id,
+        )
+        assert mutation.finalize().dish_version == 3
         pending_effect_id = ProjectionService(
             session, uuid_factory=lambda: _next(ids)
         )._record_event(
@@ -583,8 +632,8 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
         assert result.task_count == 1
 
         view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
-        assert view.title == "[ready] Exact imported task"
-        assert view.body == "Canonical body\n---\nStatus: ready\n"
+        assert view.title == "[ready] Recovery marker replacement"
+        assert view.body == "Replacement body\n---\nStatus: ready\n"
         assert view.section_id == context["section_id"]
         assert view.completed is False
         successor_state = session.get(
@@ -600,6 +649,27 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             successor_state.placement_version,
             successor_state.completion_version,
         ) == predecessor_identity[1:]
+        successor_receipts = session.scalars(
+            select(models.DishMutationReceipt)
+            .where(
+                models.DishMutationReceipt.generation_id == control.generation_id,
+                models.DishMutationReceipt.task_id == task_id,
+            )
+            .order_by(models.DishMutationReceipt.dish_version)
+        ).all()
+        assert [
+            (
+                receipt.dish_version,
+                receipt.content_changed,
+                receipt.placement_changed,
+                receipt.completion_changed,
+            )
+            for receipt in successor_receipts
+        ] == [
+            (1, False, False, True),
+            (2, True, False, False),
+            (3, False, True, False),
+        ]
 
         predecessor_state = session.get(
             models.DishState, (context["generation_id"], task_id)
@@ -667,7 +737,7 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             ttl=timedelta(minutes=1),
         ) is None
 
-        pre_write_completion_version = successor_state.completion_version
+        pre_write_dish_version = successor_state.dish_version
         port = PostgresCommandPort(
             session, cursor_secret=b"r" * 32, uuid_factory=lambda: _next(ids)
         )
@@ -684,7 +754,7 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             )
         )
         assert read_result.ok is True
-        assert read_result.data["title"] == "[ready] Exact imported task"
+        assert read_result.data["title"] == "[ready] Recovery marker replacement"
 
         def unrelated_request(at, phase):
             return RequestSpec(
@@ -782,7 +852,7 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
         assert updated.completed is False
         assert session.get(
             models.DishState, (control.generation_id, task_id)
-        ).completion_version == pre_write_completion_version + 1
+        ).completion_version == pre_write_dish_version + 1
         obligation = session.scalar(
             select(wf.InvocationAuditObligation).where(
                 wf.InvocationAuditObligation.request_id == qualification_request_id

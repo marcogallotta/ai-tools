@@ -1091,7 +1091,7 @@ class AbandonmentAttempt(Base):
         Uuid, ForeignKey("service_runs.run_id", ondelete="RESTRICT"), nullable=False
     )
     baseline_content_version_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("task_content_versions.content_version_id", ondelete="RESTRICT"), nullable=False
+        Uuid, nullable=False
     )
     baseline_placement_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
@@ -1109,6 +1109,16 @@ class AbandonmentAttempt(Base):
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "baseline_content_version_id"],
+            [
+                "task_content_versions.generation_id",
+                "task_content_versions.task_id",
+                "task_content_versions.content_version_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_abandonment_exact_baseline_content",
+        ),
         ForeignKeyConstraint(
             ["generation_id", "task_id", "baseline_placement_version"],
             [

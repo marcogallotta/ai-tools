@@ -707,6 +707,18 @@ def _predecessor_task_snapshot(session: Session, generation_id: uuid.UUID) -> li
             raise RestoreControlError(
                 f"predecessor scalar receipts are incomplete for task {state.task_id}"
             )
+        sparse_receipts = []
+        for dish_version in sorted(receipt_versions):
+            effects = {
+                "content_changed": dish_version == version.created_dish_version,
+                "placement_changed": dish_version == state.placement_version,
+                "completion_changed": dish_version == state.completion_version,
+            }
+            if not any(effects.values()):
+                raise RestoreControlError(
+                    f"predecessor scalar dish version has no current marker for task {state.task_id}"
+                )
+            sparse_receipts.append({"dish_version": dish_version, **effects})
         memberships = session.scalars(
             select(models.CurrentTaskProjectMembership)
             .where(
@@ -734,15 +746,7 @@ def _predecessor_task_snapshot(session: Session, generation_id: uuid.UUID) -> li
                 "membership_revision": membership_head.membership_revision,
                 "placement_version": state.placement_version,
                 "completion_version": state.completion_version,
-                "receipts": [
-                    {
-                        "dish_version": row.dish_version,
-                        "content_changed": bool(row.content_changed),
-                        "placement_changed": bool(row.placement_changed),
-                        "completion_changed": bool(row.completion_changed),
-                    }
-                    for row in receipts
-                ],
+                "receipts": sparse_receipts,
                 "memberships": [
                     {
                         "project_id": str(row.project_id),
