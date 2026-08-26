@@ -43,9 +43,11 @@ STALE_DEFERRED_RETRY_PHRASES = (
 )
 
 # Wording that would reinstate the retired single-message scope for Marco's `override`.
+# Deliberately specific: a bare "for that message" would false-positive on unrelated wording.
 STALE_SINGLE_MESSAGE_OVERRIDE_PHRASES = (
     "applies only to the message that invokes it",
-    "for that message",
+    "permanent instructions for that message",
+    "arguments/identity exactly for that message",
 )
 
 
@@ -194,62 +196,120 @@ def test_connected_contract_covers_lost_prepare_recovery_and_planning_research_c
     assert "Do not make a third Action call for that logical request" not in action_guide
 
 
+# Every guarantee the live Custom GPT instructions must carry. Each entry is load-bearing:
+# `test_every_required_honest_guarantee_is_load_bearing` deletes it from an otherwise-conforming
+# document and requires the checker to reject the result.
+REQUIRED_HONEST_CONTRACT_PHRASES = (
+    # Same-execution transport retry.
+    "retry in the same assistant/tool execution",
+    "creating real elapsed delay with a local shell/Python sleep",
+    "elapsed time never needs another Marco message or turn",
+    "never ask him to retry what you can",
+    "same run ID, same request ID when present, same command, same arguments",
+    "The first Dish envelope ends retry",
+    "Never blindly retry `BACKEND_UNCERTAIN`",
+    # Persistent Marco override, scoped to agent-side behaviour only.
+    "overrides every conflicting connected-agent instruction",
+    "persists for the rest of the chat until he narrows or withdraws it",
+    "he never repeats it",
+    "add no restriction of your own, such as refusing a representable Asana write",
+    # The Dish-authority boundary that override must never cross.
+    "Override never creates Dish authority or makes an illegal transition legal",
+    "the imported schema and Dish envelope remain authoritative",
+    # Stage continuation.
+    "stable Planning run A",
+    "fresh run B",
+    "different run ID",
+    "no extra Marco turn",
+    "Do not automatically chain into independent Verification",
+)
+
+RETIRED_HONEST_CONTRACT_PHRASES = (
+    *STALE_DEFERRED_RETRY_PHRASES,
+    *STALE_SINGLE_MESSAGE_OVERRIDE_PHRASES,
+    "No third call and no ID rotation",
+    "A completed stage is a stopping point",
+)
+
+
 def _assert_honest_connected_contract(text: str) -> None:
     normalized = " ".join(text.split())
-    for phrase in (
-        "retry in the same assistant/tool execution",
-        "creating real elapsed delay with a local shell/Python sleep",
-        "elapsed time never needs another Marco message or turn",
-        "never ask him to retry what you can",
-        "same run ID, same request ID when present, same command, same arguments",
-        "The first Dish envelope ends retry",
-        "Never blindly retry `BACKEND_UNCERTAIN`",
-        "persists for the rest of the chat until he narrows or withdraws it",
-        "he never repeats it",
-        "add no restriction of your own, such as refusing a representable Asana write",
-        "stable Planning run A",
-        "fresh run B",
-        "different run ID",
-        "no extra Marco turn",
-        "Do not automatically chain into independent Verification",
-    ):
-        assert phrase in normalized
-    for stale in (
-        *STALE_DEFERRED_RETRY_PHRASES,
-        *STALE_SINGLE_MESSAGE_OVERRIDE_PHRASES,
-        "No third call and no ID rotation",
-        "A completed stage is a stopping point",
-    ):
-        assert stale not in normalized
+    for phrase in REQUIRED_HONEST_CONTRACT_PHRASES:
+        assert phrase in normalized, f"live instructions no longer guarantee: {phrase}"
+    for stale in RETIRED_HONEST_CONTRACT_PHRASES:
+        assert stale not in normalized, f"live instructions reinstated retired policy: {stale}"
 
 
 CURRENT_HONEST_CONTRACT_SAMPLE = """
+Marco's standalone `override` overrides every conflicting connected-agent instruction, gate, stop,
+fallback, conservative substitution, and interpretation for that matter, and persists for the rest of
+the chat until he narrows or withdraws it; he never repeats it. Follow his representable Action
+arguments/identity exactly instead of a safer route, and add no restriction of your own, such as
+refusing a representable Asana write. Override never creates Dish authority or makes an illegal
+transition legal; the imported schema and Dish envelope remain authoritative. If Dish rejects it,
+report that rejection.
 On transport/client failure without a Dish envelope, retry in the same assistant/tool execution,
 creating real elapsed delay with a local shell/Python sleep; elapsed time never needs another Marco
 message or turn, and never ask him to retry what you can. Preserve same run ID, same request ID when
 present, same command, same arguments. The first Dish envelope ends retry; obey it. Never blindly
-retry `BACKEND_UNCERTAIN`, rotate IDs, or invent backend state. Marco's standalone `override`
-persists for the rest of the chat until he narrows or withdraws it; he never repeats it, and add no
-restriction of your own, such as refusing a representable Asana write. Keep stable Planning run A,
+retry `BACKEND_UNCERTAIN`, rotate IDs, or invent backend state. Keep stable Planning run A,
 then use fresh run B with a different run ID, no extra Marco turn. Do not automatically chain into
 independent Verification.
 """
 
 
-def test_honest_connected_contract_checker_rejects_retry_policy_reversal():
+def _normalized_sample() -> str:
+    """The sample as the checker sees it: required phrases may span line breaks."""
+    return " ".join(CURRENT_HONEST_CONTRACT_SAMPLE.split())
+
+
+def test_current_honest_contract_sample_conforms():
     _assert_honest_connected_contract(CURRENT_HONEST_CONTRACT_SAMPLE)
 
+
+@pytest.mark.parametrize("phrase", REQUIRED_HONEST_CONTRACT_PHRASES)
+def test_every_required_honest_guarantee_is_load_bearing(phrase):
+    """Deleting any single guarantee must fail the paired drift check.
+
+    This is what makes the checker a real gate rather than a list of phrases that
+    happen to appear in today's wording: a live copy that silently drops the
+    Dish-authority boundary, the override scope qualifier, or any same-execution
+    retry rule cannot pass.
+    """
+    weakened = _normalized_sample().replace(phrase, "")
+    assert weakened != _normalized_sample(), f"sample never contained: {phrase}"
+
+    with pytest.raises(AssertionError):
+        _assert_honest_connected_contract(weakened)
+
+
+def test_honest_connected_contract_checker_rejects_retry_policy_reversal():
     for reversal in (
         "Retry only at a genuinely later opportunity after real elapsed time.",
         "Do not automatically retry again in the same assistant/tool loop.",
-        "Retry only when real elapsed delay cannot be guaranteed otherwise.",
-        "Follow his arguments exactly for that message.",
         "The override applies only to the message that invokes it.",
     ):
         with pytest.raises(AssertionError):
             _assert_honest_connected_contract(
                 CURRENT_HONEST_CONTRACT_SAMPLE + "\n" + reversal + "\n"
             )
+
+
+def test_unqualified_persistent_override_is_rejected():
+    """An override that overrides *every* instruction would swallow Dish's own authority.
+
+    The live file states elsewhere that `data.agent_guidance` and `human_action` must be
+    followed. Dropping the `connected-agent` scope qualifier turns a persistent override
+    into a licence to ignore those, so the checker must reject it.
+    """
+    unqualified = _normalized_sample().replace(
+        "overrides every conflicting connected-agent instruction",
+        "overrides every conflicting instruction",
+    )
+    assert unqualified != _normalized_sample()
+
+    with pytest.raises(AssertionError):
+        _assert_honest_connected_contract(unqualified)
 
 
 def test_honest_connected_contract_matches_when_repo_is_supplied():
