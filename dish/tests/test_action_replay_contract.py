@@ -264,6 +264,13 @@ def _normalized_sample() -> str:
 
 
 def test_current_honest_contract_sample_conforms():
+    normalized = _normalized_sample()
+    missing = [phrase for phrase in REQUIRED_HONEST_CONTRACT_PHRASES if phrase not in normalized]
+    reinstated = [phrase for phrase in RETIRED_HONEST_CONTRACT_PHRASES if phrase in normalized]
+    assert (missing, reinstated) == ([], []), (
+        "the fixture must model a conforming live file so the load-bearing tests below "
+        f"mutate a genuinely passing sample; missing={missing} reinstated={reinstated}"
+    )
     _assert_honest_connected_contract(CURRENT_HONEST_CONTRACT_SAMPLE)
 
 
