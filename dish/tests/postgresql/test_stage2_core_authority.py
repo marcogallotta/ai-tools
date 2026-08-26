@@ -96,6 +96,7 @@ def test_stage2_migration_renders_postgresql_constraints_and_guards() -> None:
     assert "dish_validate_scalar_state" in rendered
     assert "task_content_versions_scalar_source_validate" in rendered
     assert "command_executions_content_binding_guard" in rendered
+    assert "FOR SHARE" in rendered
     assert "CREATE TRIGGER current_task_project_memberships_validate" in rendered
     assert "task_external_aliases_identity_update" in rendered
 

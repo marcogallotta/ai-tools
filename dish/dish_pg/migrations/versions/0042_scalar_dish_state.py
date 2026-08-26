@@ -348,6 +348,15 @@ def _install_postgresql_guards() -> None:
         """
         CREATE OR REPLACE FUNCTION dish_validate_content_creation_receipt()
         RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.creator_route='command_execution' THEN
+            -- Serialize lifetime binding validation against a concurrent non-key
+            -- contract_binding_id update on the exact execution row.
+            PERFORM 1 FROM command_executions e
+             WHERE e.execution_id=NEW.command_execution_id
+               AND e.generation_id=NEW.generation_id
+               AND e.task_id=NEW.task_id
+             FOR SHARE;
+          END IF;
           IF NOT EXISTS (
             SELECT 1
               FROM dish_mutation_receipts r
