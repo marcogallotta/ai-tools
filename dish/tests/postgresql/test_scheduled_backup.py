@@ -66,7 +66,7 @@ def _write_success_report(
         {
             "format": backup.FORMAT,
             "status": "pass" if expected_schema_head == observed_schema_head else "degraded",
-            "ok": True,
+            "ok": expected_schema_head == observed_schema_head,
             "artifact_ok": True,
             "schema_policy": backup._schema_policy(
                 expected_schema_head, observed_schema_head
@@ -370,6 +370,7 @@ def test_run_uses_restore_compatible_custom_archive_and_prunes_only_after_copy(
         "--no-privileges",
     ]
     assert report["backup"]["sha256"] == report["off_device"]["sha256"]
+    assert report["ok"] is True
     assert report["artifact_ok"] is True
     assert report["schema_policy"] == {
         "status": "pass",
@@ -391,6 +392,7 @@ def test_schema_head_mismatch_creates_verified_artifact_and_degraded_health(
     off_root.mkdir()
     config = backup.config_from_environ(env, repo_root=tmp_path)
     local_root = tmp_path / "local"
+    local_root.mkdir()
     calls: list[str] = []
 
     monkeypatch.setattr(
@@ -454,7 +456,7 @@ def test_schema_head_mismatch_creates_verified_artifact_and_degraded_health(
     )
 
     assert calls == ["dump", "verify", "copy", "verify"]
-    assert report["ok"] is True
+    assert report["ok"] is False
     assert report["artifact_ok"] is True
     assert report["status"] == "degraded"
     assert report["schema_policy"] == {
@@ -551,6 +553,40 @@ def test_pre_dump_database_and_schema_gates_remain_fatal(
     )
 
     with pytest.raises(backup.BackupError, match=message):
+        backup.run_backup(
+            config,
+            environ={},
+            now=datetime(2026, 8, 26, tzinfo=timezone.utc),
+            token="deadbeef",
+        )
+
+
+def test_configured_database_identity_mismatch_remains_fatal_before_source_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    env["DISH_PG_EXPECTED_DATABASE_NAME"] = "other_prod"
+    (tmp_path / "off-device").mkdir()
+    config = backup.config_from_environ(env, repo_root=tmp_path)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    monkeypatch.setattr(
+        backup, "_prepare_local_root", lambda config: (local_root, _stat(1))
+    )
+    monkeypatch.setattr(
+        backup,
+        "_prepare_off_device_root",
+        lambda config, *, local_metadata: tmp_path / "off-device",
+    )
+    monkeypatch.setattr(
+        backup,
+        "_query_source_identity",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("source query ran")
+        ),
+    )
+
+    with pytest.raises(backup.BackupError, match="database does not match"):
         backup.run_backup(
             config,
             environ={},

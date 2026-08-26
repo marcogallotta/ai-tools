@@ -546,9 +546,8 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
 
 def _load_backup_report(path: Path) -> dict[str, Any]:
     document = _load_json(path, label="backup report")
-    if document.get("format") != FORMAT or document.get("ok") is not True:
-        raise BackupError(f"backup report is not a successful {FORMAT} report: {path}")
-    if document.get("artifact_ok", True) is not True:
+    artifact_ok = document.get("artifact_ok", document.get("ok"))
+    if document.get("format") != FORMAT or artifact_ok is not True:
         raise BackupError(f"backup report does not describe a successful artifact: {path}")
     _validate_report_sha256(document)
     _report_schema_policy(document)
@@ -808,7 +807,7 @@ def run_backup(
                 {
                     "format": FORMAT,
                     "status": schema_policy["status"],
-                    "ok": True,
+                    "ok": schema_policy["ok"],
                     "artifact_ok": True,
                     "schema_policy": schema_policy,
                     "backup_id": backup_id,
