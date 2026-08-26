@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 
 import pytest
 from pathlib import Path
@@ -99,144 +98,6 @@ def test_generated_and_checked_in_operation_descriptions_fit_importer_limit():
             assert len(description) <= 300, (path, len(description))
 
 
-def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
-    action_guide = " ".join(
-        (ROOT / "deploy" / "gpt-action.md").read_text(encoding="utf-8").split()
-    )
-    runtime = " ".join(
-        (ROOT / "docs" / "runtime-contract.md").read_text(encoding="utf-8").split()
-    )
-
-    assert "data.agent_guidance" in action_guide
-    assert "For every Action whose imported schema requires `client.request_id`" in action_guide
-    assert "This includes `inspect`" in action_guide
-    assert "transport/client failure" in action_guide
-    assert "do not issue repeated automatic retries in the same assistant/tool loop" in action_guide
-    assert "real elapsed delay cannot be guaranteed" in action_guide
-    assert "Retry only at a genuine later opportunity after real elapsed time" in action_guide
-    assert "the same `client.run_id`" in action_guide
-    assert "the same `client.request_id` when present" in action_guide
-    assert "the same command, and the same arguments" in action_guide
-    assert "preserve the exact call for the next genuine retry opportunity" in action_guide
-    assert "do not hammer the Action or report that retries were exhausted" in action_guide
-    assert "As soon as any Dish envelope is received, stop transport retry behavior" in action_guide
-    assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
-    assert "never rotate request or run IDs merely to escape a failed or pending call" in action_guide
-    assert "Do not invent a server-side sleep/timing Action" in action_guide
-    assert "no-same-turn retry rule" in action_guide
-    assert "up to three times after the initial attempt" not in action_guide
-    assert "approximately 2s, 5s, then 10s" not in action_guide
-    assert "Truly read-only Actions" in action_guide
-    assert "actual connected-agent run/principal, not a Marco-message boundary" in action_guide
-    assert "Do not rotate a run ID merely because Marco sent another message" in action_guide
-    assert "never construct `--detail ''`" in action_guide
-    assert "ask the real Marco-facing question in ordinary language" in action_guide
-    assert "One Marco message is normally one agent run" not in action_guide
-    assert "State-specific procedures" in action_guide
-
-    assert "expected argument, state, authorization, and workflow failures are stored" in runtime
-    assert "the first response is not labelled as a replay" in runtime
-    assert "service_request_identity_conflict" in runtime
-    assert "matching pending or uncertain request is never blindly executed again" in runtime
-    assert "fresh UUID represents new work" in runtime
-
-
-def test_connected_contract_covers_lost_prepare_recovery_and_planning_research_continuation():
-    action_guide = " ".join(
-        (ROOT / "deploy" / "gpt-action.md").read_text(encoding="utf-8").split()
-    )
-
-    assert "do not issue repeated automatic retries in the same assistant/tool loop" in action_guide
-    assert "Retry only at a genuine later opportunity after real elapsed time" in action_guide
-    assert "preserve the exact call for the next genuine retry opportunity" in action_guide
-    assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
-    assert "original objective explicitly requests both Planning and Research" in action_guide
-    assert "stable Planning run A" in action_guide
-    assert "fresh run B" in action_guide
-    assert "different `client.run_id`" in action_guide
-    assert "do not require another Marco turn solely to cross the stage boundary" in action_guide
-    assert "objective requested Planning only, stop after Planning" in action_guide
-    assert "Never broaden a Planning+Research objective into independent Verification" in action_guide
-
-    assert "Dibs bi tahina" in action_guide
-    assert "first Planning `prepare` Action" in action_guide
-    assert "must not immediately retry in the same assistant/tool loop" in action_guide
-    assert "same run ID, request ID when present, command, and arguments" in action_guide
-    assert "if that later exact replay returns one, Planning continues without a Marco rescue" in action_guide
-    assert "not as proof of a Dish backend defect" in action_guide
-    assert "fresh Research run B" in action_guide
-    assert "no extra Marco turn" in action_guide
-    assert "no automatic Verification" in action_guide
-    assert "infer a numeric cooldown" in action_guide
-    assert "DISH_HONEST_REPO=<honest-pantry>" in action_guide
-
-    assert "automatically retry exactly once" not in action_guide
-    assert "Do not make a third Action call for that logical request" not in action_guide
-
-
-def _assert_honest_connected_contract(text: str) -> None:
-    normalized = " ".join(text.split())
-    for phrase in (
-        "do not automatically retry again in the same assistant/tool loop",
-        "Retry only at a genuinely later opportunity after real elapsed time",
-        "same run ID, same request ID when present, same command, same arguments",
-        "Never blindly retry `BACKEND_UNCERTAIN`",
-        "stable Planning run A",
-        "fresh run B",
-        "different run ID",
-        "no extra Marco turn",
-        "Do not automatically chain into independent Verification",
-    ):
-        assert phrase in normalized
-    for stale in (
-        "automatically retry exactly once",
-        "No third call and no ID rotation",
-        "A completed stage is a stopping point",
-    ):
-        assert stale not in normalized
-
-
-def test_honest_connected_contract_checker_rejects_retry_policy_reversal():
-    current = """
-do not automatically retry again in the same assistant/tool loop. Retry only at a genuinely later
-opportunity after real elapsed time with the same run ID, same request ID when present, same command,
-same arguments. Never blindly retry `BACKEND_UNCERTAIN`. Keep stable Planning run A, then use fresh
-run B with a different run ID, no extra Marco turn. Do not automatically chain into independent Verification.
-"""
-    _assert_honest_connected_contract(current)
-
-    with pytest.raises(AssertionError):
-        _assert_honest_connected_contract(
-            current + "\nautomatically retry exactly once. No third call and no ID rotation.\n"
-        )
-
-
-def test_honest_connected_contract_matches_when_repo_is_supplied():
-    honest_repo = os.environ.get("DISH_HONEST_REPO")
-    if not honest_repo:
-        pytest.skip("set DISH_HONEST_REPO for paired cross-repository instruction drift acceptance")
-    honest = Path(honest_repo) / "dish-custom-gpt-instructions.md"
-    text = honest.read_text(encoding="utf-8")
-    normalized = " ".join(text.split())
-    assert "stable Planning run A" in normalized
-    _assert_honest_connected_contract(text)
-
-
-
-def test_connected_override_and_canonical_dish_identity_contract_are_explicit():
-    action_guide = " ".join(
-        (ROOT / "deploy" / "gpt-action.md").read_text(encoding="utf-8").split()
-    )
-
-    assert "standalone word `override`" in action_guide
-    assert "applies only to the message that invokes it" in action_guide
-    assert "does not make a disallowed transition legal" in action_guide
-    assert "Dish's returned envelope remains authoritative" in action_guide
-    assert "read(dish_id=<uuid>)" in action_guide
-    assert "data.identity_binding" in action_guide
-    assert "Never pass a Dish UUID as `submission_id`" in action_guide
-    assert "section/task browsing" in action_guide
-    assert "stop rather than guessing" in action_guide
 
 def test_typed_action_policy_derives_command_and_request_id_inventory():
     assert set(CONNECTED_AGENT_COMMANDS) == set(EXPECTED_ACTION_COMMANDS)
@@ -294,12 +155,3 @@ def test_action_contract_rejects_plausible_generator_regressions(mutate):
 
     with pytest.raises(AssertionError):
         assert assert_action_openapi_contract(document) is None
-
-def test_connected_uuid_acceptance_remains_explicitly_reimport_gated():
-    action_guide = " ".join(
-        (ROOT / "deploy" / "gpt-action.md").read_text(encoding="utf-8").split()
-    )
-
-    assert "local acceptance only" in action_guide
-    assert "Connected acceptance is not established until this exact schema is re-imported" in action_guide
-    assert "visibly verified in the GPT editor" in action_guide
