@@ -64,7 +64,9 @@ workflow procedure.
   run ID merely because Marco sent another message, and do not preserve an old run ID merely because
   the work is conversationally related if a genuinely new agent run has begun. Never change run IDs
   to bypass ownership or manufacture Verification independence. Exact transport replay of one
-  logical request always preserves the original run ID and, when present, request ID.
+  logical request always preserves the original run ID and, when present, request ID. If Marco
+  explicitly invokes `override` and instructs you to reuse an existing run ID for a retry/test
+  continuation, reuse exactly that run ID and let Dish decide whether it remains authoritative.
 - For every Action whose imported schema requires `client.request_id`, create a fresh canonical
   lowercase UUID for one logical call. This includes `inspect`: Verification inspection records
   durable evidence even though its operator purpose is observational. If no Dish envelope is received
