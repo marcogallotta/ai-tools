@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Agent Forks</title>
+  <style>
+    :root { color-scheme: dark; font: 14px/1.4 system-ui; background:#101214; color:#e9eef2 }
+    * { box-sizing:border-box } body { margin:0 } button,input,textarea { font:inherit }
+    header { display:flex; gap:10px; align-items:center; padding:12px; border-bottom:1px solid #343a40 }
+    button { background:#27313a; color:inherit; border:1px solid #4d5a65; border-radius:4px; padding:6px 10px; cursor:pointer }
+    button:hover { background:#35434e } button.danger { color:#ffb1b1 }
+    #layout { display:grid; grid-template-columns:250px 1fr 360px; height:calc(100vh - 58px) }
+    aside,main { overflow:auto; padding:12px } aside { border-right:1px solid #343a40 } #compare { border-left:1px solid #343a40 }
+    .branch { margin:4px 0; padding:7px; border-radius:4px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+    .branch:hover,.branch.active { background:#24313a } .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#7d8790; margin-right:6px }
+    .running .dot { background:#50d890; box-shadow:0 0 8px #50d890 } .tree-1 { margin-left:16px } .tree-2 { margin-left:32px } .tree-3 { margin-left:48px }
+    #agentHead { display:flex; align-items:center; gap:10px; position:sticky; top:-12px; background:#101214; padding:8px 0; z-index:1 }
+    #agentHead h2 { margin:0; flex:1 } .message { max-width:80%; padding:9px; margin:8px 0; border-radius:6px; white-space:pre-wrap }
+    .user { margin-left:auto; background:#264361 } .assistant { background:#252a2f } .meta { font-size:11px; opacity:.65; margin-bottom:3px }
+    .fork { float:right; padding:1px 5px; font-size:11px } #composer { display:flex; gap:8px; margin-top:12px }
+    textarea,input { background:#171b1f; color:inherit; border:1px solid #48525b; border-radius:4px; padding:8px }
+    textarea { flex:1; min-height:68px; resize:vertical } .stack { display:flex; flex-direction:column; gap:6px }
+    .compare-card { background:#1b2024; border:1px solid #343a40; padding:9px; margin:8px 0; border-radius:4px; white-space:pre-wrap }
+    .empty { opacity:.55; padding:30px 0; text-align:center } label { display:block; margin:5px 0 }
+    @media(max-width:850px){ #layout{grid-template-columns:190px 1fr} #compare{display:none} }
+  </style>
+</head>
+<body>
+<header><strong>Agent Forks</strong><button onclick="newBranch()">New conversation</button><span id="status"></span></header>
+<div id="layout">
+  <aside><div id="tree"></div></aside>
+  <main>
+    <div id="agentHead"><h2 id="title">Select an agent</h2><button id="stop" class="danger" hidden>Stop</button></div>
+    <div id="messages" class="empty">Create or select a conversation.</div>
+    <div id="composer" hidden><textarea id="input" placeholder="Message this agent"></textarea><div class="stack"><button onclick="send(false)">Send</button><button onclick="send(true)">Redirect</button></div></div>
+  </main>
+  <aside id="compare"><strong>Compare latest outputs</strong><div id="checks"></div><button onclick="compare()">Compare selected</button><div id="comparison"></div></aside>
+</div>
+<script>
+let state={branches:[]}, selected=null;
+const $=id=>document.getElementById(id);
+async function api(path,body){
+  const response=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  const data=await response.json(); if(!response.ok) throw Error(data.error||response.statusText); return data;
+}
+function depth(branch){let n=0,p=branch; while(p&&p.parent_id){n++;p=state.branches.find(x=>x.id===p.parent_id)} return Math.min(n,3)}
+function esc(text){const d=document.createElement('div');d.textContent=text;return d.innerHTML}
+function render(){
+  const children=id=>state.branches.filter(b=>b.parent_id===id);
+  const checked=new Set([...document.querySelectorAll('[name=cmp]:checked')].map(x=>x.value));
+  const rows=[]; function walk(branch){rows.push(`<div class="branch ${branch.status} ${selected===branch.id?'active':''} tree-${depth(branch)}" onclick="selectBranch('${branch.id}')"><span class="dot"></span>${esc(branch.name)}</div>`);children(branch.id).forEach(walk)}
+  children(null).forEach(walk); $('tree').innerHTML=rows.join('')||'<div class="empty">No agents</div>';
+  $('checks').innerHTML=state.branches.map(b=>`<label><input type="checkbox" name="cmp" value="${b.id}" ${checked.has(b.id)?'checked':''}> ${esc(b.name)}</label>`).join('');
+  const branch=state.branches.find(b=>b.id===selected); $('composer').hidden=!branch; $('stop').hidden=!branch;
+  if(!branch){$('title').textContent='Select an agent';return}
+  $('title').textContent=`${branch.name} · ${branch.status}`;
+  $('messages').className=''; $('messages').innerHTML=branch.messages.map(m=>`<div class="message ${m.role}"><button class="fork" onclick="forkAt('${m.id}')">fork</button><div class="meta">${m.role}</div>${esc(m.text)}</div>`).join('')||'<div class="empty">Send the first message.</div>';
+  $('messages').scrollIntoView({block:'end'});
+}
+async function refresh(){try{state=await api('/api/state');if(selected&&!state.branches.some(b=>b.id===selected))selected=null;render();$('status').textContent=''}catch(e){$('status').textContent=e.message}}
+function selectBranch(id){selected=id;render()}
+async function newBranch(){const name=prompt('Agent name','Agent '+(state.branches.length+1));if(!name)return;const promptText=prompt('Optional system prompt','')||'';const b=await api('/api/branches',{name,prompt:promptText});selected=b.id;await refresh()}
+async function forkAt(messageId){const parent=state.branches.find(b=>b.id===selected);const name=prompt('Fork name',parent.name+' fork');if(!name)return;const b=await api(`/api/branches/${selected}/fork`,{message_id:messageId,name});selected=b.id;await refresh()}
+async function send(redirect){const text=$('input').value.trim();if(!text||!selected)return;$('input').value='';await api(`/api/branches/${selected}/${redirect?'redirect':'messages'}`,{text});await refresh()}
+$('stop').onclick=async()=>{await api(`/api/branches/${selected}/stop`,{});await refresh()};
+async function compare(){const ids=[...document.querySelectorAll('[name=cmp]:checked')].map(x=>x.value);const out=await api('/api/compare',{branch_ids:ids});$('comparison').innerHTML=out.map(x=>`<div class="compare-card"><strong>${esc(x.name)}</strong>\n${esc(x.output||'(no output)')}</div>`).join('')}
+$('input').addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter')send(false)});
+refresh();setInterval(refresh,700);
+</script>
+</body>
+</html>
