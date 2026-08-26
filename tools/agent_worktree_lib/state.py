@@ -277,9 +277,24 @@ def validate_agent_state(agent_id: str | None) -> dict[str, Any] | None:
 
 
 
-DEVELOPMENT_WORKFLOW_PROJECT_GID = "1217419962189616"
-DEVELOPMENT_WORKFLOW_PROJECT_NAME = "Dish — Development Workflow v2"
-IMPLEMENTATION_TASK_SECTIONS = {"Under Development"}
+# Every project a standing Dish role may own repository Implementation work from, per
+# dish/docs/agents/asana-v2-project-mode.md's registry and dish/docs/agents/workflow.md.
+# Each entry's `sections` are that project's own shape-specific names for "execution has
+# actually accepted or begun the work", including continuing an already-published PR (a
+# CI fix or Review-BLOCK fix round stays on the existing PR lineage per
+# dish/docs/agents/implementation.md rather than moving the task back a section).
+REPOSITORY_MUTATION_OWNING_PROJECTS = (
+    {
+        "gid": "1217419962189616",
+        "name": "Dish — Development Workflow v2",
+        "sections": {"Under Development"},
+    },
+    {
+        "gid": "1217381674871544",
+        "name": "Dish — Workflow",
+        "sections": {"In Progress", "Review / Integration"},
+    },
+)
 
 
 def _live_repository_mutation_task(task_gid: str) -> dict[str, Any]:
@@ -320,27 +335,28 @@ def _live_repository_mutation_task(task_gid: str) -> dict[str, Any]:
         fail("MUTATION_TASK_AUTHORITY_INVALID", "live task authority does not match the requested task")
     if bool(task.get("completed")):
         fail("MUTATION_TASK_MODE_BLOCKED", "completed task does not permit repository Implementation")
+    owning_gids = {entry["gid"] for entry in REPOSITORY_MUTATION_OWNING_PROJECTS}
     matches = []
     for membership in task.get("memberships") or []:
         if not isinstance(membership, dict):
             continue
         project = membership.get("project")
         section = membership.get("section")
-        if (
-            isinstance(project, dict)
-            and str(project.get("gid") or "") == DEVELOPMENT_WORKFLOW_PROJECT_GID
-        ):
+        if isinstance(project, dict) and str(project.get("gid") or "") in owning_gids:
             matches.append((project, section))
     if len(matches) != 1:
         fail(
             "MUTATION_TASK_AUTHORITY_INVALID",
-            "task must have exactly one current Development Workflow membership",
+            "task must have exactly one current repository-mutation-owning project membership",
         )
     project, section = matches[0]
-    if str(project.get("name") or "") != DEVELOPMENT_WORKFLOW_PROJECT_NAME:
-        fail("MUTATION_TASK_AUTHORITY_INVALID", "Development Workflow project identity is contradictory")
+    owning_entry = next(
+        entry for entry in REPOSITORY_MUTATION_OWNING_PROJECTS if entry["gid"] == str(project.get("gid") or "")
+    )
+    if str(project.get("name") or "") != owning_entry["name"]:
+        fail("MUTATION_TASK_AUTHORITY_INVALID", "owning project identity is contradictory")
     section_name = str(section.get("name") or "").strip() if isinstance(section, dict) else ""
-    if section_name not in IMPLEMENTATION_TASK_SECTIONS:
+    if section_name not in owning_entry["sections"]:
         fail(
             "MUTATION_TASK_MODE_BLOCKED",
             f"current task mode {section_name or 'unknown'!r} does not permit repository Implementation",
