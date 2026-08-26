@@ -1398,6 +1398,23 @@ def _install_sqlite_occurrence_validation_triggers() -> None:
     )
 
 
+def _install_sqlite_command_content_binding_guard() -> None:
+    execution = Base.metadata.tables["command_executions"]
+    event.listen(
+        execution,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER command_executions_content_binding_guard "
+            "BEFORE UPDATE OF contract_binding_id ON command_executions "
+            "WHEN EXISTS (SELECT 1 FROM task_content_versions cv "
+            "WHERE cv.command_execution_id=OLD.execution_id "
+            "AND cv.contract_binding_id<>NEW.contract_binding_id) "
+            "BEGIN SELECT RAISE(ABORT, 'command content binding is immutable'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+
+
 _install_sqlite_stage3_immutability_triggers()
 _install_sqlite_import_provenance_triggers()
 _install_sqlite_occurrence_validation_triggers()
+_install_sqlite_command_content_binding_guard()

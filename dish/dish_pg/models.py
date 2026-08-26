@@ -1019,7 +1019,15 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "AND r.command_execution_id IS NEW.command_execution_id AND EXISTS ("
             "SELECT 1 FROM command_executions ce WHERE ce.execution_id=NEW.command_execution_id "
             "AND ce.generation_id=NEW.generation_id AND ce.task_id=NEW.task_id "
-            "AND ce.contract_binding_id=NEW.contract_binding_id)))) "
+            "AND ce.contract_binding_id=NEW.contract_binding_id))) "
+            "AND (NEW.created_dish_version<>1 OR EXISTS ("
+            "SELECT 1 FROM authority_generations g WHERE g.generation_id=NEW.generation_id "
+            "AND g.creation_reason IN ('destructive_restore','test_fixture_recovery')) OR EXISTS ("
+            "SELECT 1 FROM dish_tasks t WHERE t.task_id=NEW.task_id AND ("
+            "(t.creation_route='import' AND NEW.creator_route='import' "
+            "AND t.import_run_id IS NEW.import_run_id) OR "
+            "(t.creation_route='create' AND NEW.creator_route='command_execution' "
+            "AND t.command_execution_id IS NEW.command_execution_id))))) "
             "BEGIN SELECT RAISE(ABORT, 'content creation receipt mismatch'); END"
         ).execute_if(dialect="sqlite"),
     )

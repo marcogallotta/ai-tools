@@ -95,6 +95,7 @@ def test_stage2_migration_renders_postgresql_constraints_and_guards() -> None:
     assert "dish_validate_active_registry_pointer" in rendered
     assert "dish_validate_scalar_state" in rendered
     assert "task_content_versions_scalar_source_validate" in rendered
+    assert "command_executions_content_binding_guard" in rendered
     assert "CREATE TRIGGER current_task_project_memberships_validate" in rendered
     assert "task_external_aliases_identity_update" in rendered
 
@@ -126,6 +127,7 @@ def test_stage2_alembic_upgrade_reaches_head_from_empty_database(tmp_path: Path)
                         "OR name LIKE 'task_content_versions_%' "
                         "OR name LIKE 'verification_inspection_%' "
                         "OR name='dish_tasks_creation_provenance_immutable' "
+                        "OR name='command_executions_content_binding_guard' "
                         "OR name='projection_outbox_events_authority_insert' "
                         "OR name LIKE 'current_task_project_memberships_validate_%')"
                     )
@@ -146,6 +148,7 @@ def test_stage2_alembic_upgrade_reaches_head_from_empty_database(tmp_path: Path)
             "task_content_versions_immutable_delete",
             "verification_inspection_placement_validate",
             "dish_tasks_creation_provenance_immutable",
+            "command_executions_content_binding_guard",
             "projection_outbox_events_authority_insert",
             "current_task_project_memberships_validate_insert",
             "current_task_project_memberships_validate_update",
@@ -318,6 +321,76 @@ def test_ordinary_initial_scalar_authority_must_use_v1_all_domain_receipt(core_d
             session.flush()
 
 
+def test_initial_v1_content_source_must_match_dish_creation_source(core_db) -> None:
+    factory, ids = core_db
+    with pytest.raises(IntegrityError, match="content creation receipt mismatch"):
+        with session_scope(factory) as session:
+            context = _bootstrap_registry(session, ids)
+            other_import_run_id = _next(ids)
+            session.add(
+                models.ImportRun(
+                    import_run_id=other_import_run_id,
+                    source_commit="42619b9",
+                    source_release="dish-42619b9",
+                    legacy_generation_id="legacy-mismatched-source",
+                    baseline_high_water_mark="asana-event-mismatched-source",
+                    source_bundle_sha256="d" * 64,
+                    status="complete",
+                    started_at=NOW,
+                    completed_at=NOW,
+                    provenance={"fixture": "mismatched-source"},
+                )
+            )
+            task_id = _next(ids)
+            session.add(
+                models.DishTask(
+                    task_id=task_id,
+                    existence_state="ordinary",
+                    creation_route="import",
+                    import_run_id=context["import_run_id"],
+                    command_execution_id=None,
+                    created_at=NOW,
+                    retired_at=None,
+                )
+            )
+            session.flush()
+            session.add(
+                models.DishMutationReceipt(
+                    generation_id=context["generation_id"],
+                    task_id=task_id,
+                    dish_version=1,
+                    source_route="import",
+                    import_run_id=other_import_run_id,
+                    command_execution_id=None,
+                    content_changed=True,
+                    placement_changed=True,
+                    completion_changed=True,
+                    occurred_at=NOW,
+                )
+            )
+            session.flush()
+            session.add(
+                models.ContentVersion(
+                    content_version_id=_next(ids),
+                    generation_id=context["generation_id"],
+                    task_id=task_id,
+                    representation_kind="document",
+                    title="Mismatched initial source",
+                    body="Mismatched initial source\n---\nStatus: ready\n",
+                    identity_scheme="legacy-sha256-v1",
+                    content_identity="e" * 64,
+                    creator_route="import",
+                    import_run_id=other_import_run_id,
+                    command_execution_id=None,
+                    predecessor_content_version_id=None,
+                    contract_binding_id=context["binding_id"],
+                    created_dish_version=1,
+                    created_at=NOW,
+                )
+            )
+            session.flush()
+
+
 def test_current_membership_pointer_must_match_exact_event(core_db) -> None:
     factory, ids = core_db
     with pytest.raises(IntegrityError, match="current project membership pointer is invalid"):
@@ -454,6 +527,120 @@ def test_command_content_binding_must_match_its_execution(core_db) -> None:
                     created_at=NOW,
                 )
             )
+            session.flush()
+
+
+def test_command_content_binding_cannot_drift_after_insert(core_db) -> None:
+    factory, ids = core_db
+    with pytest.raises(IntegrityError, match="command content binding is immutable"):
+        with session_scope(factory) as session:
+            context = _bootstrap_registry(session, ids)
+            imported = _import_one(session, ids, context)
+            state = session.get(
+                models.DishState, (context["generation_id"], imported.task_id)
+            )
+            head = session.get(
+                models.TaskMembershipHead,
+                (context["generation_id"], imported.task_id),
+            )
+            assert state is not None and head is not None
+            replacement_binding_id = _next(ids)
+            ContractBindingRepository(session).add(
+                models.HonestContractBinding(
+                    binding_id=replacement_binding_id,
+                    binding_kind="task_schema",
+                    source_identity="honest-pantry@binding-drift",
+                    dish_release="dish-42619b9",
+                    honest_release="honest-1",
+                    protocol_release="protocol-1",
+                    protocol_sha256="d" * 64,
+                    schema_release="schema-binding-drift",
+                    schema_sha256="e" * 64,
+                    migration_id=None,
+                    source_schema_version=None,
+                    target_schema_version=None,
+                    migration_metadata_sha256=None,
+                    source_ids={"fixture": "binding-drift"},
+                    provenance={"fixture": True},
+                    resolved_at=NOW,
+                )
+            )
+            run_id, request_id, execution_id = _next(ids), _next(ids), _next(ids)
+            session.add(
+                wf.ServiceRun(
+                    run_id=run_id,
+                    generation_id=context["generation_id"],
+                    owner_id="binding-drift-test",
+                    agent="service",
+                    capability_digest=b"b" * 32,
+                    bootstrap_id=None,
+                    status="active",
+                    registered_at=NOW,
+                    retired_at=None,
+                )
+            )
+            session.flush()
+            session.add(
+                wf.ServiceRequest(
+                    request_id=request_id,
+                    generation_id=context["generation_id"],
+                    run_id=run_id,
+                    owner_id="binding-drift-test",
+                    principal_class="service",
+                    command_name="binding-drift-test",
+                    canonical_payload_sha256="f" * 64,
+                    canonical_payload={"fixture": "binding-drift"},
+                    protocol_release="protocol-1",
+                    dish_release="dish-42619b9",
+                    admitted_at=NOW,
+                )
+            )
+            session.flush()
+            execution = wf.CommandExecution(
+                execution_id=execution_id,
+                generation_id=context["generation_id"],
+                request_id=request_id,
+                task_id=imported.task_id,
+                operation_id=None,
+                command_name="binding-drift-test",
+                transaction_profile="L",
+                canonical_intent={"fixture": "binding-drift"},
+                pinned_inputs={"now": NOW.isoformat()},
+                contract_binding_id=context["binding_id"],
+                status="pending",
+                claim_owner=None,
+                claim_token=None,
+                claim_expires_at=None,
+                execution_revision=1,
+                admitted_at=NOW,
+                terminal_at=None,
+            )
+            session.add(execution)
+            session.flush()
+            mutation = DishRepository(
+                session, uuid_factory=lambda: _next(ids)
+            ).begin_scalar_mutation(
+                generation_id=context["generation_id"],
+                task_id=imported.task_id,
+                expected_dish_version=state.dish_version,
+                expected_membership_revision=head.membership_revision,
+                source=ScalarMutationSource(
+                    route="command_execution",
+                    command_execution_id=execution_id,
+                    occurred_at=NOW + timedelta(seconds=1),
+                ),
+            )
+            mutation.replace_content(
+                title="Binding-stable content",
+                body="Binding-stable content\n---\nStatus: ready\n",
+                identity_scheme="legacy-sha256-v1",
+                content_identity="f" * 64,
+                contract_binding_id=context["binding_id"],
+                predecessor_content_version_id=state.current_content_version_id,
+            )
+            mutation.finalize()
+            session.flush()
+            execution.contract_binding_id = replacement_binding_id
             session.flush()
 
 

@@ -365,6 +365,19 @@ def _install_postgresql_guards() -> None:
                      AND NEW.creator_route='command_execution'
                      AND r.command_execution_id=NEW.command_execution_id
                      AND e.contract_binding_id=NEW.contract_binding_id))
+               AND (NEW.created_dish_version <> 1
+                 OR EXISTS (
+                   SELECT 1 FROM authority_generations g
+                    WHERE g.generation_id=NEW.generation_id
+                      AND g.creation_reason IN ('destructive_restore','test_fixture_recovery'))
+                 OR EXISTS (
+                   SELECT 1 FROM dish_tasks t
+                    WHERE t.task_id=NEW.task_id
+                      AND ((t.creation_route='import' AND NEW.creator_route='import'
+                            AND t.import_run_id=NEW.import_run_id)
+                        OR (t.creation_route='create'
+                            AND NEW.creator_route='command_execution'
+                            AND t.command_execution_id=NEW.command_execution_id))))
           ) THEN
             RAISE EXCEPTION 'content creation receipt mismatch';
           END IF;
@@ -376,6 +389,24 @@ def _install_postgresql_guards() -> None:
         "CREATE CONSTRAINT TRIGGER task_content_versions_scalar_source_validate "
         "AFTER INSERT ON task_content_versions DEFERRABLE INITIALLY DEFERRED "
         "FOR EACH ROW EXECUTE FUNCTION dish_validate_content_creation_receipt()"
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION dish_validate_command_content_binding_change()
+        RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+          IF EXISTS (
+            SELECT 1 FROM task_content_versions cv
+             WHERE cv.command_execution_id=OLD.execution_id
+               AND cv.contract_binding_id IS DISTINCT FROM NEW.contract_binding_id
+          ) THEN RAISE EXCEPTION 'command content binding is immutable'; END IF;
+          RETURN NEW;
+        END; $$
+        """
+    )
+    op.execute(
+        "CREATE TRIGGER command_executions_content_binding_guard "
+        "BEFORE UPDATE OF contract_binding_id ON command_executions "
+        "FOR EACH ROW EXECUTE FUNCTION dish_validate_command_content_binding_change()"
     )
     op.execute(
         """
@@ -564,6 +595,16 @@ def _install_sqlite_guards() -> None:
         "BEFORE UPDATE OF task_id, creation_route, import_run_id, command_execution_id, created_at "
         "ON dish_tasks BEGIN SELECT RAISE(ABORT, 'DishTask creation provenance is immutable'); END"
     )
+    op.execute(
+        """
+        CREATE TRIGGER command_executions_content_binding_guard
+        BEFORE UPDATE OF contract_binding_id ON command_executions WHEN EXISTS (
+          SELECT 1 FROM task_content_versions cv
+           WHERE cv.command_execution_id=OLD.execution_id
+             AND cv.contract_binding_id<>NEW.contract_binding_id
+        ) BEGIN SELECT RAISE(ABORT, 'command content binding is immutable'); END
+        """
+    )
     for table in ("dish_states", "task_membership_heads"):
         op.execute(
             f"CREATE TRIGGER {table}_identity_immutable BEFORE UPDATE OF generation_id, task_id "
@@ -593,6 +634,18 @@ def _install_sqlite_guards() -> None:
                         AND ce.generation_id=NEW.generation_id
                         AND ce.task_id=NEW.task_id
                         AND ce.contract_binding_id=NEW.contract_binding_id)))
+             AND (NEW.created_dish_version<>1 OR EXISTS (
+               SELECT 1 FROM authority_generations g
+                WHERE g.generation_id=NEW.generation_id
+                  AND g.creation_reason IN ('destructive_restore','test_fixture_recovery')
+             ) OR EXISTS (
+               SELECT 1 FROM dish_tasks t WHERE t.task_id=NEW.task_id
+                 AND ((t.creation_route='import' AND NEW.creator_route='import'
+                       AND t.import_run_id IS NEW.import_run_id)
+                   OR (t.creation_route='create'
+                       AND NEW.creator_route='command_execution'
+                       AND t.command_execution_id IS NEW.command_execution_id))
+             ))
         ) BEGIN SELECT RAISE(ABORT, 'content creation receipt mismatch'); END
         """
     )
@@ -864,6 +917,11 @@ def downgrade() -> None:
         # metadata-only predecessor trigger, so removing it restores their exact schema.
         op.execute("DROP TRIGGER IF EXISTS projection_outbox_events_authority_insert")
         op.execute("DROP TRIGGER IF EXISTS dish_tasks_creation_provenance_immutable")
+        op.execute("DROP TRIGGER IF EXISTS command_executions_content_binding_guard")
+    else:
+        op.execute(
+            "DROP FUNCTION IF EXISTS dish_validate_command_content_binding_change() CASCADE"
+        )
     for table in (
         "verification_inspection_occurrences",
         "abandonment_attempts",
