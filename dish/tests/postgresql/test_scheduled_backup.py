@@ -44,6 +44,8 @@ def _write_success_report(
     backup_id: str,
     completed_at: datetime,
     payload: bytes = b"archive",
+    expected_schema_head: str = "0038_head",
+    observed_schema_head: str = "0038_head",
 ) -> tuple[Path, dict[str, object]]:
     report_dir = local_root / backup_id
     report_dir.mkdir(parents=True)
@@ -63,8 +65,12 @@ def _write_success_report(
     report = backup._with_report_sha256(
         {
             "format": backup.FORMAT,
-            "status": "pass",
+            "status": "pass" if expected_schema_head == observed_schema_head else "degraded",
             "ok": True,
+            "artifact_ok": True,
+            "schema_policy": backup._schema_policy(
+                expected_schema_head, observed_schema_head
+            ),
             "backup_id": backup_id,
             "started_at": backup._timestamp(completed_at),
             "completed_at": backup._timestamp(completed_at),
@@ -72,7 +78,7 @@ def _write_success_report(
             "database": {
                 "name": "dish_prod",
                 "server_version_num": "170010",
-                "schema_head": "0038_head",
+                "schema_head": observed_schema_head,
                 "public_table_count": 100,
                 "database_url_env": "DISH_PG_DATABASE_URL",
             },
@@ -364,8 +370,230 @@ def test_run_uses_restore_compatible_custom_archive_and_prunes_only_after_copy(
         "--no-privileges",
     ]
     assert report["backup"]["sha256"] == report["off_device"]["sha256"]
+    assert report["artifact_ok"] is True
+    assert report["schema_policy"] == {
+        "status": "pass",
+        "ok": True,
+        "expected_head": "0038_head",
+        "observed_head": "0038_head",
+        "schema_match": True,
+    }
     assert Path(report["backup"]["path"]).exists()
     assert Path(report["off_device"]["path"]).exists()
+
+
+def test_schema_head_mismatch_creates_verified_artifact_and_degraded_health(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    env["DISH_PG_EXPECTED_SCHEMA_HEAD"] = "0040_no_asana_post_burn"
+    off_root = tmp_path / "off-device"
+    off_root.mkdir()
+    config = backup.config_from_environ(env, repo_root=tmp_path)
+    local_root = tmp_path / "local"
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        backup, "_prepare_local_root", lambda config: (local_root, _stat(1))
+    )
+    monkeypatch.setattr(
+        backup,
+        "_prepare_off_device_root",
+        lambda config, *, local_metadata: off_root,
+    )
+    monkeypatch.setattr(
+        backup,
+        "_query_source_identity",
+        lambda *args, **kwargs: (
+            "dish_prod",
+            "170010",
+            100,
+            "0041_test_generation_rollover",
+        ),
+    )
+    monkeypatch.setattr(backup, "_git_head", lambda *args, **kwargs: "a" * 40)
+    monkeypatch.setattr(backup, "_tool_version", lambda binary, env: f"{binary} 17")
+
+    def fake_run(
+        command: list[object], *, env: dict[str, str]
+    ) -> subprocess.CompletedProcess[str]:
+        if str(command[0]) == "pg_dump":
+            calls.append("dump")
+            Path(command[command.index("--file") + 1]).write_bytes(b"PGDMP-archive")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if str(command[0]) == "pg_restore" and "--list" in command:
+            calls.append("verify")
+            return subprocess.CompletedProcess(command, 0, stdout="TOC\n", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(backup, "_run", fake_run)
+
+    def fake_copy(
+        source: Path,
+        *,
+        off_device_root: Path,
+        backup_id: str,
+        expected_sha256: str,
+        allow_same_device: bool = False,
+    ) -> tuple[Path, Path]:
+        calls.append("copy")
+        target = off_device_root / f"{backup_id}.dump"
+        target.write_bytes(source.read_bytes())
+        checksum = off_device_root / f"{backup_id}.dump.sha256"
+        checksum.write_text(
+            backup._checksum_sidecar(expected_sha256, target.name), encoding="utf-8"
+        )
+        return target, checksum
+
+    monkeypatch.setattr(backup, "_copy_off_device", fake_copy)
+    monkeypatch.setattr(backup, "_prune_retention", lambda **kwargs: [])
+
+    completed = datetime(2026, 8, 26, 8, 0, tzinfo=timezone.utc)
+    report = backup.run_backup(
+        config, environ={}, now=completed, token="deadbeef"
+    )
+
+    assert calls == ["dump", "verify", "copy", "verify"]
+    assert report["ok"] is True
+    assert report["artifact_ok"] is True
+    assert report["status"] == "degraded"
+    assert report["schema_policy"] == {
+        "status": "degraded",
+        "ok": False,
+        "expected_head": "0040_no_asana_post_burn",
+        "observed_head": "0041_test_generation_rollover",
+        "schema_match": False,
+    }
+    assert Path(report["backup"]["path"]).exists()
+    assert Path(report["off_device"]["path"]).exists()
+    attempt = json.loads((local_root / "last-attempt.json").read_text(encoding="utf-8"))
+    assert attempt["ok"] is True
+
+    monkeypatch.setattr(backup, "_prepare_roots", lambda config: (local_root, off_root))
+    real_regular = backup._regular_file
+
+    def regular(path: Path, *, label: str) -> SimpleNamespace:
+        metadata = real_regular(path, label=label)
+        device = 2 if path.parent == off_root else 1
+        return SimpleNamespace(st_dev=device, st_size=metadata.st_size, st_mode=metadata.st_mode)
+
+    monkeypatch.setattr(backup, "_regular_file", regular)
+    health = backup.health(config, now=completed + timedelta(hours=1))
+
+    assert health["ok"] is False
+    assert health["status"] == "degraded"
+    assert health["artifact_ok"] is True
+    assert health["artifact_fresh"] is True
+    assert health["schema_policy_ok"] is False
+    assert health["schema_policy"] == report["schema_policy"]
+    assert "verified artifact remains usable" in health["error"]
+
+
+def test_run_command_returns_failure_signal_for_degraded_schema_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = _config(tmp_path)
+    report = {
+        "ok": True,
+        "artifact_ok": True,
+        "backup_id": "20260826T080000Z-deadbeef",
+        "completed_at": "2026-08-26T08:00:00Z",
+        "backup": {"sha256": "a" * 64},
+        "off_device": {"path": "/off/backup.dump"},
+        "database": {"schema_head": "0041_test_generation_rollover"},
+        "schema_policy": backup._schema_policy(
+            "0040_no_asana_post_burn", "0041_test_generation_rollover"
+        ),
+    }
+    monkeypatch.setattr(backup, "config_from_environ", lambda **kwargs: config)
+    monkeypatch.setattr(backup, "run_backup", lambda config: report)
+
+    assert backup.main(["run"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["ok"] is False
+    assert output["artifact_ok"] is True
+    assert output["status"] == "degraded"
+    assert output["schema_policy"]["schema_match"] is False
+
+
+@pytest.mark.parametrize(
+    ("source_identity", "message"),
+    [
+        (("wrong_database", "170010", 100, "0038_head"), "connected database"),
+        (("dish_prod", "170010", 0, "0038_head"), "public schema has no tables"),
+    ],
+)
+def test_pre_dump_database_and_schema_gates_remain_fatal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_identity: tuple[str, str, int, str],
+    message: str,
+) -> None:
+    config = _config(tmp_path)
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off-device"
+    local_root.mkdir(exist_ok=True)
+    monkeypatch.setattr(
+        backup, "_prepare_local_root", lambda config: (local_root, _stat(1))
+    )
+    monkeypatch.setattr(
+        backup,
+        "_prepare_off_device_root",
+        lambda config, *, local_metadata: off_root,
+    )
+    monkeypatch.setattr(
+        backup, "_query_source_identity", lambda *args, **kwargs: source_identity
+    )
+    monkeypatch.setattr(
+        backup,
+        "_run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("pg_dump ran")),
+    )
+
+    with pytest.raises(backup.BackupError, match=message):
+        backup.run_backup(
+            config,
+            environ={},
+            now=datetime(2026, 8, 26, tzinfo=timezone.utc),
+            token="deadbeef",
+        )
+
+
+def test_multiple_alembic_heads_remain_fatal_before_pg_dump(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off-device"
+    local_root.mkdir(exist_ok=True)
+    monkeypatch.setattr(
+        backup, "_prepare_local_root", lambda config: (local_root, _stat(1))
+    )
+    monkeypatch.setattr(
+        backup,
+        "_prepare_off_device_root",
+        lambda config, *, local_metadata: off_root,
+    )
+    monkeypatch.setattr(
+        backup,
+        "_query_source_identity",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            backup.BackupError("database must have exactly one Alembic head, found 2")
+        ),
+    )
+    monkeypatch.setattr(
+        backup,
+        "_run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("pg_dump ran")),
+    )
+
+    with pytest.raises(backup.BackupError, match="exactly one Alembic head"):
+        backup.run_backup(
+            config,
+            environ={},
+            now=datetime(2026, 8, 26, tzinfo=timezone.utc),
+            token="deadbeef",
+        )
 
 
 def test_copy_failure_never_invokes_retention(
@@ -639,7 +867,12 @@ def test_health_reports_latest_age_destination_and_freshness(
     )
 
     assert result["ok"] is True
+    assert result["status"] == "pass"
     assert result["fresh"] is True
+    assert result["artifact_ok"] is True
+    assert result["artifact_fresh"] is True
+    assert result["schema_policy_ok"] is True
+    assert result["schema_policy"]["schema_match"] is True
     assert result["latest_success"]["age_seconds"] == 1.5 * 60 * 60
     assert result["latest_success"]["off_device_path"].endswith("deadbeef.dump")
     assert result["off_device_destination"] == str(off_root)

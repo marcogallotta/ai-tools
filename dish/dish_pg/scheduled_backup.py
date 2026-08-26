@@ -271,6 +271,48 @@ def _with_report_sha256(report: Mapping[str, Any]) -> dict[str, Any]:
     return finalized
 
 
+def _schema_policy(expected_head: str, observed_head: str) -> dict[str, Any]:
+    schema_match = observed_head == expected_head
+    return {
+        "status": "pass" if schema_match else "degraded",
+        "ok": schema_match,
+        "expected_head": expected_head,
+        "observed_head": observed_head,
+        "schema_match": schema_match,
+    }
+
+
+def _report_schema_policy(report: Mapping[str, Any]) -> dict[str, Any]:
+    policy = report.get("schema_policy")
+    if policy is None:
+        # Reports written before schema-policy drift was separated from artifact
+        # success could only exist after an exact expected/observed-head match.
+        database = report.get("database")
+        observed_head = database.get("schema_head") if isinstance(database, Mapping) else None
+        if not isinstance(observed_head, str) or not observed_head:
+            raise BackupError("backup report is missing schema head evidence")
+        return _schema_policy(observed_head, observed_head)
+    if not isinstance(policy, Mapping):
+        raise BackupError("backup report schema policy is not an object")
+    expected_head = policy.get("expected_head")
+    observed_head = policy.get("observed_head")
+    schema_match = policy.get("schema_match")
+    status = policy.get("status")
+    ok = policy.get("ok")
+    if not isinstance(expected_head, str) or not expected_head:
+        raise BackupError("backup report schema policy has no expected head")
+    if not isinstance(observed_head, str) or not observed_head:
+        raise BackupError("backup report schema policy has no observed head")
+    if not isinstance(schema_match, bool):
+        raise BackupError("backup report schema policy has no match result")
+    if schema_match != (observed_head == expected_head):
+        raise BackupError("backup report schema policy match result is inconsistent")
+    expected_status = "pass" if schema_match else "degraded"
+    if status != expected_status or ok is not schema_match:
+        raise BackupError("backup report schema policy status is inconsistent")
+    return dict(policy)
+
+
 def _validate_report_sha256(document: Mapping[str, Any]) -> None:
     expected = document.get("report_sha256")
     if not isinstance(expected, str) or not LOWER_SHA256.fullmatch(expected):
@@ -506,7 +548,10 @@ def _load_backup_report(path: Path) -> dict[str, Any]:
     document = _load_json(path, label="backup report")
     if document.get("format") != FORMAT or document.get("ok") is not True:
         raise BackupError(f"backup report is not a successful {FORMAT} report: {path}")
+    if document.get("artifact_ok", True) is not True:
+        raise BackupError(f"backup report does not describe a successful artifact: {path}")
     _validate_report_sha256(document)
+    _report_schema_policy(document)
     return document
 
 
@@ -710,10 +755,7 @@ def run_backup(
                 )
             if table_count <= 0:
                 raise BackupError("source PostgreSQL public schema has no tables")
-            if schema_head != config.expected_schema_head:
-                raise BackupError(
-                    f"database schema head is {schema_head!r}, expected {config.expected_schema_head!r}"
-                )
+            schema_policy = _schema_policy(config.expected_schema_head, schema_head)
 
             source_commit = _git_head(config.repo_root.expanduser().resolve(strict=True), env)
             tools = {
@@ -765,8 +807,10 @@ def run_backup(
             report = _with_report_sha256(
                 {
                     "format": FORMAT,
-                    "status": "pass",
+                    "status": schema_policy["status"],
                     "ok": True,
+                    "artifact_ok": True,
+                    "schema_policy": schema_policy,
                     "backup_id": backup_id,
                     "started_at": _timestamp(started_at),
                     "completed_at": _timestamp(completed_at),
@@ -909,6 +953,7 @@ def _verify_latest_report(
     expected_off_sidecar = _checksum_sidecar(expected_sha256, expected_off.name)
     if expected_off_checksum.read_text(encoding="utf-8") != expected_off_sidecar:
         raise BackupError("latest off-device checksum sidecar mismatch")
+    schema_policy = _report_schema_policy(report)
     return {
         "backup_id": backup_id,
         "completed_at": report.get("completed_at"),
@@ -918,6 +963,8 @@ def _verify_latest_report(
         "schema_head": report.get("database", {}).get("schema_head")
         if isinstance(report.get("database"), Mapping)
         else None,
+        "artifact_ok": True,
+        "schema_policy": schema_policy,
         "sha256": expected_sha256,
         "local_path": str(expected_local),
         "off_device_path": str(expected_off),
@@ -969,8 +1016,21 @@ def health(
             latest_attempt_ok = attempt.get("ok") is True
             result["latest_attempt"] = attempt
         result["fresh"] = fresh
+        result["artifact_ok"] = True
+        result["artifact_fresh"] = fresh
         result["latest_attempt_ok"] = latest_attempt_ok
-        result["ok"] = fresh and latest_attempt_ok
+        schema_policy = latest["schema_policy"]
+        schema_policy_ok = schema_policy.get("ok") is True
+        result["schema_policy"] = schema_policy
+        result["schema_policy_ok"] = schema_policy_ok
+        result["ok"] = fresh and latest_attempt_ok and schema_policy_ok
+        result["status"] = (
+            "pass"
+            if result["ok"]
+            else "degraded"
+            if fresh and latest_attempt_ok and not schema_policy_ok
+            else "fail"
+        )
         if not fresh:
             result["error"] = (
                 f"latest successful backup is stale: {age_seconds:.0f}s > "
@@ -978,6 +1038,12 @@ def health(
             )
         elif not latest_attempt_ok:
             result["error"] = "latest backup attempt failed after the last successful artifact"
+        elif not schema_policy_ok:
+            result["error"] = (
+                "backup schema policy is degraded: observed head "
+                f"{schema_policy['observed_head']!r}, expected "
+                f"{schema_policy['expected_head']!r}; verified artifact remains usable"
+            )
         return result
     except BackupError as exc:
         result["error"] = _redact(str(exc))
@@ -1012,15 +1078,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.command == "run":
             report = run_backup(config)
+            artifact_ok = report.get("artifact_ok", report.get("ok")) is True
+            schema_policy = _report_schema_policy(report)
+            ok = artifact_ok and schema_policy.get("ok") is True
             output = {
-                "ok": True,
+                "ok": ok,
+                "status": "pass" if ok else "degraded",
+                "artifact_ok": artifact_ok,
+                "schema_policy": schema_policy,
                 "backup_id": report["backup_id"],
                 "completed_at": report["completed_at"],
                 "sha256": report["backup"]["sha256"],
                 "off_device_path": report["off_device"]["path"],
             }
             print(json.dumps(output, sort_keys=True, separators=(",", ":")))
-            return 0
+            return 0 if ok else 1
         result = health(config)
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return 0 if result.get("ok") is True else 1
