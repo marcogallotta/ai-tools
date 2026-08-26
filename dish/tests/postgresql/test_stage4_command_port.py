@@ -26,6 +26,7 @@ from dish_pg.planner import (
 )
 from dish_pg.protocol import AuthenticationError, PostgresProtocolService, ScopedBearerAuthenticator
 from dish_pg.read_model import InvalidCursor
+from dish_pg.repositories import DishRepository, ScalarMutationSource
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import WorkflowAuthorityService
 from dish_tool.models import material_editor_line
@@ -531,7 +532,7 @@ def test_prepare_non_material_change_preserves_prior_signed_state_and_checks_in(
         port, signed = _signed_ready_baseline(session, ids, context, task_id)
         signed_parts = parse_canonical_document(title=signed.title, body=signed.body)
         placement_before = session.get(
-            models.CurrentTaskSectionPlacement,
+            models.DishState,
             (context["generation_id"], task_id),
         ).section_id
         change_run = _next(ids)
@@ -631,7 +632,7 @@ def test_prepare_non_material_change_preserves_prior_signed_state_and_checks_in(
             originating_signoff.cycle_id
         )
         placement_after = session.get(
-            models.CurrentTaskSectionPlacement,
+            models.DishState,
             (context["generation_id"], task_id),
         ).section_id
         assert placement_after == placement_before
@@ -1067,7 +1068,7 @@ def test_postgresql_planner_matches_shared_legal_actions(command: str, principal
     snapshot = AuthoritativeSnapshot(
         generation_id=str(uuid.uuid4()),
         task_id=str(uuid.uuid4()),
-        fence=AuthorityFence(1, 1, 1, 1, 1, "prepare_required"),
+        fence=AuthorityFence(1, 1, 1, "prepare_required"),
         workflow=workflow,
         task_exists=True,
     )
@@ -1101,7 +1102,7 @@ def test_planner_delegates_legality_and_adjudicates_exact_effects() -> None:
     snapshot = AuthoritativeSnapshot(
         generation_id=str(uuid.uuid4()),
         task_id=str(uuid.uuid4()),
-        fence=AuthorityFence(1, 1, 1, 1, 1, "prepare_required"),
+        fence=AuthorityFence(1, 1, 1, "prepare_required"),
         workflow=workflow,
         task_exists=True,
     )
@@ -1663,12 +1664,29 @@ Destination section: Sichuan — 12345
             session, ids, context, external_id="12345"
         )
         if start_away_from_research:
-            placement = session.get(
-                models.CurrentTaskSectionPlacement,
+            state = session.get(
+                models.DishState,
                 (context["generation_id"], task_id),
             )
-            placement.section_id = destination_section_id
-            session.flush()
+            membership = session.get(
+                models.TaskMembershipHead, (context["generation_id"], task_id)
+            )
+            mutation = DishRepository(session).begin_scalar_mutation(
+                generation_id=context["generation_id"],
+                task_id=task_id,
+                expected_dish_version=state.dish_version,
+                expected_membership_revision=membership.membership_revision,
+                source=ScalarMutationSource(
+                    route="import",
+                    import_run_id=context["import_run_id"],
+                    occurred_at=NOW,
+                ),
+            )
+            mutation.place(
+                section_id=destination_section_id,
+                registry_version_id=state.registry_version_id,
+            )
+            mutation.finalize()
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         port = _port(session, ids)
         challenge = port.execute(
@@ -1727,12 +1745,8 @@ Destination section: Sichuan — 12345
             )
         ) == 0
 
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
-        current = session.get(models.ContentVersion, activation.content_version_id)
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        current = session.get(models.ContentVersion, state.current_content_version_id)
         assert current.body.startswith("### Planning brief\n")
         assert "Destination section: Sichuan — 12345" in current.body
-        placement = session.get(
-            models.CurrentTaskSectionPlacement, (context["generation_id"], task_id)
-        )
-        assert placement.section_id == context["section_id"]
+        assert state.section_id == context["section_id"]

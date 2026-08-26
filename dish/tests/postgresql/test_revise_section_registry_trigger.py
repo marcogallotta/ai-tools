@@ -84,12 +84,12 @@ def test_test_membership_revision_creates_exact_four_preserves_history_and_match
             models.SectionExternalAlias.external_id == "1217084805070731",
         ))
         assert old_alias is not None and old_alias.state == "active"
-        placement = session.get(
-            models.CurrentTaskSectionPlacement, (context["generation_id"], _task_id)
+        state = session.get(
+            models.DishState, (context["generation_id"], _task_id)
         )
-        assert placement is not None
-        placement_event_id = placement.latest_event_id
-        placement_revision = placement.placement_revision
+        assert state is not None
+        dish_version = state.dish_version
+        placement_version = state.placement_version
         result = _call(session, ids, context)
         assert result["changed"] is True
         assert result["before"] == {"registry_version_id": str(context["registry_version_id"]), "registry_revision": 1}
@@ -117,19 +117,22 @@ def test_test_membership_revision_creates_exact_four_preserves_history_and_match
         assert replacement_alias is not None
         assert replacement_alias.section_id == context["section_id"]
 
-        session.refresh(placement)
-        assert placement.section_id == context["section_id"]
-        assert placement.registry_version_id == uuid.UUID(result["after"]["registry_version_id"])
-        assert placement.latest_event_id != placement_event_id
-        assert placement.placement_revision == placement_revision + 1
-        placement_event = session.get(models.TaskSectionPlacementEvent, placement.latest_event_id)
-        assert placement_event is not None
-        assert placement_event.section_id == context["section_id"]
-        assert placement_event.registry_version_id == placement.registry_version_id
-        assert placement_event.provenance_route == "import"
-        assert placement_event.import_run_id == uuid.UUID(result["import_run_id"])
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], _task_id))
-        assert head is not None and head.placement_revision == placement.placement_revision
+        session.refresh(state)
+        assert state.section_id == context["section_id"]
+        assert state.registry_version_id == uuid.UUID(result["after"]["registry_version_id"])
+        assert state.dish_version == dish_version + 1
+        assert state.placement_version == state.dish_version
+        assert state.placement_version != placement_version
+        receipt = session.get(
+            models.DishMutationReceipt,
+            (context["generation_id"], _task_id, state.dish_version),
+        )
+        assert receipt is not None
+        assert receipt.placement_changed is True
+        assert receipt.content_changed is False
+        assert receipt.completion_changed is False
+        assert receipt.source_route == "import"
+        assert receipt.import_run_id == uuid.UUID(result["import_run_id"])
         task_page = PostgresReadModel(session, cursor_secret=SECRET).section_tasks(
             section_reference=GIDS[0]
         )

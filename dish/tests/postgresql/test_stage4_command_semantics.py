@@ -24,6 +24,7 @@ from dish_pg.planner import (
     plan_command,
 )
 from dish_pg.read_model import PostgresReadModel
+from dish_pg.repositories import DishRepository, ScalarMutationSource
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from dish_pg.shadow_worker import (
     _semantic_shadow_command,
@@ -137,12 +138,11 @@ def test_small_correction_binds_inspection_correction_activation_and_signoff(wor
         assert approved.ok
         correction = session.scalar(select(wf.VerificationCorrection))
         signoff = session.get(wf.VerificationSignoff, uuid.UUID(approved.data["signoff_id"]))
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
+        state = session.get(models.DishState, (context["generation_id"], task_id))
         assert correction.source_content_version_id == uuid.UUID(prepared.data["content_version_id"])
-        assert correction.corrected_content_version_id == activation.content_version_id
+        assert correction.corrected_content_version_id == state.current_content_version_id
         assert signoff.inspection_id == uuid.UUID(inspected.data["inspection_id"])
-        assert signoff.signed_content_version_id == activation.content_version_id
+        assert signoff.signed_content_version_id == state.current_content_version_id
 
 
 def test_large_rejection_creates_exact_corrected_occurrence_and_new_cycle(workflow_db) -> None:
@@ -214,7 +214,7 @@ def _valid_hold_reject_planner_state() -> tuple[AuthoritativeSnapshot, Canonical
     snapshot = AuthoritativeSnapshot(
         generation_id=str(uuid.uuid4()),
         task_id=str(uuid.uuid4()),
-        fence=AuthorityFence(1, 1, 1, 1, 1, "prepare_required"),
+        fence=AuthorityFence(1, 1, 1, "prepare_required"),
         workflow=workflow,
         task_exists=True,
         hold_reject_baseline_matches=True,
@@ -332,10 +332,8 @@ def test_hold_reject_creates_only_preconstruction_evidence_hold_and_replays(work
         port = _port(session, ids)
         started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
         operation_id = uuid.UUID(started.data["operation_id"])
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        baseline_activation_id = head.current_content_activation_id
-        activation = session.get(models.ContentActivation, baseline_activation_id)
-        baseline_content_version_id = activation.content_version_id
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        baseline_content_version_id = state.current_content_version_id
         projection_count = session.scalar(select(func.count()).select_from(tx.ProjectionOutboxEvent))
         call = _call(
             "hold-reject",
@@ -355,7 +353,7 @@ def test_hold_reject_creates_only_preconstruction_evidence_hold_and_replays(work
         hold = session.scalar(
             select(wf.EvidenceHold).where(wf.EvidenceHold.operation_id == operation_id)
         )
-        head_after = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
+        state_after = session.get(models.DishState, (context["generation_id"], task_id))
         assert result.ok is True
         assert replay.ok is True and replay.request_replayed is True
         assert hold is not None and hold.state == "open" and hold.cycle_id is None
@@ -363,7 +361,7 @@ def test_hold_reject_creates_only_preconstruction_evidence_hold_and_replays(work
         assert operation.lifecycle == "open"
         assert operation.phase == "held_evidence"
         assert operation.persisted_actions == ["supply-evidence"]
-        assert head_after.current_content_activation_id == baseline_activation_id
+        assert state_after.current_content_version_id == baseline_content_version_id
         assert session.scalar(
             select(func.count()).select_from(wf.VerificationCycle).where(
                 wf.VerificationCycle.operation_id == operation_id
@@ -531,45 +529,35 @@ def test_submit_rejects_when_current_content_no_longer_matches_signoff(workflow_
             )
         )
         assert approved.ok
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        membership = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
+        )
         replacement_id = _next(ids)
-        activation_id = _next(ids)
         body = "Drifted after signoff\n---\nStatus: pending-verification\n"
-        session.add(
-            models.ContentVersion(
-                content_version_id=replacement_id,
-                generation_id=context["generation_id"],
-                task_id=task_id,
-                representation_kind="document",
-                title="[ready] Exact imported task",
-                body=body,
-                identity_scheme="sha256-title-body-v1",
-                content_identity=hashlib.sha256(("[ready] Exact imported task\0" + body).encode()).hexdigest(),
-                creator_route="import",
+        mutation = DishRepository(session, uuid_factory=lambda: _next(ids)).begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=membership.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
                 import_run_id=context["import_run_id"],
-                command_execution_id=None,
-                predecessor_content_version_id=reviewed.content_version_id,
-                contract_binding_id=context["binding_id"],
-                created_at=NOW,
-            )
+                occurred_at=NOW,
+            ),
         )
-        session.flush()
-        session.add(
-            models.ContentActivation(
-                content_activation_id=activation_id,
-                generation_id=context["generation_id"],
-                task_id=task_id,
-                content_version_id=replacement_id,
-                activation_route="import",
-                import_run_id=context["import_run_id"],
-                command_execution_id=None,
-                task_revision=head.task_revision + 1,
-                activated_at=NOW,
-            )
+        mutation.replace_content(
+            title="[ready] Exact imported task",
+            body=body,
+            identity_scheme="sha256-title-body-v1",
+            content_identity=hashlib.sha256(
+                ("[ready] Exact imported task\0" + body).encode()
+            ).hexdigest(),
+            contract_binding_id=context["binding_id"],
+            predecessor_content_version_id=state.current_content_version_id,
+            content_version_id=replacement_id,
         )
-        session.flush()
-        head.current_content_activation_id = activation_id
-        head.task_revision += 1
+        mutation.finalize()
         submitted = port.execute(
             _call(
                 "submit",
@@ -655,18 +643,12 @@ def test_hold_reject_supply_evidence_resumes_preconstruction_baseline(workflow_d
         port = _port(session, ids)
         started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
         operation_id = uuid.UUID(started.data["operation_id"])
-        head = session.get(
-            models.TaskAuthorityHead, (context["generation_id"], task_id)
-        )
-        baseline_activation_id = head.current_content_activation_id
-        baseline_activation = session.get(
-            models.ContentActivation, baseline_activation_id
-        )
-        baseline_content_version_id = baseline_activation.content_version_id
-        activation_count = session.scalar(
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        baseline_content_version_id = state.current_content_version_id
+        version_count = session.scalar(
             select(func.count())
-            .select_from(models.ContentActivation)
-            .where(models.ContentActivation.task_id == task_id)
+            .select_from(models.ContentVersion)
+            .where(models.ContentVersion.task_id == task_id)
         )
         projection_count = session.scalar(
             select(func.count()).select_from(tx.ProjectionOutboxEvent)
@@ -709,8 +691,8 @@ def test_hold_reject_supply_evidence_resumes_preconstruction_baseline(workflow_d
 
         operation = session.get(wf.WorkflowOperation, operation_id)
         hold = session.get(wf.EvidenceHold, hold_id)
-        head_after = session.get(
-            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        state_after = session.get(
+            models.DishState, (context["generation_id"], task_id)
         )
         assert supplied.ok is True
         assert supplied.data["resume_status"] == "pending-research"
@@ -725,12 +707,12 @@ def test_hold_reject_supply_evidence_resumes_preconstruction_baseline(workflow_d
         assert operation.lifecycle == "open"
         assert operation.phase == "prepare_required"
         assert operation.persisted_actions == ["prepare"]
-        assert head_after.current_content_activation_id == baseline_activation_id
+        assert state_after.current_content_version_id == baseline_content_version_id
         assert session.scalar(
             select(func.count())
-            .select_from(models.ContentActivation)
-            .where(models.ContentActivation.task_id == task_id)
-        ) == activation_count
+            .select_from(models.ContentVersion)
+            .where(models.ContentVersion.task_id == task_id)
+        ) == version_count
         assert session.scalar(
             select(func.count())
             .select_from(wf.VerificationCycle)
@@ -796,20 +778,23 @@ def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
         assert replay.data == first.data
         assert session.scalar(select(func.count()).select_from(tx.ProjectionOutboxEvent)) == projection_count
         current = session.get(
-            models.CurrentTaskCompletion, (context["generation_id"], task_id)
+            models.DishState, (context["generation_id"], task_id)
         )
         assert current is not None and current.completed is True
-        latest = session.get(models.TaskCompletionEvent, current.latest_event_id)
+        latest = session.get(
+            models.DishMutationReceipt,
+            (context["generation_id"], task_id, current.completion_version),
+        )
         assert latest is not None
-        assert latest.completed is True
-        assert latest.reason == reason
+        assert latest.completion_changed is True
         assert latest.command_execution_id is not None
         assert session.scalar(
             select(func.count())
-            .select_from(models.TaskCompletionEvent)
+            .select_from(models.DishMutationReceipt)
             .where(
-                models.TaskCompletionEvent.task_id == task_id,
-                models.TaskCompletionEvent.reason == reason,
+                models.DishMutationReceipt.task_id == task_id,
+                models.DishMutationReceipt.completion_changed.is_(True),
+                models.DishMutationReceipt.command_execution_id.is_not(None),
             )
         ) == 1
 
@@ -896,13 +881,10 @@ def test_newly_created_incomplete_archive_reason_remains_active_not_archived(
         assert created.ok is True
         task_id = uuid.UUID(created.data["task_id"])
         current = session.get(
-            models.CurrentTaskCompletion, (context["generation_id"], task_id)
+            models.DishState, (context["generation_id"], task_id)
         )
         assert current is not None and current.completed is False
-        latest = session.get(models.TaskCompletionEvent, current.latest_event_id)
-        assert latest is not None
-        assert latest.completed is False
-        assert latest.reason == "archive"
+        assert current.completion_reason == "archive"
 
         view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
 
@@ -927,10 +909,10 @@ def test_cooked_and_archive_reject_open_workflow_without_partial_completion(
         started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
         assert started.ok is True
         before = session.get(
-            models.CurrentTaskCompletion, (context["generation_id"], task_id)
+            models.DishState, (context["generation_id"], task_id)
         )
         assert before is not None
-        before_identity = (before.latest_event_id, before.completion_revision, before.completed)
+        before_identity = (before.dish_version, before.completion_version, before.completed)
 
         result = port.execute(
             _call(
@@ -945,7 +927,7 @@ def test_cooked_and_archive_reject_open_workflow_without_partial_completion(
         assert result.code == "TASK_NOT_RESTING"
         assert "open_operation_id" in result.data["guidance"]
         current = session.get(
-            models.CurrentTaskCompletion, (context["generation_id"], task_id)
+            models.DishState, (context["generation_id"], task_id)
         )
         assert current is not None
-        assert (current.latest_event_id, current.completion_revision, current.completed) == before_identity
+        assert (current.dish_version, current.completion_version, current.completed) == before_identity

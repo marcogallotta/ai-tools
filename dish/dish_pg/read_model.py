@@ -50,6 +50,7 @@ class TaskCurrentView:
     title: str
     body: str
     content_version_id: uuid.UUID
+    dish_version: int
     task_revision: int
     membership_revision: int
     placement_revision: int
@@ -257,38 +258,20 @@ class PostgresReadModel:
             select(
                 models.DishTask.task_id,
                 models.ContentVersion.title,
-                models.CurrentTaskCompletion.completed,
+                models.DishState.completed,
                 models.TaskExternalAlias.external_id,
             )
             .join(
-                models.CurrentTaskSectionPlacement,
-                models.CurrentTaskSectionPlacement.task_id == models.DishTask.task_id,
-            )
-            .join(
-                models.TaskAuthorityHead,
+                models.DishState,
                 and_(
-                    models.TaskAuthorityHead.generation_id
-                    == models.CurrentTaskSectionPlacement.generation_id,
-                    models.TaskAuthorityHead.task_id == models.DishTask.task_id,
+                    models.DishState.generation_id == generation.generation_id,
+                    models.DishState.task_id == models.DishTask.task_id,
                 ),
-            )
-            .join(
-                models.ContentActivation,
-                models.ContentActivation.content_activation_id
-                == models.TaskAuthorityHead.current_content_activation_id,
             )
             .join(
                 models.ContentVersion,
                 models.ContentVersion.content_version_id
-                == models.ContentActivation.content_version_id,
-            )
-            .join(
-                models.CurrentTaskCompletion,
-                and_(
-                    models.CurrentTaskCompletion.generation_id
-                    == models.TaskAuthorityHead.generation_id,
-                    models.CurrentTaskCompletion.task_id == models.DishTask.task_id,
-                ),
+                == models.DishState.current_content_version_id,
             )
             .outerjoin(
                 models.TaskExternalAlias,
@@ -299,10 +282,9 @@ class PostgresReadModel:
                 ),
             )
             .where(
-                models.CurrentTaskSectionPlacement.generation_id == generation.generation_id,
-                models.CurrentTaskSectionPlacement.section_id == section.section_id,
-                models.CurrentTaskSectionPlacement.registry_version_id == active.registry_version_id,
-                models.CurrentTaskCompletion.completed.is_(False),
+                models.DishState.section_id == section.section_id,
+                models.DishState.registry_version_id == active.registry_version_id,
+                models.DishState.completed.is_(False),
                 models.DishTask.existence_state != "retired",
             )
             .order_by(title_key, models.DishTask.task_id)
@@ -357,7 +339,7 @@ class PostgresReadModel:
         body: str,
         operation: wf.WorkflowOperation,
     ) -> WorkflowSnapshot:
-        placement = self.session.get(models.CurrentTaskSectionPlacement, (generation_id, task_id))
+        placement = self.session.get(models.DishState, (generation_id, task_id))
         live_section_gid = None
         if placement is not None:
             live_section_gid = self.session.scalar(
@@ -457,13 +439,8 @@ class PostgresReadModel:
                 latest_route = "evidence"
             elif latest_human is not None and latest_human.cycle_id == cycle.cycle_id:
                 latest_route = latest_human.route
-        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
-        activation = (
-            self.session.get(models.ContentActivation, head.current_content_activation_id)
-            if head is not None
-            else None
-        )
-        current_version_id = activation.content_version_id if activation is not None else None
+        state = self.session.get(models.DishState, (generation_id, task_id))
+        current_version_id = state.current_content_version_id if state is not None else None
         baseline = None
         if operation.phase == "held_evidence" and latest_hold is not None:
             baseline = latest_hold.baseline_content_version_id
@@ -501,38 +478,20 @@ class PostgresReadModel:
     def task_view(self, task_reference: str | uuid.UUID) -> TaskCurrentView:
         generation = self.active_generation()
         task = self.resolve_task(task_reference)
-        head = self.session.get(
-            models.TaskAuthorityHead, (generation.generation_id, task.task_id)
+        state = self.session.get(models.DishState, (generation.generation_id, task.task_id))
+        membership = self.session.get(
+            models.TaskMembershipHead, (generation.generation_id, task.task_id)
         )
-        if head is None:
-            raise ReadModelError("task has no authority head in the active generation")
-        activation = self.session.get(models.ContentActivation, head.current_content_activation_id)
-        if activation is None:
-            raise ReadModelError("task authority head has no content activation")
-        version = self.session.get(models.ContentVersion, activation.content_version_id)
-        placement = self.session.get(
-            models.CurrentTaskSectionPlacement, (generation.generation_id, task.task_id)
-        )
-        completion = self.session.get(
-            models.CurrentTaskCompletion, (generation.generation_id, task.task_id)
-        )
-        if version is None or placement is None or completion is None:
+        if state is None or membership is None:
+            raise ReadModelError("task has incomplete scalar/membership authority")
+        version = self.session.get(models.ContentVersion, state.current_content_version_id)
+        if version is None:
             raise ReadModelError("task authority bundle is incomplete")
-        latest_completion = self.session.get(
-            models.TaskCompletionEvent, completion.latest_event_id
-        )
-        if latest_completion is None:
-            raise ReadModelError("task completion history is incomplete")
-        if (
-            latest_completion.task_id != task.task_id
-            or latest_completion.generation_id != generation.generation_id
-        ):
-            raise ReadModelError("task completion history does not match current authority")
-        if not completion.completed:
+        if not state.completed:
             completion_state = "active"
-        elif latest_completion.reason == "cooked":
+        elif state.completion_reason == "cooked":
             completion_state = "cooked"
-        elif latest_completion.reason == "archive":
+        elif state.completion_reason == "archive":
             completion_state = "archived"
         else:
             completion_state = "completed"
@@ -563,13 +522,14 @@ class PostgresReadModel:
             title=version.title,
             body=version.body,
             content_version_id=version.content_version_id,
-            task_revision=head.task_revision,
-            membership_revision=head.membership_revision,
-            placement_revision=head.placement_revision,
-            completion_revision=head.completion_revision,
-            section_id=placement.section_id,
-            completed=completion.completed,
-            completion_reason=latest_completion.reason,
+            dish_version=state.dish_version,
+            task_revision=version.created_dish_version,
+            membership_revision=membership.membership_revision,
+            placement_revision=state.placement_version,
+            completion_revision=state.completion_version,
+            section_id=state.section_id,
+            completed=state.completed,
+            completion_reason=state.completion_reason,
             completion_state=completion_state,
             operation_id=operation.operation_id if operation else None,
             operation_phase=operation.phase if operation else None,

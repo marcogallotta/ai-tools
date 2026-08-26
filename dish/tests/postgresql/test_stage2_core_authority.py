@@ -21,7 +21,9 @@ from dish_pg.repositories import (
     AuthorityRepository,
     ContractBindingRepository,
     CoreAuthorityError,
+    DishRepository,
     RegistryRepository,
+    ScalarMutationSource,
 )
 from dish_pg.workflow import OperationRunRevoked, WorkflowAuthorityRepository
 from dish_pg.services import (
@@ -60,14 +62,11 @@ def test_stage2_schema_stops_before_command_authority() -> None:
         "dish_tasks",
         "task_external_aliases",
         "task_content_versions",
-        "task_content_activations",
-        "task_authority_heads",
+        "dish_mutation_receipts",
+        "dish_states",
+        "task_membership_heads",
         "task_project_membership_events",
         "current_task_project_memberships",
-        "task_section_placement_events",
-        "current_task_section_placements",
-        "task_completion_events",
-        "current_task_completion",
     }
     forbidden = {
         "service_requests",
@@ -94,7 +93,7 @@ def test_stage2_migration_renders_postgresql_constraints_and_guards() -> None:
     assert "uq_task_external_alias_identity" in rendered
     assert "dish_reject_immutable_authority" in rendered
     assert "dish_validate_active_registry_pointer" in rendered
-    assert "dish_validate_current_placement" in rendered
+    assert "dish_validate_scalar_state" in rendered
     assert "task_external_aliases_identity_update" in rendered
 
 
@@ -104,7 +103,7 @@ def test_stage2_alembic_upgrade_reaches_head_from_empty_database(tmp_path: Path)
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
 
-    command.upgrade(config, "0002_core_authority_model")
+    command.upgrade(config, "0042_scalar_dish_state")
 
     engine = create_engine(database_url, future=True)
     try:
@@ -114,7 +113,7 @@ def test_stage2_alembic_upgrade_reaches_head_from_empty_database(tmp_path: Path)
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "0002_core_authority_model"
+        assert revision == "0042_scalar_dish_state"
     finally:
         engine.dispose()
 
@@ -147,29 +146,20 @@ def test_import_activation_commits_complete_authority_bundle(core_db) -> None:
         task = session.get(models.DishTask, result.task_id)
         assert task is not None
         assert task.creation_route == "import"
-        head = session.get(
-            models.TaskAuthorityHead,
+        state = session.get(
+            models.DishState,
             (context["generation_id"], result.task_id),
         )
-        assert head is not None
-        assert head.current_content_activation_id == result.content_activation_id
-        assert head.task_revision == 1
+        assert state is not None
+        assert state.current_content_version_id == result.content_version_id
+        assert state.dish_version == 1
         version = session.get(models.ContentVersion, result.content_version_id)
         assert version is not None
         assert version.title == "[ready] Exact imported task"
         assert version.body.endswith("Status: ready\n")
-        placement = session.get(
-            models.CurrentTaskSectionPlacement,
-            (context["generation_id"], result.task_id),
-        )
-        assert placement is not None
-        assert placement.section_id == context["section_id"]
-        assert placement.registry_version_id == context["registry_version_id"]
-        completion = session.get(
-            models.CurrentTaskCompletion,
-            (context["generation_id"], result.task_id),
-        )
-        assert completion is not None and completion.completed is False
+        assert state.section_id == context["section_id"]
+        assert state.registry_version_id == context["registry_version_id"]
+        assert state.completed is False
         memberships = session.scalars(
             select(models.CurrentTaskProjectMembership).where(
                 models.CurrentTaskProjectMembership.task_id == result.task_id
@@ -184,6 +174,101 @@ def test_import_activation_commits_complete_authority_bundle(core_db) -> None:
             )
         )
         assert alias is not None and alias.task_id == result.task_id
+
+
+def test_scalar_noop_writes_no_receipt(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids)
+        imported = _import_one(session, ids, context)
+        state = session.get(
+            models.DishState, (context["generation_id"], imported.task_id)
+        )
+        head = session.get(
+            models.TaskMembershipHead,
+            (context["generation_id"], imported.task_id),
+        )
+        assert state is not None and head is not None
+        mutation = DishRepository(
+            session, uuid_factory=lambda: _next(ids)
+        ).begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=imported.task_id,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=head.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
+                import_run_id=context["import_run_id"],
+                occurred_at=NOW + timedelta(seconds=1),
+            ),
+        )
+        outcome = mutation.finalize()
+        assert outcome.dish_version is None
+        assert outcome.changed_domains == frozenset()
+        assert session.scalar(
+            select(func.count()).select_from(models.DishMutationReceipt)
+        ) == 1
+
+
+def test_multi_domain_scalar_mutation_writes_one_receipt_and_one_version(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids)
+        imported = _import_one(session, ids, context)
+        state = session.get(
+            models.DishState, (context["generation_id"], imported.task_id)
+        )
+        head = session.get(
+            models.TaskMembershipHead,
+            (context["generation_id"], imported.task_id),
+        )
+        assert state is not None and head is not None
+        mutation = DishRepository(
+            session, uuid_factory=lambda: _next(ids)
+        ).begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=imported.task_id,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=head.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
+                import_run_id=context["import_run_id"],
+                occurred_at=NOW + timedelta(seconds=1),
+            ),
+        )
+        replacement_id = mutation.replace_content(
+            title="[ready] Replacement",
+            body="Replacement body\n---\nStatus: ready\n",
+            identity_scheme="legacy-sha256-v1",
+            content_identity=HASH_C,
+            contract_binding_id=context["binding_id"],
+            predecessor_content_version_id=state.current_content_version_id,
+        )
+        mutation.place(
+            section_id=state.section_id,
+            registry_version_id=state.registry_version_id,
+        )
+        mutation.set_completion(completed=True, reason="imported")
+        outcome = mutation.finalize()
+
+        assert outcome.dish_version == 2
+        assert outcome.changed_domains == frozenset(
+            {"content", "placement", "completion"}
+        )
+        receipt = session.get(
+            models.DishMutationReceipt,
+            (context["generation_id"], imported.task_id, 2),
+        )
+        assert receipt is not None
+        assert receipt.content_changed is True
+        assert receipt.placement_changed is True
+        assert receipt.completion_changed is True
+        session.refresh(state)
+        assert state.current_content_version_id == replacement_id
+        assert state.dish_version == state.placement_version == state.completion_version == 2
+        assert session.scalar(
+            select(func.count()).select_from(models.DishMutationReceipt)
+        ) == 2
 
 
 def test_import_backfills_terminal_operation_attempt_history_without_fake_authority(core_db) -> None:
@@ -330,7 +415,44 @@ def test_content_and_occurrence_evidence_is_immutable(core_db) -> None:
 
     with pytest.raises(IntegrityError, match="immutable authority row"):
         with session_scope(factory) as session:
-            event = session.get(models.TaskCompletionEvent, result.completion_event_id)
-            assert event is not None
-            session.delete(event)
+            receipt = session.get(
+                models.DishMutationReceipt,
+                (context["generation_id"], result.task_id, result.completion_version),
+            )
+            assert receipt is not None
+            session.delete(receipt)
+            session.flush()
+
+
+def test_dish_creation_provenance_and_scalar_heads_are_not_rekeyable(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids)
+        imported = _import_one(session, ids, context)
+
+    with pytest.raises(IntegrityError, match="creation provenance is immutable"):
+        with session_scope(factory) as session:
+            task = session.get(models.DishTask, imported.task_id)
+            assert task is not None
+            task.created_at = task.created_at + timedelta(seconds=1)
+            session.flush()
+
+    with pytest.raises(IntegrityError, match="dish_states cannot be deleted"):
+        with session_scope(factory) as session:
+            state = session.get(
+                models.DishState,
+                (context["generation_id"], imported.task_id),
+            )
+            assert state is not None
+            session.delete(state)
+            session.flush()
+
+    with pytest.raises(IntegrityError, match="task_membership_heads identity is immutable"):
+        with session_scope(factory) as session:
+            head = session.get(
+                models.TaskMembershipHead,
+                (context["generation_id"], imported.task_id),
+            )
+            assert head is not None
+            head.task_id = _next(ids)
             session.flush()

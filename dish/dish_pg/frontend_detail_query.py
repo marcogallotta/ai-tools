@@ -183,19 +183,10 @@ class FrontendDetailQuery:
             )
             .select_from(models.DishTask)
             .join(
-                models.TaskAuthorityHead,
+                models.DishState,
                 and_(
-                    models.TaskAuthorityHead.generation_id == generation_id,
-                    models.TaskAuthorityHead.task_id == models.DishTask.task_id,
-                ),
-            )
-            .join(
-                models.ContentActivation,
-                and_(
-                    models.ContentActivation.content_activation_id
-                    == models.TaskAuthorityHead.current_content_activation_id,
-                    models.ContentActivation.generation_id == generation_id,
-                    models.ContentActivation.task_id == models.DishTask.task_id,
+                    models.DishState.generation_id == generation_id,
+                    models.DishState.task_id == models.DishTask.task_id,
                 ),
             )
             .join(
@@ -204,14 +195,7 @@ class FrontendDetailQuery:
                     models.ContentVersion.generation_id == generation_id,
                     models.ContentVersion.task_id == models.DishTask.task_id,
                     models.ContentVersion.content_version_id
-                    == models.ContentActivation.content_version_id,
-                ),
-            )
-            .join(
-                models.CurrentTaskSectionPlacement,
-                and_(
-                    models.CurrentTaskSectionPlacement.generation_id == generation_id,
-                    models.CurrentTaskSectionPlacement.task_id == models.DishTask.task_id,
+                    == models.DishState.current_content_version_id,
                 ),
             )
             .join(
@@ -219,12 +203,12 @@ class FrontendDetailQuery:
                 and_(
                     models.SectionRegistryEntry.registry_version_id == registry_version_id,
                     models.SectionRegistryEntry.section_id
-                    == models.CurrentTaskSectionPlacement.section_id,
+                    == models.DishState.section_id,
                 ),
             )
             .join(
                 models.GovernedSection,
-                models.GovernedSection.section_id == models.CurrentTaskSectionPlacement.section_id,
+                models.GovernedSection.section_id == models.DishState.section_id,
             )
             .join(models.GovernedProject, models.GovernedProject.project_id == models.GovernedSection.project_id)
             .join(
@@ -234,14 +218,6 @@ class FrontendDetailQuery:
                     models.CurrentTaskProjectMembership.task_id == models.DishTask.task_id,
                     models.CurrentTaskProjectMembership.project_id == models.GovernedSection.project_id,
                     models.CurrentTaskProjectMembership.is_member.is_(True),
-                ),
-            )
-            .join(
-                models.CurrentTaskCompletion,
-                and_(
-                    models.CurrentTaskCompletion.generation_id == generation_id,
-                    models.CurrentTaskCompletion.task_id == models.DishTask.task_id,
-                    models.CurrentTaskCompletion.completed.is_(False),
                 ),
             )
             .outerjoin(
@@ -255,6 +231,7 @@ class FrontendDetailQuery:
             .where(
                 models.DishTask.task_id == task_id,
                 models.DishTask.existence_state.in_(("ordinary", "isolated")),
+                models.DishState.completed.is_(False),
                 models.GovernedSection.lifecycle == "active",
                 models.GovernedProject.lifecycle == "active",
             )

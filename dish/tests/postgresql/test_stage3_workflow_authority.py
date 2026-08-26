@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg.database import session_scope
+from dish_pg.repositories import DishRepository, ScalarMutationSource
 from dish_pg.workflow import (
     ContentionLost,
     ExecutionSpec,
@@ -212,9 +213,27 @@ def test_task_and_operation_fences_reject_stale_execution(workflow_db) -> None:
         service.repo.capture_operation_fence(
             execution_id=execution_id, operation_id=operation_id, at=NOW
         )
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        assert head is not None
-        head.task_revision += 1
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        membership = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
+        )
+        assert state is not None and membership is not None
+        mutation = DishRepository(session).begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=membership.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
+                import_run_id=context["import_run_id"],
+                occurred_at=NOW,
+            ),
+        )
+        mutation.place(
+            section_id=state.section_id,
+            registry_version_id=state.registry_version_id,
+        )
+        mutation.finalize()
         operation.phase = "await_verification"
         operation.operation_revision += 1
         session.flush()

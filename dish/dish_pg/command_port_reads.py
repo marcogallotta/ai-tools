@@ -1,18 +1,15 @@
 """Read and semantic-proposal helpers for the PostgreSQL command port."""
 from __future__ import annotations
 
-import copy
-import hashlib
 import uuid
 from dataclasses import asdict, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Mapping
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from . import models
 from . import stage3_models as wf
-from . import stage5_models as projection
 from .command_contract import definition_for
 from .command_port_common import (
     SEMANTIC_PROPOSAL_PREFIX as _SEMANTIC_PROPOSAL_PREFIX,
@@ -21,45 +18,26 @@ from .command_port_common import (
     CommandRuleError,
     decode_semantic_proposal_text as _decode_semantic_proposal_text,
     json_safe as _json_safe,
-    semantic_proposal_text as _semantic_proposal_text,
     task_reference_from_dish as _task_reference_from_dish,
 )
 from .document_authority import (
     CanonicalDocumentError,
-    held_document,
     parse_canonical_document,
-    prepared_change_document,
-    prepared_document,
-    ready_document,
-    resumed_document,
 )
 from .read_model import ReadModelError
 from .planner import AuthorityFence, AuthoritativeSnapshot
 from .repositories import (
     CoreAuthorityError,
-    REGISTRY_ROLE_CORRECTION_KIND,
-    REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE,
     RegistryRepository,
-    registry_source_import_run,
 )
-from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
+from dish_tool.content_versions import content_identity
 from dish_tool.governed_diff import (
-    GOVERNED_FIELDS,
     agent_attested_decision_appends,
     canonical_diff,
     governed_changes_requiring_authorization,
     validate_semantic_proposal,
 )
 from dish_tool.errors import DishRuleError
-from dish_tool.task_document import (
-    DESTINATION_RE,
-    DocumentParseError,
-    finding_payload,
-    parse_canonical_planning_notes,
-    parse_planning_brief,
-    render_planning_brief_notes,
-    validate_planning_brief,
-)
 
 
 class PostgresCommandReadMixin:
@@ -617,9 +595,8 @@ class PostgresCommandReadMixin:
                 healthy_count += 1
                 continue
             counts[category] += 1
-            head = self.session.get(models.TaskAuthorityHead, (generation.generation_id, operation.task_id))
-            activation = self.session.get(models.ContentActivation, head.current_content_activation_id) if head else None
-            version = self.session.get(models.ContentVersion, activation.content_version_id) if activation else None
+            state = self.session.get(models.DishState, (generation.generation_id, operation.task_id))
+            version = self.session.get(models.ContentVersion, state.current_content_version_id) if state else None
             items.append({
                 "category": category,
                 "category_reason": reason,
@@ -654,20 +631,13 @@ class PostgresCommandReadMixin:
         rows: list[dict[str, Any]] = []
         for operation in operations:
             task = self.session.get(models.DishTask, operation.task_id)
-            head = self.session.get(
-                models.TaskAuthorityHead,
+            state = self.session.get(
+                models.DishState,
                 (generation.generation_id, operation.task_id),
             )
-            activation = (
-                self.session.get(
-                    models.ContentActivation, head.current_content_activation_id
-                )
-                if head is not None
-                else None
-            )
             version = (
-                self.session.get(models.ContentVersion, activation.content_version_id)
-                if activation is not None
+                self.session.get(models.ContentVersion, state.current_content_version_id)
+                if state is not None
                 else None
             )
             cycle = self.session.scalar(
@@ -974,22 +944,21 @@ class PostgresCommandReadMixin:
             )
             if creation_fence is not None:
                 hold_reject_baseline_matches = bool(
-                    view.task_revision == creation_fence.expected_task_revision
+                    view.dish_version == creation_fence.expected_dish_version
                     and view.membership_revision
                     == creation_fence.expected_membership_revision
-                    and view.placement_revision
-                    == creation_fence.expected_placement_revision
-                    and view.completion_revision
-                    == creation_fence.expected_completion_revision
                 )
             hold_reject_candidate_activation_exists = self.session.scalar(
-                select(models.ContentActivation.content_activation_id)
+                select(models.DishMutationReceipt.dish_version)
                 .join(
                     wf.CommandExecution,
                     wf.CommandExecution.execution_id
-                    == models.ContentActivation.command_execution_id,
+                    == models.DishMutationReceipt.command_execution_id,
                 )
-                .where(wf.CommandExecution.operation_id == operation.operation_id)
+                .where(
+                    wf.CommandExecution.operation_id == operation.operation_id,
+                    models.DishMutationReceipt.content_changed.is_(True),
+                )
                 .limit(1)
             ) is not None
             authors = list(
@@ -1040,10 +1009,8 @@ class PostgresCommandReadMixin:
             generation_id=str(generation_id),
             task_id=str(task.task_id),
             fence=AuthorityFence(
-                task_revision=view.task_revision,
+                dish_version=view.dish_version,
                 membership_revision=view.membership_revision,
-                placement_revision=view.placement_revision,
-                completion_revision=view.completion_revision,
                 operation_revision=operation.operation_revision if operation else None,
                 operation_phase=operation.phase if operation else None,
             ),

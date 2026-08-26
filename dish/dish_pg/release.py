@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0041_test_generation_rollover"
+ALEMBIC_HEAD = "0042_scalar_dish_state"
 
 
 class ReleaseCandidateService(
@@ -1214,32 +1214,27 @@ class ReleaseCandidateService(
         add("active_registry_present", registry is not None)
 
         total_tasks = self._count(
-            models.TaskAuthorityHead,
-            models.TaskAuthorityHead.generation_id == candidate.generation_id,
+            models.DishState,
+            models.DishState.generation_id == candidate.generation_id,
         )
         placements = self._count(
-            models.CurrentTaskSectionPlacement,
-            models.CurrentTaskSectionPlacement.generation_id == candidate.generation_id,
+            models.DishState,
+            models.DishState.generation_id == candidate.generation_id,
         )
         completions = self._count(
-            models.CurrentTaskCompletion,
-            models.CurrentTaskCompletion.generation_id == candidate.generation_id,
+            models.DishState,
+            models.DishState.generation_id == candidate.generation_id,
         )
-        membership_tasks = int(
-            self.session.scalar(
-                select(func.count(func.distinct(models.CurrentTaskProjectMembership.task_id))).where(
-                    models.CurrentTaskProjectMembership.generation_id == candidate.generation_id,
-                    models.CurrentTaskProjectMembership.is_member.is_(True),
-                )
-            )
-            or 0
+        membership_tasks = self._count(
+            models.TaskMembershipHead,
+            models.TaskMembershipHead.generation_id == candidate.generation_id,
         )
         alias_tasks = int(
             self.session.scalar(
                 select(func.count(func.distinct(models.TaskExternalAlias.task_id)))
-                .join(models.TaskAuthorityHead, models.TaskAuthorityHead.task_id == models.TaskExternalAlias.task_id)
+                .join(models.DishState, models.DishState.task_id == models.TaskExternalAlias.task_id)
                 .where(
-                    models.TaskAuthorityHead.generation_id == candidate.generation_id,
+                    models.DishState.generation_id == candidate.generation_id,
                     models.TaskExternalAlias.external_system == "asana",
                     models.TaskExternalAlias.state == "active",
                 )

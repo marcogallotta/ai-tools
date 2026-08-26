@@ -158,27 +158,20 @@ def assert_committed_command_effects(
 
     observed: set[str] = set()
     execution_id = execution.execution_id
-    if session.scalar(
-        select(models.TaskCompletionEvent.completion_event_id).where(
-            models.TaskCompletionEvent.command_execution_id == execution_id
+    scalar_receipt = session.scalar(
+        select(models.DishMutationReceipt).where(
+            models.DishMutationReceipt.command_execution_id == execution_id
         )
-    ) is not None:
+    )
+    if scalar_receipt is not None and scalar_receipt.completion_changed:
         observed.add("set_completion")
-    if session.scalar(
-        select(models.ContentActivation.content_activation_id).where(
-            models.ContentActivation.command_execution_id == execution_id
-        )
-    ) is not None:
+    if scalar_receipt is not None and scalar_receipt.content_changed:
         observed.add(
             "activate_corrected_content_version"
             if command_name in {"approve", "reject", "apply-proposal"}
             else "activate_content_version"
         )
-    if session.scalar(
-        select(models.TaskSectionPlacementEvent.placement_event_id).where(
-            models.TaskSectionPlacementEvent.command_execution_id == execution_id
-        )
-    ) is not None:
+    if scalar_receipt is not None and scalar_receipt.placement_changed:
         observed.add(
             "place_research_queue"
             if "place_research_queue" in expected.mutation_kinds

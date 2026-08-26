@@ -109,9 +109,8 @@ def _case_test_verifier_reconstruction_is_bound_to_latest_verification_cycle(wor
 
     with session_scope(factory) as session:
         operation = session.get(wf.WorkflowOperation, operation_id)
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
-        version = session.get(models.ContentVersion, activation.content_version_id)
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        version = session.get(models.ContentVersion, state.current_content_version_id)
         snapshot = PostgresReadModel(
             session, cursor_secret=b"cycle-bound-read-model-secret-32"
         )._workflow_snapshot(
@@ -143,9 +142,8 @@ def _case_test_verifier_reconstruction_is_bound_to_latest_verification_cycle(wor
 
     with session_scope(factory) as session:
         operation = session.get(wf.WorkflowOperation, operation_id)
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
-        version = session.get(models.ContentVersion, activation.content_version_id)
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        version = session.get(models.ContentVersion, state.current_content_version_id)
         snapshot = PostgresReadModel(
             session, cursor_secret=b"cycle-bound-read-model-secret-32"
         )._workflow_snapshot(

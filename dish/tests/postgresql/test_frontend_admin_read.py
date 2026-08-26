@@ -172,17 +172,15 @@ def test_admin_reads_real_open_human_review_expired_lease_and_uncertainty(workfl
             issued_at=wall_now - timedelta(hours=2),
             expires_at=wall_now - timedelta(hours=1),
         )
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        assert head is not None
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
-        assert activation is not None
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        assert state is not None
         workflow.open_human_review(
             requirement_id=_workflow_next(ids),
             execution_id=execution_id,
             operation_id=operation_id,
             route="human_review",
             question=question,
-            baseline_content_version_id=activation.content_version_id,
+            baseline_content_version_id=state.current_content_version_id,
             opened_at=NOW,
         )
         session.add(
@@ -194,7 +192,7 @@ def test_admin_reads_real_open_human_review_expired_lease_and_uncertainty(workfl
                 cycle_id=None,
                 route="human_review",
                 question="Old resolved question",
-                baseline_content_version_id=activation.content_version_id,
+                    baseline_content_version_id=state.current_content_version_id,
                 state="decided",
                 opened_by_execution_id=execution_id,
                 opened_at=NOW - timedelta(hours=2),

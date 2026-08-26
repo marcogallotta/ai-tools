@@ -921,7 +921,7 @@ def _install_sqlite_projection_guards() -> None:
             "WHEN NOT EXISTS ("
             "SELECT 1 FROM projection_epochs e "
             "JOIN authority_generations g ON g.generation_id = e.generation_id "
-            "JOIN task_authority_heads h ON h.generation_id = e.generation_id "
+            "JOIN dish_states h ON h.generation_id = e.generation_id "
             "AND h.task_id = NEW.task_id "
             "WHERE e.projection_epoch_id = NEW.projection_epoch_id "
             "AND e.generation_id = NEW.generation_id "

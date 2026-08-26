@@ -735,18 +735,11 @@ def _authoritative_projection_snapshot(
     generation_id: uuid.UUID,
     task_id: uuid.UUID,
 ) -> dict[str, Any]:
-    head = session.get(core_models.TaskAuthorityHead, (generation_id, task_id))
-    if head is None:
+    state = session.get(core_models.DishState, (generation_id, task_id))
+    if state is None:
         raise ProductionShapedError("projection fixture task authority is missing")
-    activation = session.get(
-        core_models.ContentActivation, head.current_content_activation_id
-    )
-    if activation is None:
-        raise ProductionShapedError("projection fixture content activation is missing")
-    content = session.get(core_models.ContentVersion, activation.content_version_id)
-    placement = session.get(core_models.CurrentTaskSectionPlacement, (generation_id, task_id))
-    completion = session.get(core_models.CurrentTaskCompletion, (generation_id, task_id))
-    if content is None or placement is None or completion is None:
+    content = session.get(core_models.ContentVersion, state.current_content_version_id)
+    if content is None:
         raise ProductionShapedError("projection fixture current state is incomplete")
     project_ids = sorted(
         str(value)
@@ -765,8 +758,8 @@ def _authoritative_projection_snapshot(
         "identity_scheme": content.identity_scheme,
         "content_identity": content.content_identity,
         "project_ids": project_ids,
-        "section_id": None if placement.section_id is None else str(placement.section_id),
-        "completed": bool(completion.completed),
+        "section_id": None if state.section_id is None else str(state.section_id),
+        "completed": bool(state.completed),
     }
 
 

@@ -95,9 +95,9 @@ class ImportedTaskSpec:
 class ImportedTaskResult:
     task_id: uuid.UUID
     content_version_id: uuid.UUID
-    content_activation_id: uuid.UUID
-    placement_event_id: uuid.UUID
-    completion_event_id: uuid.UUID
+    dish_version: int
+    placement_version: int
+    completion_version: int
 
 
 @dataclass(frozen=True)
@@ -211,28 +211,38 @@ class CoreAuthorityService:
             command_execution_id=None,
             predecessor_content_version_id=None,
             contract_binding_id=contract_binding_id,
+            created_dish_version=1,
             created_at=spec.observed_at,
         )
-        content_activation_id = self.uuid_factory()
-        activation = models.ContentActivation(
-            content_activation_id=content_activation_id,
+        receipt = models.DishMutationReceipt(
             generation_id=generation_id,
             task_id=spec.task_id,
-            content_version_id=content_version_id,
-            activation_route="import",
+            dish_version=1,
+            source_route="import",
             import_run_id=import_run_id,
             command_execution_id=None,
-            task_revision=1,
-            activated_at=spec.observed_at,
+            content_changed=True,
+            placement_changed=True,
+            completion_changed=True,
+            occurred_at=spec.observed_at,
         )
-        head = models.TaskAuthorityHead(
+        state = models.DishState(
             generation_id=generation_id,
             task_id=spec.task_id,
-            current_content_activation_id=content_activation_id,
-            task_revision=1,
-            membership_revision=1,
-            placement_revision=1,
-            completion_revision=1,
+            current_content_version_id=content_version_id,
+            section_id=spec.section_id,
+            registry_version_id=active_registry.registry_version_id,
+            completed=spec.completed,
+            completion_reason="imported",
+            dish_version=1,
+            placement_version=1,
+            completion_version=1,
+            updated_at=spec.observed_at,
+        )
+        membership_head = models.TaskMembershipHead(
+            generation_id=generation_id,
+            task_id=spec.task_id,
+            membership_revision=1 if spec.project_ids else 0,
             updated_at=spec.observed_at,
         )
 
@@ -269,64 +279,15 @@ class CoreAuthorityService:
                 )
             )
 
-        placement_event_id = self.uuid_factory()
-        placement_event = models.TaskSectionPlacementEvent(
-            placement_event_id=placement_event_id,
-            generation_id=generation_id,
-            task_id=spec.task_id,
-            section_id=spec.section_id,
-            registry_version_id=active_registry.registry_version_id,
-            event_kind="placed",
-            placement_revision=1,
-            provenance_route="import",
-            import_run_id=import_run_id,
-            command_execution_id=None,
-            occurred_at=spec.observed_at,
-        )
-        current_placement = models.CurrentTaskSectionPlacement(
-            generation_id=generation_id,
-            task_id=spec.task_id,
-            section_id=spec.section_id,
-            registry_version_id=active_registry.registry_version_id,
-            latest_event_id=placement_event_id,
-            placement_revision=1,
-            updated_at=spec.observed_at,
-        )
-
-        completion_event_id = self.uuid_factory()
-        completion_event = models.TaskCompletionEvent(
-            completion_event_id=completion_event_id,
-            generation_id=generation_id,
-            task_id=spec.task_id,
-            completed=spec.completed,
-            reason="imported",
-            completion_revision=1,
-            provenance_route="import",
-            import_run_id=import_run_id,
-            command_execution_id=None,
-            occurred_at=spec.observed_at,
-        )
-        current_completion = models.CurrentTaskCompletion(
-            generation_id=generation_id,
-            task_id=spec.task_id,
-            completed=spec.completed,
-            latest_event_id=completion_event_id,
-            completion_revision=1,
-            updated_at=spec.observed_at,
-        )
-
         self.tasks.add_imported_task_bundle(
             task=task,
             alias=alias,
+            receipt=receipt,
             version=version,
-            activation=activation,
-            head=head,
+            state=state,
+            membership_head=membership_head,
             membership_events=membership_events,
             current_memberships=current_memberships,
-            placement_event=placement_event,
-            current_placement=current_placement,
-            completion_event=completion_event,
-            current_completion=current_completion,
         )
         self.session.flush()
         self._import_operation_history(
@@ -338,9 +299,9 @@ class CoreAuthorityService:
         return ImportedTaskResult(
             task_id=spec.task_id,
             content_version_id=content_version_id,
-            content_activation_id=content_activation_id,
-            placement_event_id=placement_event_id,
-            completion_event_id=completion_event_id,
+            dish_version=1,
+            placement_version=1,
+            completion_version=1,
         )
 
     @staticmethod
@@ -756,8 +717,8 @@ class CoreAuthorityService:
         task = self.session.get(models.DishTask, task_id)
         if task is None:
             raise CoreAuthorityError(f"history backfill requires existing DishTask: {task_id}")
-        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
-        if head is None:
+        state = self.session.get(models.DishState, (generation_id, task_id))
+        if state is None:
             raise CoreAuthorityError("history backfill task is absent from the active generation")
         binding = self.contracts.require(contract_binding_id)
         if binding.dish_release != generation.dish_release:

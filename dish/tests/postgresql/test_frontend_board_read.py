@@ -85,7 +85,7 @@ def _task_route(task_id: UUID) -> str:
     )
 
 
-def _import_title(session, ids, context, *, title: str, asana_gid: str):
+def _import_title(session, ids, context, *, title: str, asana_gid: str, completed: bool = False):
     service = CoreAuthorityService(session, uuid_factory=lambda: _next(ids))
     task_id = _next(ids)
     body = "Canonical body\n---\nStatus: ready\n"
@@ -102,7 +102,7 @@ def _import_title(session, ids, context, *, title: str, asana_gid: str):
             content_identity=hashlib.sha256((title + "\0" + body).encode()).hexdigest(),
             project_ids=(context["project_id"],),
             section_id=context["section_id"],
-            completed=False,
+            completed=completed,
             observed_at=NOW,
         ),
     )
@@ -176,19 +176,13 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
         isolated = _import_title(session, ids, context, title="Alpha", asana_gid="1001")
         peer = _import_title(session, ids, context, title="alpha", asana_gid="1002")
         later = _import_title(session, ids, context, title="Beta", asana_gid="1003")
-        completed = _import_title(session, ids, context, title="Completed", asana_gid="1004")
+        completed = _import_title(
+            session, ids, context, title="Completed", asana_gid="1004", completed=True
+        )
         retired = _import_title(session, ids, context, title="Retired", asana_gid="1005")
         nonmember = _import_title(session, ids, context, title="Nonmember", asana_gid="1006")
 
         session.get(models.DishTask, isolated.task_id).existence_state = "isolated"
-        completion = session.scalar(
-            select(models.CurrentTaskCompletion).where(
-                models.CurrentTaskCompletion.generation_id == context["generation_id"],
-                models.CurrentTaskCompletion.task_id == completed.task_id,
-            )
-        )
-        assert completion is not None
-        completion.completed = True
         retired_row = session.get(models.DishTask, retired.task_id)
         assert retired_row is not None
         retired_row.existence_state = "retired"
@@ -257,13 +251,12 @@ def test_board_and_search_keep_placement_from_prior_registry_revision(core_db) -
             context,
             workflow_role="research_queue",
         )
-        placement = session.get(
-            models.CurrentTaskSectionPlacement,
+        state = session.get(
+            models.DishState,
             (context["generation_id"], imported.task_id),
         )
-        assert placement is not None
-        assert placement.registry_version_id == context["registry_version_id"]
-        assert placement.registry_version_id != revised_registry
+        assert state is not None
+        assert state.registry_version_id == revised_registry
 
     with session_scope(factory) as session:
         service = _service(session)
@@ -290,18 +283,12 @@ def test_active_title_search_is_global_case_insensitive_and_board_eligible(core_
         exact = _import_title(session, ids, context, title="Chicken Curry", asana_gid="1101")
         partial = _import_title(session, ids, context, title="Curry Noodles", asana_gid="1102")
         beyond_page = _import_title(session, ids, context, title="Green Curry", asana_gid="1103")
-        completed = _import_title(session, ids, context, title="Completed Curry", asana_gid="1104")
+        completed = _import_title(
+            session, ids, context, title="Completed Curry", asana_gid="1104", completed=True
+        )
         archived = _import_title(session, ids, context, title="Archived Curry", asana_gid="1105")
         inactive = _import_title(session, ids, context, title="Inactive Curry", asana_gid="1106")
 
-        completion = session.scalar(
-            select(models.CurrentTaskCompletion).where(
-                models.CurrentTaskCompletion.generation_id == context["generation_id"],
-                models.CurrentTaskCompletion.task_id == completed.task_id,
-            )
-        )
-        assert completion is not None
-        completion.completed = True
         archived_row = session.get(models.DishTask, archived.task_id)
         assert archived_row is not None
         archived_row.existence_state = "retired"
@@ -701,17 +688,15 @@ def test_current_durable_lease_review_and_recovery_facts_map_to_attention(workfl
             issued_at=NOW,
             expires_at=NOW + timedelta(minutes=1),
         )
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        assert head is not None
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
-        assert activation is not None
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        assert state is not None
         service.open_human_review(
             requirement_id=_workflow_next(ids),
             execution_id=execution_id,
             operation_id=operation_id,
             route="human_review",
             question="Review the durable result",
-            baseline_content_version_id=activation.content_version_id,
+            baseline_content_version_id=state.current_content_version_id,
             opened_at=NOW,
         )
         execution = session.get(wf.CommandExecution, execution_id)

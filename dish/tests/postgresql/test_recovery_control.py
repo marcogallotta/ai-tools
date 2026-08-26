@@ -475,15 +475,18 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             origin="live",
             created_at=WORKFLOW_NOW + timedelta(minutes=7),
         ).projection_event_id
-        predecessor_head = session.get(
-            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        predecessor_state = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        predecessor_membership_head = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
         )
         predecessor_identity = (
-            predecessor_head.current_content_activation_id,
-            predecessor_head.task_revision,
-            predecessor_head.membership_revision,
-            predecessor_head.placement_revision,
-            predecessor_head.completion_revision,
+            predecessor_state.current_content_version_id,
+            predecessor_state.dish_version,
+            predecessor_membership_head.membership_revision,
+            predecessor_state.placement_version,
+            predecessor_state.completion_version,
         )
 
     with session_scope(factory) as session:
@@ -497,17 +500,16 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             clock=lambda: WORKFLOW_NOW + timedelta(minutes=8),
             uuid_factory=lambda: _next(ids),
         )
-        with pytest.raises(ReadModelError, match="no authority head"):
+        with pytest.raises(ReadModelError, match="incomplete scalar/membership authority"):
             PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
-        predecessor_head_after_promotion = session.get(
-            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        predecessor_state_after_promotion = session.get(
+            models.DishState, (context["generation_id"], task_id)
         )
-        predecessor_content_activation = session.get(
-            models.ContentActivation,
-            predecessor_head_after_promotion.current_content_activation_id,
+        predecessor_membership_head = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
         )
         predecessor_content = session.get(
-            models.ContentVersion, predecessor_content_activation.content_version_id
+            models.ContentVersion, predecessor_state_after_promotion.current_content_version_id
         )
         predecessor_membership = session.scalar(
             select(models.CurrentTaskProjectMembership).where(
@@ -515,43 +517,24 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
                 models.CurrentTaskProjectMembership.task_id == task_id,
             )
         )
-        predecessor_placement = session.scalar(
-            select(models.CurrentTaskSectionPlacement).where(
-                models.CurrentTaskSectionPlacement.generation_id == context["generation_id"],
-                models.CurrentTaskSectionPlacement.task_id == task_id,
-            )
-        )
-        predecessor_completion = session.scalar(
-            select(models.CurrentTaskCompletion).where(
-                models.CurrentTaskCompletion.generation_id == context["generation_id"],
-                models.CurrentTaskCompletion.task_id == task_id,
-            )
-        )
         predecessor_pending_effect = session.get(
             projection_models.ProjectionOutboxEvent, pending_effect_id
         )
         predecessor_forensic_snapshot = (
-            predecessor_head_after_promotion.current_content_activation_id,
-            predecessor_head_after_promotion.task_revision,
-            predecessor_head_after_promotion.membership_revision,
-            predecessor_head_after_promotion.placement_revision,
-            predecessor_head_after_promotion.completion_revision,
-            predecessor_content_activation.content_activation_id,
-            predecessor_content_activation.content_version_id,
-            predecessor_content_activation.task_revision,
+            predecessor_state_after_promotion.current_content_version_id,
+            predecessor_state_after_promotion.dish_version,
+            predecessor_membership_head.membership_revision,
+            predecessor_state_after_promotion.placement_version,
+            predecessor_state_after_promotion.completion_version,
             predecessor_content.content_identity,
             predecessor_content.title,
             predecessor_content.body,
             predecessor_membership.latest_event_id,
             predecessor_membership.is_member,
             predecessor_membership.membership_revision,
-            predecessor_placement.latest_event_id,
-            predecessor_placement.section_id,
-            predecessor_placement.registry_version_id,
-            predecessor_placement.placement_revision,
-            predecessor_completion.latest_event_id,
-            predecessor_completion.completed,
-            predecessor_completion.completion_revision,
+            predecessor_state_after_promotion.section_id,
+            predecessor_state_after_promotion.registry_version_id,
+            predecessor_state_after_promotion.completed,
             predecessor_pending_effect.projection_event_id,
             predecessor_pending_effect.state,
             predecessor_pending_effect.intent_payload,
@@ -604,32 +587,35 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
         assert view.body == "Canonical body\n---\nStatus: ready\n"
         assert view.section_id == context["section_id"]
         assert view.completed is False
-        successor_head = session.get(
-            models.TaskAuthorityHead, (control.generation_id, task_id)
+        successor_state = session.get(
+            models.DishState, (control.generation_id, task_id)
         )
-        assert successor_head is not None
+        successor_membership_head = session.get(
+            models.TaskMembershipHead, (control.generation_id, task_id)
+        )
+        assert successor_state is not None and successor_membership_head is not None
         assert (
-            successor_head.task_revision,
-            successor_head.membership_revision,
-            successor_head.placement_revision,
-            successor_head.completion_revision,
+            successor_state.dish_version,
+            successor_membership_head.membership_revision,
+            successor_state.placement_version,
+            successor_state.completion_version,
         ) == predecessor_identity[1:]
 
-        predecessor_head = session.get(
-            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        predecessor_state = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        predecessor_membership_head = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
         )
         assert (
-            predecessor_head.current_content_activation_id,
-            predecessor_head.task_revision,
-            predecessor_head.membership_revision,
-            predecessor_head.placement_revision,
-            predecessor_head.completion_revision,
+            predecessor_state.current_content_version_id,
+            predecessor_state.dish_version,
+            predecessor_membership_head.membership_revision,
+            predecessor_state.placement_version,
+            predecessor_state.completion_version,
         ) == predecessor_identity
-        predecessor_content_activation = session.get(
-            models.ContentActivation, predecessor_head.current_content_activation_id
-        )
         predecessor_content = session.get(
-            models.ContentVersion, predecessor_content_activation.content_version_id
+            models.ContentVersion, predecessor_state.current_content_version_id
         )
         predecessor_membership = session.scalar(
             select(models.CurrentTaskProjectMembership).where(
@@ -637,43 +623,24 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
                 models.CurrentTaskProjectMembership.task_id == task_id,
             )
         )
-        predecessor_placement = session.scalar(
-            select(models.CurrentTaskSectionPlacement).where(
-                models.CurrentTaskSectionPlacement.generation_id == context["generation_id"],
-                models.CurrentTaskSectionPlacement.task_id == task_id,
-            )
-        )
-        predecessor_completion = session.scalar(
-            select(models.CurrentTaskCompletion).where(
-                models.CurrentTaskCompletion.generation_id == context["generation_id"],
-                models.CurrentTaskCompletion.task_id == task_id,
-            )
-        )
         predecessor_pending_effect = session.get(
             projection_models.ProjectionOutboxEvent, pending_effect_id
         )
         assert (
-            predecessor_head.current_content_activation_id,
-            predecessor_head.task_revision,
-            predecessor_head.membership_revision,
-            predecessor_head.placement_revision,
-            predecessor_head.completion_revision,
-            predecessor_content_activation.content_activation_id,
-            predecessor_content_activation.content_version_id,
-            predecessor_content_activation.task_revision,
+            predecessor_state.current_content_version_id,
+            predecessor_state.dish_version,
+            predecessor_membership_head.membership_revision,
+            predecessor_state.placement_version,
+            predecessor_state.completion_version,
             predecessor_content.content_identity,
             predecessor_content.title,
             predecessor_content.body,
             predecessor_membership.latest_event_id,
             predecessor_membership.is_member,
             predecessor_membership.membership_revision,
-            predecessor_placement.latest_event_id,
-            predecessor_placement.section_id,
-            predecessor_placement.registry_version_id,
-            predecessor_placement.placement_revision,
-            predecessor_completion.latest_event_id,
-            predecessor_completion.completed,
-            predecessor_completion.completion_revision,
+            predecessor_state.section_id,
+            predecessor_state.registry_version_id,
+            predecessor_state.completed,
             predecessor_pending_effect.projection_event_id,
             predecessor_pending_effect.state,
             predecessor_pending_effect.intent_payload,
@@ -700,7 +667,7 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             ttl=timedelta(minutes=1),
         ) is None
 
-        pre_write_completion_revision = successor_head.completion_revision
+        pre_write_completion_version = successor_state.completion_version
         port = PostgresCommandPort(
             session, cursor_secret=b"r" * 32, uuid_factory=lambda: _next(ids)
         )
@@ -814,8 +781,8 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
         updated = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
         assert updated.completed is False
         assert session.get(
-            models.TaskAuthorityHead, (control.generation_id, task_id)
-        ).completion_revision == pre_write_completion_revision + 1
+            models.DishState, (control.generation_id, task_id)
+        ).completion_version == pre_write_completion_version + 1
         obligation = session.scalar(
             select(wf.InvocationAuditObligation).where(
                 wf.InvocationAuditObligation.request_id == qualification_request_id

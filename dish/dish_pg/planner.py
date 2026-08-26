@@ -17,10 +17,8 @@ class PlanningError(ValueError):
 
 @dataclass(frozen=True)
 class AuthorityFence:
-    task_revision: int
+    dish_version: int
     membership_revision: int
-    placement_revision: int
-    completion_revision: int
     operation_revision: int | None = None
     operation_phase: str | None = None
 

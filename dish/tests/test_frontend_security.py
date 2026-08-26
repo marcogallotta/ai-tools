@@ -379,7 +379,7 @@ def test_frontend_authority_identity_requires_complete_active_runtime_identity()
     identity = FrontendAuthorityIdentity.from_runtime_identity(
         {
             "database": "dish_stage_a_test",
-            "schema_head": "0041_test_generation_rollover",
+            "schema_head": "0042_scalar_dish_state",
             "dish_release": "dish@test",
             "generation_id": "00000000-0000-4000-8000-000000000123",
             "generation_status": "active",
@@ -387,7 +387,7 @@ def test_frontend_authority_identity_requires_complete_active_runtime_identity()
     )
     assert identity.as_dict() == {
         "database": "dish_stage_a_test",
-        "schema_head": "0041_test_generation_rollover",
+        "schema_head": "0042_scalar_dish_state",
         "dish_release": "dish@test",
         "generation_id": "00000000-0000-4000-8000-000000000123",
         "generation_status": "active",
@@ -397,7 +397,7 @@ def test_frontend_authority_identity_requires_complete_active_runtime_identity()
         FrontendAuthorityIdentity.from_runtime_identity(
             {
                 "database": "dish_stage_a_test",
-                "schema_head": "0041_test_generation_rollover",
+                "schema_head": "0042_scalar_dish_state",
                 "dish_release": "dish@test",
                 "generation_id": "",
                 "generation_status": "active",
@@ -407,7 +407,7 @@ def test_frontend_authority_identity_requires_complete_active_runtime_identity()
         FrontendAuthorityIdentity.from_runtime_identity(
             {
                 "database": "dish_stage_a_test",
-                "schema_head": "0041_test_generation_rollover",
+                "schema_head": "0042_scalar_dish_state",
                 "dish_release": "dish@test",
                 "generation_id": "00000000-0000-4000-8000-000000000123",
                 "generation_status": "retired",
@@ -432,7 +432,7 @@ def test_authority_bound_frontend_requires_observation_reads(tmp_path: Path) -> 
     )
     identity = FrontendAuthorityIdentity(
         database="dish_stage_a_test",
-        schema_head="0041_test_generation_rollover",
+        schema_head="0042_scalar_dish_state",
         dish_release="dish@test",
         generation_id="00000000-0000-4000-8000-000000000123",
     )

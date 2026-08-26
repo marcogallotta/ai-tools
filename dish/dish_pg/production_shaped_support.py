@@ -165,10 +165,10 @@ def compare_sanitized_item(
     )
     if content is None or content.title != payload["title"] or content.body != payload["body"]:
         failures.append("content authority mismatch")
-    placement = session.get(models.CurrentTaskSectionPlacement, (generation_id, task_id))
+    placement = session.get(models.DishState, (generation_id, task_id))
     if placement is None or str(placement.section_id) != str(payload["section_id"]):
         failures.append("section placement mismatch")
-    completion = session.get(models.CurrentTaskCompletion, (generation_id, task_id))
+    completion = placement
     if completion is None or bool(completion.completed) is not bool(payload["completed"]):
         failures.append("completion mismatch")
     mapping = session.scalar(

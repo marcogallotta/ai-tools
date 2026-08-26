@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg import models
@@ -20,7 +20,9 @@ from dish_pg.release_history import (
 from dish_pg.repositories import (
     AuthorityRepository,
     ContractBindingRepository,
+    DishRepository,
     RegistryRepository,
+    ScalarMutationSource,
 )
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from tests.support.postgresql.certification import postgresql_dsn
@@ -271,7 +273,7 @@ def _activate_role_only_registry_revision(
     *,
     workflow_role: str,
 ) -> uuid.UUID:
-    """Revise registry metadata without fabricating a new placement event."""
+    """Revise registry metadata and atomically rebind every Dish placement."""
     current = session.get(models.ActiveSectionRegistry, context["generation_id"])
     source = session.get(
         models.SectionRegistryEntry,
@@ -306,6 +308,33 @@ def _activate_role_only_registry_revision(
             )
         ],
     )
+    dishes = DishRepository(session, uuid_factory=lambda: _next(ids))
+    states = session.scalars(
+        select(models.DishState)
+        .where(models.DishState.generation_id == context["generation_id"])
+        .order_by(models.DishState.task_id)
+    ).all()
+    for state in states:
+        membership = session.get(
+            models.TaskMembershipHead, (context["generation_id"], state.task_id)
+        )
+        assert membership is not None
+        mutation = dishes.begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=state.task_id,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=membership.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
+                import_run_id=context["import_run_id"],
+                occurred_at=NOW,
+            ),
+        )
+        mutation.place(
+            section_id=state.section_id,
+            registry_version_id=registry_version_id,
+        )
+        mutation.finalize()
     activation_id = _next(ids)
     revision = current.registry_revision + 1
     registry.activate_registry(

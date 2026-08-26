@@ -295,29 +295,17 @@ def test_terminal_backfill_is_provenance_safe_idempotent_and_preserves_task_auth
                 select(models.ContentVersion).where(models.ContentVersion.task_id == task_id)
             )
         )
-        original_activation = tuple(
+        original_receipts = tuple(
             session.scalars(
-                select(models.ContentActivation).where(models.ContentActivation.task_id == task_id)
+                select(models.DishMutationReceipt).where(
+                    models.DishMutationReceipt.task_id == task_id
+                )
             )
         )
         original_memberships = tuple(
             session.scalars(
                 select(models.TaskProjectMembershipEvent).where(
                     models.TaskProjectMembershipEvent.task_id == task_id
-                )
-            )
-        )
-        original_placements = tuple(
-            session.scalars(
-                select(models.TaskSectionPlacementEvent).where(
-                    models.TaskSectionPlacementEvent.task_id == task_id
-                )
-            )
-        )
-        original_completions = tuple(
-            session.scalars(
-                select(models.TaskCompletionEvent).where(
-                    models.TaskCompletionEvent.task_id == task_id
                 )
             )
         )
@@ -328,10 +316,8 @@ def test_terminal_backfill_is_provenance_safe_idempotent_and_preserves_task_auth
             "task": _row_state(task_before),
             "alias": _row_state(original_alias),
             "content": tuple(_row_state(row) for row in original_content),
-            "activation": tuple(_row_state(row) for row in original_activation),
+            "receipts": tuple(_row_state(row) for row in original_receipts),
             "memberships": tuple(_row_state(row) for row in original_memberships),
-            "placements": tuple(_row_state(row) for row in original_placements),
-            "completions": tuple(_row_state(row) for row in original_completions),
             "registry": _row_state(registry),
         }
 
@@ -382,11 +368,11 @@ def test_terminal_backfill_is_provenance_safe_idempotent_and_preserves_task_auth
                     select(models.ContentVersion).where(models.ContentVersion.task_id == task_id)
                 )
             ),
-            "activation": tuple(
+            "receipts": tuple(
                 _row_state(row)
                 for row in session.scalars(
-                    select(models.ContentActivation).where(
-                        models.ContentActivation.task_id == task_id
+                    select(models.DishMutationReceipt).where(
+                        models.DishMutationReceipt.task_id == task_id
                     )
                 )
             ),
@@ -395,22 +381,6 @@ def test_terminal_backfill_is_provenance_safe_idempotent_and_preserves_task_auth
                 for row in session.scalars(
                     select(models.TaskProjectMembershipEvent).where(
                         models.TaskProjectMembershipEvent.task_id == task_id
-                    )
-                )
-            ),
-            "placements": tuple(
-                _row_state(row)
-                for row in session.scalars(
-                    select(models.TaskSectionPlacementEvent).where(
-                        models.TaskSectionPlacementEvent.task_id == task_id
-                    )
-                )
-            ),
-            "completions": tuple(
-                _row_state(row)
-                for row in session.scalars(
-                    select(models.TaskCompletionEvent).where(
-                        models.TaskCompletionEvent.task_id == task_id
                     )
                 )
             ),
@@ -573,246 +543,49 @@ def test_pre0036_import_can_attest_an_explicit_empty_revocation_set(
 
 
 @pytest.mark.database_boundary
-def test_0036_preexisting_import_fails_closed_until_exact_revocations_reconciled(
+@pytest.mark.database_boundary
+def test_0042_populated_authority_fails_closed_before_scalar_rewrite(
     tmp_path: Path,
 ) -> None:
-    database = tmp_path / "pre-0036-import.sqlite3"
+    database = tmp_path / "populated-pre-0042.sqlite3"
     config = _migration_config(database)
-    command.upgrade(config, "0035_persistence_constraint_integrity")
+    command.upgrade(config, "0041_test_generation_rollover")
 
-    run_id = uuid.uuid4()
-    owner_id = "owner-1"
-    operation_id = uuid.uuid4()
-    other_operation_id = uuid.uuid4()
-    cycle_id = uuid.uuid4()
-    other_cycle_id = uuid.uuid4()
-    lease_id = uuid.uuid4()
-    other_lease_id = uuid.uuid4()
-    revocation_id = uuid.uuid4()
-
-    first = _history_spec(
-        operation_id=operation_id,
-        cycle_id=cycle_id,
-        lease_id=lease_id,
-        owner_id=owner_id,
-        source_run_id=str(run_id),
-    )
-    second = _history_spec(
-        operation_id=other_operation_id,
-        cycle_id=other_cycle_id,
-        lease_id=other_lease_id,
-        owner_id=owner_id,
-        source_run_id=str(run_id),
-        actor_attempt_sequence=11,
-        minute=10,
-    )
-    imported_history = ImportedOperationHistorySpec(
-        operations=first.operations + second.operations,
-        verification_cycles=first.verification_cycles + second.verification_cycles,
-        leases=first.leases + second.leases,
-    )
-
-    engine = create_engine(f"sqlite+pysqlite:///{database}", future=True)
-    factory = sessionmaker(
-        bind=engine, class_=Session, autoflush=False, expire_on_commit=False, future=True
-    )
-    ids = _uuid_stream()
-    task_id = _next(ids)
-    with session_scope(factory) as session:
-        context = _bootstrap_registry(
-            session,
-            ids,
-            generation_status="active",
-            schema_head="0035_persistence_constraint_integrity",
-            exact_revocation_source=False,
+    generation_id = uuid.uuid4()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            INSERT INTO authority_generations (
+                generation_id, predecessor_generation_id, creation_reason,
+                external_restore_control_id, schema_head, dish_release,
+                status, created_at, retired_at
+            ) VALUES (?, NULL, 'initial_cutover', NULL, ?, ?, 'active', ?, NULL)
+            """,
+            (
+                generation_id.hex,
+                "0041_test_generation_rollover",
+                "historical-populated-fixture",
+                NOW.isoformat(),
+            ),
         )
-        _import_task(
-            session, ids, context, task_id=task_id, history=imported_history
-        )
-    engine.dispose()
 
-    command.upgrade(config, "head")
-    assert ALEMBIC_HEAD == "0041_test_generation_rollover"
+    with pytest.raises(
+        RuntimeError, match="requires an empty authority_generations table"
+    ):
+        command.upgrade(config, "0042_scalar_dish_state")
 
-    engine = create_engine(f"sqlite+pysqlite:///{database}", future=True)
-    factory = sessionmaker(
-        bind=engine, class_=Session, autoflush=False, expire_on_commit=False, future=True
-    )
-    pre_reconcile_execution = uuid.uuid4()
-    with session_scope(factory) as session:
-        target = resolve_backfill_target(session, task_gid=TASK_GID)
-        _register_run(
-            session, generation_id=context["generation_id"], run_id=run_id, owner=owner_id
-        )
-        workflow = WorkflowAuthorityService(session)
-        request_id = uuid.uuid4()
-        _admit(
-            workflow,
-            request_id=request_id,
-            generation_id=context["generation_id"],
-            run_id=run_id,
-            owner=owner_id,
-            command="prepare",
-            payload={"task_id": str(task_id)},
-        )
-        workflow.begin_execution(
-            ExecutionSpec(
-                execution_id=pre_reconcile_execution,
-                request_id=request_id,
-                generation_id=context["generation_id"],
-                task_id=task_id,
-                operation_id=operation_id,
-                command_name="prepare",
-                transaction_profile="L",
-                canonical_intent={"command": "prepare"},
-                pinned_inputs={"now": NOW.isoformat()},
-                contract_binding_id=context["binding_id"],
-                admitted_at=NOW,
-            )
-        )
-        with pytest.raises(
-            ImportedRevocationHistoryUnreconciled, match="revocation history is unreconciled"
-        ):
-            workflow.create_actor_fact(
-                actor_fact_id=uuid.uuid4(),
-                execution_id=pre_reconcile_execution,
-                operation_id=operation_id,
-                run_id=run_id,
-                owner_id=owner_id,
-                actor_role="actor",
-                agent="claude",
-                actor_attempt_sequence=1,
-                recorded_at=NOW,
-            )
-
-    legacy = tmp_path / "legacy-pre-0036.sqlite3"
-    _legacy_db(legacy)
-    _insert_terminal_history(
-        legacy,
-        operation_id=operation_id,
-        cycle_id=cycle_id,
-        lease_id=lease_id,
-        owner_id=owner_id,
-        source_run_id=str(run_id),
-    )
-    _insert_terminal_history(
-        legacy,
-        operation_id=other_operation_id,
-        cycle_id=other_cycle_id,
-        lease_id=other_lease_id,
-        owner_id=owner_id,
-        source_run_id=str(run_id),
-        minute=10,
-    )
-    _insert_exact_revocation(
-        legacy,
-        revocation_id=revocation_id,
-        operation_id=operation_id,
-        owner_id=owner_id,
-        source_run_id=str(run_id),
-        source_lease_id=lease_id,
-    )
-    snapshot = capture_terminal_history_snapshot(
-        legacy_database=legacy,
-        task_gid=TASK_GID,
-        task_id=task_id,
-        output=tmp_path / "pre-0036-reconciliation.ndjson",
-    )
-    assert json.loads(snapshot.path.read_text())["format"] == EXACT_REVOCATION_SNAPSHOT_FORMAT
-
-    with session_scope(factory) as session:
-        result = apply_terminal_history_snapshot(
-            session,
-            target=target,
-            snapshot=snapshot,
-            source_commit=SOURCE_COMMIT,
-            clock=lambda: NOW + timedelta(hours=1),
-        )
-        assert result.inserted_operations == 0
-        assert result.inserted_verification_cycles == 0
-        assert result.inserted_leases == 0
-        assert result.inserted_revocations == 1
-        assert result.supplemental_import_run_id is not None
-
-    with session_scope(factory) as session:
-        supplemental = session.get(models.ImportRun, result.supplemental_import_run_id)
-        assert supplemental is not None
-        assert supplemental.provenance[EXACT_REVOCATION_HISTORY_PROVENANCE_KEY] == (
-            EXACT_REVOCATION_RECONCILIATION_CONTRACT
-        )
-        assert supplemental.provenance["source_format"] == EXACT_REVOCATION_SNAPSHOT_FORMAT
-        revocations = tuple(
-            session.scalars(
-                select(wf.OperationRunRevocation).where(
-                    wf.OperationRunRevocation.generation_id == context["generation_id"]
-                )
-            )
-        )
-        assert [(row.operation_id, row.owner_id, row.source_run_id) for row in revocations] == [
-            (operation_id, owner_id, str(run_id))
-        ]
-        assert session.scalar(
-            select(wf.OperationRunRevocation).where(
-                wf.OperationRunRevocation.operation_id == other_operation_id
-            )
-        ) is None
-
-        workflow = WorkflowAuthorityService(session)
-        with pytest.raises(OperationRunRevoked):
-            workflow.create_actor_fact(
-                actor_fact_id=uuid.uuid4(),
-                execution_id=pre_reconcile_execution,
-                operation_id=operation_id,
-                run_id=run_id,
-                owner_id=owner_id,
-                actor_role="actor",
-                agent="claude",
-                actor_attempt_sequence=1,
-                recorded_at=NOW + timedelta(hours=1),
-            )
-
-        other_request_id = uuid.uuid4()
-        other_execution_id = uuid.uuid4()
-        _admit(
-            workflow,
-            request_id=other_request_id,
-            generation_id=context["generation_id"],
-            run_id=run_id,
-            owner=owner_id,
-            command="prepare",
-            payload={"task_id": str(task_id), "operation_id": str(other_operation_id)},
-        )
-        workflow.begin_execution(
-            ExecutionSpec(
-                execution_id=other_execution_id,
-                request_id=other_request_id,
-                generation_id=context["generation_id"],
-                task_id=task_id,
-                operation_id=other_operation_id,
-                command_name="prepare",
-                transaction_profile="L",
-                canonical_intent={"command": "prepare"},
-                pinned_inputs={"now": NOW.isoformat()},
-                contract_binding_id=context["binding_id"],
-                admitted_at=NOW,
-            )
-        )
-        actor = workflow.create_actor_fact(
-            actor_fact_id=uuid.uuid4(),
-            execution_id=other_execution_id,
-            operation_id=other_operation_id,
-            run_id=run_id,
-            owner_id=owner_id,
-            actor_role="actor",
-            agent="claude",
-            actor_attempt_sequence=2,
-            recorded_at=NOW + timedelta(hours=1),
-        )
-        assert actor.operation_id == other_operation_id
-        assert actor.run_id == run_id
-    engine.dispose()
-
-
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == ("0041_test_generation_rollover",)
+        old_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_authority_heads'"
+        ).fetchone()
+        new_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dish_states'"
+        ).fetchone()
+    assert old_table == (1,)
+    assert new_table is None
 def test_allow_departed_tasks_export_behavior_is_unchanged(tmp_path: Path) -> None:
     legacy = tmp_path / "legacy.sqlite3"
     _legacy_db(legacy)

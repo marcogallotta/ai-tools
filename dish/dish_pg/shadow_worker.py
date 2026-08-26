@@ -1307,15 +1307,10 @@ def _target_authority_state(
     if "task_content" in captured_domains:
         rows: list[dict[str, Any]] = []
         for task_id in sorted_task_ids:
-            head = session.get(models.TaskAuthorityHead, (generation.generation_id, task_id))
-            if head is None:
+            state = session.get(models.DishState, (generation.generation_id, task_id))
+            if state is None:
                 continue
-            activation = session.get(models.ContentActivation, head.current_content_activation_id)
-            version = (
-                None
-                if activation is None
-                else session.get(models.ContentVersion, activation.content_version_id)
-            )
+            version = session.get(models.ContentVersion, state.current_content_version_id)
             if version is not None:
                 rows.append({
                     "identity": version.content_identity,
