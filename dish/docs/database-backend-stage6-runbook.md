@@ -212,10 +212,11 @@ sudo systemctl daemon-reload
 # sudo systemctl start dish-postgres-backup.service
 ```
 
-Each successful service run:
+Each service run that passes the artifact-safety gates:
 
-1. fail-closes on the configured database name, single Alembic head, empty-table inventory, missing
-   off-device mount, same-device destination, or overlapping backup run;
+1. fail-closes on the configured database name, multiple/missing Alembic heads, empty-table inventory,
+   missing off-device mount, same-device destination, or overlapping backup run; an expected/observed
+   Alembic-head mismatch is instead recorded as degraded schema policy and does not suppress the dump;
 2. writes a mode-0600 custom-format `pg_dump --no-owner --no-privileges` archive into a hidden local
    candidate directory, validates it with `pg_restore --list`, writes a SHA-256 sidecar, and rehashes
    it;
@@ -227,11 +228,14 @@ Each successful service run:
    therefore cannot prune the previous usable backup. A retention failure leaves the newly verified
    pair in place but makes the run fail visibly.
 
-The local root also carries a self-hashed `last-attempt.json`. The health command rehashes both
-latest artifact copies and checksum sidecars, rechecks current device independence, reports the
-latest successful backup time/age/database/schema/hash/local path/off-device destination, and fails
-when the artifact is stale or the latest attempt failed. Run it with the same environment values as
-the service, for example from an operator shell that has loaded the mode-0600 environment file:
+The backup report records artifact success separately from schema-policy status, including expected
+head, observed head, and `schema_match`. A mismatched run publishes and verifies the usable artifact,
+then exits non-zero with `status=degraded` so service failure/alert handling remains active. The local
+root also carries a self-hashed `last-attempt.json`. The health command rehashes both latest artifact
+copies and checksum sidecars, rechecks current device independence, reports artifact success and
+freshness separately from schema-policy health, and fails when the artifact is stale, the latest
+attempt failed, or the recorded schema policy is degraded. Run it with the same environment values
+as the service, for example from an operator shell that has loaded the mode-0600 environment file:
 
 ```sh
 set -a
