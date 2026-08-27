@@ -8,9 +8,11 @@ from sqlalchemy import func, select, text
 
 from dish_pg import models
 from dish_pg import reservation_models as reservations
+from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
+from dish_pg.frontend_board_query import FrontendBoardQuery
 from dish_pg.repositories import DishRepository, RegistryRepository, ScalarMutationSource
 from dish_pg.test_generation_rollover import (
     CREATION_REASON,
@@ -21,14 +23,14 @@ from dish_pg.test_generation_rollover import (
     require_test_database_url,
     rollover_test_generation,
 )
-from dish_pg.workflow import WorkflowAuthorityService
+from dish_pg.workflow import StoredOutcome, WorkflowAuthorityService
 from tests.support.postgresql import first_admission as first_admission_support
 from tests.support.postgresql.first_admission import (
     _activate_authority,
     _burn_and_open_admission,
     _prepare_approved_cutover,
 )
-from tests.support.postgresql.workflow import NOW, _admit, _next, _register_run
+from tests.support.postgresql.workflow import NOW, _admit, _execution, _next, _register_run
 
 pytestmark = pytest.mark.database_boundary
 SOURCE_COMMIT = "f" * 40
@@ -190,6 +192,86 @@ def _stage6_forensic_payload(factory, candidate_id, cutover_id, generation_id):
 
 def test_rollover_preserves_contaminated_generation_and_new_admission_isolated(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        archive_run_id = _next(ids)
+        archive_request_id = _next(ids)
+        archive_execution_id = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=archive_run_id,
+        )
+        archive_workflow = WorkflowAuthorityService(
+            session, uuid_factory=lambda: _next(ids)
+        )
+        _admit(
+            archive_workflow,
+            request_id=archive_request_id,
+            generation_id=context["generation_id"],
+            run_id=archive_run_id,
+            command="archive",
+            payload={"task_id": str(task_id)},
+        )
+        _execution(
+            archive_workflow,
+            execution_id=archive_execution_id,
+            request_id=archive_request_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            binding_id=context["binding_id"],
+            command="archive",
+        )
+        predecessor = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        membership = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
+        )
+        assert predecessor is not None and membership is not None
+        mutation = DishRepository(
+            session, uuid_factory=lambda: _next(ids)
+        ).begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            expected_dish_version=predecessor.dish_version,
+            expected_membership_revision=membership.membership_revision,
+            source=ScalarMutationSource(
+                route="command_execution",
+                command_execution_id=archive_execution_id,
+                occurred_at=NOW + timedelta(minutes=30),
+            ),
+        )
+        mutation.set_completion(completed=True, reason="archive")
+        mutation.finalize()
+        archive_workflow.repo.record_outcome(
+            request_id=archive_request_id,
+            outcome=StoredOutcome(
+                outcome_id=_next(ids),
+                outcome_class="success",
+                result_code="OK",
+                http_status=200,
+                result_payload={"ok": True, "completion_state": "archived"},
+                immutable_success=True,
+                recorded_at=NOW + timedelta(minutes=30),
+            ),
+            execution_id=archive_execution_id,
+            audit_event_id=_next(ids),
+            audit_event_type="task_archived",
+            actor="owner-1",
+            audit_payload={"task_id": str(task_id)},
+            task_id=task_id,
+            operation_id=None,
+            obligation_id=_next(ids),
+            invocation_metadata={"surface": "test"},
+        )
+        obligation = session.scalar(
+            select(wf.InvocationAuditObligation).where(
+                wf.InvocationAuditObligation.request_id == archive_request_id
+            )
+        )
+        assert obligation is not None
+        obligation.state = "fulfilled"
+        obligation.terminal_at = NOW + timedelta(minutes=30)
     candidate_id, cutover_id, reservation_id = _contaminate(factory, ids, context, task_id)
     verification_section_id = _install_verification_queue(factory, ids, context)
     before = _stage6_forensic_payload(
@@ -245,6 +327,14 @@ def test_rollover_preserves_contaminated_generation_and_new_admission_isolated(w
         new_epoch = session.get(tx.ProjectionEpoch, result.projection_epoch_id)
         assert new_epoch.external_effects_enabled is False
         assert session.get(tx.ShadowBaseline, result.shadow_baseline_id).status == "open"
+        successor_state = session.get(
+            models.DishState, (result.generation_id, task_id)
+        )
+        assert successor_state is not None
+        assert successor_state.completion_reason == "imported"
+        assert successor_state.archived_at is not None
+        archive = FrontendBoardQuery(session).archived_tasks(max_results=10)
+        assert [item.task_id for item in archive.results] == [task_id]
 
         run_id = _next(ids)
         _register_run(session, generation_id=result.generation_id, run_id=run_id)

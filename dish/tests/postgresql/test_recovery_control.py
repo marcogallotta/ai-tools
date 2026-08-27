@@ -15,6 +15,7 @@ from dish_pg import stage6_models as release_models
 from dish_pg.candidate_manifest import bind_approval_manifest
 from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.database import session_scope
+from dish_pg.frontend_board_query import FrontendBoardQuery
 from dish_pg.recovery_control import (
     RecoveredPhysicalState,
     _authorized_release_candidate,
@@ -35,6 +36,7 @@ from dish_pg.workflow import (
     MutationAdmissionClosed,
     RequestSpec,
     StaleAuthorityError,
+    StoredOutcome,
     WorkflowAuthorityService,
 )
 from tests.support.postgresql.core import HASH_C, NOW, _bootstrap_registry, _next, core_db
@@ -459,6 +461,87 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
     factory, ids, context, task_id = recovery_db
     pending_effect_id = None
     with session_scope(factory) as session:
+        archive_run_id = _next(ids)
+        archive_request_id = _next(ids)
+        archive_execution_id = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=archive_run_id,
+        )
+        archive_workflow = WorkflowAuthorityService(
+            session, uuid_factory=lambda: _next(ids)
+        )
+        _admit(
+            archive_workflow,
+            request_id=archive_request_id,
+            generation_id=context["generation_id"],
+            run_id=archive_run_id,
+            command="archive",
+            payload={"task_id": str(task_id)},
+        )
+        _execution(
+            archive_workflow,
+            execution_id=archive_execution_id,
+            request_id=archive_request_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            binding_id=context["binding_id"],
+            command="archive",
+        )
+        predecessor_state = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        predecessor_membership_head = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
+        )
+        assert predecessor_state is not None and predecessor_membership_head is not None
+        archive_mutation = DishRepository(
+            session, uuid_factory=lambda: _next(ids)
+        ).begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            expected_dish_version=predecessor_state.dish_version,
+            expected_membership_revision=predecessor_membership_head.membership_revision,
+            source=ScalarMutationSource(
+                route="command_execution",
+                command_execution_id=archive_execution_id,
+                occurred_at=WORKFLOW_NOW + timedelta(minutes=4),
+            ),
+        )
+        archive_mutation.set_completion(completed=True, reason="archive")
+        assert archive_mutation.finalize().dish_version == 2
+        archive_workflow.repo.record_outcome(
+            request_id=archive_request_id,
+            outcome=StoredOutcome(
+                outcome_id=_next(ids),
+                outcome_class="success",
+                result_code="OK",
+                http_status=200,
+                result_payload={"ok": True, "completion_state": "archived"},
+                immutable_success=True,
+                recorded_at=WORKFLOW_NOW + timedelta(minutes=4),
+            ),
+            execution_id=archive_execution_id,
+            audit_event_id=_next(ids),
+            audit_event_type="task_archived",
+            actor="owner-1",
+            audit_payload={"task_id": str(task_id)},
+            task_id=task_id,
+            operation_id=None,
+            obligation_id=_next(ids),
+            invocation_metadata={"surface": "test"},
+        )
+        archive_obligation = session.scalar(
+            select(wf.InvocationAuditObligation).where(
+                wf.InvocationAuditObligation.request_id == archive_request_id
+            )
+        )
+        assert archive_obligation is not None
+        archive_obligation.state = "fulfilled"
+        archive_obligation.terminal_at = WORKFLOW_NOW + timedelta(minutes=4)
+
+    with session_scope(factory) as session:
         generation = session.get(models.AuthorityGeneration, context["generation_id"])
         service, candidate_id, _ = _burn_rollback(
             session, ids, context, task_id, dish_release=generation.dish_release
@@ -492,7 +575,7 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             contract_binding_id=context["binding_id"],
             predecessor_content_version_id=predecessor_state.current_content_version_id,
         )
-        assert mutation.finalize().dish_version == 2
+        assert mutation.finalize().dish_version == 3
         session.refresh(predecessor_state)
         mutation = DishRepository(
             session, uuid_factory=lambda: _next(ids)
@@ -511,7 +594,7 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             section_id=predecessor_state.section_id,
             registry_version_id=predecessor_state.registry_version_id,
         )
-        assert mutation.finalize().dish_version == 3
+        assert mutation.finalize().dish_version == 4
         pending_effect_id = ProjectionService(
             session, uuid_factory=lambda: _next(ids)
         )._record_event(
@@ -635,7 +718,7 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
         assert view.title == "[ready] Recovery marker replacement"
         assert view.body == "Replacement body\n---\nStatus: ready\n"
         assert view.section_id == context["section_id"]
-        assert view.completed is False
+        assert view.completed is True
         successor_state = session.get(
             models.DishState, (control.generation_id, task_id)
         )
@@ -643,6 +726,10 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             models.TaskMembershipHead, (control.generation_id, task_id)
         )
         assert successor_state is not None and successor_membership_head is not None
+        assert successor_state.completion_reason == "imported"
+        assert successor_state.archived_at is not None
+        archive = FrontendBoardQuery(session).archived_tasks(max_results=10)
+        assert [item.task_id for item in archive.results] == [task_id]
         assert (
             successor_state.dish_version,
             successor_membership_head.membership_revision,
@@ -666,9 +753,9 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             )
             for receipt in successor_receipts
         ] == [
-            (1, False, False, True),
-            (2, True, False, False),
-            (3, False, True, False),
+            (2, False, False, True),
+            (3, True, False, False),
+            (4, False, True, False),
         ]
 
         predecessor_state = session.get(

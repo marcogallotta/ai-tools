@@ -117,7 +117,8 @@ def upgrade() -> None:
         op.create_check_constraint(
             "ck_dish_states_archived_at_matches_completion",
             "dish_states",
-            "(archived_at IS NOT NULL) = (completed AND completion_reason = 'archive')",
+            "(archived_at IS NULL OR (completed AND completion_reason IN ('archive','imported'))) "
+            "AND (NOT completed OR completion_reason <> 'archive' OR archived_at IS NOT NULL)",
         )
     op.create_index(
         "ix_dish_states_archive",

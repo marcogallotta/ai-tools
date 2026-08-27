@@ -763,6 +763,11 @@ def _predecessor_task_snapshot(session: Session, generation_id: uuid.UUID) -> li
                 "completion": {
                     "completed": bool(state.completed),
                     "reason": state.completion_reason,
+                    "archived_at": (
+                        None
+                        if state.archived_at is None
+                        else _utc_instant(state.archived_at).isoformat()
+                    ),
                 },
             }
         )
@@ -945,6 +950,14 @@ def _clone_rehydrated_task_authority(
                 registry_version_id=registry_version_id,
                 completed=snapshot["completion"]["completed"],
                 completion_reason="imported",
+                archived_at=(
+                    None
+                    if snapshot["completion"]["archived_at"] is None
+                    else _parse_aware(
+                        snapshot["completion"]["archived_at"],
+                        "completion.archived_at",
+                    )
+                ),
                 dish_version=snapshot["dish_version"],
                 placement_version=snapshot["placement_version"],
                 completion_version=snapshot["completion_version"],

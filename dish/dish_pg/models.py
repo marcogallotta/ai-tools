@@ -783,7 +783,8 @@ class DishState(Base):
             name="completion_reason_allowed",
         ),
         CheckConstraint(
-            "(archived_at IS NOT NULL) = (completed AND completion_reason = 'archive')",
+            "(archived_at IS NULL OR (completed AND completion_reason IN ('archive','imported'))) "
+            "AND (NOT completed OR completion_reason <> 'archive' OR archived_at IS NOT NULL)",
             name="archived_at_matches_completion",
         ),
         Index("ix_dish_states_section", "generation_id", "section_id", "task_id"),

@@ -376,7 +376,10 @@ def _task_snapshot(session: Session, generation_id: uuid.UUID) -> list[dict[str,
                     for row in memberships
                 ],
                 "placement": {"section_id": state.section_id},
-                "completion": {"completed": state.completed},
+                "completion": {
+                    "completed": state.completed,
+                    "archived_at": state.archived_at,
+                },
             }
         )
     return result
@@ -520,6 +523,7 @@ def _clone_task_authority(
                 registry_version_id=registry_version_id,
                 completed=snapshot["completion"]["completed"],
                 completion_reason="imported",
+                archived_at=snapshot["completion"]["archived_at"],
                 dish_version=1,
                 placement_version=1,
                 completion_version=1,
