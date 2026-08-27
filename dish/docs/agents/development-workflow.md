@@ -99,10 +99,18 @@ Use comments for meaningful chronology. After a comment changes current truth, f
 
 For Development Workflow design/research work, the owning Asana task is the durable canonical design/review artifact. Chat is transport, not authority.
 
+- The current design specification must not exceed 8,000 characters. Before continuing design,
+  Review, or Implementation from an existing oversized specification, first squash it into a
+  current specification within that limit while preserving every material current requirement,
+  decision, constraint, unresolved blocker, and next action. Do not rewrite historical comments or
+  older immutable design generations.
 - Before design review dispatch, persist the complete proposed design in the owning task and read it back. A chat-only design is not review-ready.
 - The review handoff names the owning task plus the review role/question. The reviewer reads the live task as canonical input rather than a copied chat subset.
 - Persist the review verdict, blockers, and amendments to that same task and verify the write. If review amends the design, fold the accepted/current design into task notes; comments remain chronology, not the current design source.
 - Before Implementation dispatch, ensure the task notes contain the accepted current design. The handoff names the owning task and current repository authority; it must not substitute a partial copied design.
+- On the happy path, Design Review and Implementation consume the current squashed specification
+  without replaying the comment trail. Read historical comments only when needed to resolve
+  ambiguity, provenance, a contradiction, or missing detail.
 - A chat-only design/review result remains incomplete until persisted and read back. A stale copied chat subset never overrides newer Asana task state.
 
 These durability rules change process state only; they do not expand semantic design, Review, Implementation, or Integration authority.
