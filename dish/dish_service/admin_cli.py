@@ -62,8 +62,7 @@ def build_parser() -> JsonArgumentParser:
             "the test profile; production administration remains Marco-only."
         ),
         epilog=(
-            "Normal use: inspect one Dish; archive preserves a finished Dish's history while "
-            "removing it from active views; queue processes work waiting for Marco; audit checks "
+            "Normal use: inspect one Dish; queue processes work waiting for Marco; audit checks "
             "fleet integrity; active shows current run ownership; kill safely replaces one run. "
             "Advanced recovery, review-detail, migration, backup, and governance commands remain "
             "callable when Dish returns one as an exact next action, but are intentionally omitted "
