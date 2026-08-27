@@ -224,6 +224,11 @@ class ScalarDishMutation:
             values.update(
                 completed=self._completion[0],
                 completion_reason=self._completion[1],
+                archived_at=(
+                    self.source.occurred_at
+                    if self._completion == (True, "archive")
+                    else None
+                ),
                 completion_version=next_version,
             )
         result = self.session.execute(

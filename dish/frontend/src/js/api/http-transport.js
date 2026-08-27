@@ -99,6 +99,8 @@ const ADMIN_ERROR_CODES = Object.freeze({
   503: new Set(["service_unavailable", "internal_error"]),
 });
 
+const ARCHIVE_ERROR_CODES = ADMIN_ERROR_CODES;
+
 const DETAIL_ERROR_CODES = Object.freeze({
   400: new Set(["request_invalid"]),
   401: new Set(["auth_required", "session_expired", "session_revoked"]),
@@ -222,6 +224,12 @@ export class FrontendHttpClient {
   async admin() {
     return readFrontendJson(await this.client.getFrontendAdmin(), {
       errorCodesByStatus: ADMIN_ERROR_CODES,
+    });
+  }
+
+  async archive() {
+    return readFrontendJson(await this.client.getFrontendArchive(), {
+      errorCodesByStatus: ARCHIVE_ERROR_CODES,
     });
   }
 

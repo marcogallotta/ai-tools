@@ -86,12 +86,17 @@ class FakeRuntime:
             encoding="utf-8",
         )
         self.board_calls = 0
+        self.archive_calls = 0
         self.search_calls: list[str] = []
         self.search_outcome = "ok"
 
     def board(self):
         self.board_calls += 1
         return {"kind": "board"}
+
+    def archive(self):
+        self.archive_calls += 1
+        return {"generated_at": "2026-08-27T10:00:00+00:00", "dishes": [], "truncated": False}
 
     def search(self, query: str):
         self.search_calls.append(query)
@@ -274,6 +279,18 @@ def test_private_search_is_authenticated_bounded_and_failure_is_isolated(private
     status, _, body = request(server, "GET", "/frontend/board", cookie=TOKEN)
     assert status == 200
     assert api(body) == {"kind": "board"}
+
+
+def test_private_archive_is_authenticated_and_html_route_is_protected(private_server) -> None:
+    server, runtime = private_server
+    status, _, body = request(server, "GET", "/frontend/archive", cookie=TOKEN)
+    assert status == 200
+    assert api(body) == {"generated_at": "2026-08-27T10:00:00+00:00", "dishes": [], "truncated": False}
+    assert runtime.archive_calls == 1
+    status, headers, body = request(server, "GET", "/archive", contract=None)
+    assert status == 303
+    assert header_values(headers, "Location")[0].startswith("/login?return=rt1.")
+    assert body == b""
 
 
 def test_protected_payload_is_withheld_when_final_session_check_fails(private_server) -> None:

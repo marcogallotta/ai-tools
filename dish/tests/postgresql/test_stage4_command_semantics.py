@@ -2,7 +2,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from dataclasses import replace
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
@@ -17,6 +17,7 @@ from dish_pg.command_contract import ACTION_COMMANDS, definition_for
 from dish_pg.command_effects import effect_spec_for
 from dish_pg.command_port import PostgresCommandPort
 from dish_pg.database import session_scope
+from dish_pg.frontend_board_query import FrontendBoardQuery
 from dish_pg.planner import (
     AuthorityFence,
     AuthoritativeSnapshot,
@@ -781,6 +782,11 @@ def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
             models.DishState, (context["generation_id"], task_id)
         )
         assert current is not None and current.completed is True
+        if command_name == "archive":
+            assert current.archived_at is not None
+            assert current.archived_at.replace(tzinfo=timezone.utc) == NOW
+        else:
+            assert current.archived_at is None
         latest = session.get(
             models.DishMutationReceipt,
             (context["generation_id"], task_id, current.completion_version),
@@ -835,6 +841,10 @@ def test_archive_alone_accepts_private_admin_principal_without_projection(workfl
         assert archived.data["completion_state"] == "archived"
         assert archived.data["system_reason"] == "admin_archive"
         assert archived.data["authority_mode"] == "postgresql"
+        current = session.get(models.DishState, (context["generation_id"], task_id))
+        assert current is not None and current.archived_at is not None
+        archive = FrontendBoardQuery(session).archived_tasks(max_results=10)
+        assert [item.task_id for item in archive.results] == [task_id]
         assert session.scalar(
             select(func.count()).select_from(tx.ProjectionOutboxEvent)
         ) == before_projection_count
@@ -885,6 +895,8 @@ def test_newly_created_incomplete_archive_reason_remains_active_not_archived(
         )
         assert current is not None and current.completed is False
         assert current.completion_reason == "archive"
+        assert current.archived_at is None
+        assert FrontendBoardQuery(session).archived_tasks(max_results=10).results == ()
 
         view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
 

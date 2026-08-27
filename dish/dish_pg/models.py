@@ -738,6 +738,7 @@ class DishState(Base):
     )
     completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     completion_reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     dish_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     placement_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     completion_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -781,9 +782,14 @@ class DishState(Base):
             "completion_reason IN ('imported','cooked','archive','reopen_planning')",
             name="completion_reason_allowed",
         ),
+        CheckConstraint(
+            "(archived_at IS NOT NULL) = (completed AND completion_reason = 'archive')",
+            name="archived_at_matches_completion",
+        ),
         Index("ix_dish_states_section", "generation_id", "section_id", "task_id"),
         Index("ix_dish_states_board", "generation_id", "completed", "section_id", "task_id"),
         Index("ix_dish_states_registry", "generation_id", "registry_version_id", "task_id"),
+        Index("ix_dish_states_archive", "generation_id", "archived_at", "task_id"),
     )
 
 

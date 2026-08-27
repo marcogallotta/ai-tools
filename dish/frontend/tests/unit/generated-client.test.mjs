@@ -7,6 +7,7 @@ import { FRONTEND_OPERATION_IDS, GeneratedFrontendClient } from "../../src/js/ap
     "frontendLogin",
     "frontendLogout",
     "getFrontendAdmin",
+    "getFrontendArchive",
     "getFrontendBoard",
     "getFrontendSearch",
     "getFrontendSectionTasks",

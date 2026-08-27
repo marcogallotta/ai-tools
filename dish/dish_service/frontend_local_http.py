@@ -31,6 +31,8 @@ class LocalBoardBackend(Protocol):
 
     def admin(self) -> dict[str, Any]: ...
 
+    def archive(self) -> dict[str, Any]: ...
+
     def search(self, query: str) -> dict[str, Any]: ...
 
     def continuation(self, *, section_route_id: str, cursor: str) -> dict[str, Any]: ...
@@ -99,6 +101,9 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/frontend/admin":
             self._admin(parsed.query)
+            return
+        if parsed.path == "/frontend/archive":
+            self._archive(parsed.query)
             return
         task_route = _task_route_from_path(parsed.path)
         if task_route is not None:
@@ -216,6 +221,20 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             LOG.error("local frontend admin read failed type=%s", type(exc).__name__)
             self._write_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "internal_error", "Admin data could not be loaded.")
+
+    def _archive(self, query: str) -> None:
+        if not self._require_contract():
+            return
+        if query:
+            self._write_api_error(HTTPStatus.BAD_REQUEST, "request_invalid", "Archive request is invalid.")
+            return
+        try:
+            self._write_api_json(HTTPStatus.OK, self.server.backend.archive())
+        except BoardReadUnavailable:
+            self._write_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "service_unavailable", "Archive data is temporarily unavailable.")
+        except Exception as exc:
+            LOG.error("local frontend archive read failed type=%s", type(exc).__name__)
+            self._write_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "internal_error", "Archive data could not be loaded.")
 
     def _section_page(self, section_route_id: str, query: str) -> None:
         if not self._require_contract():

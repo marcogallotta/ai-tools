@@ -36,6 +36,7 @@ class FakeBackend:
         self.fail_bootstrap = False
         self.search_calls: list[str] = []
         self.fail_search = False
+        self.archive_calls = 0
         self.detail_calls: list[str] = []
         self.detail_outcome = "ok"
 
@@ -81,6 +82,10 @@ class FakeBackend:
             ],
             "truncated": False,
         }
+
+    def archive(self):
+        self.archive_calls += 1
+        return {"generated_at": "2026-08-27T10:00:00+00:00", "dishes": [], "truncated": False}
 
     def continuation(self, *, section_route_id: str, cursor: str):
         self.continuation_calls.append((section_route_id, cursor))
@@ -323,6 +328,19 @@ def test_local_search_is_read_only_and_does_not_poison_board(local_server) -> No
     status, _, body = request(server, "GET", "/frontend/board")
     assert status == 200
     assert json_body(body)["sections"][0]["cards"][0]["task_id"] == TASK_ID
+
+
+def test_local_archive_is_read_only_and_contract_bound(local_server) -> None:
+    server, backend = local_server
+    status, headers, body = request(server, "GET", "/frontend/archive")
+    assert status == 200
+    assert headers["X-Dish-Frontend-Contract"] == FRONTEND_CONTRACT_VERSION
+    assert json_body(body) == {"generated_at": "2026-08-27T10:00:00+00:00", "dishes": [], "truncated": False}
+    assert backend.archive_calls == 1
+    status, _, body = request(server, "GET", "/frontend/archive?unexpected=1")
+    assert status == 400
+    assert json_body(body)["error"]["code"] == "request_invalid"
+    assert backend.archive_calls == 1
 
 
 def test_bootstrap_and_continuation_are_contract_bound_and_read_only(local_server) -> None:
