@@ -144,9 +144,11 @@ workflow policy.
 
 `archive <dish>` is a private-admin lifecycle command shown in root help, never an Action/OpenAPI
 capability. It has no operator-supplied reason: the durable invocation provenance records
-`system_reason=admin_archive`. In the SQLite/Asana authority it requires confirmation, a resting
+`system_reason=admin_archive`. In the SQLite/Asana authority it requires confirmation, an active
 incomplete Dish, and a distinct configured Cooking History project; it then marks the task complete,
 adds Cooking History, removes Cooking last, and confirms preserved identity from an exact reread.
+Archive supersedes open workflow state without cleaning it up; the preserved state is historical and
+cannot authorize later mutation while the Dish is archived. Read-only inspection remains available.
 In PostgreSQL authority the same private admin command is a narrow additional principal for the
 existing agent-owned `archive` semantic. Agent exposure and semantics remain unchanged, and the
 PostgreSQL path creates no Asana projection. The private admin transport also retains exact-ID

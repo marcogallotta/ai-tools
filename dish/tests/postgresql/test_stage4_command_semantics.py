@@ -938,10 +938,7 @@ def test_newly_created_incomplete_archive_reason_remains_active_not_archived(
         assert task_id in {item.task_id for item in page.items}
 
 
-@pytest.mark.parametrize("command_name", ("cooked", "archive"))
-def test_cooked_and_archive_reject_open_workflow_without_partial_completion(
-    workflow_db, command_name: str
-) -> None:
+def test_cooked_rejects_open_workflow_without_partial_completion(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     run_id = _next(ids)
     with session_scope(factory) as session:
@@ -957,7 +954,7 @@ def test_cooked_and_archive_reject_open_workflow_without_partial_completion(
 
         result = port.execute(
             _call(
-                command_name,
+                "cooked",
                 run_id=run_id,
                 request_id=_next(ids),
                 arguments={"task_id": str(task_id)},
@@ -972,3 +969,35 @@ def test_cooked_and_archive_reject_open_workflow_without_partial_completion(
         )
         assert current is not None
         assert (current.dish_version, current.completion_version, current.completed) == before_identity
+
+
+def test_archive_overrides_open_workflow_and_blocks_late_mutation(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
+
+        archived = port.execute(
+            _call(
+                "archive",
+                run_id=run_id,
+                request_id=_next(ids),
+                principal="admin",
+                arguments={"task_id": str(task_id), "confirmed": True},
+            )
+        )
+        late_renewal = port.execute(
+            _call(
+                "renew-lease",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"operation_id": started.data["operation_id"]},
+            )
+        )
+
+        assert archived.ok is True
+        assert archived.data["completion_state"] == "archived"
+        assert late_renewal.ok is False
+        assert late_renewal.code == "TASK_ARCHIVED"

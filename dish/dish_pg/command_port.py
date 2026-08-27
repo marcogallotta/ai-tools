@@ -3218,19 +3218,6 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError("ARCHIVE_AUTHORITY_MISSING", "task archive authority is incomplete")
         if current.completed or current.archived_at is not None:
             raise CommandRuleError("TASK_NOT_ACTIVE", "Archive requires an active Dish")
-        blocking_operation = self.session.scalar(
-            select(wf.WorkflowOperation.operation_id).where(
-                wf.WorkflowOperation.generation_id == generation.generation_id,
-                wf.WorkflowOperation.task_id == task.task_id,
-                wf.WorkflowOperation.lifecycle == "open",
-            ).limit(1)
-        )
-        if blocking_operation is not None:
-            raise CommandRuleError(
-                "TASK_NOT_RESTING",
-                "Archive requires a resting Dish with no open workflow operation",
-                data={"open_operation_id": str(blocking_operation)},
-            )
         self._scalar_mutation(
             generation_id=generation.generation_id,
             task_id=task.task_id,

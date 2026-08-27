@@ -162,7 +162,7 @@ def test_manual_completion_is_not_relabelled_as_archived(monkeypatch) -> None:
     assert backend.writes == 0
 
 
-def test_archive_refuses_an_open_operation_before_any_effect(monkeypatch) -> None:
+def test_archive_overrides_an_open_operation_without_cleanup(monkeypatch) -> None:
     conn, backend, app = _application(monkeypatch)
     head = conn.execute(
         "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid=?",
@@ -180,9 +180,14 @@ def test_archive_refuses_an_open_operation_before_any_effect(monkeypatch) -> Non
 
     result = app.execute("archive", dish=TASK_GID, confirmed=True)
 
-    assert result["code"] == "TASK_NOT_RESTING"
-    assert result["errors"][0].get("open_operation_id")
-    assert backend.writes == 0
+    assert result["ok"] is True
+    assert backend.completed is True
+    assert backend.tasks[TASK_GID]["project_gids"] == {HISTORY_GID}
+    operation = conn.execute(
+        "SELECT status FROM operations WHERE task_gid=?", (TASK_GID,)
+    ).fetchone()
+    assert operation is not None
+    assert operation["status"] == "open"
 
 
 def test_archive_fails_closed_when_history_project_is_not_distinct(monkeypatch) -> None:
