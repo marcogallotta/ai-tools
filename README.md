@@ -53,6 +53,7 @@ The repo is used through `~/.claude/` and `~/.local/bin/`, not from this directo
 | `CLAUDE-global.md` | `~/.claude/CLAUDE.md` |
 | `hooks/` | `~/.claude/hooks/` |
 | `codex/hooks.json` | `~/.codex/hooks.json` |
+| `codex/git-pr.rules` | `~/.codex/rules/git-pr.rules` |
 | `hooks/agent-reground` | `~/.local/bin/agent-reground` |
 | `hooks/codex-protected-checkout` | `~/.local/bin/codex-protected-checkout` |
 | `tools/git-commit` | `~/.local/bin/git-commit` |

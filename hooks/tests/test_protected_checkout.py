@@ -1,5 +1,34 @@
 import subprocess
 
+import pytest
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -m x", "git push --force", "git reset --hard HEAD",
+    "git clean -fd", "git restore README.md", "git branch -D old",
+])
+def test_prompt_free_git_accepts_ordinary_feature_mutations(
+    classifier_module, protected_repo, command
+):
+    assert classifier_module.prompt_free_git(command, protected_repo["linked"])
+
+
+@pytest.mark.parametrize("command,cwd", [
+    ("git commit -m x", "primary"),
+    ("git push origin HEAD:main", "linked"),
+    ("git branch -D main", "linked"),
+    ("git status; git commit -m x", "linked"),
+    ("env git commit -m x", "linked"),
+])
+def test_prompt_free_git_rejects_main_and_unclear_forms(
+    classifier_module, protected_repo, command, cwd
+):
+    assert not classifier_module.prompt_free_git(command, protected_repo[cwd])
+
+
+def test_prompt_free_git_accepts_direct_pr_command(classifier_module, protected_repo):
+    assert classifier_module.prompt_free_git("gh pr merge 42", protected_repo["primary"])
+
 
 def classify(module, protected_repo, command, cwd="primary"):
     return module.classify(

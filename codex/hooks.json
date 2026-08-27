@@ -35,6 +35,19 @@
           }
         ]
       }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/marco/.local/bin/codex-protected-checkout",
+            "timeout": 10,
+            "statusMessage": "Checking branch prompt policy"
+          }
+        ]
+      }
     ]
   }
 }

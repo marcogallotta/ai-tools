@@ -107,6 +107,30 @@ def test_codex_hooks_config_is_user_level_and_hard_deny_adapter(hooks_dir):
     entries = config["hooks"]["PreToolUse"]
     entry = next(item for item in entries if item.get("matcher") == "^Bash$")
     assert entry["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"
+    permission = config["hooks"]["PermissionRequest"][0]
+    assert permission["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"
+    rules = (hooks_dir.parent / "codex" / "git-pr.rules").read_text()
+    assert 'decision="prompt"' in rules
+    assert '["gh", "pr"]' in rules
+
+
+def test_codex_permission_request_allows_feature_and_pr_but_not_main(
+    codex_protected_checkout, protected_repo, monkeypatch, capsys
+):
+    for command, cwd, allowed in (
+        ("git reset --hard HEAD", protected_repo["linked"], True),
+        ("git push origin HEAD:main", protected_repo["linked"], False),
+        ("git commit -m x", protected_repo["primary"], False),
+        ("gh pr merge 42", protected_repo["primary"], True),
+        ("git status; git commit -m x", protected_repo["linked"], False),
+    ):
+        decision = run_adapter(codex_protected_checkout, {
+            "hook_event_name": "PermissionRequest", "tool_name": "Bash",
+            "cwd": str(cwd), "tool_input": {"command": command},
+        }, monkeypatch, capsys)
+        assert (decision is not None) is allowed
+        if allowed:
+            assert decision["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
 def test_codex_adapter_is_silent_in_registered_worktree_outside_ai_tools(

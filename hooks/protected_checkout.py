@@ -22,6 +22,34 @@ GIT_LOCATION_VALUE_OPTS = ("-C", "--git-dir", "--work-tree")
 SHELL_COMMANDS = {"bash", "dash", "fish", "ksh", "sh", "zsh"}
 COMMAND_WRAPPERS = {"command", "exec", "nohup", "sudo"}
 CONTROL_PREFIXES = {"!", "do", "elif", "else", "if", "then", "time", "until", "while"}
+PROMPT_FREE_READS = {"branch", "diff", "grep", "log", "ls-files", "merge-base", "rev-parse", "show", "status"}
+BRANCH_MUTATIONS = {"branch", "checkout", "cherry-pick", "clean", "commit", "merge", "mv", "push", "rebase", "reset", "restore", "revert", "switch"}
+
+
+def prompt_free_git(command, cwd):
+    """True only for a direct PR command, Git read, or ordinary feature-branch mutation."""
+    segments = [part for part in split_segments(command) if part.strip()]
+    if len(segments) != 1:
+        return False
+    try:
+        tokens = shlex.split(segments[0])
+    except ValueError:
+        return False
+    if len(tokens) >= 2 and basename_token(tokens[0]) == "gh" and tokens[1] == "pr":
+        return True
+    if len(tokens) < 2 or basename_token(tokens[0]) != "git" or tokens[1].startswith("-"):
+        return False
+    subcommand = tokens[1]
+    if any(arg in ("-h", "--help") for arg in tokens[2:]):
+        return True
+    if subcommand in PROMPT_FREE_READS and (subcommand != "branch" or all(arg.startswith("-") and not arg.startswith(("-d", "-D", "-m", "-M", "-c", "-C")) for arg in tokens[2:])):
+        return True
+    if subcommand not in BRANCH_MUTATIONS or subcommand == "add":
+        return False
+    if subcommand in {"branch", "checkout", "push", "switch"} and any(re.search(r"(^|[/:])main($|:)", arg) for arg in tokens[2:]):
+        return False
+    result = _run_git(["branch", "--show-current"], {}, cwd)
+    return bool(result and result.returncode == 0 and result.stdout.strip() not in ("", "main"))
 
 
 def split_segments(command):
