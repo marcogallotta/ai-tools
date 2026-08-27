@@ -1,85 +1,224 @@
 name: Build and publish dependency bundle
 
 on:
-  workflow_dispatch: {}
+  issues:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+    inputs:
+      task_gid: {required: true, type: string}
+      pr_number: {required: true, type: string}
+      head_sha: {required: true, type: string}
+      bundle_id: {required: true, type: string}
 
 permissions:
   contents: write
+  actions: write
+  statuses: write
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: dependency-bundle-${{ github.event_name == 'issues' && github.event.issue.number || inputs.bundle_id }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-publish:
-    name: Build and publish canonical dependency bundle
+  candidate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.title == 'dependency-bundle candidate publication' &&
+       contains(github.event.issue.body, 'dish-dependency-bundle-candidate:v1'))
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      task_gid: ${{ steps.request.outputs.task_gid }}
+      pr_number: ${{ steps.request.outputs.pr_number }}
+      head_sha: ${{ steps.request.outputs.head_sha }}
+      bundle_id: ${{ steps.request.outputs.bundle_id }}
+      release_tag: ${{ steps.expected.outputs.release_tag }}
+      archive_name: ${{ steps.expected.outputs.archive_name }}
+      checksum_name: ${{ steps.expected.outputs.checksum_name }}
+      manifest_name: ${{ steps.expected.outputs.manifest_name }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
 
-      - name: Compute expected bundle identity
-        id: expected
+      - name: Validate authorized exact-head request
+        id: request
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ACTOR: ${{ github.actor }}
+          INPUT_TASK: ${{ inputs.task_gid }}
+          INPUT_PR: ${{ inputs.pr_number }}
+          INPUT_HEAD: ${{ inputs.head_sha }}
+          INPUT_BUNDLE: ${{ inputs.bundle_id }}
         run: |
           set -euo pipefail
-          python3 scripts/dependency_bundle.py expected \
-            --repo-root "$GITHUB_WORKSPACE" \
-            --github-output "$GITHUB_OUTPUT"
-          python3 scripts/dependency_bundle.py expected \
-            --repo-root "$GITHUB_WORKSPACE" \
-            --json
+          if [[ "$EVENT_NAME" == issues ]]; then
+            permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" --jq .permission)
+            [[ "$permission" =~ ^(admin|maintain|write)$ ]]
+            mapfile -t request < <(python3 - <<'PY'
+          import os, re
+          pattern = r"<!-- dish-dependency-bundle-candidate:v1 task=(\d{16}) pr=(\d+) head=([0-9a-f]{40}) bundle=([A-Za-z0-9._-]+) -->"
+          matches = re.findall(pattern, os.environ["ISSUE_BODY"])
+          if len(matches) != 1:
+              raise SystemExit("request must contain exactly one canonical candidate marker")
+          print("\n".join(matches[0]))
+          PY
+            )
+            task_gid=${request[0]}; pr_number=${request[1]}; head_sha=${request[2]}; bundle_id=${request[3]}
+          else
+            task_gid=$INPUT_TASK; pr_number=$INPUT_PR; head_sha=$INPUT_HEAD; bundle_id=$INPUT_BUNDLE
+          fi
+          [[ "$task_gid" =~ ^[0-9]{16}$ && "$pr_number" =~ ^[0-9]+$ && "$head_sha" =~ ^[0-9a-f]{40}$ ]]
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")
+          [[ $(jq -r .state <<<"$pr") == open ]]
+          [[ $(jq -r .head.sha <<<"$pr") == "$head_sha" ]]
+          [[ $(jq -r .head.repo.full_name <<<"$pr") == "$GITHUB_REPOSITORY" ]]
+          printf 'task_gid=%s\npr_number=%s\nhead_sha=%s\nbundle_id=%s\n' \
+            "$task_gid" "$pr_number" "$head_sha" "$bundle_id" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.request.outputs.head_sha }}
+          path: candidate
+          persist-credentials: false
+
+      - name: Verify changed inputs and candidate identity with trusted tooling
+        id: expected
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.request.outputs.pr_number }}
+          BUNDLE_ID: ${{ steps.request.outputs.bundle_id }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename' > /tmp/changed
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          target = json.loads(Path("trusted/ci/dependency-bundle-target.json").read_text())
+          allowed = set(target["compatibility_manifests"]) | {"ci/dependency-bundle-target.json"}
+          if not set(Path("/tmp/changed").read_text().splitlines()) & allowed:
+              raise SystemExit("candidate does not change a dependency compatibility input")
+          PY
+          expected=$(python3 trusted/scripts/dependency_bundle.py expected --repo-root candidate)
+          [[ "$expected" == "$BUNDLE_ID" ]]
+          python3 trusted/scripts/dependency_bundle.py expected --repo-root candidate --github-output "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ steps.expected.outputs.python_version }}
 
-      - name: Build canonical staging wheelhouse
+      - name: Build without executing candidate tooling or source
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf wheelhouse-serial
-          mkdir -p wheelhouse-serial
-          python -m pip download --only-binary=:all: \
-            -r dish/requirements-test.txt -d wheelhouse-serial
-          python -m pip download --only-binary=:all: \
-            -r tools/requirements.txt -d wheelhouse-serial
-          python -m pip download --only-binary=:all: \
-            -r dish/requirements-flake.txt -d wheelhouse-serial
+          mkdir wheelhouse publication
+          while read -r manifest; do
+            python -m pip download --only-binary=:all: -r "candidate/$manifest" -d wheelhouse
+          done < <(python3 -c 'import json; print("\n".join(json.load(open("candidate/ci/dependency-bundle-target.json"))["compatibility_manifests"]))')
+          python trusted/scripts/dependency_bundle.py build --repo-root candidate --wheelhouse wheelhouse \
+            --output-dir publication --source-commit "${{ steps.request.outputs.head_sha }}"
 
-      - name: Build immutable bundle assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .ci/dependency-bundle-publication
-          python scripts/dependency_bundle.py build \
-            --repo-root "$GITHUB_WORKSPACE" \
-            --wheelhouse wheelhouse-serial \
-            --output-dir .ci/dependency-bundle-publication \
-            --source-commit "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dependency-bundle-candidate-${{ steps.request.outputs.head_sha }}
+          path: publication
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Publish authoritative Release
+  publish:
+    needs: candidate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+      statuses: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.candidate.outputs.head_sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: dependency-bundle-candidate-${{ needs.candidate.outputs.head_sha }}
+          path: publication
+
+      - name: Publish or byte-verify immutable Release authority
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          ARCHIVE_NAME: ${{ steps.expected.outputs.archive_name }}
-          CHECKSUM_NAME: ${{ steps.expected.outputs.checksum_name }}
-          MANIFEST_NAME: ${{ steps.expected.outputs.manifest_name }}
+          HEAD_SHA: ${{ needs.candidate.outputs.head_sha }}
+          RELEASE_TAG: ${{ needs.candidate.outputs.release_tag }}
+          ARCHIVE_NAME: ${{ needs.candidate.outputs.archive_name }}
+          CHECKSUM_NAME: ${{ needs.candidate.outputs.checksum_name }}
+          MANIFEST_NAME: ${{ needs.candidate.outputs.manifest_name }}
         run: |
           set -euo pipefail
-          python scripts/dependency_bundle.py publish \
-            --repo-root "$GITHUB_WORKSPACE" \
-            --archive ".ci/dependency-bundle-publication/$ARCHIVE_NAME" \
-            --checksum ".ci/dependency-bundle-publication/$CHECKSUM_NAME" \
-            --manifest ".ci/dependency-bundle-publication/$MANIFEST_NAME" \
-            --source-commit "$GITHUB_SHA"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            mkdir existing
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir existing
+            cmp "publication/$ARCHIVE_NAME" "existing/$ARCHIVE_NAME"
+            cmp "publication/$CHECKSUM_NAME" "existing/$CHECKSUM_NAME"
+            cmp "publication/$MANIFEST_NAME" "existing/$MANIFEST_NAME"
+          else
+            python trusted/scripts/dependency_bundle.py verify --repo-root candidate \
+              --archive "publication/$ARCHIVE_NAME" --checksum "publication/$CHECKSUM_NAME" \
+              --manifest "publication/$MANIFEST_NAME"
+            python trusted/scripts/dependency_bundle.py publish --repo-root candidate \
+              --archive "publication/$ARCHIVE_NAME" --checksum "publication/$CHECKSUM_NAME" \
+              --manifest "publication/$MANIFEST_NAME" --source-commit "$HEAD_SHA"
+          fi
 
-      - name: Dispatch Actions artifact mirror
+      - name: Dispatch exact locator mirror
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.expected.outputs.release_tag }}
         run: |
-          set -euo pipefail
-          # A Release created with the default GITHUB_TOKEN does not trigger the
-          # mirror workflow's `release: published` event (anti-recursion), so
-          # dispatch it explicitly here.
-          gh workflow run dependency-bundle-mirror.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref "$GITHUB_REF_NAME" \
-            -f "tag=$RELEASE_TAG"
+          gh workflow run dependency-bundle-mirror.yml --repo "$GITHUB_REPOSITORY" \
+            --ref "${{ github.event.repository.default_branch }}" \
+            -f tag="${{ needs.candidate.outputs.release_tag }}" \
+            -f locator_sha="${{ needs.candidate.outputs.head_sha }}" \
+            -f bundle_id="${{ needs.candidate.outputs.bundle_id }}"
+
+      - name: Close successful issue request
+        if: github.event_name == 'issues'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" \
+            --body "Published immutable bundle \`${{ needs.candidate.outputs.bundle_id }}\` for exact head \`${{ needs.candidate.outputs.head_sha }}\`; locator mirror dispatched."
+          gh issue close "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY"
+
+  close-failed-issue:
+    needs: [candidate, publish]
+    if: always() && github.event_name == 'issues' && (needs.candidate.result == 'failure' || needs.publish.result == 'failure')
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Record typed failure and close request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" \
+            --body "Dependency-bundle candidate publication failed closed. Inspect trusted run \`$GITHUB_RUN_ID\`; submit a fresh request only after correcting the typed validation/build/publication failure."
+          gh issue close "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY"

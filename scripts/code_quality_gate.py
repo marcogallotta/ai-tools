@@ -53,6 +53,7 @@ def evaluate(repo: Path, *, target_base: str, head: str, task_gid: str, pr_numbe
         "target_base_sha": target_base, "head_sha": head, "comparison_base_sha": comparison_base, "ancestor_proof": True,
         "changed_paths": list(changed), "changed_paths_digest": _digest(list(changed)),
         "policy_source_sha": policy_source, "policy_digest": policy_digest, "registry_digest": registry_digest, "bootstrap": bootstrap,
+        "effective_enabled": bool(policy.get("enabled")),
         "tool_policy": {"ruff": policy["ruff"], "pyright": policy["pyright"], "jscpd": policy["jscpd"]},
         "analyzers": normalized_analyzers, "findings": sorted(failures, key=lambda x: _canonical(x)), "signals": sorted(signals, key=lambda x: _canonical(x)),
         "correction_round": correction_round, "max_quality_correction_rounds": max_rounds, "outcome": outcome,

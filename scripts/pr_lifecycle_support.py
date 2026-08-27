@@ -8,6 +8,7 @@ process memory is only a cache for one poll iteration.
 from __future__ import annotations
 
 import argparse
+import base64
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -492,6 +493,25 @@ class GitHubREST:
 
     def get_pr_files(self, number: int) -> list[dict[str, Any]]:
         return [dict(item) for item in self._get_paginated(f"pulls/{number}/files")]
+
+    def get_file_bytes(self, path: str, ref: str) -> bytes | None:
+        try:
+            _, _, value = self.http.request(
+                "GET",
+                self._url(f"contents/{urlparse.quote(path, safe='/')}", {"ref": ref}),
+                headers=self.headers,
+            )
+        except HTTPError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        if not isinstance(value, dict) or value.get("encoding") != "base64":
+            raise LifecycleError(f"GitHub contents response for {path} was not base64 file content")
+        try:
+            encoded = "".join(str(value.get("content") or "").split())
+            return base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise LifecycleError(f"GitHub contents response for {path} has invalid base64") from exc
 
     def get_repository_id(self) -> int:
         _, _, value = self.http.request(
