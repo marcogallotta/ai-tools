@@ -247,7 +247,7 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  assert kernels.role_index_contracts()==expected
  assert deps['preload']=={'role_index_contracts':True,'additional':['dish/docs/agents/contributor-base.md']}
  assert deps['triggered_reads']['test-scope decisions']==['dish/docs/testing.md#Autonomous changed-path selection','dish/docs/architecture/testing-boundaries.md#Proving tests']
- assert deps['triggered_reads']['dispatcher / Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md#Review routing','ci/pr-lifecycle-dispatcher-runbook.md#BLOCK -> implementation/fix routing','ci/pr-lifecycle-dispatcher-runbook.md#Integration composition']
+ assert deps['triggered_reads']['manual Review / fix / Integration handoffs']==['dish/docs/agents/review.md#Review claims and manual routing','dish/docs/agents/implementation.md#Manual Worker formal-BLOCK fix continuation','dish/docs/agents/integration.md#Manual Integration handoff']
  assert deps['triggered_reads']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md#Named lane commands','dish/docs/architecture/postgresql-runtime.md#Proving tests']
  text=kernels.render_role(m,s,'development-workflow')
  assert text.index('Startup:')<text.index('Startup/re-ground context:')
@@ -264,7 +264,7 @@ def test_development_workflow_re_grounding_and_action_context_match_standing_con
  assert 'every standing role contract it lists' in role and 'contributor-base.md' in role
  assert 'compaction/session restart should trigger role/process re-grounding' in role
  assert 'Review evidence semantics' in role and "Integration's literal `TESTS TO RUN`" in role
- for path in ('../testing.md','../architecture/testing-boundaries.md','../../../ci/pr-lifecycle-dispatcher-runbook.md','../architecture/postgresql-runtime.md'):
+ for path in ('../testing.md','../architecture/testing-boundaries.md','review.md','implementation.md','integration.md','../architecture/postgresql-runtime.md'):
   assert path in role
 
 
@@ -326,9 +326,10 @@ def test_worker_policy_is_triggered_and_keeps_union_and_integration_authority_ou
  for role in s['roles']:
   text=kernels.render_role(m,s,role)
   assert 'Worker dispatch / phase cutover' in text
-  assert 'ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile' in text
- runbook=(DISH_ROOT.parent/'ci'/'pr-lifecycle-dispatcher-runbook.md').read_text()
- assert 'never a union semantic role' in runbook and '202 Accepted' in runbook and 'Integration landing remains outside Worker authority' in runbook
+  assert 'dish/docs/agents/review.md#Worker BLOCK' in text
+ assert 'not a union role' in rule['text']
+ assert 'HTTP 202 is admission only' in rule['text']
+ assert 'Integration landing remains outside Worker authority' in rule['text']
 
 def test_development_workflow_asana_mode_guard_reaches_every_project_and_worker():
  m,s=kernels.load_canonical(); rule=next(x for x in kernels.shared_rules(s) if x['id']=='development-workflow-asana-mode')
@@ -725,8 +726,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829'})
- assert set(versions)==expected and len(versions)==33
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-97f8d465a375','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829'})
+ assert set(versions)==expected and len(versions)==34
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']

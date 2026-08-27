@@ -12,7 +12,7 @@ The design attempted to make routine PR observation and routing survive agent/se
 
 ## Decision
 
-The repository contains an implementation of the proposed dispatcher in `scripts/pr_lifecycle.py`, but it was never deployed or commissioned and will not be activated. It is not standing workflow infrastructure or authority. Current routing is manual: the acting role re-reads GitHub, the owning Asana task, and the applicable standing contracts at each handoff.
+The repository contains an implementation of the proposed dispatcher in [scripts/pr_lifecycle.py](../../../../../scripts/pr_lifecycle.py), but it was never deployed or commissioned and will not be activated. It is not standing workflow infrastructure or authority. Current routing is manual: the acting role re-reads GitHub, the owning Asana task, and the applicable standing contracts at each handoff.
 
 ## Consequences
 
