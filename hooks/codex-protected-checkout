@@ -38,7 +38,7 @@ def main():
     if event == "PermissionRequest":
         if protected_checkout.prompt_free_git(command, invocation_cwd):
             print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
-                "permissionDecision": "allow", "permissionDecisionReason": "non-main Git or PR operation"}}))
+                "decision": {"behavior": "allow"}}}))
         return 0
     active = protected_checkout.active_task_for_git_segment(command, invocation_cwd)
     if active and active[1] in ("add", "commit", "push"):
