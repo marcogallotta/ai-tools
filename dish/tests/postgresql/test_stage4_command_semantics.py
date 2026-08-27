@@ -816,6 +816,7 @@ def test_archive_alone_accepts_private_admin_principal_without_projection(workfl
         before = session.get(models.DishState, (context["generation_id"], task_id))
         assert before is not None
         before_completion = (before.completed, before.completion_reason)
+        before_completion_version = before.completion_version
 
         archived = port.execute(
             _call(
@@ -837,6 +838,14 @@ def test_archive_alone_accepts_private_admin_principal_without_projection(workfl
         current = session.get(models.DishState, (context["generation_id"], task_id))
         assert current is not None and current.archived_at is not None
         assert (current.completed, current.completion_reason) == before_completion
+        assert current.completion_version == before_completion_version
+        receipt = session.get(
+            models.DishMutationReceipt,
+            (context["generation_id"], task_id, current.dish_version),
+        )
+        assert receipt is not None
+        assert receipt.archive_changed is True
+        assert receipt.completion_changed is False
         assert archived.data["completed"] is False
         assert archived.data["completion_reason"] == before_completion[1]
         view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)

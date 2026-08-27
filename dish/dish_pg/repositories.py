@@ -188,7 +188,8 @@ class ScalarDishMutation:
             for domain, staged in (
                 ("content", self._content),
                 ("placement", self._placement),
-                ("completion", self._completion if self._completion is not None else self._archived_at),
+                ("completion", self._completion),
+                ("archive", self._archived_at),
             )
             if staged is not None
         )
@@ -206,6 +207,7 @@ class ScalarDishMutation:
             content_changed="content" in changed,
             placement_changed="placement" in changed,
             completion_changed="completion" in changed,
+            archive_changed="archive" in changed,
             occurred_at=self.source.occurred_at,
         )
         self.session.add(receipt)
@@ -233,7 +235,7 @@ class ScalarDishMutation:
                 completion_version=next_version,
             )
         elif self._archived_at is not None:
-            values.update(archived_at=self._archived_at, completion_version=next_version)
+            values["archived_at"] = self._archived_at
         result = self.session.execute(
             update(models.DishState)
             .where(
