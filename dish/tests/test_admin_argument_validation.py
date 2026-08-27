@@ -221,7 +221,11 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
         parser.parse_args(["--help"])
     root_help = " ".join(capsys.readouterr().out.split())
     assert "Start with `dish-admin inspect <dish>`" in root_help
-    assert "Normal use: inspect one Dish; queue processes work waiting for Marco; audit checks fleet integrity; active shows current run ownership" in root_help
+    assert (
+        "Normal use: inspect one Dish; archive preserves a finished Dish's history while "
+        "removing it from active views; queue processes work waiting for Marco; audit checks "
+        "fleet integrity; active shows current run ownership"
+    ) in root_help
     assert "Advanced recovery, review-detail, migration, backup" in root_help
     assert "recover-lease" not in root_help.split("options:")[0]
     assert "attention" not in root_help.split("options:")[0]
@@ -229,7 +233,19 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
     assert "review-queue" not in root_help.split("options:")[0]
     assert "active-leases" not in root_help.split("options:")[0]
     command_help = root_help.split("positional arguments:", 1)[1].split("options:", 1)[0]
-    assert command_help.index("inspect") < command_help.index("queue") < command_help.index("audit") < command_help.index("active") < command_help.index("kill") < command_help.index("kill-all-expired") < command_help.rindex("kill-all")
+    expected_commands = (
+        "inspect",
+        "archive",
+        "queue",
+        "audit",
+        "active",
+        "kill",
+        "kill-all-expired",
+        "kill-all",
+    )
+    positions = [command_help.index(command) for command in expected_commands[:-1]]
+    positions.append(command_help.rindex(expected_commands[-1]))
+    assert positions == sorted(positions)
 
     with pytest.raises(SystemExit):
         parser.parse_args(["authorize-governed-change", "--help"])
