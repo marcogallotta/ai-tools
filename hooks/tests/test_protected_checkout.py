@@ -17,6 +17,10 @@ def test_prompt_free_git_accepts_ordinary_feature_mutations(
     ("git commit -m x", "primary"),
     ("git push origin HEAD:main", "linked"),
     ("git branch -D main", "linked"),
+    ("git push --all", "linked"),
+    ("git push --mirror", "linked"),
+    ('git push origin "$DEST"', "linked"),
+    ('git branch -D "$TARGET"', "linked"),
     ("git status; git commit -m x", "linked"),
     ("env git commit -m x", "linked"),
 ])

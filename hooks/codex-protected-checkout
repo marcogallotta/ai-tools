@@ -40,6 +40,10 @@ def main():
             print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
                 "permissionDecision": "allow", "permissionDecisionReason": "non-main Git or PR operation"}}))
         return 0
+    active = protected_checkout.active_task_for_git_segment(command, invocation_cwd)
+    if active and active[1] in ("add", "commit", "push"):
+        print(json.dumps(deny(f"[protected-checkout] Raw git {active[1]} is denied in active Dish task {active[0]}; use tools/agent-worktree.")))
+        return 0
     if not applies(payload):
         return 0
     reason = protected_checkout.classify(command, invocation_cwd)

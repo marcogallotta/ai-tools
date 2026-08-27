@@ -105,19 +105,19 @@ class TestGitFalsePositiveRepros:
         decision = run_hook(
             destructive_op_guard, "git worktree add ../foo agent/some-branch", monkeypatch, capsys
         )
-        assert_asked(decision, "unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_remote_add_unknown_asks(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(
             destructive_op_guard, "git remote add origin git@example.com:x/y.git", monkeypatch, capsys
         )
-        assert_asked(decision, "unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_submodule_add_unknown_asks(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(
             destructive_op_guard, "git submodule add https://example.com/x.git", monkeypatch, capsys
         )
-        assert_asked(decision, "unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
 
 class TestRm:
@@ -241,26 +241,26 @@ class TestGitCommitWrapper:
 class TestGitSubcommands:
     def test_git_commit_asked(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, 'git commit -m "x"', monkeypatch, capsys)
-        assert_asked(decision, "main or an unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_push_asked(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git push", monkeypatch, capsys)
-        assert_asked(decision, "main or an unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_checkout_asked(self, destructive_op_guard, monkeypatch, capsys):
         # cwd is outside any git repo, so the new protected-checkout branch
         # isolation check (which needs to resolve a real repo identity) finds
         # nothing to act on and this exercises check_git's own generic ask.
         decision = run_hook(destructive_op_guard, "git checkout main", monkeypatch, capsys, cwd="/tmp")
-        assert_asked(decision, "main or an unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_clean_asked(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git clean -fd", monkeypatch, capsys)
-        assert_asked(decision, "main or an unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_restore_asked(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git restore file.py", monkeypatch, capsys)
-        assert_asked(decision, "main or an unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_status_allowed(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git status", monkeypatch, capsys)
@@ -268,11 +268,11 @@ class TestGitSubcommands:
 
     def test_git_reset_hard_asked(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git reset --hard HEAD~1", monkeypatch, capsys)
-        assert_asked(decision, "main or an unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_reset_without_repo_asks(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git reset HEAD~1", monkeypatch, capsys)
-        assert_asked(decision, "unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_add_denied(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git add foo.py", monkeypatch, capsys)
@@ -286,7 +286,7 @@ class TestGitSubcommands:
         decision = run_hook(
             destructive_op_guard, "git -C /some/repo worktree add ../foo agent/x", monkeypatch, capsys
         )
-        assert_asked(decision, "unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
 
 class TestPsql:
@@ -828,7 +828,7 @@ class TestProtectedCheckoutBranchIsolation:
             destructive_op_guard, "git -c color.ui=false status", monkeypatch, capsys,
             cwd=str(protected_repo["primary"]),
         )
-        assert_asked(decision, "unresolved target")
+        assert_asked(decision, "Destructive git operation")
 
 
 def _register_active_task(protected_repo, monkeypatch, tmp_path, task_gid="12345"):
@@ -837,7 +837,8 @@ def _register_active_task(protected_repo, monkeypatch, tmp_path, task_gid="12345
 
     home = tmp_path / "home"
     root = home / ".local/state/dish/worktrees"
-    root.mkdir(parents=True)
+    state_dir = root / task_gid
+    state_dir.mkdir(parents=True)
     linked = protected_repo["linked"].resolve()
     git_dir = subprocess.run(
         ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-dir"],
@@ -847,7 +848,7 @@ def _register_active_task(protected_repo, monkeypatch, tmp_path, task_gid="12345
         ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-common-dir"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()
-    (root / f"{task_gid}.json").write_text(json.dumps({
+    (state_dir / ("a" * 24 + "-" + "b" * 32 + ".json")).write_text(json.dumps({
         "task_gid": task_gid,
         "branch": "agent/existing",
         "worktree_path": str(linked),
@@ -904,5 +905,5 @@ class TestActiveTaskGitBoundary:
                         cwd=str(protected_repo["unrelated"]))
         explicit = run_hook(destructive_op_guard, "git branch -D main", monkeypatch, capsys,
                             cwd=str(protected_repo["linked"]))
-        assert_asked(main, "main or an unresolved target")
-        assert_asked(explicit, "main or an unresolved target")
+        assert_asked(main, "Destructive git operation")
+        assert_asked(explicit, "Destructive git operation")

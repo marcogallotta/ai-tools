@@ -133,14 +133,14 @@ def test_codex_permission_request_allows_feature_and_pr_but_not_main(
             assert decision["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
-def test_codex_adapter_is_silent_in_registered_worktree_outside_ai_tools(
+def test_codex_adapter_denies_raw_commit_in_nested_active_worktree(
     codex_protected_checkout, protected_repo, monkeypatch, capsys, tmp_path
 ):
     import subprocess
 
     linked = protected_repo["linked"].resolve()
     home = tmp_path / "home"
-    state_root = home / ".local/state/dish/worktrees"
+    state_root = home / ".local/state/dish/worktrees/12345"
     state_root.mkdir(parents=True)
     git_dir = subprocess.run(
         ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-dir"],
@@ -150,7 +150,7 @@ def test_codex_adapter_is_silent_in_registered_worktree_outside_ai_tools(
         ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-common-dir"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()
-    (state_root / "12345.json").write_text(json.dumps({
+    (state_root / ("a" * 24 + "-" + "b" * 32 + ".json")).write_text(json.dumps({
         "task_gid": "12345",
         "branch": "agent/existing",
         "worktree_path": str(linked),
@@ -170,9 +170,10 @@ def test_codex_adapter_is_silent_in_registered_worktree_outside_ai_tools(
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
             "cwd": str(linked),
-            "tool_input": {"command": "git switch main"},
+            "tool_input": {"command": "git commit -m x"},
         },
         monkeypatch,
         capsys,
     )
-    assert decision is None
+    assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "agent-worktree" in decision["hookSpecificOutput"]["permissionDecisionReason"]

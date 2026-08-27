@@ -293,16 +293,26 @@ def check_git(segments, cwd=None):
     for seg in segments:
         tokens = tokenize(seg)
         sub = git_subcommand(tokens)
-        if sub == "add":
+        if sub and sub != "add":
+            return ask(
+                "[destructive-op-guard] Destructive git operation "
+                "(commit/push/checkout/restore/clean/mv) requires explicit approval."
+            )
+
+    for seg in segments:
+        tokens = tokenize(seg)
+        if git_subcommand(tokens) != "reset":
+            continue
+        if "--hard" in tokens:
+            return ask("[destructive-op-guard] Destructive git operation (reset --hard) requires explicit approval.")
+
+    for seg in segments:
+        tokens = tokenize(seg)
+        if git_subcommand(tokens) == "add":
             return deny(
                 "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can "
                 "collide with another session's commit. Use the repository's bounded commit wrapper. "
                 "Run 'git-commit --help' first if unsure."
-            )
-        if sub:
-            return ask(
-                "[destructive-op-guard] Destructive git operation on main or an unresolved target "
-                "requires explicit approval."
             )
 
     return None

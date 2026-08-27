@@ -27,7 +27,6 @@ BRANCH_MUTATIONS = {"branch", "checkout", "cherry-pick", "clean", "commit", "mer
 
 
 def prompt_free_git(command, cwd):
-    """True only for a direct PR command, Git read, or ordinary feature-branch mutation."""
     segments = [part for part in split_segments(command) if part.strip()]
     if len(segments) != 1:
         return False
@@ -45,6 +44,8 @@ def prompt_free_git(command, cwd):
     if subcommand in PROMPT_FREE_READS and (subcommand != "branch" or all(arg.startswith("-") and not arg.startswith(("-d", "-D", "-m", "-M", "-c", "-C")) for arg in tokens[2:])):
         return True
     if subcommand not in BRANCH_MUTATIONS or subcommand == "add":
+        return False
+    if any(any(char in arg for char in SHELL_EXPANSION_CHARS) for arg in tokens[2:]) or (subcommand == "push" and any(arg in ("--all", "--mirror") for arg in tokens[2:])):
         return False
     if subcommand in {"branch", "checkout", "push", "switch"} and any(re.search(r"(^|[/:])main($|:)", arg) for arg in tokens[2:]):
         return False
@@ -370,7 +371,7 @@ def _active_task_for_identity(identity):
     state_root = Path(os.path.expanduser("~/.local/state/dish/worktrees"))
     if not state_root.is_dir():
         return None
-    for path in state_root.glob("*.json"):
+    for path in (*state_root.glob("*.json"), *state_root.glob("*/*.json")):
         if path.is_symlink():
             continue
         try:
@@ -383,7 +384,9 @@ def _active_task_for_identity(identity):
         branch = str(state.get("branch", ""))
         if not task_gid.isdigit() or not branch.startswith("agent/"):
             continue
-        if path.stem != task_gid:
+        if (path.parent == state_root and path.stem != task_gid) or (
+            path.parent != state_root and path.parent.name != task_gid
+        ):
             continue
         if (
             os.path.realpath(str(state.get("worktree_path", ""))) == toplevel
