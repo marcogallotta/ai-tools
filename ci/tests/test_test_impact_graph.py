@@ -60,11 +60,26 @@ def test_pglite_owner_tests_use_the_governed_lane_target():
         ["dish/dish_pg/command_contract.py"], provenance="candidate"
     )
     obligation = next(
-        item
-        for item in envelope["obligations"]
-        if item["guarantee"] == f"test-file:{test}"
+        item for item in envelope["obligations"]
+        if item["guarantee"] == "pglite-collection"
     )
     assert obligation["preferred_targets"] == ["harness:pglite-nested-collection"]
+
+
+def test_multiple_pglite_owners_coalesce_to_one_collection_obligation():
+    path = "dish/dish_pg/release.py"
+    candidate = graph.build_legacy_envelope([path], provenance="candidate")
+    matching = [
+        item for item in candidate["obligations"]
+        if item["key"] == "legacy-target:harness:pglite-nested-collection"
+    ]
+    assert len(matching) == 1
+    assert matching[0]["guarantee"] == "pglite-collection"
+    assert graph.arbiter.validate_envelope(candidate, expected_provenance="candidate") == candidate
+
+    duplicate = {**candidate, "obligations": [*candidate["obligations"], matching[0]]}
+    with pytest.raises(graph.arbiter.ArbiterError, match="duplicate obligation"):
+        graph.arbiter.validate_envelope(duplicate, expected_provenance="candidate")
 
 
 def test_python_import_edges_are_additive_target_evidence():

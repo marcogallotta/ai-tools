@@ -116,6 +116,14 @@ def test_native_owner_target_keeps_native_runtime_identity():
     assert all("postgresql" in item["requirements"] for item in native)
 
 
+def test_multiple_pglite_owners_select_one_governed_collection_target():
+    plan = build(["dish/dish_pg/release.py"])
+    assert [
+        item["id"] for item in [*plan["selected_targets"], *plan["hosted_required_targets"]]
+        if item["id"] == "harness:pglite-nested-collection"
+    ] == ["harness:pglite-nested-collection"]
+
+
 def test_unknown_path_fails_closed_to_all_boundaries():
     plan = build(["unexpected-surface.bin"])
     assert plan["classifications"][0]["classification"] == "unclassified"
