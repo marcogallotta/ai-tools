@@ -4,6 +4,7 @@ import hashlib
 import uuid
 from dataclasses import replace
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -17,8 +18,11 @@ from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.frontend_board_query import FrontendBoardQuery
 from dish_pg.recovery_control import (
+    _RECOVERY_TASK_SNAPSHOT_V1,
+    _RECOVERY_TASK_SNAPSHOT_V2,
     RecoveredPhysicalState,
     _authorized_release_candidate,
+    _predecessor_task_snapshot,
     RestoreControl,
     RestoreControlError,
     authorize_recovery_qualification,
@@ -38,6 +42,7 @@ from dish_pg.workflow import (
     StaleAuthorityError,
     StoredOutcome,
     WorkflowAuthorityService,
+    sha256_json,
 )
 from tests.support.postgresql.core import HASH_C, NOW, _bootstrap_registry, _next, core_db
 from tests.support.postgresql.workflow import (
@@ -457,7 +462,9 @@ def test_recovery_remains_valid_after_legitimate_post_burn_readiness(recovery_db
 
 
 
-def test_authorized_rehydration_restores_current_authority_and_keeps_transients_fenced(recovery_db):
+def test_authorized_rehydration_restores_current_authority_and_keeps_transients_fenced(
+    recovery_db, monkeypatch
+):
     factory, ids, context, task_id = recovery_db
     pending_effect_id = None
     with session_scope(factory) as session:
@@ -703,15 +710,55 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             recovered_state=state,
             clock=lambda: WORKFLOW_NOW + timedelta(minutes=10),
         )
-        replay = rehydrate_restored_generation(
-            session,
-            control,
-            recovered_state=state,
-            clock=lambda: WORKFLOW_NOW + timedelta(minutes=11),
+        legacy_snapshots = _predecessor_task_snapshot(
+            session, context["generation_id"]
         )
+        legacy_snapshot_sha = sha256_json(
+            {
+                "format": _RECOVERY_TASK_SNAPSHOT_V1,
+                "predecessor_generation_id": str(context["generation_id"]),
+                "successor_generation_id": str(control.generation_id),
+                "tasks": [
+                    {
+                        **snapshot,
+                        "completion": {
+                            "completed": snapshot["completion"]["completed"],
+                            "reason": snapshot["completion"]["reason"],
+                        },
+                    }
+                    for snapshot in legacy_snapshots
+                ],
+            }
+        )
+        legacy_repair = session.get(models.AppliedMigrationEvent, result.repair_event_id)
+        assert legacy_repair is not None
+        assert (
+            legacy_repair.details["predecessor_snapshot_format"]
+            == _RECOVERY_TASK_SNAPSHOT_V2
+        )
+        legacy_details = dict(legacy_repair.details)
+        legacy_details.pop("predecessor_snapshot_format")
+        legacy_details["predecessor_snapshot_sha256"] = legacy_snapshot_sha
+        legacy_event = SimpleNamespace(
+            details=legacy_details,
+            migration_event_id=legacy_repair.migration_event_id,
+            terminal_at=legacy_repair.terminal_at,
+        )
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                "dish_pg.recovery_control._rehydration_repair_event",
+                lambda *_args, **_kwargs: legacy_event,
+            )
+            replay = rehydrate_restored_generation(
+                session,
+                control,
+                recovered_state=state,
+                clock=lambda: WORKFLOW_NOW + timedelta(minutes=11),
+            )
         assert replay.replayed is True
         assert replay.repair_event_id == result.repair_event_id
         assert replay.import_run_id == result.import_run_id
+        assert replay.predecessor_snapshot_sha256 == legacy_snapshot_sha
         assert result.task_count == 1
 
         view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)

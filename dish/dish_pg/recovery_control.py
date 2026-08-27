@@ -774,6 +774,44 @@ def _predecessor_task_snapshot(session: Session, generation_id: uuid.UUID) -> li
     return snapshots
 
 
+_RECOVERY_TASK_SNAPSHOT_V1 = "dish-recovery-current-task-snapshot-v1"
+_RECOVERY_TASK_SNAPSHOT_V2 = "dish-recovery-current-task-snapshot-v2"
+
+
+def _recovery_task_snapshot_sha256(
+    *,
+    predecessor_generation_id: uuid.UUID,
+    successor_generation_id: uuid.UUID,
+    snapshots: list[dict[str, Any]],
+    snapshot_format: str,
+) -> str:
+    if snapshot_format == _RECOVERY_TASK_SNAPSHOT_V1:
+        digest_snapshots = [
+            {
+                **snapshot,
+                "completion": {
+                    "completed": snapshot["completion"]["completed"],
+                    "reason": snapshot["completion"]["reason"],
+                },
+            }
+            for snapshot in snapshots
+        ]
+    elif snapshot_format == _RECOVERY_TASK_SNAPSHOT_V2:
+        digest_snapshots = snapshots
+    else:
+        raise RestoreControlError(
+            f"unsupported recovery task snapshot format: {snapshot_format}"
+        )
+    return sha256_json(
+        {
+            "format": snapshot_format,
+            "predecessor_generation_id": str(predecessor_generation_id),
+            "successor_generation_id": str(successor_generation_id),
+            "tasks": digest_snapshots,
+        }
+    )
+
+
 def _predecessor_transient_state(session: Session, generation_id: uuid.UUID) -> dict[str, Any]:
     operations = session.scalars(
         select(wf.WorkflowOperation)
@@ -952,7 +990,7 @@ def _clone_rehydrated_task_authority(
                 completion_reason="imported",
                 archived_at=(
                     None
-                    if snapshot["completion"]["archived_at"] is None
+                    if snapshot["completion"].get("archived_at") is None
                     else _parse_aware(
                         snapshot["completion"]["archived_at"],
                         "completion.archived_at",
@@ -1022,13 +1060,12 @@ def rehydrate_restored_generation(
         session, control, recovered_state
     )
     snapshots = _predecessor_task_snapshot(session, predecessor.generation_id)
-    snapshot_sha = sha256_json(
-        {
-            "format": "dish-recovery-current-task-snapshot-v1",
-            "predecessor_generation_id": str(predecessor.generation_id),
-            "successor_generation_id": str(successor.generation_id),
-            "tasks": snapshots,
-        }
+    snapshot_format = _RECOVERY_TASK_SNAPSHOT_V2
+    snapshot_sha = _recovery_task_snapshot_sha256(
+        predecessor_generation_id=predecessor.generation_id,
+        successor_generation_id=successor.generation_id,
+        snapshots=snapshots,
+        snapshot_format=snapshot_format,
     )
     transient_state = _predecessor_transient_state(session, predecessor.generation_id)
     transient_sha = sha256_json(
@@ -1041,12 +1078,22 @@ def rehydrate_restored_generation(
     existing = _rehydration_repair_event(session, successor.generation_id)
     if existing is not None:
         details = existing.details
+        recorded_snapshot_format = details.get("predecessor_snapshot_format")
+        if recorded_snapshot_format is None:
+            recorded_snapshot_format = _RECOVERY_TASK_SNAPSHOT_V1
+        expected_recorded_snapshot_sha = _recovery_task_snapshot_sha256(
+            predecessor_generation_id=predecessor.generation_id,
+            successor_generation_id=successor.generation_id,
+            snapshots=snapshots,
+            snapshot_format=recorded_snapshot_format,
+        )
         if (
             details.get("route") != RECOVERY_REHYDRATION_REVISION
             or details.get("external_restore_control_id") != control.external_control_id
             or details.get("predecessor_generation_id") != str(predecessor.generation_id)
             or details.get("successor_generation_id") != str(successor.generation_id)
-            or details.get("predecessor_snapshot_sha256") != snapshot_sha
+            or details.get("predecessor_snapshot_sha256")
+                != expected_recorded_snapshot_sha
             or details.get("recovery_evidence_sha256") != control.recovery_evidence_sha256
             or details.get("bootstrap_id") != str(control.bootstrap_id)
             or details.get("bootstrap_capability_sha256")
@@ -1058,7 +1105,7 @@ def rehydrate_restored_generation(
             generation_id=successor.generation_id,
             import_run_id=uuid.UUID(details["import_run_id"]),
             repair_event_id=existing.migration_event_id,
-            predecessor_snapshot_sha256=snapshot_sha,
+            predecessor_snapshot_sha256=expected_recorded_snapshot_sha,
             transient_state_sha256=str(details["transient_state_sha256"]),
             task_count=int(details["task_count"]),
             rehydrated_at=existing.terminal_at,
@@ -1092,6 +1139,7 @@ def rehydrate_restored_generation(
                 "predecessor_generation_id": str(predecessor.generation_id),
                 "successor_generation_id": str(successor.generation_id),
                 "recovery_evidence_sha256": control.recovery_evidence_sha256,
+                "predecessor_snapshot_format": snapshot_format,
                 "predecessor_snapshot_sha256": snapshot_sha,
                 "bootstrap_id": str(control.bootstrap_id),
                 "bootstrap_capability_sha256": control.bootstrap_capability_digest.hex(),
@@ -1128,6 +1176,7 @@ def rehydrate_restored_generation(
                 "recovery_evidence_sha256": control.recovery_evidence_sha256,
                 "bootstrap_id": str(control.bootstrap_id),
                 "bootstrap_capability_sha256": control.bootstrap_capability_digest.hex(),
+                "predecessor_snapshot_format": snapshot_format,
                 "predecessor_snapshot_sha256": snapshot_sha,
                 "transient_state_sha256": transient_sha,
                 "transient_state": transient_state,

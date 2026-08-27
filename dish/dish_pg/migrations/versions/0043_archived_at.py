@@ -114,6 +114,33 @@ def upgrade() -> None:
         "WHERE completed AND completion_reason='archive'"
     )
     if dialect == "postgresql":
+        op.execute(
+            """
+            WITH RECURSIVE archived_lineage(generation_id, task_id, archived_at) AS (
+              SELECT generation_id, task_id, archived_at
+                FROM dish_states
+               WHERE archived_at IS NOT NULL
+              UNION
+              SELECT child.generation_id, child.task_id, parent.archived_at
+                FROM archived_lineage parent
+                JOIN authority_generations child_generation
+                  ON child_generation.predecessor_generation_id=parent.generation_id
+                JOIN dish_states child
+                  ON child.generation_id=child_generation.generation_id
+                 AND child.task_id=parent.task_id
+               WHERE child.completed
+                 AND child.completion_reason='imported'
+                 AND child.archived_at IS NULL
+            )
+            UPDATE dish_states target
+               SET archived_at=archived_lineage.archived_at
+              FROM archived_lineage
+             WHERE target.generation_id=archived_lineage.generation_id
+               AND target.task_id=archived_lineage.task_id
+               AND target.archived_at IS NULL
+            """
+        )
+    if dialect == "postgresql":
         op.create_check_constraint(
             "ck_dish_states_archived_at_matches_completion",
             "dish_states",

@@ -61,6 +61,8 @@ def test_stage6_schema_migration_and_postgresql_guards(tmp_path: Path) -> None:
     assert "CREATE TABLE cutover_runs" in rendered
     assert "dish_validate_release_candidate_transition" in rendered
     assert "dish_require_open_mutation_admission" in rendered
+    assert "WITH RECURSIVE archived_lineage" in rendered
+    assert "child.completion_reason='imported'" in rendered
 
     path = tmp_path / "stage6.sqlite3"
     online = Config(str(ROOT / "alembic.ini"))
