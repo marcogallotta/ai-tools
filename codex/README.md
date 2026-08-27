@@ -12,6 +12,10 @@ plus owning Asana and active Git/PR state from durable identity. Re-grounding is
 informational recovery and is not a global tool-use barrier. The Bash-specific
 hook calls
 `~/.local/bin/codex-protected-checkout` and preserves its hard-deny boundary.
+The same adapter handles `PermissionRequest`: direct Git reads, ordinary
+mutations on a known non-`main` branch, and direct `gh pr` commands are allowed;
+`main`, unresolved, wrapped, compound, and unfamiliar forms retain the prompt.
+Claude's `destructive-op-guard` uses the same small branch check.
 
 The shared `hooks/protected_checkout.py` classifier denies direct and visibly
 nested `git checkout`/`git switch` branch changes against the primary
@@ -33,6 +37,7 @@ session and use `/hooks` to review and trust the exact hook definition:
 
 ```sh
 ln -s /home/marco/ai-tools/codex/hooks.json /home/marco/.codex/hooks.json
+ln -s /home/marco/ai-tools/codex/git-pr.rules /home/marco/.codex/rules/git-pr.rules
 ln -s /home/marco/ai-tools/hooks/dish-operator-context /home/marco/.local/bin/dish-operator-context
 ln -s /home/marco/ai-tools/hooks/agent-reground /home/marco/.local/bin/agent-reground
 ln -s /home/marco/ai-tools/hooks/codex-protected-checkout /home/marco/.local/bin/codex-protected-checkout
@@ -56,13 +61,14 @@ git -C "$WT" status --short
 ```
 
 Temporarily point the user hook and adapter links at that exact worktree head.
-First inspect `~/.codex/hooks.json`, `~/.local/bin/dish-operator-context`,
+First inspect `~/.codex/hooks.json`, `~/.codex/rules/git-pr.rules`, `~/.local/bin/dish-operator-context`,
 `~/.local/bin/agent-reground`, and `~/.local/bin/codex-protected-checkout`;
 move aside and later restore any pre-existing files or links rather than
 overwriting them.
 
 ```sh
 ln -s "$WT/codex/hooks.json" /home/marco/.codex/hooks.json
+ln -s "$WT/codex/git-pr.rules" /home/marco/.codex/rules/git-pr.rules
 ln -s "$WT/hooks/dish-operator-context" /home/marco/.local/bin/dish-operator-context
 ln -s "$WT/hooks/agent-reground" /home/marco/.local/bin/agent-reground
 ln -s "$WT/hooks/codex-protected-checkout" /home/marco/.local/bin/codex-protected-checkout

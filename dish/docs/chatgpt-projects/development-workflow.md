@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-0fb81f771493
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-4bd8dc87ac82
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -40,6 +40,7 @@ Chats/handoffs cannot expand authority; flag contract conflicts.
 
 High-consequence rules:
 - Design Principles (design-principles.md): DP-01 Parallel work; serialize authority; DP-02 Automate with visibility/control; DP-03 No invented mandatory gates; DP-04 Human review at design/risk, not routine code; DP-05 Human attention is scarce; DP-06 PR shape heuristic; atomic only for named invariant; DP-07 Merge != operational completion; DP-08 Exact/versioned/recoverable lineage; dedupe best-effort; DP-09 Marco consequential reversals explicit/durable; DP-10 Real-host checks only for concrete CI gaps; DP-11 A role/Project is a working-context boundary, not an exhaustive design corpus.
+- Generated root Work chat is the single presentation authority.
 - Mismatch alone never blocks. d96+ fold role/action history: 1/3 compatible, 2/3 additive; both continue/no resync. 3/3 requires proof + Marco-approved BREAKING. Invalid history/proof => ?/3 integrity error: fail affected action, repair repository authority. Current: no prefix; pre-d96: legacy hard break.
 - After current-Git grounding, current `main` kernel + role index/contract are authority; installed Project text is bootstrap/version witness. Compatible/additive drift needs no manual resync; unreadable/mismatched current authority fails only the affected action.
 - GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.
@@ -52,7 +53,7 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
-- Own dev mechanics; PR classification and role handoffs are manual acting-role work, with final landing local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.
+- Own dev mechanics; acting roles classify PRs and hand off work; landing is local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.
 - Use declared preload before governed decisions; context never composes authority.
 - Material design authors falsify/fix/rerun against the Review V4 contract; the author pass never counts as independent Design Review.
 - Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval.

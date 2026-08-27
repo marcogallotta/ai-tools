@@ -22,6 +22,35 @@ GIT_LOCATION_VALUE_OPTS = ("-C", "--git-dir", "--work-tree")
 SHELL_COMMANDS = {"bash", "dash", "fish", "ksh", "sh", "zsh"}
 COMMAND_WRAPPERS = {"command", "exec", "nohup", "sudo"}
 CONTROL_PREFIXES = {"!", "do", "elif", "else", "if", "then", "time", "until", "while"}
+PROMPT_FREE_READS = {"branch", "diff", "grep", "log", "ls-files", "merge-base", "rev-parse", "show", "status"}
+BRANCH_MUTATIONS = {"branch", "checkout", "cherry-pick", "clean", "commit", "merge", "mv", "push", "rebase", "reset", "restore", "revert", "switch"}
+
+
+def prompt_free_git(command, cwd):
+    segments = [part for part in split_segments(command) if part.strip()]
+    if len(segments) != 1:
+        return False
+    try:
+        tokens = shlex.split(segments[0])
+    except ValueError:
+        return False
+    if len(tokens) >= 2 and basename_token(tokens[0]) == "gh" and tokens[1] == "pr":
+        return True
+    if len(tokens) < 2 or basename_token(tokens[0]) != "git" or tokens[1].startswith("-"):
+        return False
+    subcommand = tokens[1]
+    if any(arg in ("-h", "--help") for arg in tokens[2:]):
+        return True
+    if subcommand in PROMPT_FREE_READS and (subcommand != "branch" or all(arg.startswith("-") and not arg.startswith(("-d", "-D", "-m", "-M", "-c", "-C")) for arg in tokens[2:])):
+        return True
+    if subcommand not in BRANCH_MUTATIONS or subcommand == "add":
+        return False
+    if any(any(char in arg for char in SHELL_EXPANSION_CHARS) for arg in tokens[2:]) or (subcommand == "push" and any(arg in ("--all", "--mirror") for arg in tokens[2:])):
+        return False
+    if subcommand in {"branch", "checkout", "push", "switch"} and any(re.search(r"(^|[/:])main($|:)", arg) for arg in tokens[2:]):
+        return False
+    result = _run_git(["branch", "--show-current"], {}, cwd)
+    return bool(result and result.returncode == 0 and result.stdout.strip() not in ("", "main"))
 
 
 def split_segments(command):
@@ -342,7 +371,7 @@ def _active_task_for_identity(identity):
     state_root = Path(os.path.expanduser("~/.local/state/dish/worktrees"))
     if not state_root.is_dir():
         return None
-    for path in state_root.glob("*.json"):
+    for path in (*state_root.glob("*.json"), *state_root.glob("*/*.json")):
         if path.is_symlink():
             continue
         try:
@@ -355,7 +384,9 @@ def _active_task_for_identity(identity):
         branch = str(state.get("branch", ""))
         if not task_gid.isdigit() or not branch.startswith("agent/"):
             continue
-        if path.stem != task_gid:
+        if (path.parent == state_root and path.stem != task_gid) or (
+            path.parent != state_root and path.parent.name != task_gid
+        ):
             continue
         if (
             os.path.realpath(str(state.get("worktree_path", ""))) == toplevel
