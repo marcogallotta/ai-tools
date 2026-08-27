@@ -670,61 +670,83 @@ def _validate_rehydration_lineage(
 
 
 def _predecessor_task_snapshot(session: Session, generation_id: uuid.UUID) -> list[dict[str, Any]]:
-    heads = session.scalars(
-        select(models.TaskAuthorityHead)
-        .where(models.TaskAuthorityHead.generation_id == generation_id)
-        .order_by(models.TaskAuthorityHead.task_id)
+    states = session.scalars(
+        select(models.DishState)
+        .where(models.DishState.generation_id == generation_id)
+        .order_by(models.DishState.task_id)
     ).all()
     snapshots: list[dict[str, Any]] = []
-    for head in heads:
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
-        placement = session.get(models.CurrentTaskSectionPlacement, (generation_id, head.task_id))
-        completion = session.get(models.CurrentTaskCompletion, (generation_id, head.task_id))
+    for state in states:
+        membership_head = session.get(models.TaskMembershipHead, (generation_id, state.task_id))
+        version = session.get(models.ContentVersion, state.current_content_version_id)
         if (
-            activation is None
-            or activation.generation_id != generation_id
-            or activation.task_id != head.task_id
-            or activation.task_revision != head.task_revision
-            or placement is None
-            or placement.placement_revision != head.placement_revision
-            or completion is None
-            or completion.completion_revision != head.completion_revision
+            membership_head is None
+            or version is None
+            or version.generation_id != generation_id
+            or version.task_id != state.task_id
         ):
             raise RestoreControlError(
-                f"predecessor current task authority is incomplete for task {head.task_id}"
+                f"predecessor current task authority is incomplete for task {state.task_id}"
             )
-        version = session.get(models.ContentVersion, activation.content_version_id)
-        if version is None or version.generation_id != generation_id or version.task_id != head.task_id:
+        receipt_versions = {
+            state.dish_version,
+            state.placement_version,
+            state.completion_version,
+            version.created_dish_version,
+        }
+        receipts = session.scalars(
+            select(models.DishMutationReceipt)
+            .where(
+                models.DishMutationReceipt.generation_id == generation_id,
+                models.DishMutationReceipt.task_id == state.task_id,
+                models.DishMutationReceipt.dish_version.in_(receipt_versions),
+            )
+            .order_by(models.DishMutationReceipt.dish_version)
+        ).all()
+        if {row.dish_version for row in receipts} != receipt_versions:
             raise RestoreControlError(
-                f"predecessor current content is incomplete for task {head.task_id}"
+                f"predecessor scalar receipts are incomplete for task {state.task_id}"
             )
+        sparse_receipts = []
+        for dish_version in sorted(receipt_versions):
+            effects = {
+                "content_changed": dish_version == version.created_dish_version,
+                "placement_changed": dish_version == state.placement_version,
+                "completion_changed": dish_version == state.completion_version,
+            }
+            if not any(effects.values()):
+                raise RestoreControlError(
+                    f"predecessor scalar dish version has no current marker for task {state.task_id}"
+                )
+            sparse_receipts.append({"dish_version": dish_version, **effects})
         memberships = session.scalars(
             select(models.CurrentTaskProjectMembership)
             .where(
                 models.CurrentTaskProjectMembership.generation_id == generation_id,
-                models.CurrentTaskProjectMembership.task_id == head.task_id,
+                models.CurrentTaskProjectMembership.task_id == state.task_id,
             )
             .order_by(models.CurrentTaskProjectMembership.project_id)
         ).all()
-        if any(row.membership_revision > head.membership_revision for row in memberships):
+        if any(row.membership_revision > membership_head.membership_revision for row in memberships):
             raise RestoreControlError(
-                f"predecessor membership revision exceeds task head for task {head.task_id}"
+                f"predecessor membership revision exceeds task head for task {state.task_id}"
             )
         snapshots.append(
             {
-                "task_id": str(head.task_id),
+                "task_id": str(state.task_id),
                 "source_content_version_id": str(version.content_version_id),
-                "source_content_activation_id": str(activation.content_activation_id),
                 "representation_kind": version.representation_kind,
                 "title": version.title,
                 "body": version.body,
                 "identity_scheme": version.identity_scheme,
                 "content_identity": version.content_identity,
                 "contract_binding_id": str(version.contract_binding_id),
-                "task_revision": head.task_revision,
-                "membership_revision": head.membership_revision,
-                "placement_revision": head.placement_revision,
-                "completion_revision": head.completion_revision,
+                "content_created_dish_version": version.created_dish_version,
+                "dish_version": state.dish_version,
+                "membership_revision": membership_head.membership_revision,
+                "placement_version": state.placement_version,
+                "completion_version": state.completion_version,
+                "receipts": sparse_receipts,
                 "memberships": [
                     {
                         "project_id": str(row.project_id),
@@ -735,13 +757,12 @@ def _predecessor_task_snapshot(session: Session, generation_id: uuid.UUID) -> li
                     for row in memberships
                 ],
                 "placement": {
-                    "section_id": None if placement.section_id is None else str(placement.section_id),
-                    "source_registry_version_id": str(placement.registry_version_id),
-                    "source_event_id": str(placement.latest_event_id),
+                    "section_id": None if state.section_id is None else str(state.section_id),
+                    "source_registry_version_id": str(state.registry_version_id),
                 },
                 "completion": {
-                    "completed": bool(completion.completed),
-                    "source_event_id": str(completion.latest_event_id),
+                    "completed": bool(state.completed),
+                    "reason": state.completion_reason,
                 },
             }
         )
@@ -875,7 +896,22 @@ def _clone_rehydrated_task_authority(
     for snapshot in snapshots:
         task_id = uuid.UUID(snapshot["task_id"])
         version_id = _deterministic_rehydration_uuid(control, f"task:{task_id}:content-version")
-        activation_id = _deterministic_rehydration_uuid(control, f"task:{task_id}:content-activation")
+        for receipt in snapshot["receipts"]:
+            session.add(
+                models.DishMutationReceipt(
+                    generation_id=control.generation_id,
+                    task_id=task_id,
+                    dish_version=receipt["dish_version"],
+                    source_route="import",
+                    import_run_id=import_run_id,
+                    command_execution_id=None,
+                    content_changed=receipt["content_changed"],
+                    placement_changed=receipt["placement_changed"],
+                    completion_changed=receipt["completion_changed"],
+                    occurred_at=at,
+                )
+            )
+        session.flush()
         session.add(
             models.ContentVersion(
                 content_version_id=version_id,
@@ -891,33 +927,35 @@ def _clone_rehydrated_task_authority(
                 command_execution_id=None,
                 predecessor_content_version_id=None,
                 contract_binding_id=uuid.UUID(snapshot["contract_binding_id"]),
+                created_dish_version=snapshot["content_created_dish_version"],
                 created_at=at,
             )
         )
         session.flush()
         session.add(
-            models.ContentActivation(
-                content_activation_id=activation_id,
+            models.DishState(
                 generation_id=control.generation_id,
                 task_id=task_id,
-                content_version_id=version_id,
-                activation_route="import",
-                import_run_id=import_run_id,
-                command_execution_id=None,
-                task_revision=snapshot["task_revision"],
-                activated_at=at,
+                current_content_version_id=version_id,
+                section_id=(
+                    None
+                    if snapshot["placement"]["section_id"] is None
+                    else uuid.UUID(snapshot["placement"]["section_id"])
+                ),
+                registry_version_id=registry_version_id,
+                completed=snapshot["completion"]["completed"],
+                completion_reason="imported",
+                dish_version=snapshot["dish_version"],
+                placement_version=snapshot["placement_version"],
+                completion_version=snapshot["completion_version"],
+                updated_at=at,
             )
         )
-        session.flush()
         session.add(
-            models.TaskAuthorityHead(
+            models.TaskMembershipHead(
                 generation_id=control.generation_id,
                 task_id=task_id,
-                current_content_activation_id=activation_id,
-                task_revision=snapshot["task_revision"],
                 membership_revision=snapshot["membership_revision"],
-                placement_revision=snapshot["placement_revision"],
-                completion_revision=snapshot["completion_revision"],
                 updated_at=at,
             )
         )
@@ -951,61 +989,6 @@ def _clone_rehydrated_task_authority(
                     updated_at=at,
                 )
             )
-        placement_id = _deterministic_rehydration_uuid(control, f"task:{task_id}:placement")
-        section_id = None if snapshot["placement"]["section_id"] is None else uuid.UUID(snapshot["placement"]["section_id"])
-        session.add(
-            models.TaskSectionPlacementEvent(
-                placement_event_id=placement_id,
-                generation_id=control.generation_id,
-                task_id=task_id,
-                section_id=section_id,
-                registry_version_id=registry_version_id,
-                event_kind="placed" if section_id is not None else "cleared",
-                placement_revision=snapshot["placement_revision"],
-                provenance_route="import",
-                import_run_id=import_run_id,
-                command_execution_id=None,
-                occurred_at=at,
-            )
-        )
-        session.flush()
-        session.add(
-            models.CurrentTaskSectionPlacement(
-                generation_id=control.generation_id,
-                task_id=task_id,
-                section_id=section_id,
-                registry_version_id=registry_version_id,
-                latest_event_id=placement_id,
-                placement_revision=snapshot["placement_revision"],
-                updated_at=at,
-            )
-        )
-        completion_id = _deterministic_rehydration_uuid(control, f"task:{task_id}:completion")
-        session.add(
-            models.TaskCompletionEvent(
-                completion_event_id=completion_id,
-                generation_id=control.generation_id,
-                task_id=task_id,
-                completed=snapshot["completion"]["completed"],
-                reason="imported",
-                completion_revision=snapshot["completion_revision"],
-                provenance_route="import",
-                import_run_id=import_run_id,
-                command_execution_id=None,
-                occurred_at=at,
-            )
-        )
-        session.flush()
-        session.add(
-            models.CurrentTaskCompletion(
-                generation_id=control.generation_id,
-                task_id=task_id,
-                completed=snapshot["completion"]["completed"],
-                latest_event_id=completion_id,
-                completion_revision=snapshot["completion_revision"],
-                updated_at=at,
-            )
-        )
     session.flush()
 
 
@@ -1069,8 +1052,8 @@ def rehydrate_restored_generation(
             replayed=True,
         )
     if session.scalar(
-        select(models.TaskAuthorityHead.generation_id)
-        .where(models.TaskAuthorityHead.generation_id == successor.generation_id)
+        select(models.DishState.generation_id)
+        .where(models.DishState.generation_id == successor.generation_id)
         .limit(1)
     ) is not None:
         raise RestoreControlError("successor already contains task authority without authorized rehydration")

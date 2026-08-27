@@ -1,4 +1,4 @@
-"""Current-head populated predecessor case built on the generic migration harness."""
+"""Historical 0017 -> 0018 populated-predecessor migration fixture."""
 from __future__ import annotations
 
 import uuid
@@ -7,16 +7,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy import MetaData, Table, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
-
-from dish_pg.database import session_scope
-from dish_pg.release import ALEMBIC_HEAD
-from dish_pg.transition import ProjectionService
-from tests.support.postgresql.core import _bootstrap_registry, _import_one, _uuid_stream
 from tests.support.postgresql.migrations import MigrationDatabase
 
 PREDECESSOR_REVISION = "0017_abandonment_terminal_state"
-TARGET_REVISION = ALEMBIC_HEAD
+TARGET_REVISION = "0018_projection_attempt_lifecycle"
 NOW = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)
 REQUEST_HASH = "a" * 64
 
@@ -32,6 +26,10 @@ def _attempt_table(connection) -> Table:
     return Table("projection_attempts", MetaData(), autoload_with=connection)
 
 
+def _table(connection, name: str) -> Table:
+    return Table(name, MetaData(), autoload_with=connection)
+
+
 def _database_uuid(database: MigrationDatabase, value: uuid.UUID | None):
     if value is None or database.expected_dialect == "postgresql":
         return value
@@ -43,60 +41,187 @@ def seed_valid_projection_attempt_predecessor(
 ) -> ProjectionAttemptSeed:
     """Seed a predecessor-valid outbox event and legacy projection attempt."""
 
-    engine = database.create_engine()
-    factory = sessionmaker(
-        bind=engine,
-        class_=Session,
-        autoflush=False,
-        expire_on_commit=False,
-        future=True,
-    )
-    ids = _uuid_stream()
-    try:
-        with session_scope(factory) as session:
-            context = _bootstrap_registry(session, ids, generation_status="active")
-            task = _import_one(session, ids, context)
-            projection = ProjectionService(session, uuid_factory=lambda: next(ids))
-            projection.activate_epoch(
-                generation_id=context["generation_id"],
-                activation_reason="populated predecessor migration test",
-                created_at=NOW,
-                external_effects_enabled=False,
-            )
-            event = projection._record_event(
-                generation_id=context["generation_id"],
-                execution_id=None,
-                task_id=task.task_id,
-                event_type="update_task_document",
-                payload={"notes": "v2"},
-                source_route="service",
-                origin="live",
-                created_at=NOW,
-            )
-            attempt_id = next(ids)
-            table = _attempt_table(session.connection())
-            session.execute(
-                table.insert().values(
-                    attempt_id=_database_uuid(database, attempt_id),
-                    projection_event_id=_database_uuid(database, event.projection_event_id),
-                    attempt_number=1,
-                    worker_id="legacy-worker",
-                    request_identity="stable-logical-request",
-                    intended_external_id="123456789",
-                    request_payload={"notes": "v2"},
-                    request_sha256=REQUEST_HASH,
-                    state="not_applied",
-                    started_at=NOW,
-                    terminal_at=NOW,
-                )
-            )
-        return ProjectionAttemptSeed(
-            attempt_id=attempt_id,
-            event_id=event.projection_event_id,
-            expected_dispatch_identity=attempt_id.hex + REQUEST_HASH[:32],
+    values = iter(uuid.UUID(int=value) for value in range(1, 20))
+    import_run_id = next(values)
+    generation_id = next(values)
+    task_id = next(values)
+    binding_id = next(values)
+    content_id = next(values)
+    activation_id = next(values)
+    epoch_id = next(values)
+    event_id = next(values)
+    attempt_id = next(values)
+    dbid = lambda value: _database_uuid(database, value)
+
+    def _seed(connection) -> None:
+        connection.execute(
+            _table(connection, "stage_a_import_runs").insert(),
+            {
+                "import_run_id": dbid(import_run_id),
+                "source_commit": "1" * 40,
+                "source_release": "historical-fixture",
+                "legacy_generation_id": "projection-attempt-migration",
+                "baseline_high_water_mark": "fixture",
+                "source_bundle_sha256": "2" * 64,
+                "status": "complete",
+                "started_at": NOW,
+                "completed_at": NOW,
+                "provenance": {"fixture": "0017"},
+            },
         )
-    finally:
-        engine.dispose()
+        connection.execute(
+            _table(connection, "authority_generations").insert(),
+            {
+                "generation_id": dbid(generation_id),
+                "predecessor_generation_id": None,
+                "creation_reason": "initial_cutover",
+                "external_restore_control_id": None,
+                "schema_head": PREDECESSOR_REVISION,
+                "dish_release": "historical-fixture",
+                "status": "active",
+                "created_at": NOW,
+                "retired_at": None,
+            },
+        )
+        connection.execute(
+            _table(connection, "honest_contract_bindings").insert(),
+            {
+                "binding_id": dbid(binding_id),
+                "binding_kind": "release",
+                "source_identity": "historical-fixture",
+                "dish_release": "historical-fixture",
+                "honest_release": "historical-fixture",
+                "protocol_release": "historical-fixture",
+                "protocol_sha256": "3" * 64,
+                "schema_release": "historical-fixture",
+                "schema_sha256": "4" * 64,
+                "migration_id": None,
+                "source_schema_version": None,
+                "target_schema_version": None,
+                "migration_metadata_sha256": None,
+                "source_ids": {"fixture": "0017"},
+                "provenance": {"fixture": "0017"},
+                "resolved_at": NOW,
+            },
+        )
+        connection.execute(
+            _table(connection, "dish_tasks").insert(),
+            {
+                "task_id": dbid(task_id),
+                "existence_state": "ordinary",
+                "creation_route": "import",
+                "import_run_id": dbid(import_run_id),
+                "command_execution_id": None,
+                "created_at": NOW,
+                "retired_at": None,
+            },
+        )
+        connection.execute(
+            _table(connection, "task_content_versions").insert(),
+            {
+                "content_version_id": dbid(content_id),
+                "generation_id": dbid(generation_id),
+                "task_id": dbid(task_id),
+                "representation_kind": "document",
+                "title": "Historical fixture",
+                "body": "body",
+                "identity_scheme": "fixture",
+                "content_identity": "fixture-v1",
+                "creator_route": "import",
+                "import_run_id": dbid(import_run_id),
+                "command_execution_id": None,
+                "predecessor_content_version_id": None,
+                "contract_binding_id": dbid(binding_id),
+                "created_at": NOW,
+            },
+        )
+        connection.execute(
+            _table(connection, "task_content_activations").insert(),
+            {
+                "content_activation_id": dbid(activation_id),
+                "generation_id": dbid(generation_id),
+                "task_id": dbid(task_id),
+                "content_version_id": dbid(content_id),
+                "activation_route": "import",
+                "import_run_id": dbid(import_run_id),
+                "command_execution_id": None,
+                "task_revision": 1,
+                "activated_at": NOW,
+            },
+        )
+        connection.execute(
+            _table(connection, "task_authority_heads").insert(),
+            {
+                "generation_id": dbid(generation_id),
+                "task_id": dbid(task_id),
+                "current_content_activation_id": dbid(activation_id),
+                "task_revision": 1,
+                "membership_revision": 0,
+                "placement_revision": 0,
+                "completion_revision": 1,
+                "updated_at": NOW,
+            },
+        )
+        epoch_values = {
+            "projection_epoch_id": dbid(epoch_id),
+            "generation_id": dbid(generation_id),
+            "epoch_number": 1,
+            "status": "active",
+            "activation_reason": "populated predecessor migration test",
+            "created_at": NOW,
+            "retired_at": None,
+        }
+        epoch_table = _table(connection, "projection_epochs")
+        if "external_effects_enabled" in epoch_table.c:
+            epoch_values["external_effects_enabled"] = False
+        connection.execute(epoch_table.insert(), epoch_values)
+        connection.execute(
+            _table(connection, "projection_outbox_events").insert(),
+            {
+                "projection_event_id": dbid(event_id),
+                "generation_id": dbid(generation_id),
+                "projection_epoch_id": dbid(epoch_id),
+                "source_route": "service",
+                "origin": "live",
+                "command_execution_id": None,
+                "task_id": dbid(task_id),
+                "event_type": "update_task_document",
+                "aggregate_sequence": 1,
+                "idempotency_key": "5" * 64,
+                "intent_payload": {"notes": "v2"},
+                "intent_sha256": "6" * 64,
+                "state": "pending",
+                "claim_owner": None,
+                "claim_token": None,
+                "claim_expires_at": None,
+                "outbox_revision": 1,
+                "created_at": NOW,
+                "terminal_at": None,
+            },
+        )
+        connection.execute(
+            _attempt_table(connection).insert(),
+            {
+                "attempt_id": dbid(attempt_id),
+                "projection_event_id": dbid(event_id),
+                "attempt_number": 1,
+                "worker_id": "legacy-worker",
+                "request_identity": "stable-logical-request",
+                "intended_external_id": "123456789",
+                "request_payload": {"notes": "v2"},
+                "request_sha256": REQUEST_HASH,
+                "state": "not_applied",
+                "started_at": NOW,
+                "terminal_at": NOW,
+            },
+        )
+
+    database.seed(_seed)
+    return ProjectionAttemptSeed(
+        attempt_id=attempt_id,
+        event_id=event_id,
+        expected_dispatch_identity=attempt_id.hex + REQUEST_HASH[:32],
+    )
 
 
 def assert_projection_attempt_backfill(

@@ -809,41 +809,38 @@ class WorkflowAuthorityRepository:
     def capture_task_fence(
         self, *, execution_id: uuid.UUID, generation_id: uuid.UUID, task_id: uuid.UUID, at: datetime
     ) -> wf.TaskExecutionFence:
-        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
-        if head is None:
-            raise WorkflowAuthorityError("task has no authority head")
+        state = self.session.get(models.DishState, (generation_id, task_id))
+        membership = self.session.get(models.TaskMembershipHead, (generation_id, task_id))
+        if state is None or membership is None:
+            raise WorkflowAuthorityError("task has incomplete scalar/membership authority")
         row = wf.TaskExecutionFence(
             execution_id=execution_id,
             generation_id=generation_id,
             task_id=task_id,
-            expected_task_revision=head.task_revision,
-            expected_membership_revision=head.membership_revision,
-            expected_placement_revision=head.placement_revision,
-            expected_completion_revision=head.completion_revision,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=membership.membership_revision,
             captured_at=at,
         )
         self.session.add(row)
         self.session.flush()
         return row
 
-    def assert_task_fence(self, execution_id: uuid.UUID) -> models.TaskAuthorityHead:
+    def assert_task_fence(self, execution_id: uuid.UUID) -> models.DishState:
         fence = self.session.get(wf.TaskExecutionFence, execution_id)
         if fence is None:
             raise WorkflowAuthorityError("execution has no task fence")
-        head = self.session.get(models.TaskAuthorityHead, (fence.generation_id, fence.task_id))
-        if head is None or (
-            head.task_revision,
-            head.membership_revision,
-            head.placement_revision,
-            head.completion_revision,
-        ) != (
-            fence.expected_task_revision,
-            fence.expected_membership_revision,
-            fence.expected_placement_revision,
-            fence.expected_completion_revision,
+        state = self.session.get(models.DishState, (fence.generation_id, fence.task_id))
+        membership = self.session.get(
+            models.TaskMembershipHead, (fence.generation_id, fence.task_id)
+        )
+        if (
+            state is None
+            or membership is None
+            or state.dish_version != fence.expected_dish_version
+            or membership.membership_revision != fence.expected_membership_revision
         ):
             raise StaleAuthorityError("task fence is stale")
-        return head
+        return state
 
     def capture_operation_fence(
         self, *, execution_id: uuid.UUID, operation_id: uuid.UUID, at: datetime
@@ -1334,15 +1331,14 @@ class WorkflowAuthorityService:
             raise WorkflowAuthorityError("inspection actor/cycle mismatch")
         if actor.run_id != verifier_run_id or not attestation.strip():
             raise WorkflowAuthorityError("inspection requires exact verifier run and attestation")
-        placement = self.session.get(
-            models.CurrentTaskSectionPlacement, (cycle.generation_id, cycle.task_id)
-        )
+        placement = self.session.get(models.DishState, (cycle.generation_id, cycle.task_id))
         if placement is None:
             raise WorkflowAuthorityError("inspection requires current placement evidence")
         row = wf.VerificationInspectionOccurrence(
             inspection_id=inspection_id,
             cycle_id=cycle_id,
             operation_id=cycle.operation_id,
+            generation_id=cycle.generation_id,
             task_id=cycle.task_id,
             reviewed_content_version_id=cycle.reviewed_content_version_id,
             verifier_actor_fact_id=actor_fact_id,
@@ -1350,7 +1346,7 @@ class WorkflowAuthorityService:
             attestation=attestation,
             section_id=placement.section_id,
             registry_version_id=placement.registry_version_id,
-            placement_event_id=placement.latest_event_id,
+            placement_version=placement.placement_version,
             request_id=execution.request_id,
             command_execution_id=execution_id,
             inspected_at=inspected_at,
@@ -1829,13 +1825,8 @@ class WorkflowAuthorityService:
             raise WorkflowAuthorityError("abandonment authority is incomplete")
         if lease.operation_id != source_operation_id or lease.task_id != operation.task_id:
             raise WorkflowAuthorityError("abandonment lease/operation mismatch")
-        head = self.session.get(
-            models.TaskAuthorityHead, (execution.generation_id, operation.task_id)
-        )
-        placement = self.session.get(
-            models.CurrentTaskSectionPlacement, (execution.generation_id, operation.task_id)
-        )
-        if head is None or placement is None:
+        state = self.session.get(models.DishState, (execution.generation_id, operation.task_id))
+        if state is None:
             raise WorkflowAuthorityError("abandonment requires exact task baseline")
         row = wf.AbandonmentAttempt(
             abandonment_id=abandonment_id,
@@ -1847,8 +1838,8 @@ class WorkflowAuthorityService:
             source_cycle_id=source_cycle_id,
             source_owner_id=lease.owner_id,
             source_run_id=lease.run_id,
-            baseline_content_activation_id=head.current_content_activation_id,
-            baseline_placement_event_id=placement.latest_event_id,
+            baseline_content_version_id=state.current_content_version_id,
+            baseline_placement_version=state.placement_version,
             reason=reason,
             state="preparing",
             request_id=execution.request_id,

@@ -1154,7 +1154,7 @@ class CutoverControlAuthority:
             )
         task = self.session.get(models.DishTask, task_id)
         head = self.session.get(
-            models.TaskAuthorityHead, (candidate.generation_id, task_id)
+            models.DishState, (candidate.generation_id, task_id)
         )
         if task is None or head is None:
             raise ReleaseAuthorityError(

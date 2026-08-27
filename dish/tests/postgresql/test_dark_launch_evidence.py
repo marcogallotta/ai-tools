@@ -9,6 +9,7 @@ import pytest
 from dish_pg import models
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
+from dish_pg.repositories import DishRepository, ScalarMutationSource
 from dish_tool.content_versions import content_identity
 from dish_pg.shadow_evidence import (
     EVIDENCE_SCHEMA_VERSION,
@@ -335,52 +336,35 @@ def test_active_old_postgresql_content_version_projects_raw_then_compares_canoni
     source = _content_source_snapshot(identity=canonical, title=title, body=body)
 
     with session_scope(factory) as session:
-        head = session.get(
-            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        membership = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
         )
-        assert head is not None
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
-        assert activation is not None
-        version = session.get(models.ContentVersion, activation.content_version_id)
+        assert state is not None and membership is not None
+        version = session.get(models.ContentVersion, state.current_content_version_id)
         assert version is not None
         legacy_version_id = next(ids)
-        legacy_activation_id = next(ids)
-        session.add(
-            models.ContentVersion(
-                content_version_id=legacy_version_id,
-                generation_id=context["generation_id"],
-                task_id=task_id,
-                representation_kind="document",
-                title=title,
-                body=body,
-                identity_scheme=version.identity_scheme,
-                content_identity=legacy,
-                creator_route="import",
+        mutation = DishRepository(session, uuid_factory=lambda: next(ids)).begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=membership.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
                 import_run_id=context["import_run_id"],
-                command_execution_id=None,
-                predecessor_content_version_id=version.content_version_id,
-                contract_binding_id=context["binding_id"],
-                created_at=NOW,
-            )
+                occurred_at=NOW,
+            ),
         )
-        session.flush()
-        session.add(
-            models.ContentActivation(
-                content_activation_id=legacy_activation_id,
-                generation_id=context["generation_id"],
-                task_id=task_id,
-                content_version_id=legacy_version_id,
-                activation_route="import",
-                import_run_id=context["import_run_id"],
-                command_execution_id=None,
-                task_revision=head.task_revision + 1,
-                activated_at=NOW,
-            )
+        mutation.replace_content(
+            title=title,
+            body=body,
+            identity_scheme=version.identity_scheme,
+            content_identity=legacy,
+            contract_binding_id=context["binding_id"],
+            predecessor_content_version_id=version.content_version_id,
+            content_version_id=legacy_version_id,
         )
-        session.flush()
-        head.current_content_activation_id = legacy_activation_id
-        head.task_revision += 1
-        session.flush()
+        mutation.finalize()
 
         target_state = _target_authority_state(
             session,

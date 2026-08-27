@@ -86,9 +86,8 @@ def _open_verifier_round(
 
 
 def _active_content(session, context, task_id):
-    head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-    activation = session.get(models.ContentActivation, head.current_content_activation_id)
-    return session.get(models.ContentVersion, activation.content_version_id)
+    state = session.get(models.DishState, (context["generation_id"], task_id))
+    return session.get(models.ContentVersion, state.current_content_version_id)
 
 
 def _resolve_verification_hold(session, port, ids, context, *, task_id, operation_id):
@@ -244,9 +243,8 @@ def test_evidence_hold_resumes_as_distinct_canonical_verification_occurrence(
         operation = session.get(wf.WorkflowOperation, uuid.UUID(operation_id))
         assert hold.state == "supplied"
         assert operation.phase == "await_verification"
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
-        resumed = session.get(models.ContentVersion, activation.content_version_id)
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        resumed = session.get(models.ContentVersion, state.current_content_version_id)
         parsed = parse_canonical_document(
             title=resumed.title,
             body=resumed.body,

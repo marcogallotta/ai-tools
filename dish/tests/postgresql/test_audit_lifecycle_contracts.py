@@ -90,19 +90,16 @@ def test_approval_creates_ready_occurrence_and_submit_derives_destination(workfl
         )
         assert forbidden.code == "UNEXPECTED_DESTINATION_ARGUMENT"
         assert submitted.ok
-        placement = session.get(
-            models.CurrentTaskSectionPlacement,
+        state = session.get(
+            models.DishState,
             (context["generation_id"], task_id),
         )
         operation = session.get(
             wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
         )
-        completion = session.get(
-            models.CurrentTaskCompletion, (context["generation_id"], task_id)
-        )
-        assert placement.section_id == destination_section_id
+        assert state.section_id == destination_section_id
         assert operation.lifecycle == "completed"
-        assert completion.completed is False
+        assert state.completed is False
 
 
 def test_human_review_decision_resumes_same_operation_with_legacy_arguments(
@@ -161,13 +158,8 @@ def test_human_review_decision_resumes_same_operation_with_legacy_arguments(
             wf.HumanReviewRequirement, uuid.UUID(rejected.data["requirement_id"])
         )
         assert requirement.state == "decided"
-        head = session.get(
-            models.TaskAuthorityHead, (context["generation_id"], task_id)
-        )
-        activation = session.get(
-            models.ContentActivation, head.current_content_activation_id
-        )
-        resumed = session.get(models.ContentVersion, activation.content_version_id)
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        resumed = session.get(models.ContentVersion, state.current_content_version_id)
         parsed = parse_canonical_document(
             title=resumed.title,
             body=resumed.body,
@@ -197,8 +189,8 @@ def test_expected_authority_failure_rolls_back_domain_mutations_and_replays(
         reviewed = session.get(
             models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
         )
-        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
-        baseline_activation_id = head.current_content_activation_id
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        baseline_content_version_id = state.current_content_version_id
         baseline_count = session.query(models.ContentVersion).filter_by(task_id=task_id).count()
 
         def fail_signoff(**_kwargs):
@@ -227,8 +219,8 @@ def test_expected_authority_failure_rolls_back_domain_mutations_and_replays(
         assert first.code == "AUTHORITY_MISMATCH"
         assert second.code == first.code
         assert second.request_replayed is True
-        session.refresh(head)
-        assert head.current_content_activation_id == baseline_activation_id
+        session.refresh(state)
+        assert state.current_content_version_id == baseline_content_version_id
         assert session.query(models.ContentVersion).filter_by(task_id=task_id).count() == baseline_count
         assert session.scalar(
             select(wf.VerificationSignoff).where(

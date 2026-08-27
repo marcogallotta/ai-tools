@@ -323,7 +323,7 @@ def resolve_backfill_target(session: Session, *, task_gid: str) -> BackfillTarge
     )
     if generation is None:
         raise TerminalHistoryBackfillError("no active PostgreSQL authority generation exists")
-    if session.get(models.TaskAuthorityHead, (generation.generation_id, task.task_id)) is None:
+    if session.get(models.DishState, (generation.generation_id, task.task_id)) is None:
         raise TerminalHistoryBackfillError(
             "existing DishTask is not present in the active PostgreSQL generation"
         )

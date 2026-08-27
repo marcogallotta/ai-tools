@@ -397,11 +397,9 @@ def _install_synthetic_contamination(monkeypatch, factory, context):
 
 
 def _current_content(session: Session, generation_id: uuid.UUID, task_id: uuid.UUID):
-    head = session.get(models.TaskAuthorityHead, (generation_id, task_id))
-    assert head is not None
-    activation = session.get(models.ContentActivation, head.current_content_activation_id)
-    assert activation is not None
-    version = session.get(models.ContentVersion, activation.content_version_id)
+    state = session.get(models.DishState, (generation_id, task_id))
+    assert state is not None
+    version = session.get(models.ContentVersion, state.current_content_version_id)
     assert version is not None
     return version
 

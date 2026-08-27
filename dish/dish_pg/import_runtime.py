@@ -133,10 +133,10 @@ def verify_imported_records(
             or version.import_run_id != import_run_id
         ):
             errors.append(f"{prefix}: ContentVersion content/provenance mismatch")
-        placement = session.get(models.CurrentTaskSectionPlacement, (generation_id, spec.task_id))
+        placement = session.get(models.DishState, (generation_id, spec.task_id))
         if placement is None or placement.section_id != spec.section_id:
             errors.append(f"{prefix}: current section placement mismatch")
-        completion = session.get(models.CurrentTaskCompletion, (generation_id, spec.task_id))
+        completion = placement
         if completion is None or completion.completed != spec.completed:
             errors.append(f"{prefix}: current completion mismatch")
         memberships = tuple(

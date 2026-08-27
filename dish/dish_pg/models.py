@@ -30,7 +30,8 @@ from sqlalchemy import (
     event,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.schema import DDL
 
 NAMING_CONVENTION = {
@@ -605,6 +606,7 @@ class ContentVersion(Base):
     contract_binding_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT"), nullable=False
     )
+    created_dish_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -617,6 +619,16 @@ class ContentVersion(Base):
             ],
             ondelete="RESTRICT",
             name="fk_content_version_exact_predecessor",
+        ),
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "created_dish_version"],
+            [
+                "dish_mutation_receipts.generation_id",
+                "dish_mutation_receipts.task_id",
+                "dish_mutation_receipts.dish_version",
+            ],
+            ondelete="RESTRICT",
+            name="fk_content_version_creation_receipt",
         ),
         CheckConstraint("representation_kind = 'document'", name="document_only"),
         CheckConstraint("length(trim(title)) > 0", name="title_nonblank"),
@@ -636,6 +648,7 @@ class ContentVersion(Base):
             "predecessor_content_version_id <> content_version_id",
             name="predecessor_not_self",
         ),
+        CheckConstraint("created_dish_version > 0", name="positive_created_dish_version"),
         UniqueConstraint(
             "generation_id",
             "task_id",
@@ -646,86 +659,148 @@ class ContentVersion(Base):
         UniqueConstraint(
             "generation_id", "task_id", "content_version_id", name="uq_content_generation_task_id"
         ),
+        UniqueConstraint(
+            "generation_id",
+            "task_id",
+            "created_dish_version",
+            name="uq_content_created_dish_version",
+        ),
     )
 
 
-class ContentActivation(Base):
-    __tablename__ = "task_content_activations"
+class DishMutationReceipt(Base):
+    __tablename__ = "dish_mutation_receipts"
 
-    content_activation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    generation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    task_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    content_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    activation_route: Mapped[str] = mapped_column(String(24), nullable=False)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), primary_key=True
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), primary_key=True
+    )
+    dish_version: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_route: Mapped[str] = mapped_column(String(24), nullable=False)
     import_run_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT")
     )
     command_execution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    task_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    content_changed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    placement_changed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    completion_changed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["generation_id", "task_id", "content_version_id"],
+            ["command_execution_id", "generation_id", "task_id"],
+            [
+                "command_executions.execution_id",
+                "command_executions.generation_id",
+                "command_executions.task_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_dish_mutation_receipt_exact_execution",
+        ),
+        CheckConstraint("dish_version > 0", name="positive_dish_version"),
+        CheckConstraint("source_route IN ('import','command_execution')", name="source_route_allowed"),
+        CheckConstraint(
+            "(source_route = 'import' AND import_run_id IS NOT NULL AND command_execution_id IS NULL) OR "
+            "(source_route = 'command_execution' AND import_run_id IS NULL AND command_execution_id IS NOT NULL)",
+            name="exact_source",
+        ),
+        CheckConstraint(
+            "content_changed OR placement_changed OR completion_changed",
+            name="at_least_one_effect",
+        ),
+        Index(
+            "uq_dish_mutation_receipt_execution",
+            "command_execution_id",
+            unique=True,
+            postgresql_where=text("command_execution_id IS NOT NULL"),
+            sqlite_where=text("command_execution_id IS NOT NULL"),
+        ),
+    )
+
+
+class DishState(Base):
+    __tablename__ = "dish_states"
+
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), primary_key=True
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), primary_key=True
+    )
+    current_content_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    section_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("governed_sections.section_id", ondelete="RESTRICT")
+    )
+    registry_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT"), nullable=False
+    )
+    completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    completion_reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    dish_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    placement_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    completion_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "current_content_version_id"],
             [
                 "task_content_versions.generation_id",
                 "task_content_versions.task_id",
                 "task_content_versions.content_version_id",
             ],
             ondelete="RESTRICT",
-            name="fk_content_activation_exact_version",
+            name="fk_dish_state_exact_content",
         ),
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "dish_version"],
+            ["dish_mutation_receipts.generation_id", "dish_mutation_receipts.task_id", "dish_mutation_receipts.dish_version"],
+            ondelete="RESTRICT",
+            name="fk_dish_state_current_receipt",
+        ),
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "placement_version"],
+            ["dish_mutation_receipts.generation_id", "dish_mutation_receipts.task_id", "dish_mutation_receipts.dish_version"],
+            ondelete="RESTRICT",
+            name="fk_dish_state_placement_receipt",
+        ),
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "completion_version"],
+            ["dish_mutation_receipts.generation_id", "dish_mutation_receipts.task_id", "dish_mutation_receipts.dish_version"],
+            ondelete="RESTRICT",
+            name="fk_dish_state_completion_receipt",
+        ),
+        CheckConstraint("dish_version > 0", name="positive_dish_version"),
+        CheckConstraint("placement_version > 0", name="positive_placement_version"),
+        CheckConstraint("completion_version > 0", name="positive_completion_version"),
+        CheckConstraint("placement_version <= dish_version", name="placement_not_future"),
+        CheckConstraint("completion_version <= dish_version", name="completion_not_future"),
         CheckConstraint(
-            "activation_route IN ('import','command_execution')", name="route_allowed"
+            "completion_reason IN ('imported','cooked','archive','reopen_planning')",
+            name="completion_reason_allowed",
         ),
-        CheckConstraint(
-            "(activation_route = 'import' AND import_run_id IS NOT NULL "
-            "AND command_execution_id IS NULL) OR "
-            "(activation_route = 'command_execution' AND import_run_id IS NULL "
-            "AND command_execution_id IS NOT NULL)",
-            name="exact_provenance_route",
-        ),
-        CheckConstraint("task_revision > 0", name="positive_task_revision"),
-        UniqueConstraint(
-            "generation_id", "task_id", "task_revision", name="uq_content_activation_revision"
-        ),
-        UniqueConstraint(
-            "generation_id",
-            "task_id",
-            "content_version_id",
-            name="uq_content_activation_version",
-        ),
+        Index("ix_dish_states_section", "generation_id", "section_id", "task_id"),
+        Index("ix_dish_states_board", "generation_id", "completed", "section_id", "task_id"),
+        Index("ix_dish_states_registry", "generation_id", "registry_version_id", "task_id"),
     )
 
 
-class TaskAuthorityHead(Base):
-    __tablename__ = "task_authority_heads"
+class TaskMembershipHead(Base):
+    __tablename__ = "task_membership_heads"
 
     generation_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid,
-        ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"),
-        primary_key=True,
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), primary_key=True
     )
     task_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), primary_key=True
     )
-    current_content_activation_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid,
-        ForeignKey("task_content_activations.content_activation_id", ondelete="RESTRICT"),
-        nullable=False,
-        unique=True,
-    )
-    task_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
     membership_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    placement_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    completion_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        CheckConstraint("task_revision > 0", name="positive_task_revision"),
         CheckConstraint("membership_revision >= 0", name="nonnegative_membership_revision"),
-        CheckConstraint("placement_revision >= 0", name="nonnegative_placement_revision"),
-        CheckConstraint("completion_revision > 0", name="positive_completion_revision"),
     )
 
 
@@ -793,7 +868,7 @@ class CurrentTaskProjectMembership(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["generation_id", "task_id"],
-            ["task_authority_heads.generation_id", "task_authority_heads.task_id"],
+            ["task_membership_heads.generation_id", "task_membership_heads.task_id"],
             ondelete="RESTRICT",
             name="fk_current_membership_task_head",
         ),
@@ -801,163 +876,6 @@ class CurrentTaskProjectMembership(Base):
             ["project_id"], ["governed_projects.project_id"], ondelete="RESTRICT"
         ),
         CheckConstraint("membership_revision > 0", name="positive_revision"),
-    )
-
-
-class TaskSectionPlacementEvent(Base):
-    __tablename__ = "task_section_placement_events"
-
-    placement_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    generation_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
-    )
-    task_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), nullable=False
-    )
-    section_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("governed_sections.section_id", ondelete="RESTRICT")
-    )
-    registry_version_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid,
-        ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    event_kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    placement_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    provenance_route: Mapped[str] = mapped_column(String(24), nullable=False)
-    import_run_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT")
-    )
-    command_execution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        CheckConstraint("event_kind IN ('placed','cleared')", name="event_kind_allowed"),
-        CheckConstraint(
-            "(event_kind = 'placed' AND section_id IS NOT NULL) OR "
-            "(event_kind = 'cleared' AND section_id IS NULL)",
-            name="section_matches_event",
-        ),
-        CheckConstraint(
-            "provenance_route IN ('import','command_execution')", name="route_allowed"
-        ),
-        CheckConstraint(
-            "(provenance_route = 'import' AND import_run_id IS NOT NULL "
-            "AND command_execution_id IS NULL) OR "
-            "(provenance_route = 'command_execution' AND import_run_id IS NULL "
-            "AND command_execution_id IS NOT NULL)",
-            name="exact_provenance_route",
-        ),
-        CheckConstraint("placement_revision > 0", name="positive_revision"),
-        UniqueConstraint(
-            "generation_id", "task_id", "placement_revision", name="uq_placement_event_revision"
-        ),
-    )
-
-
-class CurrentTaskSectionPlacement(Base):
-    __tablename__ = "current_task_section_placements"
-
-    generation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    task_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    section_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("governed_sections.section_id", ondelete="RESTRICT")
-    )
-    registry_version_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid,
-        ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    latest_event_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid,
-        ForeignKey("task_section_placement_events.placement_event_id", ondelete="RESTRICT"),
-        nullable=False,
-        unique=True,
-    )
-    placement_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["generation_id", "task_id"],
-            ["task_authority_heads.generation_id", "task_authority_heads.task_id"],
-            ondelete="RESTRICT",
-            name="fk_current_placement_task_head",
-        ),
-        CheckConstraint("placement_revision > 0", name="positive_revision"),
-    )
-
-
-class TaskCompletionEvent(Base):
-    __tablename__ = "task_completion_events"
-
-    completion_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    generation_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
-    )
-    task_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), nullable=False
-    )
-    completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    reason: Mapped[str] = mapped_column(String(32), nullable=False)
-    completion_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    provenance_route: Mapped[str] = mapped_column(String(24), nullable=False)
-    import_run_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT")
-    )
-    command_execution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        CheckConstraint(
-            "reason IN ('imported','cooked','archive','reopen_planning')", name="reason_allowed"
-        ),
-        CheckConstraint(
-            "(reason = 'imported' AND provenance_route = 'import') OR "
-            "(reason IN ('cooked','archive','reopen_planning') "
-            "AND provenance_route = 'command_execution')",
-            name="reason_matches_route",
-        ),
-        CheckConstraint(
-            "provenance_route IN ('import','command_execution')", name="route_allowed"
-        ),
-        CheckConstraint(
-            "(provenance_route = 'import' AND import_run_id IS NOT NULL "
-            "AND command_execution_id IS NULL) OR "
-            "(provenance_route = 'command_execution' AND import_run_id IS NULL "
-            "AND command_execution_id IS NOT NULL)",
-            name="exact_provenance_route",
-        ),
-        CheckConstraint("completion_revision > 0", name="positive_revision"),
-        UniqueConstraint(
-            "generation_id", "task_id", "completion_revision", name="uq_completion_event_revision"
-        ),
-    )
-
-
-class CurrentTaskCompletion(Base):
-    __tablename__ = "current_task_completion"
-
-    generation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    task_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    latest_event_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid,
-        ForeignKey("task_completion_events.completion_event_id", ondelete="RESTRICT"),
-        nullable=False,
-        unique=True,
-    )
-    completion_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["generation_id", "task_id"],
-            ["task_authority_heads.generation_id", "task_authority_heads.task_id"],
-            ondelete="RESTRICT",
-            name="fk_current_completion_task_head",
-        ),
-        CheckConstraint("completion_revision > 0", name="positive_revision"),
     )
 
 
@@ -969,10 +887,8 @@ IMMUTABLE_TABLE_NAMES = (
     "section_registry_entries",
     "section_registry_activations",
     "task_content_versions",
-    "task_content_activations",
+    "dish_mutation_receipts",
     "task_project_membership_events",
-    "task_section_placement_events",
-    "task_completion_events",
 )
 
 
@@ -1044,5 +960,205 @@ def _install_sqlite_immutability_triggers() -> None:
 
 
 _install_sqlite_immutability_triggers()
+
+
+def _install_sqlite_scalar_authority_triggers() -> None:
+    dish_task = Base.metadata.tables["dish_tasks"]
+    content_version = Base.metadata.tables["task_content_versions"]
+    dish_state = Base.metadata.tables["dish_states"]
+    membership_head = Base.metadata.tables["task_membership_heads"]
+    current_membership = Base.metadata.tables["current_task_project_memberships"]
+
+    event.listen(
+        dish_task,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER dish_tasks_creation_provenance_immutable "
+            "BEFORE UPDATE OF task_id, creation_route, import_run_id, command_execution_id, created_at "
+            "ON dish_tasks BEGIN SELECT RAISE(ABORT, 'DishTask creation provenance is immutable'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    for table, name in ((dish_state, "dish_states"), (membership_head, "task_membership_heads")):
+        event.listen(
+            table,
+            "after_create",
+            DDL(
+                f"CREATE TRIGGER {name}_identity_immutable BEFORE UPDATE OF generation_id, task_id "
+                f"ON {name} BEGIN SELECT RAISE(ABORT, '{name} identity is immutable'); END"
+            ).execute_if(dialect="sqlite"),
+        )
+        event.listen(
+            table,
+            "after_create",
+            DDL(
+                f"CREATE TRIGGER {name}_delete_forbidden BEFORE DELETE ON {name} "
+                f"BEGIN SELECT RAISE(ABORT, '{name} cannot be deleted'); END"
+            ).execute_if(dialect="sqlite"),
+        )
+
+    source_match = (
+        "((r.source_route = 'import' AND r.import_run_id IS cv.import_run_id "
+        "AND cv.creator_route = 'import') OR "
+        "(r.source_route = 'command_execution' AND r.command_execution_id IS cv.command_execution_id "
+        "AND cv.creator_route = 'command_execution' AND EXISTS ("
+        "SELECT 1 FROM command_executions ce WHERE ce.execution_id=cv.command_execution_id "
+        "AND ce.generation_id=cv.generation_id AND ce.task_id=cv.task_id "
+        "AND ce.contract_binding_id=cv.contract_binding_id)))"
+    )
+    event.listen(
+        content_version,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER task_content_versions_scalar_source_validate "
+            "BEFORE INSERT ON task_content_versions WHEN NOT EXISTS ("
+            "SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
+            "AND r.task_id=NEW.task_id AND r.dish_version=NEW.created_dish_version "
+            "AND r.content_changed=1 AND ((r.source_route='import' "
+            "AND NEW.creator_route='import' AND r.import_run_id IS NEW.import_run_id) OR "
+            "(r.source_route='command_execution' AND NEW.creator_route='command_execution' "
+            "AND r.command_execution_id IS NEW.command_execution_id AND EXISTS ("
+            "SELECT 1 FROM command_executions ce WHERE ce.execution_id=NEW.command_execution_id "
+            "AND ce.generation_id=NEW.generation_id AND ce.task_id=NEW.task_id "
+            "AND ce.contract_binding_id=NEW.contract_binding_id))) "
+            "AND (NEW.created_dish_version<>1 OR EXISTS ("
+            "SELECT 1 FROM authority_generations g WHERE g.generation_id=NEW.generation_id "
+            "AND g.creation_reason IN ('destructive_restore','test_fixture_recovery')) OR EXISTS ("
+            "SELECT 1 FROM dish_tasks t WHERE t.task_id=NEW.task_id AND ("
+            "(t.creation_route='import' AND NEW.creator_route='import' "
+            "AND t.import_run_id IS NEW.import_run_id) OR "
+            "(t.creation_route='create' AND NEW.creator_route='command_execution' "
+            "AND t.command_execution_id IS NEW.command_execution_id))))) "
+            "BEGIN SELECT RAISE(ABORT, 'content creation receipt mismatch'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        dish_state,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER dish_states_validate_insert BEFORE INSERT ON dish_states WHEN "
+            "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
+            "AND r.task_id=NEW.task_id AND r.dish_version=NEW.dish_version) OR "
+            "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
+            "AND r.task_id=NEW.task_id AND r.dish_version=NEW.placement_version "
+            "AND r.placement_changed=1) OR "
+            "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
+            "AND r.task_id=NEW.task_id AND r.dish_version=NEW.completion_version "
+            "AND r.completion_changed=1) OR "
+            "NOT EXISTS (SELECT 1 FROM task_content_versions cv JOIN dish_mutation_receipts r "
+            "ON r.generation_id=cv.generation_id AND r.task_id=cv.task_id "
+            "AND r.dish_version=cv.created_dish_version WHERE cv.generation_id=NEW.generation_id "
+            "AND cv.task_id=NEW.task_id AND cv.content_version_id=NEW.current_content_version_id "
+            "AND r.content_changed=1 AND " + source_match + ") OR "
+            "NOT EXISTS (SELECT 1 FROM authority_generations g WHERE g.generation_id=NEW.generation_id "
+            "AND (g.creation_reason='destructive_restore' OR (NEW.dish_version=1 "
+            "AND NEW.placement_version=1 AND NEW.completion_version=1 "
+            "AND EXISTS (SELECT 1 FROM task_content_versions cv WHERE "
+            "cv.generation_id=NEW.generation_id AND cv.task_id=NEW.task_id "
+            "AND cv.content_version_id=NEW.current_content_version_id "
+            "AND cv.created_dish_version=1)))) OR "
+            "EXISTS (SELECT 1 FROM dish_mutation_receipts r "
+            "JOIN task_content_versions cv ON cv.generation_id=NEW.generation_id "
+            "AND cv.task_id=NEW.task_id AND cv.content_version_id=NEW.current_content_version_id "
+            "WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id "
+            "AND r.dish_version IN (NEW.dish_version, NEW.placement_version, "
+            "NEW.completion_version, cv.created_dish_version) AND ("
+            "r.content_changed <> (r.dish_version=cv.created_dish_version) OR "
+            "r.placement_changed <> (r.dish_version=NEW.placement_version) OR "
+            "r.completion_changed <> (r.dish_version=NEW.completion_version))) OR "
+            "NOT EXISTS (SELECT 1 FROM section_registry_entries e WHERE e.registry_version_id=NEW.registry_version_id "
+            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)) OR "
+            "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
+            "AND r.task_id=NEW.task_id AND r.dish_version=NEW.completion_version "
+            "AND ((r.source_route='import' AND NEW.completion_reason='imported') OR "
+            "(r.source_route='command_execution' AND NEW.completion_reason IN ('cooked','archive','reopen_planning')))) "
+            "BEGIN SELECT RAISE(ABORT, 'invalid initial DishState authority'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    for operation in ("INSERT", "UPDATE"):
+        event.listen(
+            current_membership,
+            "after_create",
+            DDL(
+                f"CREATE TRIGGER current_task_project_memberships_validate_{operation.lower()} "
+                f"BEFORE {operation} ON current_task_project_memberships WHEN NOT EXISTS ("
+                "SELECT 1 FROM task_project_membership_events e "
+                "WHERE e.membership_event_id=NEW.latest_event_id "
+                "AND e.generation_id=NEW.generation_id AND e.task_id=NEW.task_id "
+                "AND e.project_id=NEW.project_id "
+                "AND e.membership_revision=NEW.membership_revision "
+                "AND ((e.event_kind='joined' AND NEW.is_member=1) "
+                "OR (e.event_kind='left' AND NEW.is_member=0))) "
+                "BEGIN SELECT RAISE(ABORT, 'current project membership pointer is invalid'); END"
+            ).execute_if(dialect="sqlite"),
+        )
+    event.listen(
+        dish_state,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER dish_states_validate_update BEFORE UPDATE ON dish_states WHEN "
+            "NEW.dish_version <> OLD.dish_version + 1 OR "
+            "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
+            "AND r.task_id=NEW.task_id AND r.dish_version=NEW.dish_version "
+            "AND r.content_changed = (NEW.current_content_version_id IS NOT OLD.current_content_version_id) "
+            "AND r.placement_changed = (NEW.placement_version <> OLD.placement_version) "
+            "AND r.completion_changed = (NEW.completion_version <> OLD.completion_version)) OR "
+            "((NEW.placement_version = OLD.placement_version) AND "
+            "(NEW.section_id IS NOT OLD.section_id OR NEW.registry_version_id <> OLD.registry_version_id)) OR "
+            "((NEW.placement_version <> OLD.placement_version) AND NEW.placement_version <> NEW.dish_version) OR "
+            "((NEW.completion_version = OLD.completion_version) AND "
+            "(NEW.completed <> OLD.completed OR NEW.completion_reason <> OLD.completion_reason)) OR "
+            "((NEW.completion_version <> OLD.completion_version) AND NEW.completion_version <> NEW.dish_version) OR "
+            "NOT EXISTS (SELECT 1 FROM task_content_versions cv JOIN dish_mutation_receipts r "
+            "ON r.generation_id=cv.generation_id AND r.task_id=cv.task_id AND r.dish_version=cv.created_dish_version "
+            "WHERE cv.generation_id=NEW.generation_id AND cv.task_id=NEW.task_id "
+            "AND cv.content_version_id=NEW.current_content_version_id "
+            "AND ((NEW.current_content_version_id=OLD.current_content_version_id) OR cv.created_dish_version=NEW.dish_version) "
+            "AND " + source_match + ") OR "
+            "NOT EXISTS (SELECT 1 FROM section_registry_entries e WHERE e.registry_version_id=NEW.registry_version_id "
+            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)) OR "
+            "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
+            "AND r.task_id=NEW.task_id AND r.dish_version=NEW.completion_version "
+            "AND ((r.source_route='import' AND NEW.completion_reason='imported') OR "
+            "(r.source_route='command_execution' AND NEW.completion_reason IN ('cooked','archive','reopen_planning')))) "
+            "BEGIN SELECT RAISE(ABORT, 'invalid DishState transition'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+
+
+_install_sqlite_scalar_authority_triggers()
+
+
+@event.listens_for(Session, "before_commit")
+def _validate_sqlite_active_registry_bindings(session: Session) -> None:
+    """Emulate the deferred PostgreSQL registry-final-state guard on SQLite."""
+    bind = session.get_bind()
+    if bind.dialect.name != "sqlite":
+        return
+    connection = session.connection()
+    tables = {
+        row[0]
+        for row in connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('dish_states','active_section_registries','section_registry_entries')"
+        )
+    }
+    if tables != {"dish_states", "active_section_registries", "section_registry_entries"}:
+        return
+    session.flush()
+    mismatch = connection.exec_driver_sql(
+        "SELECT 1 FROM dish_states s "
+        "LEFT JOIN active_section_registries a ON a.generation_id=s.generation_id "
+        "WHERE a.generation_id IS NULL OR a.registry_version_id<>s.registry_version_id "
+        "OR (s.section_id IS NOT NULL AND NOT EXISTS ("
+        "SELECT 1 FROM section_registry_entries e "
+        "WHERE e.registry_version_id=s.registry_version_id AND e.section_id=s.section_id)) "
+        "LIMIT 1"
+    ).first()
+    if mismatch is not None:
+        raise IntegrityError(
+            "DishState registry binding is not transaction-final",
+            params=None,
+            orig=RuntimeError("DishState registry binding is not transaction-final"),
+        )
 
 CORE_TABLE_NAMES = tuple(Base.metadata.tables)

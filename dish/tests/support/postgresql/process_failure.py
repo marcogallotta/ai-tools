@@ -680,16 +680,18 @@ def command_snapshot(factory, *, request_id: uuid.UUID) -> dict[str, Any]:
                 ),
                 "placement_events": int(
                     session.scalar(
-                        select(func.count()).select_from(models.TaskSectionPlacementEvent).where(
-                            models.TaskSectionPlacementEvent.command_execution_id.in_(execution_ids)
+                        select(func.count()).select_from(models.DishMutationReceipt).where(
+                            models.DishMutationReceipt.command_execution_id.in_(execution_ids),
+                            models.DishMutationReceipt.placement_changed.is_(True),
                         )
                     )
                     or 0
                 ),
                 "completion_events": int(
                     session.scalar(
-                        select(func.count()).select_from(models.TaskCompletionEvent).where(
-                            models.TaskCompletionEvent.command_execution_id.in_(execution_ids)
+                        select(func.count()).select_from(models.DishMutationReceipt).where(
+                            models.DishMutationReceipt.command_execution_id.in_(execution_ids),
+                            models.DishMutationReceipt.completion_changed.is_(True),
                         )
                     )
                     or 0

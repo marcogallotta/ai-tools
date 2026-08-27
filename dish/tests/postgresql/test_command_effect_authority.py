@@ -130,9 +130,9 @@ def test_execution_rejects_and_rolls_back_missing_projection_intent(workflow_db)
         port = _port(session, ids)
         started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
         operation_id = started.data["operation_id"]
-        baseline_activations = session.scalar(
-            select(func.count()).select_from(models.ContentActivation).where(
-                models.ContentActivation.task_id == task_id
+        baseline_versions = session.scalar(
+            select(func.count()).select_from(models.ContentVersion).where(
+                models.ContentVersion.task_id == task_id
             )
         )
         baseline_events = session.scalar(
@@ -160,10 +160,10 @@ def test_execution_rejects_and_rolls_back_missing_projection_intent(workflow_db)
 
     with session_scope(factory) as session:
         assert session.scalar(
-            select(func.count()).select_from(models.ContentActivation).where(
-                models.ContentActivation.task_id == task_id
+            select(func.count()).select_from(models.ContentVersion).where(
+                models.ContentVersion.task_id == task_id
             )
-        ) == baseline_activations
+        ) == baseline_versions
         assert session.scalar(
             select(func.count()).select_from(tx.ProjectionOutboxEvent).where(
                 tx.ProjectionOutboxEvent.task_id == task_id

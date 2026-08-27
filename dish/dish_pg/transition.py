@@ -1433,8 +1433,8 @@ class ProjectionService:
         generation = self.session.get(models.AuthorityGeneration, generation_id)
         if generation is None or generation.status != "active":
             raise TransitionAuthorityError("projection event requires active authority generation")
-        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
-        if head is None:
+        state = self.session.get(models.DishState, (generation_id, task_id))
+        if state is None:
             raise TransitionAuthorityError("projection event requires a task in the active generation")
         if source_route == "command":
             execution = self.session.get(wf.CommandExecution, execution_id)
@@ -1547,8 +1547,8 @@ class ProjectionService:
         )
         valid_task_ids = set(
             self.session.scalars(
-                select(models.TaskAuthorityHead.task_id).where(
-                    models.TaskAuthorityHead.generation_id == generation_id
+                select(models.DishState.task_id).where(
+                    models.DishState.generation_id == generation_id
                 )
             )
         )

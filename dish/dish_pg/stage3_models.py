@@ -213,6 +213,9 @@ class CommandExecution(Base):
             name="claim_and_terminal_state_consistent",
         ),
         UniqueConstraint("execution_id", "generation_id", name="uq_execution_generation"),
+        UniqueConstraint(
+            "execution_id", "generation_id", "task_id", name="uq_execution_generation_task"
+        ),
         Index("ix_command_executions_task_status", "generation_id", "task_id", "status"),
     )
 
@@ -246,23 +249,26 @@ class TaskExecutionFence(Base):
     )
     generation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     task_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    expected_task_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expected_dish_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     expected_membership_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    expected_placement_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    expected_completion_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
         ForeignKeyConstraint(
             ["generation_id", "task_id"],
-            ["task_authority_heads.generation_id", "task_authority_heads.task_id"],
+            ["dish_states.generation_id", "dish_states.task_id"],
             ondelete="RESTRICT",
-            name="fk_task_execution_fence_head",
+            name="fk_task_execution_fence_dish_state",
+        ),
+        ForeignKeyConstraint(
+            ["generation_id", "task_id"],
+            ["task_membership_heads.generation_id", "task_membership_heads.task_id"],
+            ondelete="RESTRICT",
+            name="fk_task_execution_fence_membership_head",
         ),
         CheckConstraint(
-            "expected_task_revision > 0 AND expected_membership_revision > 0 "
-            "AND expected_placement_revision > 0 AND expected_completion_revision > 0",
-            name="positive_revisions",
+            "expected_dish_version > 0 AND expected_membership_revision >= 0",
+            name="valid_versions",
         ),
     )
 
@@ -807,6 +813,9 @@ class VerificationInspectionOccurrence(Base):
     operation_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("workflow_operations.operation_id", ondelete="RESTRICT"), nullable=False
     )
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
+    )
     task_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), nullable=False
     )
@@ -826,9 +835,7 @@ class VerificationInspectionOccurrence(Base):
     registry_version_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT"), nullable=False
     )
-    placement_event_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("task_section_placement_events.placement_event_id", ondelete="RESTRICT"), nullable=False
-    )
+    placement_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     request_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("service_requests.request_id", ondelete="RESTRICT"), nullable=False, unique=True
     )
@@ -838,9 +845,20 @@ class VerificationInspectionOccurrence(Base):
     inspected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "placement_version"],
+            [
+                "dish_mutation_receipts.generation_id",
+                "dish_mutation_receipts.task_id",
+                "dish_mutation_receipts.dish_version",
+            ],
+            ondelete="RESTRICT",
+            name="fk_verification_inspection_placement_receipt",
+        ),
         CheckConstraint("length(trim(attestation)) > 0", name="attestation_nonblank"),
+        CheckConstraint("placement_version > 0", name="positive_placement_version"),
         UniqueConstraint(
-            "cycle_id", "reviewed_content_version_id", "verifier_actor_fact_id", "placement_event_id",
+            "cycle_id", "reviewed_content_version_id", "verifier_actor_fact_id", "placement_version",
             name="uq_verification_inspection_identity",
         ),
     )
@@ -1072,12 +1090,10 @@ class AbandonmentAttempt(Base):
     source_run_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("service_runs.run_id", ondelete="RESTRICT"), nullable=False
     )
-    baseline_content_activation_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("task_content_activations.content_activation_id", ondelete="RESTRICT"), nullable=False
+    baseline_content_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, nullable=False
     )
-    baseline_placement_event_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("task_section_placement_events.placement_event_id", ondelete="RESTRICT"), nullable=False
-    )
+    baseline_placement_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[str] = mapped_column(String(24), nullable=False, default="preparing")
     request_id: Mapped[uuid.UUID] = mapped_column(
@@ -1093,7 +1109,28 @@ class AbandonmentAttempt(Base):
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "baseline_content_version_id"],
+            [
+                "task_content_versions.generation_id",
+                "task_content_versions.task_id",
+                "task_content_versions.content_version_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_abandonment_exact_baseline_content",
+        ),
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "baseline_placement_version"],
+            [
+                "dish_mutation_receipts.generation_id",
+                "dish_mutation_receipts.task_id",
+                "dish_mutation_receipts.dish_version",
+            ],
+            ondelete="RESTRICT",
+            name="fk_abandonment_baseline_placement_receipt",
+        ),
         CheckConstraint("source_actor_attempt_sequence > 0", name="positive_attempt_sequence"),
+        CheckConstraint("baseline_placement_version > 0", name="positive_baseline_placement_version"),
         CheckConstraint(
             "state IN ('preparing','published','blocked','reconciling','completed','cancelled')",
             name="state_allowed",
@@ -1342,5 +1379,42 @@ def _install_sqlite_import_provenance_triggers() -> None:
         )
 
 
+def _install_sqlite_occurrence_validation_triggers() -> None:
+    inspection = Base.metadata.tables["verification_inspection_occurrences"]
+    event.listen(
+        inspection,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER verification_inspection_placement_validate "
+            "BEFORE INSERT ON verification_inspection_occurrences WHEN NOT EXISTS ("
+            "SELECT 1 FROM dish_mutation_receipts r JOIN dish_states s "
+            "ON s.generation_id=r.generation_id AND s.task_id=r.task_id "
+            "WHERE r.generation_id=NEW.generation_id AND r.task_id=NEW.task_id "
+            "AND r.dish_version=NEW.placement_version AND r.placement_changed=1 "
+            "AND s.placement_version=NEW.placement_version AND s.section_id=NEW.section_id "
+            "AND s.registry_version_id=NEW.registry_version_id) "
+            "BEGIN SELECT RAISE(ABORT, 'inspection placement occurrence mismatch'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+
+
+def _install_sqlite_command_content_binding_guard() -> None:
+    execution = Base.metadata.tables["command_executions"]
+    event.listen(
+        execution,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER command_executions_content_binding_guard "
+            "BEFORE UPDATE OF contract_binding_id ON command_executions "
+            "WHEN EXISTS (SELECT 1 FROM task_content_versions cv "
+            "WHERE cv.command_execution_id=OLD.execution_id "
+            "AND cv.contract_binding_id<>NEW.contract_binding_id) "
+            "BEGIN SELECT RAISE(ABORT, 'command content binding is immutable'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+
+
 _install_sqlite_stage3_immutability_triggers()
 _install_sqlite_import_provenance_triggers()
+_install_sqlite_occurrence_validation_triggers()
+_install_sqlite_command_content_binding_guard()

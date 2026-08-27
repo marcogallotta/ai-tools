@@ -334,37 +334,35 @@ def _active_registry_snapshot(
 
 
 def _task_snapshot(session: Session, generation_id: uuid.UUID) -> list[dict[str, Any]]:
-    heads = session.scalars(
-        select(models.TaskAuthorityHead)
-        .where(models.TaskAuthorityHead.generation_id == generation_id)
-        .order_by(models.TaskAuthorityHead.task_id)
+    states = session.scalars(
+        select(models.DishState)
+        .where(models.DishState.generation_id == generation_id)
+        .order_by(models.DishState.task_id)
     ).all()
     result: list[dict[str, Any]] = []
-    for head in heads:
-        task = session.get(models.DishTask, head.task_id)
-        activation = session.get(models.ContentActivation, head.current_content_activation_id)
-        if task is None or activation is None or activation.generation_id != generation_id:
+    for state in states:
+        task = session.get(models.DishTask, state.task_id)
+        membership_head = session.get(models.TaskMembershipHead, (generation_id, state.task_id))
+        if task is None or membership_head is None:
             raise GenerationRolloverError(
-                f"predecessor task authority is incomplete for task {head.task_id}"
+                f"predecessor task authority is incomplete for task {state.task_id}"
             )
-        version = session.get(models.ContentVersion, activation.content_version_id)
-        placement = session.get(models.CurrentTaskSectionPlacement, (generation_id, head.task_id))
-        completion = session.get(models.CurrentTaskCompletion, (generation_id, head.task_id))
-        if version is None or placement is None or completion is None:
+        version = session.get(models.ContentVersion, state.current_content_version_id)
+        if version is None:
             raise GenerationRolloverError(
-                f"predecessor current task snapshot is incomplete for task {head.task_id}"
+                f"predecessor current task snapshot is incomplete for task {state.task_id}"
             )
         memberships = session.scalars(
             select(models.CurrentTaskProjectMembership)
             .where(
                 models.CurrentTaskProjectMembership.generation_id == generation_id,
-                models.CurrentTaskProjectMembership.task_id == head.task_id,
+                models.CurrentTaskProjectMembership.task_id == state.task_id,
             )
             .order_by(models.CurrentTaskProjectMembership.project_id)
         ).all()
         result.append(
             {
-                "task_id": head.task_id,
+                "task_id": state.task_id,
                 "version": {
                     "representation_kind": version.representation_kind,
                     "title": version.title,
@@ -377,8 +375,8 @@ def _task_snapshot(session: Session, generation_id: uuid.UUID) -> list[dict[str,
                     {"project_id": row.project_id, "is_member": row.is_member}
                     for row in memberships
                 ],
-                "placement": {"section_id": placement.section_id},
-                "completion": {"completed": completion.completed},
+                "placement": {"section_id": state.section_id},
+                "completion": {"completed": state.completed},
             }
         )
     return result
@@ -476,8 +474,22 @@ def _clone_task_authority(
     for snapshot in tasks:
         task_id = snapshot["task_id"]
         version_id = uuid_factory()
-        activation_id = uuid_factory()
         version_data = snapshot["version"]
+        session.add(
+            models.DishMutationReceipt(
+                generation_id=generation_id,
+                task_id=task_id,
+                dish_version=1,
+                source_route="import",
+                import_run_id=import_run_id,
+                command_execution_id=None,
+                content_changed=True,
+                placement_changed=True,
+                completion_changed=True,
+                occurred_at=at,
+            )
+        )
+        session.flush()
         session.add(
             models.ContentVersion(
                 content_version_id=version_id,
@@ -493,34 +505,32 @@ def _clone_task_authority(
                 command_execution_id=None,
                 predecessor_content_version_id=None,
                 contract_binding_id=version_data["contract_binding_id"],
+                created_dish_version=1,
                 created_at=at,
-            )
-        )
-        session.flush()
-        session.add(
-            models.ContentActivation(
-                content_activation_id=activation_id,
-                generation_id=generation_id,
-                task_id=task_id,
-                content_version_id=version_id,
-                activation_route="import",
-                import_run_id=import_run_id,
-                command_execution_id=None,
-                task_revision=1,
-                activated_at=at,
             )
         )
         session.flush()
         memberships = snapshot["memberships"]
         session.add(
-            models.TaskAuthorityHead(
+            models.DishState(
                 generation_id=generation_id,
                 task_id=task_id,
-                current_content_activation_id=activation_id,
-                task_revision=1,
+                current_content_version_id=version_id,
+                section_id=snapshot["placement"]["section_id"],
+                registry_version_id=registry_version_id,
+                completed=snapshot["completion"]["completed"],
+                completion_reason="imported",
+                dish_version=1,
+                placement_version=1,
+                completion_version=1,
+                updated_at=at,
+            )
+        )
+        session.add(
+            models.TaskMembershipHead(
+                generation_id=generation_id,
+                task_id=task_id,
                 membership_revision=1 if memberships else 0,
-                placement_revision=1,
-                completion_revision=1,
                 updated_at=at,
             )
         )
@@ -553,60 +563,6 @@ def _clone_task_authority(
                     updated_at=at,
                 )
             )
-        placement_event_id = uuid_factory()
-        section_id = snapshot["placement"]["section_id"]
-        session.add(
-            models.TaskSectionPlacementEvent(
-                placement_event_id=placement_event_id,
-                generation_id=generation_id,
-                task_id=task_id,
-                section_id=section_id,
-                registry_version_id=registry_version_id,
-                event_kind="placed" if section_id is not None else "cleared",
-                placement_revision=1,
-                provenance_route="import",
-                import_run_id=import_run_id,
-                command_execution_id=None,
-                occurred_at=at,
-            )
-        )
-        completion_event_id = uuid_factory()
-        session.add(
-            models.TaskCompletionEvent(
-                completion_event_id=completion_event_id,
-                generation_id=generation_id,
-                task_id=task_id,
-                completed=snapshot["completion"]["completed"],
-                reason="imported",
-                completion_revision=1,
-                provenance_route="import",
-                import_run_id=import_run_id,
-                command_execution_id=None,
-                occurred_at=at,
-            )
-        )
-        session.flush()
-        session.add_all(
-            [
-                models.CurrentTaskSectionPlacement(
-                    generation_id=generation_id,
-                    task_id=task_id,
-                    section_id=section_id,
-                    registry_version_id=registry_version_id,
-                    latest_event_id=placement_event_id,
-                    placement_revision=1,
-                    updated_at=at,
-                ),
-                models.CurrentTaskCompletion(
-                    generation_id=generation_id,
-                    task_id=task_id,
-                    completed=snapshot["completion"]["completed"],
-                    latest_event_id=completion_event_id,
-                    completion_revision=1,
-                    updated_at=at,
-                ),
-            ]
-        )
         session.flush()
 
 

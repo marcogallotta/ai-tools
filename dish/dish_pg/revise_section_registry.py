@@ -26,7 +26,13 @@ from . import models
 from .bootstrap import require_postgresql_target
 from .command_port import CommandCall, CommandResult, PostgresCommandPort
 from .location_manifest import target_uuid
-from .repositories import AuthorityRepository, RegistryRepository, registry_source_import_run
+from .repositories import (
+    AuthorityRepository,
+    DishRepository,
+    RegistryRepository,
+    ScalarMutationSource,
+    registry_source_import_run,
+)
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .workflow import WorkflowAuthorityService
 
@@ -573,36 +579,34 @@ def _revise_test_section_registry_membership_transaction(
         for external_id, (section, entry) in current.items()
     }
     current_section_ids = {section.section_id for section, _entry in current.values()}
-    placement_statement = (
-        select(models.CurrentTaskSectionPlacement)
-        .where(models.CurrentTaskSectionPlacement.generation_id == generation.generation_id)
-        .order_by(models.CurrentTaskSectionPlacement.task_id)
+    state_statement = (
+        select(models.DishState)
+        .where(models.DishState.generation_id == generation.generation_id)
+        .order_by(models.DishState.task_id)
     )
     if session.get_bind().dialect.name == "postgresql":
-        placement_statement = placement_statement.with_for_update()
-    current_placements = tuple(session.scalars(placement_statement))
-    head_statement = (
-        select(models.TaskAuthorityHead)
-        .where(models.TaskAuthorityHead.generation_id == generation.generation_id)
-        .order_by(models.TaskAuthorityHead.task_id)
-    )
-    if session.get_bind().dialect.name == "postgresql":
-        head_statement = head_statement.with_for_update()
-    heads_by_task = {head.task_id: head for head in session.scalars(head_statement)}
-    if set(heads_by_task) != {placement.task_id for placement in current_placements}:
+        state_statement = state_statement.with_for_update()
+    current_states = tuple(session.scalars(state_statement))
+    membership_heads = {
+        head.task_id: head
+        for head in session.scalars(
+            select(models.TaskMembershipHead)
+            .where(models.TaskMembershipHead.generation_id == generation.generation_id)
+            .order_by(models.TaskMembershipHead.task_id)
+        )
+    }
+    if set(membership_heads) != {state.task_id for state in current_states}:
         raise ReviseTestSectionRegistryMembershipError(
             "current TEST task placement authority is incomplete"
         )
     invalid_placements = [
-        placement
-        for placement in current_placements
-        if placement.registry_version_id != current_version.registry_version_id
+        state
+        for state in current_states
+        if state.registry_version_id != current_version.registry_version_id
         or (
-            placement.section_id is not None
-            and placement.section_id not in current_section_ids
+            state.section_id is not None
+            and state.section_id not in current_section_ids
         )
-        or heads_by_task.get(placement.task_id) is None
-        or heads_by_task[placement.task_id].placement_revision != placement.placement_revision
     ]
     if invalid_placements:
         raise ReviseTestSectionRegistryMembershipError(
@@ -832,38 +836,25 @@ def _revise_test_section_registry_membership_transaction(
             for section, target in final
         ),
     )
-    placement_rebindings: list[
-        tuple[models.CurrentTaskSectionPlacement, models.TaskAuthorityHead, uuid.UUID, int]
-    ] = []
-    for placement in current_placements:
-        head = heads_by_task[placement.task_id]
-        revision = head.placement_revision + 1
-        event_id = uuid_factory()
-        session.add(
-            models.TaskSectionPlacementEvent(
-                placement_event_id=event_id,
-                generation_id=generation.generation_id,
-                task_id=placement.task_id,
-                section_id=placement.section_id,
-                registry_version_id=new_version_id,
-                event_kind="placed" if placement.section_id is not None else "cleared",
-                placement_revision=revision,
-                provenance_route="import",
+    dishes = DishRepository(session, uuid_factory=uuid_factory)
+    for state in current_states:
+        membership = membership_heads[state.task_id]
+        mutation = dishes.begin_scalar_mutation(
+            generation_id=generation.generation_id,
+            task_id=state.task_id,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=membership.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
                 import_run_id=import_run_id,
-                command_execution_id=None,
                 occurred_at=now,
-            )
+            ),
         )
-        placement_rebindings.append((placement, head, event_id, revision))
-    session.flush()
-    for placement, head, event_id, revision in placement_rebindings:
-        placement.registry_version_id = new_version_id
-        placement.latest_event_id = event_id
-        placement.placement_revision = revision
-        placement.updated_at = now
-        head.placement_revision = revision
-        head.updated_at = now
-    session.flush()
+        mutation.place(
+            section_id=state.section_id,
+            registry_version_id=new_version_id,
+        )
+        mutation.finalize()
     registry.activate_registry(
         activation=models.SectionRegistryActivation(
             registry_activation_id=activation_id,

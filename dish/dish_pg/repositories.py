@@ -8,11 +8,12 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable
+from typing import Iterable, Iterator
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from . import models
@@ -21,6 +22,269 @@ from . import stage3_models as wf
 
 class CoreAuthorityError(ValueError):
     """A requested Stage 2 authority transition is not structurally legal."""
+
+
+@dataclass(frozen=True)
+class ScalarMutationSource:
+    route: str
+    occurred_at: datetime
+    import_run_id: uuid.UUID | None = None
+    command_execution_id: uuid.UUID | None = None
+
+    def __post_init__(self) -> None:
+        valid = (
+            self.route == "import"
+            and self.import_run_id is not None
+            and self.command_execution_id is None
+        ) or (
+            self.route == "command_execution"
+            and self.import_run_id is None
+            and self.command_execution_id is not None
+        )
+        if not valid:
+            raise CoreAuthorityError("scalar mutation source is not exact")
+
+
+@dataclass(frozen=True)
+class ScalarDishMutationResult:
+    dish_version: int | None
+    changed_domains: frozenset[str]
+
+
+class ScalarDishMutation:
+    """Collect and atomically finalize one logical scalar Dish transition."""
+
+    def __init__(
+        self,
+        session: Session,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        expected_dish_version: int,
+        expected_membership_revision: int,
+        source: ScalarMutationSource,
+        uuid_factory=uuid.uuid4,
+    ) -> None:
+        self.session = session
+        self.generation_id = generation_id
+        self.task_id = task_id
+        self.expected_dish_version = expected_dish_version
+        self.expected_membership_revision = expected_membership_revision
+        self.source = source
+        self.uuid_factory = uuid_factory
+        self._content: models.ContentVersion | None = None
+        self._placement: tuple[uuid.UUID | None, uuid.UUID] | None = None
+        self._completion: tuple[bool, str] | None = None
+        self._finalized = False
+
+        self.state = session.scalar(
+            select(models.DishState)
+            .where(
+                models.DishState.generation_id == generation_id,
+                models.DishState.task_id == task_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        membership = session.scalar(
+            select(models.TaskMembershipHead)
+            .where(
+                models.TaskMembershipHead.generation_id == generation_id,
+                models.TaskMembershipHead.task_id == task_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if self.state is None or membership is None:
+            raise CoreAuthorityError("Dish scalar or membership authority is missing")
+        if self.state.dish_version != expected_dish_version:
+            raise CoreAuthorityError("Dish scalar authority is stale")
+        if membership.membership_revision != expected_membership_revision:
+            raise CoreAuthorityError("Dish membership authority is stale")
+
+    @property
+    def resulting_dish_version(self) -> int:
+        return self.expected_dish_version + 1
+
+    def replace_content(
+        self,
+        *,
+        title: str,
+        body: str,
+        identity_scheme: str,
+        content_identity: str,
+        contract_binding_id: uuid.UUID,
+        predecessor_content_version_id: uuid.UUID,
+        content_version_id: uuid.UUID | None = None,
+    ) -> uuid.UUID:
+        if self._content is not None:
+            raise CoreAuthorityError("one scalar mutation may create at most one content occurrence")
+        if self.state.current_content_version_id != predecessor_content_version_id:
+            raise CoreAuthorityError("content predecessor is not current")
+        existing = self.session.scalar(
+            select(models.ContentVersion.content_version_id).where(
+                models.ContentVersion.generation_id == self.generation_id,
+                models.ContentVersion.task_id == self.task_id,
+                models.ContentVersion.identity_scheme == identity_scheme,
+                models.ContentVersion.content_identity == content_identity,
+            )
+        )
+        if existing is not None:
+            raise CoreAuthorityError("content occurrence is not distinct")
+        content_version_id = content_version_id or self.uuid_factory()
+        self._content = models.ContentVersion(
+            content_version_id=content_version_id,
+            generation_id=self.generation_id,
+            task_id=self.task_id,
+            representation_kind="document",
+            title=title,
+            body=body,
+            identity_scheme=identity_scheme,
+            content_identity=content_identity,
+            creator_route=self.source.route,
+            import_run_id=self.source.import_run_id,
+            command_execution_id=self.source.command_execution_id,
+            predecessor_content_version_id=predecessor_content_version_id,
+            contract_binding_id=contract_binding_id,
+            created_dish_version=self.resulting_dish_version,
+            created_at=self.source.occurred_at,
+        )
+        return content_version_id
+
+    def place(self, *, section_id: uuid.UUID | None, registry_version_id: uuid.UUID) -> None:
+        if self._placement is not None:
+            raise CoreAuthorityError("placement may be staged only once")
+        if section_id is not None and self.session.get(
+            models.SectionRegistryEntry, (registry_version_id, section_id)
+        ) is None:
+            raise CoreAuthorityError("placement is not present in the selected registry")
+        self._placement = (section_id, registry_version_id)
+
+    def set_completion(self, *, completed: bool, reason: str) -> None:
+        if self._completion is not None:
+            raise CoreAuthorityError("completion may be staged only once")
+        if self.source.route == "import" and reason != "imported":
+            raise CoreAuthorityError("import completion occurrence must be imported")
+        if self.source.route == "command_execution" and reason not in {
+            "cooked",
+            "archive",
+            "reopen_planning",
+        }:
+            raise CoreAuthorityError("command completion reason is invalid")
+        self._completion = (completed, reason)
+
+    def finalize(self) -> ScalarDishMutationResult:
+        if self._finalized:
+            raise CoreAuthorityError("scalar mutation was already finalized")
+        self._finalized = True
+        changed = frozenset(
+            domain
+            for domain, staged in (
+                ("content", self._content),
+                ("placement", self._placement),
+                ("completion", self._completion),
+            )
+            if staged is not None
+        )
+        if not changed:
+            return ScalarDishMutationResult(None, changed)
+
+        next_version = self.resulting_dish_version
+        receipt = models.DishMutationReceipt(
+            generation_id=self.generation_id,
+            task_id=self.task_id,
+            dish_version=next_version,
+            source_route=self.source.route,
+            import_run_id=self.source.import_run_id,
+            command_execution_id=self.source.command_execution_id,
+            content_changed="content" in changed,
+            placement_changed="placement" in changed,
+            completion_changed="completion" in changed,
+            occurred_at=self.source.occurred_at,
+        )
+        self.session.add(receipt)
+        self.session.flush()
+        if self._content is not None:
+            self.session.add(self._content)
+            self.session.flush()
+
+        values: dict[str, object] = {
+            "dish_version": next_version,
+            "updated_at": self.source.occurred_at,
+        }
+        if self._content is not None:
+            values["current_content_version_id"] = self._content.content_version_id
+        if self._placement is not None:
+            values.update(
+                section_id=self._placement[0],
+                registry_version_id=self._placement[1],
+                placement_version=next_version,
+            )
+        if self._completion is not None:
+            values.update(
+                completed=self._completion[0],
+                completion_reason=self._completion[1],
+                completion_version=next_version,
+            )
+        result = self.session.execute(
+            update(models.DishState)
+            .where(
+                models.DishState.generation_id == self.generation_id,
+                models.DishState.task_id == self.task_id,
+                models.DishState.dish_version == self.expected_dish_version,
+            )
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise CoreAuthorityError("Dish scalar CAS lost to a concurrent writer")
+        self.session.flush()
+        self.session.expire(self.state)
+        return ScalarDishMutationResult(next_version, changed)
+
+
+class DishRepository:
+    def __init__(self, session: Session, *, uuid_factory=uuid.uuid4) -> None:
+        self.session = session
+        self.uuid_factory = uuid_factory
+
+    def begin_scalar_mutation(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        expected_dish_version: int,
+        expected_membership_revision: int,
+        source: ScalarMutationSource,
+    ) -> ScalarDishMutation:
+        return ScalarDishMutation(
+            self.session,
+            generation_id=generation_id,
+            task_id=task_id,
+            expected_dish_version=expected_dish_version,
+            expected_membership_revision=expected_membership_revision,
+            source=source,
+            uuid_factory=self.uuid_factory,
+        )
+
+    @contextmanager
+    def mutate_scalar(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        expected_dish_version: int,
+        expected_membership_revision: int,
+        source: ScalarMutationSource,
+    ) -> Iterator[ScalarDishMutation]:
+        mutation = self.begin_scalar_mutation(
+            generation_id=generation_id,
+            task_id=task_id,
+            expected_dish_version=expected_dish_version,
+            expected_membership_revision=expected_membership_revision,
+            source=source,
+        )
+        yield mutation
 
 
 REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE = "registry-role-correction-v1"
@@ -546,36 +810,42 @@ class TaskRepository:
         *,
         task: models.DishTask,
         alias: models.TaskExternalAlias,
+        receipt: models.DishMutationReceipt,
         version: models.ContentVersion,
-        activation: models.ContentActivation,
-        head: models.TaskAuthorityHead,
+        state: models.DishState,
+        membership_head: models.TaskMembershipHead,
         membership_events: Iterable[models.TaskProjectMembershipEvent],
         current_memberships: Iterable[models.CurrentTaskProjectMembership],
-        placement_event: models.TaskSectionPlacementEvent,
-        current_placement: models.CurrentTaskSectionPlacement,
-        completion_event: models.TaskCompletionEvent,
-        current_completion: models.CurrentTaskCompletion,
     ) -> None:
         if task.creation_route != "import":
             raise CoreAuthorityError("Stage 2 import bundle requires import creation provenance")
         if alias.task_id != task.task_id or alias.origin != "imported":
             raise CoreAuthorityError("task alias does not match imported task")
-        if version.task_id != task.task_id or activation.task_id != task.task_id:
+        if version.task_id != task.task_id or receipt.task_id != task.task_id:
             raise CoreAuthorityError("content authority does not match imported task")
-        if activation.content_version_id != version.content_version_id:
-            raise CoreAuthorityError("content activation does not target imported version")
-        if head.current_content_activation_id != activation.content_activation_id:
-            raise CoreAuthorityError("task head does not target imported activation")
-        if head.task_id != task.task_id or head.generation_id != version.generation_id:
-            raise CoreAuthorityError("task head generation/task mismatch")
+        if state.current_content_version_id != version.content_version_id:
+            raise CoreAuthorityError("DishState does not target imported content")
+        if state.task_id != task.task_id or state.generation_id != version.generation_id:
+            raise CoreAuthorityError("DishState generation/task mismatch")
+        if (
+            receipt.generation_id != state.generation_id
+            or receipt.dish_version != 1
+            or version.created_dish_version != 1
+            or state.dish_version != 1
+            or state.placement_version != 1
+            or state.completion_version != 1
+        ):
+            raise CoreAuthorityError("initial imported scalar authority must be occurrence one")
+        if membership_head.task_id != task.task_id or membership_head.generation_id != state.generation_id:
+            raise CoreAuthorityError("membership head generation/task mismatch")
 
         self.session.add(task)
         self.session.flush()
-        self.session.add_all([alias, version])
+        self.session.add_all([alias, receipt])
         self.session.flush()
-        self.session.add(activation)
+        self.session.add(version)
         self.session.flush()
-        self.session.add(head)
+        self.session.add_all([state, membership_head])
         self.session.flush()
 
         membership_rows = list(membership_events)
@@ -585,9 +855,4 @@ class TaskRepository:
         self.session.add_all(membership_rows)
         self.session.flush()
         self.session.add_all(current_rows)
-        self.session.add(placement_event)
-        self.session.add(completion_event)
-        self.session.flush()
-        self.session.add(current_placement)
-        self.session.add(current_completion)
         self.session.flush()

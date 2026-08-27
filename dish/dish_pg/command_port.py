@@ -10,7 +10,6 @@ import copy
 import hashlib
 import json
 import uuid
-from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 
@@ -39,8 +38,6 @@ from .document_authority import (
     resumed_document,
 )
 from .planner import (
-    AuthorityFence,
-    AuthoritativeSnapshot,
     CanonicalCommandIntent,
     plan_command,
 )
@@ -48,9 +45,12 @@ from .read_model import PostgresReadModel, ReadModelError
 from .repositories import (
     AuthorityRepository,
     CoreAuthorityError,
+    DishRepository,
     REGISTRY_ROLE_CORRECTION_KIND,
     REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE,
     RegistryRepository,
+    ScalarDishMutation,
+    ScalarMutationSource,
     registry_source_import_run,
 )
 from .transition import ProjectionService
@@ -58,10 +58,10 @@ from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
 from dish_tool.governed_diff import (
     GOVERNED_FIELDS,
     agent_attested_decision_appends,
-    canonical_diff,
     governed_changes_requiring_authorization,
     validate_semantic_proposal,
 )
+from dish_tool.errors import DishRuleError
 from dish_tool.task_document import (
     DESTINATION_RE,
     DocumentParseError,
@@ -82,11 +82,11 @@ from .workflow import (
 )
 from .command_port_common import (
     SAFE_RECLAIM_REASON_PREFIX as _SAFE_RECLAIM_REASON_PREFIX,
+    SEMANTIC_PROPOSAL_PREFIX as _SEMANTIC_PROPOSAL_PREFIX,
     CommandCall,
     CommandPortError,
     CommandResult,
     CommandRuleError,
-    decode_semantic_proposal_text as _decode_semantic_proposal_text,
     json_safe as _json_safe,
     semantic_proposal_text as _semantic_proposal_text,
     task_reference_from_dish as _task_reference_from_dish,
@@ -118,6 +118,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             session, uuid_factory=uuid_factory
         )
         self.lease_duration = lease_duration
+        self.dishes = DishRepository(session, uuid_factory=uuid_factory)
+        self._pending_scalar_mutations: dict[uuid.UUID, ScalarDishMutation] = {}
 
     def record_validation_failure(
         self,
@@ -276,6 +278,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         operation: wf.WorkflowOperation | None = None
         execution: wf.CommandExecution | None = None
         execution_id: uuid.UUID | None = None
+        self._pending_scalar_mutations.clear()
         try:
             task, operation = self._resolve_targets(call)
             if (
@@ -400,6 +403,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     operation=operation,
                 )
                 preconstruction_hold = bool(data.pop("_preconstruction_hold", False))
+                self._finalize_scalar_mutations()
                 self.session.flush()
                 assert_committed_command_effects(
                     self.session,
@@ -454,7 +458,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 task,
                 operation,
             )
-        except WorkflowAuthorityError as exc:
+        except (WorkflowAuthorityError, CoreAuthorityError) as exc:
             return self._record_rule_failure(
                 call,
                 CommandRuleError("AUTHORITY_MISMATCH", str(exc)),
@@ -795,6 +799,41 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             ),
             revised_entries,
         )
+        state_statement = (
+            select(models.DishState)
+            .where(models.DishState.generation_id == generation.generation_id)
+            .order_by(models.DishState.task_id)
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            state_statement = state_statement.with_for_update()
+        states = tuple(self.session.scalars(state_statement))
+        for state in states:
+            membership = self.session.get(
+                models.TaskMembershipHead,
+                (generation.generation_id, state.task_id),
+            )
+            if membership is None:
+                raise CommandRuleError(
+                    "REGISTRY_AUTHORITY_INVALID",
+                    "registry rebind requires complete membership authority",
+                    data={"task_id": str(state.task_id)},
+                )
+            mutation = self.dishes.begin_scalar_mutation(
+                generation_id=generation.generation_id,
+                task_id=state.task_id,
+                expected_dish_version=state.dish_version,
+                expected_membership_revision=membership.membership_revision,
+                source=ScalarMutationSource(
+                    route="import",
+                    import_run_id=correction_import_run_id,
+                    occurred_at=call.now,
+                ),
+            )
+            mutation.place(
+                section_id=state.section_id,
+                registry_version_id=registry_version_id,
+            )
+            mutation.finalize()
         registry.activate_registry(
             activation=models.SectionRegistryActivation(
                 registry_activation_id=activation_id,
@@ -836,32 +875,32 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         if active is None or entry is None:
             raise CommandRuleError("RESEARCH_QUEUE_MISSING", "active registry has no Research Queue")
         section = self.session.get(models.GovernedSection, entry.section_id)
-        task_id, version_id, activation_id = self.uuid_factory(), self.uuid_factory(), self.uuid_factory()
+        task_id, version_id = self.uuid_factory(), self.uuid_factory()
         body = str(call.arguments.get("body", ""))
         identity = content_identity(title, body)
         task = models.DishTask(task_id=task_id, existence_state="ordinary", creation_route="create", import_run_id=None, command_execution_id=execution.execution_id, created_at=call.now, retired_at=None)
-        version = models.ContentVersion(content_version_id=version_id, generation_id=generation.generation_id, task_id=task_id, representation_kind="document", title=title, body=body, identity_scheme=CONTENT_IDENTITY_SCHEME, content_identity=identity, creator_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, predecessor_content_version_id=None, contract_binding_id=binding.binding_id, created_at=call.now)
-        activation = models.ContentActivation(content_activation_id=activation_id, generation_id=generation.generation_id, task_id=task_id, content_version_id=version_id, activation_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, task_revision=1, activated_at=call.now)
-        head = models.TaskAuthorityHead(generation_id=generation.generation_id, task_id=task_id, current_content_activation_id=activation_id, task_revision=1, membership_revision=1, placement_revision=1, completion_revision=1, updated_at=call.now)
-        membership_id, placement_id, completion_id = self.uuid_factory(), self.uuid_factory(), self.uuid_factory()
+        receipt = models.DishMutationReceipt(generation_id=generation.generation_id, task_id=task_id, dish_version=1, source_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, content_changed=True, placement_changed=True, completion_changed=True, occurred_at=call.now)
+        version = models.ContentVersion(content_version_id=version_id, generation_id=generation.generation_id, task_id=task_id, representation_kind="document", title=title, body=body, identity_scheme=CONTENT_IDENTITY_SCHEME, content_identity=identity, creator_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, predecessor_content_version_id=None, contract_binding_id=binding.binding_id, created_dish_version=1, created_at=call.now)
+        state = models.DishState(generation_id=generation.generation_id, task_id=task_id, current_content_version_id=version_id, section_id=section.section_id, registry_version_id=active.registry_version_id, completed=False, completion_reason="archive", dish_version=1, placement_version=1, completion_version=1, updated_at=call.now)
+        membership_head = models.TaskMembershipHead(generation_id=generation.generation_id, task_id=task_id, membership_revision=1, updated_at=call.now)
+        membership_id = self.uuid_factory()
         membership_event = models.TaskProjectMembershipEvent(membership_event_id=membership_id, generation_id=generation.generation_id, task_id=task_id, project_id=section.project_id, event_kind="joined", membership_revision=1, provenance_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, occurred_at=call.now)
         current_membership = models.CurrentTaskProjectMembership(generation_id=generation.generation_id, task_id=task_id, project_id=section.project_id, latest_event_id=membership_id, is_member=True, membership_revision=1, updated_at=call.now)
-        placement_event = models.TaskSectionPlacementEvent(placement_event_id=placement_id, generation_id=generation.generation_id, task_id=task_id, section_id=section.section_id, registry_version_id=active.registry_version_id, event_kind="placed", placement_revision=1, provenance_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, occurred_at=call.now)
-        current_placement = models.CurrentTaskSectionPlacement(generation_id=generation.generation_id, task_id=task_id, section_id=section.section_id, registry_version_id=active.registry_version_id, latest_event_id=placement_id, placement_revision=1, updated_at=call.now)
-        completion_event = models.TaskCompletionEvent(completion_event_id=completion_id, generation_id=generation.generation_id, task_id=task_id, completed=False, reason="archive", completion_revision=1, provenance_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, occurred_at=call.now)
-        current_completion = models.CurrentTaskCompletion(generation_id=generation.generation_id, task_id=task_id, completed=False, latest_event_id=completion_id, completion_revision=1, updated_at=call.now)
         self.session.add(task)
+        self.session.flush()
+        execution.task_id = task_id
+        self.session.flush()
+        self.session.add(receipt)
         self.session.flush()
         self.session.add(version)
         self.session.flush()
-        self.session.add(activation)
+        self.session.add(state)
         self.session.flush()
-        self.session.add(head)
+        self.session.add(membership_head)
         self.session.flush()
-        self.session.add_all([membership_event, placement_event, completion_event])
+        self.session.add(membership_event)
         self.session.flush()
-        self.session.add_all([current_membership, current_placement, current_completion])
-        execution.task_id = task_id
+        self.session.add(current_membership)
         self.session.flush()
         projection_id = self._project(generation.generation_id, execution.execution_id, task_id, "create_task", {"title": title}, call.now)
         return {
@@ -1425,15 +1464,12 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             )
         self.workflow.repo.assert_task_fence(execution.execution_id)
         self.workflow.repo.assert_operation_fence(execution.execution_id)
-        head = self.session.get(
-            models.TaskAuthorityHead, (generation.generation_id, task.task_id)
-        )
-        prior_activation = self.session.get(
-            models.ContentActivation, head.current_content_activation_id
-        )
-        prior = self.session.get(
-            models.ContentVersion, prior_activation.content_version_id
-        )
+        state = self.session.get(models.DishState, (generation.generation_id, task.task_id))
+        if state is None:
+            raise CommandRuleError("CONTENT_AUTHORITY_MISSING", "task has no DishState")
+        prior = self.session.get(models.ContentVersion, state.current_content_version_id)
+        if prior is None:
+            raise CommandRuleError("CONTENT_AUTHORITY_MISSING", "current content is missing")
         file_text = call.arguments.get("file_text")
         body_value = call.arguments.get("body")
         if operation.kind == "planning":
@@ -1512,7 +1548,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 missing_message="active registry has no Research Queue",
             )
             placement = self.session.get(
-                models.CurrentTaskSectionPlacement,
+                models.DishState,
                 (generation.generation_id, task.task_id),
             )
             placement_changed = placement is None or placement.section_id != research_section_id
@@ -1784,6 +1820,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 )
             )
         if not non_material_checkin:
+            # The verification occurrence binds the newly created immutable content row.
+            # Finalize the one collected content+placement mutation before that FK-backed
+            # workflow occurrence is admitted; the outer command transaction still owns
+            # commit/rollback and the generic finalizer becomes a no-op.
+            self._finalize_scalar_mutations()
             cycle = self.workflow.open_verification_cycle(
                 cycle_id=self.uuid_factory(),
                 execution_id=execution.execution_id,
@@ -2036,6 +2077,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             predecessor_content_version_id=reviewed.content_version_id,
             at=call.now,
         )
+        self._finalize_scalar_mutations()
         if correction == "small":
             self.session.add(
                 wf.VerificationCorrection(
@@ -2274,6 +2316,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     predecessor_content_version_id=reviewed.content_version_id,
                     at=call.now,
                 )
+                self._finalize_scalar_mutations()
                 self.session.add(
                     wf.VerificationCorrection(
                         correction_id=self.uuid_factory(),
@@ -2333,6 +2376,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 predecessor_content_version_id=reviewed.content_version_id,
                 at=call.now,
             )
+            self._finalize_scalar_mutations()
             projection_id = self._project(
                 generation.generation_id,
                 execution.execution_id,
@@ -2439,6 +2483,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             predecessor_content_version_id=requirement.baseline_content_version_id,
             at=call.now,
         )
+        self._finalize_scalar_mutations()
         source_cycle = self.session.get(wf.VerificationCycle, requirement.cycle_id)
         if (
             source_cycle is None
@@ -2547,19 +2592,12 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 wf.VerificationSignoff.cycle_id == cycle.cycle_id
             )
         )
-        head = self.session.get(
-            models.TaskAuthorityHead, (generation.generation_id, task.task_id)
-        )
-        activation = (
-            self.session.get(models.ContentActivation, head.current_content_activation_id)
-            if head
-            else None
-        )
+        state = self.session.get(models.DishState, (generation.generation_id, task.task_id))
         if (
             cycle.lifecycle != "approved"
             or signoff is None
-            or activation is None
-            or signoff.signed_content_version_id != activation.content_version_id
+            or state is None
+            or signoff.signed_content_version_id != state.current_content_version_id
         ):
             raise CommandRuleError(
                 "SIGNED_STATE_REQUIRED",
@@ -2576,7 +2614,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError(
                 "SIGNOFF_LINEAGE_INVALID", "submit signoff lineage is incomplete"
             )
-        signed = self.session.get(models.ContentVersion, activation.content_version_id)
+        signed = self.session.get(models.ContentVersion, state.current_content_version_id)
         if signed is None:
             raise CommandRuleError(
                 "SIGNED_CONTENT_MISSING", "signed content occurrence is missing"
@@ -2648,15 +2686,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError("OPEN_OPERATION_REQUIRED", "discard requires an open operation")
         steps = int(self.session.scalar(select(func.count()).select_from(wf.OperationStep).where(wf.OperationStep.operation_id == operation.operation_id)) or 0)
         creation_fence = self.session.get(wf.TaskExecutionFence, operation.creation_execution_id)
-        head = self.session.get(models.TaskAuthorityHead, (generation.generation_id, task.task_id))
-        placement = self.session.get(models.CurrentTaskSectionPlacement, (generation.generation_id, task.task_id))
-        if creation_fence is None or head is None or placement is None:
+        state = self.session.get(models.DishState, (generation.generation_id, task.task_id))
+        membership = self.session.get(models.TaskMembershipHead, (generation.generation_id, task.task_id))
+        if creation_fence is None or state is None or membership is None:
             raise CommandRuleError("OPERATION_BASELINE_MISSING", "discard requires the immutable pre-operation baseline")
         baseline_matches = (
-            head.task_revision == creation_fence.expected_task_revision
-            and head.membership_revision == creation_fence.expected_membership_revision
-            and head.placement_revision == creation_fence.expected_placement_revision
-            and head.completion_revision == creation_fence.expected_completion_revision
+            state.dish_version == creation_fence.expected_dish_version
+            and membership.membership_revision == creation_fence.expected_membership_revision
         )
         prior_executions = int(self.session.scalar(select(func.count()).select_from(wf.CommandExecution).where(wf.CommandExecution.operation_id == operation.operation_id, wf.CommandExecution.execution_id.notin_([operation.creation_execution_id, execution.execution_id]))) or 0)
         projection_events = int(self.session.scalar(select(func.count()).select_from(projection.ProjectionOutboxEvent).join(wf.CommandExecution, wf.CommandExecution.execution_id == projection.ProjectionOutboxEvent.command_execution_id).where(wf.CommandExecution.operation_id == operation.operation_id)) or 0)
@@ -2930,26 +2966,17 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             creation_fence = self.session.get(
                 wf.TaskExecutionFence, operation.creation_execution_id
             )
-            head = self.session.get(
-                models.TaskAuthorityHead, (generation.generation_id, task.task_id)
-            )
-            placement = self.session.get(
-                models.CurrentTaskSectionPlacement,
-                (generation.generation_id, task.task_id),
-            )
-            if creation_fence is None or head is None or placement is None:
+            state = self.session.get(models.DishState, (generation.generation_id, task.task_id))
+            membership = self.session.get(models.TaskMembershipHead, (generation.generation_id, task.task_id))
+            if creation_fence is None or state is None or membership is None:
                 raise CommandRuleError(
                     "SAFE_RECLAIM_BASELINE_MISSING",
                     "clean-frontier PostgreSQL baseline evidence is incomplete",
                 )
             baseline_matches = (
-                head.task_revision == creation_fence.expected_task_revision
-                and head.membership_revision
+                state.dish_version == creation_fence.expected_dish_version
+                and membership.membership_revision
                 == creation_fence.expected_membership_revision
-                and head.placement_revision
-                == creation_fence.expected_placement_revision
-                and head.completion_revision
-                == creation_fence.expected_completion_revision
             )
             progressed_step = self.session.scalar(
                 select(wf.OperationStep.step_id)
@@ -2978,7 +3005,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 models.ActiveSectionRegistry, generation.generation_id
             )
             placement = self.session.get(
-                models.CurrentTaskSectionPlacement,
+                models.DishState,
                 (generation.generation_id, task.task_id),
             )
             verification_section_id = (
@@ -3140,7 +3167,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         assert task is not None
         self.workflow.repo.assert_task_fence(execution.execution_id)
         current = self.session.get(
-            models.CurrentTaskCompletion, (generation.generation_id, task.task_id)
+            models.DishState, (generation.generation_id, task.task_id)
         )
         if current is None:
             raise CommandRuleError(
@@ -3342,6 +3369,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             predecessor_content_version_id=baseline_id,
             at=call.now,
         )
+        self._finalize_scalar_mutations()
         next_cycle = self.workflow.open_verification_cycle(
             cycle_id=self.uuid_factory(),
             execution_id=execution.execution_id,
@@ -3942,6 +3970,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             predecessor_content_version_id=baseline_content_version_id,
             at=at,
         )
+        self._finalize_scalar_mutations()
         projection_id = self._project(
             generation_id,
             execution.execution_id,
@@ -3982,6 +4011,46 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "projection_event_id": projection_id,
         }
 
+    def _scalar_mutation(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        execution_id: uuid.UUID,
+        at: datetime,
+    ) -> ScalarDishMutation:
+        current = self._pending_scalar_mutations.get(execution_id)
+        if current is not None:
+            if current.generation_id != generation_id or current.task_id != task_id:
+                raise CommandRuleError(
+                    "SCALAR_MUTATION_TARGET_MISMATCH",
+                    "one command execution cannot mutate multiple Dishes",
+                )
+            return current
+        fence = self.session.get(wf.TaskExecutionFence, execution_id)
+        if fence is None or fence.generation_id != generation_id or fence.task_id != task_id:
+            raise CommandRuleError(
+                "SCALAR_FENCE_REQUIRED", "scalar mutation requires the exact task fence"
+            )
+        mutation = self.dishes.begin_scalar_mutation(
+            generation_id=generation_id,
+            task_id=task_id,
+            expected_dish_version=fence.expected_dish_version,
+            expected_membership_revision=fence.expected_membership_revision,
+            source=ScalarMutationSource(
+                route="command_execution",
+                command_execution_id=execution_id,
+                occurred_at=at,
+            ),
+        )
+        self._pending_scalar_mutations[execution_id] = mutation
+        return mutation
+
+    def _finalize_scalar_mutations(self) -> None:
+        for mutation in self._pending_scalar_mutations.values():
+            mutation.finalize()
+        self._pending_scalar_mutations.clear()
+
     def _activate_document(
         self,
         *,
@@ -3994,83 +4063,39 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         predecessor_content_version_id: uuid.UUID,
         at: datetime,
     ) -> uuid.UUID:
-        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
-        if head is None:
-            raise CommandRuleError(
-                "CONTENT_AUTHORITY_MISSING", "task has no current authority head"
-            )
-        activation = self.session.get(
-            models.ContentActivation, head.current_content_activation_id
-        )
-        if (
-            activation is None
-            or activation.content_version_id != predecessor_content_version_id
-        ):
-            raise CommandRuleError(
-                "CONTENT_AUTHORITY_DRIFT",
-                "the predecessor is not the exact current content occurrence",
-            )
         identity = content_identity(title, body)
-        if self.session.scalar(
-            select(models.ContentVersion.content_version_id).where(
-                models.ContentVersion.generation_id == generation_id,
-                models.ContentVersion.task_id == task_id,
-                models.ContentVersion.identity_scheme == CONTENT_IDENTITY_SCHEME,
-                models.ContentVersion.content_identity == identity,
-            )
-        ) is not None:
-            raise CommandRuleError(
-                "CONTENT_OCCURRENCE_NOT_DISTINCT",
-                "the candidate is identical to an existing task content occurrence",
-            )
-        version_id = self.uuid_factory()
-        self.session.add(
-            models.ContentVersion(
-                content_version_id=version_id,
+        try:
+            return self._scalar_mutation(
                 generation_id=generation_id,
                 task_id=task_id,
-                representation_kind="document",
+                execution_id=execution_id,
+                at=at,
+            ).replace_content(
                 title=title,
                 body=body,
                 identity_scheme=CONTENT_IDENTITY_SCHEME,
                 content_identity=identity,
-                creator_route="command_execution",
-                import_run_id=None,
-                command_execution_id=execution_id,
-                predecessor_content_version_id=predecessor_content_version_id,
                 contract_binding_id=binding_id,
-                created_at=at,
+                predecessor_content_version_id=predecessor_content_version_id,
             )
-        )
-        self.session.flush()
-        activation_id = self.uuid_factory()
-        revision = head.task_revision + 1
-        self.session.add(
-            models.ContentActivation(
-                content_activation_id=activation_id,
-                generation_id=generation_id,
-                task_id=task_id,
-                content_version_id=version_id,
-                activation_route="command_execution",
-                import_run_id=None,
-                command_execution_id=execution_id,
-                task_revision=revision,
-                activated_at=at,
-            )
-        )
-        self.session.flush()
-        head.current_content_activation_id = activation_id
-        head.task_revision = revision
-        head.updated_at = at
-        self.session.flush()
-        return version_id
+        except CoreAuthorityError as exc:
+            raise CommandRuleError("CONTENT_AUTHORITY_DRIFT", str(exc)) from exc
 
     def _current_content_version_id(self, generation_id: uuid.UUID, task_id: uuid.UUID) -> uuid.UUID:
-        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
-        activation = self.session.get(models.ContentActivation, head.current_content_activation_id) if head else None
-        if activation is None:
+        state = self.session.get(models.DishState, (generation_id, task_id))
+        if state is None:
             raise CommandRuleError("CONTENT_AUTHORITY_MISSING", "task has no current content occurrence")
-        return activation.content_version_id
+        pending = next(
+            (
+                mutation
+                for mutation in self._pending_scalar_mutations.values()
+                if mutation.generation_id == generation_id and mutation.task_id == task_id
+            ),
+            None,
+        )
+        if pending is not None and pending._content is not None:
+            return pending._content.content_version_id
+        return state.current_content_version_id
 
     def _assert_baseline_content_current(self, generation_id: uuid.UUID, task_id: uuid.UUID, expected_version_id: uuid.UUID) -> None:
         if self._current_content_version_id(generation_id, task_id) != expected_version_id:
@@ -4101,9 +4126,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "ABANDONMENT_GENERATION_MISMATCH",
                 "abandonment succession cannot cross authority generations",
             )
-        head = self.session.get(models.TaskAuthorityHead, (attempt.generation_id, attempt.task_id))
-        placement = self.session.get(models.CurrentTaskSectionPlacement, (attempt.generation_id, attempt.task_id))
-        if head is None or placement is None or head.current_content_activation_id != attempt.baseline_content_activation_id or placement.latest_event_id != attempt.baseline_placement_event_id:
+        state = self.session.get(models.DishState, (attempt.generation_id, attempt.task_id))
+        if state is None or state.current_content_version_id != attempt.baseline_content_version_id or state.placement_version != attempt.baseline_placement_version:
             raise CommandRuleError("ABANDONMENT_BASELINE_DRIFT", "the immutable abandonment baseline no longer matches current authority")
         existing = self.session.scalar(select(wf.OperationSuccessionEdge).where(wf.OperationSuccessionEdge.abandonment_id == attempt.abandonment_id))
         if existing is not None:
@@ -4186,32 +4210,26 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         return entry.section_id
 
     def _set_placement(self, generation_id, task_id, section_id, execution_id, at) -> None:
-        current = self.session.get(models.CurrentTaskSectionPlacement, (generation_id, task_id))
-        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
         active = self.session.get(models.ActiveSectionRegistry, generation_id)
-        if current is None or head is None or active is None:
+        if active is None:
             raise CommandRuleError("PLACEMENT_AUTHORITY_MISSING", "task placement authority is incomplete")
         registered = self.session.get(models.SectionRegistryEntry, (active.registry_version_id, section_id))
         if registered is None:
             raise CommandRuleError("DESTINATION_NOT_REGISTERED", "destination is not in active registry")
-        revision = head.placement_revision + 1
-        event_id = self.uuid_factory()
-        self.session.add(models.TaskSectionPlacementEvent(placement_event_id=event_id, generation_id=generation_id, task_id=task_id, section_id=section_id, registry_version_id=active.registry_version_id, event_kind="placed", placement_revision=revision, provenance_route="command_execution", import_run_id=None, command_execution_id=execution_id, occurred_at=at))
-        self.session.flush()
-        current.section_id, current.registry_version_id, current.latest_event_id, current.placement_revision, current.updated_at = section_id, active.registry_version_id, event_id, revision, at
-        head.placement_revision, head.updated_at = revision, at
+        self._scalar_mutation(
+            generation_id=generation_id,
+            task_id=task_id,
+            execution_id=execution_id,
+            at=at,
+        ).place(section_id=section_id, registry_version_id=active.registry_version_id)
 
     def _set_completion(self, generation_id, task_id, completed, reason, execution_id, at) -> None:
-        current = self.session.get(models.CurrentTaskCompletion, (generation_id, task_id))
-        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
-        if current is None or head is None:
-            raise CommandRuleError("COMPLETION_AUTHORITY_MISSING", "task completion authority is incomplete")
-        revision = head.completion_revision + 1
-        event_id = self.uuid_factory()
-        self.session.add(models.TaskCompletionEvent(completion_event_id=event_id, generation_id=generation_id, task_id=task_id, completed=completed, reason=reason, completion_revision=revision, provenance_route="command_execution", import_run_id=None, command_execution_id=execution_id, occurred_at=at))
-        self.session.flush()
-        current.completed, current.latest_event_id, current.completion_revision, current.updated_at = completed, event_id, revision, at
-        head.completion_revision, head.updated_at = revision, at
+        self._scalar_mutation(
+            generation_id=generation_id,
+            task_id=task_id,
+            execution_id=execution_id,
+            at=at,
+        ).set_completion(completed=completed, reason=reason)
 
     def _release_verifier_lease(
         self,

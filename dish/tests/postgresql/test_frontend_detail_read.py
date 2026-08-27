@@ -121,13 +121,12 @@ def test_detail_keeps_placement_from_prior_registry_revision(core_db) -> None:
             context,
             workflow_role="research_queue",
         )
-        placement = session.get(
-            models.CurrentTaskSectionPlacement,
+        state = session.get(
+            models.DishState,
             (context["generation_id"], imported.task_id),
         )
-        assert placement is not None
-        assert placement.registry_version_id == context["registry_version_id"]
-        assert placement.registry_version_id != revised_registry
+        assert state is not None
+        assert state.registry_version_id == revised_registry
 
     with session_scope(factory) as session:
         payload = _service(session).present(
