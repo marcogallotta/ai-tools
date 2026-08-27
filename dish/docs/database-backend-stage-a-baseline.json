@@ -74,7 +74,7 @@
     "live Asana governed projects/sections/tasks"
   ],
   "governing_source_sha256": {
-    "dish_pg/release.py": "23fb23ddedf7002acf92d9b487501584b6521efe9f4edfef252bb504821802e5",
+    "dish_pg/release.py": "c1af48f8a2f6ef248d2ec792afbadcb7cda8fae79ebe2b20777e9c620dd7e42a",
     "dish_service/admin_cli.py": "92c9ce9c7cb6d72cce388818d6e25ace0af228d6859043aa35b2fc3050db5b0d",
     "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
@@ -93,7 +93,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "PR #269 adds the reviewed private-admin archive command classification and runtime result guidance",
+  "last_rebaseline_reason": "PR #276 advances the PostgreSQL frontend archive migration head to 0043_archived_at",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
@@ -101,7 +101,7 @@
     "The evidence characterizes immutable source commit 7dff85921f005c62929c46d347a7ab29ae463480; this evidence-only commit follows it and does not alter characterized runtime source."
   ],
   "production_change_epoch": "2026-08-05",
-  "schema_head": "0042_scalar_dish_state",
+  "schema_head": "0043_archived_at",
   "source_commit": "7dff85921f005c62929c46d347a7ab29ae463480",
   "source_commit_time": "2026-08-05T11:09:00+00:00",
   "source_only_commands": [
