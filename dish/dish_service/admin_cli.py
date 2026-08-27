@@ -102,7 +102,7 @@ def build_parser() -> JsonArgumentParser:
 
     archive = subparsers.add_parser(
         _admin_name("archive"),
-        help=argparse.SUPPRESS,
+        help="archive one resting Dish while preserving its history",
         description="archive one resting Dish without deleting or rewriting its history",
     )
     archive.add_argument("dish", metavar="DISH", help=_dish_target_help)
