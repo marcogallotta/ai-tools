@@ -505,10 +505,10 @@ def test_eval_contract_matrix_and_oracle_free_prepared_cases():
 
 def test_five_whys_behavior_cases_cover_load_reground_evidence_branching_and_anti_patterns():
  initial=_scenario('five-whys-evidence-discipline'); reground=_scenario('five-whys-reground-reload')
- assert {'read_canonical_five_whys_method_before_substantive_rca','classify_verified_rejected_unknown','allow_fewer_or_more_than_five','branch_supported_causes'}<=set(initial['required_actions'])
- assert {'substantive_rca_before_method_load','force_exactly_five','stop_at_human_blame','present_hypothesis_as_fact'}<=set(initial['forbidden_actions'])
- assert {'reload_canonical_five_whys_method_after_regrounding','continue_evidence_classification','continue_branching_as_evidence_requires','preserve_role_authority'}<=set(reground['required_actions'])
- assert {'continue_from_stale_method_memory','invent_missing_evidence','treat_method_as_authority_expansion'}<=set(reground['forbidden_actions'])
+ assert {'read_canonical_five_whys_method_before_substantive_rca','classify_verified_rejected_unknown','allow_fewer_or_more_than_five','branch_supported_causes','inspect_each_applicable_authority_class','give_each_result_a_short_name_tag','report_plain_language_root_confidence_and_actionable_fix_only','keep_forensic_detail_off_marco_surface','ask_only_whether_to_add_to_asana','require_marco_confirmation_before_asana_write'}<=set(initial['required_actions'])
+ assert {'substantive_rca_before_method_load','force_exactly_five','stop_at_human_blame','present_hypothesis_as_fact','expose_forensic_chain_to_marco','omit_actionable_fix','use_heavy_jargon','ask_to_dig_deeper_when_all_roots_are_high_confidence','write_asana_without_marco_confirmation'}<=set(initial['forbidden_actions'])
+ assert {'reload_canonical_five_whys_method_after_regrounding','continue_evidence_classification','continue_branching_as_evidence_requires','preserve_role_authority','report_inconclusive_in_plain_language','give_safe_actionable_next_step','ask_whether_to_dig_deeper_or_add_to_asana','require_marco_confirmation_before_asana_write'}<=set(reground['required_actions'])
+ assert {'continue_from_stale_method_memory','invent_missing_evidence','treat_method_as_authority_expansion','promote_inconclusive_mechanism_to_root_cause','create_implementation_work_from_inconclusive_result','omit_actionable_next_step','write_asana_without_marco_confirmation'}<=set(reground['forbidden_actions'])
  for q in (initial,reground):
   assert q['required_observations']==[{'equals':{'connector':'GitHub','path':'dish/docs/agents/five-whys.md','repository':'marcogallotta/ai-tools'},'kind':'connector_read','operation':'repository_file_read'}]
 
