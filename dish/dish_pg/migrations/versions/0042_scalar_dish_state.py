@@ -863,6 +863,22 @@ def upgrade() -> None:
         )
     _create_receipts()
 
+    # verification_signoffs (untouched by this migration) still holds a live FK to the
+    # occurrence table being replaced below; drop it before the table disappears and
+    # restore it once the new-shape table exists, since the empty-authority gate already
+    # proves both tables are empty here.
+    with op.batch_alter_table("verification_signoffs") as batch:
+        batch.drop_constraint(
+            "fk_verification_signoffs_inspection_id_verification_ins_dfe3", type_="foreignkey"
+        )
+
+    # operation_succession_edges (also untouched by this migration) holds a live FK to
+    # abandonment_attempts, which is replaced below alongside the occurrence table.
+    with op.batch_alter_table("operation_succession_edges") as batch:
+        batch.drop_constraint(
+            "fk_operation_succession_edges_abandonment_id_abandonmen_6516", type_="foreignkey"
+        )
+
     # The empty-authority gate proves every dependent workflow table is empty, so replacing
     # these occurrence-bound shapes cannot discard live authority.
     op.drop_table("verification_inspection_occurrences")
@@ -911,6 +927,22 @@ def upgrade() -> None:
         sa.UniqueConstraint("latest_event_id"),
     )
     _create_downstream_tables()
+    with op.batch_alter_table("verification_signoffs") as batch:
+        batch.create_foreign_key(
+            "fk_verification_signoffs_inspection_id_verification_ins_dfe3",
+            "verification_inspection_occurrences",
+            ["inspection_id"],
+            ["inspection_id"],
+            ondelete="RESTRICT",
+        )
+    with op.batch_alter_table("operation_succession_edges") as batch:
+        batch.create_foreign_key(
+            "fk_operation_succession_edges_abandonment_id_abandonmen_6516",
+            "abandonment_attempts",
+            ["abandonment_id"],
+            ["abandonment_id"],
+            ondelete="RESTRICT",
+        )
     if op.get_bind().dialect.name == "postgresql":
         _install_postgresql_guards()
     else:
@@ -930,6 +962,14 @@ def downgrade() -> None:
     else:
         op.execute(
             "DROP FUNCTION IF EXISTS dish_validate_command_content_binding_change() CASCADE"
+        )
+    with op.batch_alter_table("verification_signoffs") as batch:
+        batch.drop_constraint(
+            "fk_verification_signoffs_inspection_id_verification_ins_dfe3", type_="foreignkey"
+        )
+    with op.batch_alter_table("operation_succession_edges") as batch:
+        batch.drop_constraint(
+            "fk_operation_succession_edges_abandonment_id_abandonmen_6516", type_="foreignkey"
         )
     for table in (
         "verification_inspection_occurrences",
@@ -1042,3 +1082,19 @@ def downgrade() -> None:
     for statement in FROZEN_CREATE_SQL["0003_workflow_authority"][dialect]:
         if any(statement.startswith(f"CREATE TABLE {table} ") for table in wanted):
             op.execute(statement)
+    with op.batch_alter_table("verification_signoffs") as batch:
+        batch.create_foreign_key(
+            "fk_verification_signoffs_inspection_id_verification_ins_dfe3",
+            "verification_inspection_occurrences",
+            ["inspection_id"],
+            ["inspection_id"],
+            ondelete="RESTRICT",
+        )
+    with op.batch_alter_table("operation_succession_edges") as batch:
+        batch.create_foreign_key(
+            "fk_operation_succession_edges_abandonment_id_abandonmen_6516",
+            "abandonment_attempts",
+            ["abandonment_id"],
+            ["abandonment_id"],
+            ondelete="RESTRICT",
+        )
