@@ -7,6 +7,7 @@ import hmac
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Mapping
 
 from sqlalchemy import and_, func, or_, select
@@ -58,6 +59,7 @@ class TaskCurrentView:
     section_id: uuid.UUID
     completed: bool
     completion_reason: str
+    archived_at: datetime | None
     completion_state: str
     operation_id: uuid.UUID | None
     operation_phase: str | None
@@ -285,6 +287,7 @@ class PostgresReadModel:
                 models.DishState.section_id == section.section_id,
                 models.DishState.registry_version_id == active.registry_version_id,
                 models.DishState.completed.is_(False),
+                models.DishState.archived_at.is_(None),
                 models.DishTask.existence_state != "retired",
             )
             .order_by(title_key, models.DishTask.task_id)
@@ -487,12 +490,12 @@ class PostgresReadModel:
         version = self.session.get(models.ContentVersion, state.current_content_version_id)
         if version is None:
             raise ReadModelError("task authority bundle is incomplete")
-        if not state.completed:
+        if state.archived_at is not None:
+            completion_state = "archived"
+        elif not state.completed:
             completion_state = "active"
         elif state.completion_reason == "cooked":
             completion_state = "cooked"
-        elif state.completion_reason == "archive":
-            completion_state = "archived"
         else:
             completion_state = "completed"
         operation = self.session.scalar(
@@ -530,6 +533,7 @@ class PostgresReadModel:
             section_id=state.section_id,
             completed=state.completed,
             completion_reason=state.completion_reason,
+            archived_at=state.archived_at,
             completion_state=completion_state,
             operation_id=operation.operation_id if operation else None,
             operation_phase=operation.phase if operation else None,

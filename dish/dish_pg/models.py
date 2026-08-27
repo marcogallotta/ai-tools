@@ -686,6 +686,9 @@ class DishMutationReceipt(Base):
     content_changed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     placement_changed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     completion_changed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    archive_changed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -707,7 +710,7 @@ class DishMutationReceipt(Base):
             name="exact_source",
         ),
         CheckConstraint(
-            "content_changed OR placement_changed OR completion_changed",
+            "content_changed OR placement_changed OR completion_changed OR archive_changed",
             name="at_least_one_effect",
         ),
         Index(
@@ -781,10 +784,6 @@ class DishState(Base):
         CheckConstraint(
             "completion_reason IN ('imported','cooked','archive','reopen_planning')",
             name="completion_reason_allowed",
-        ),
-        CheckConstraint(
-            "(archived_at IS NOT NULL) = (completed AND completion_reason = 'archive')",
-            name="archived_at_matches_completion",
         ),
         Index("ix_dish_states_section", "generation_id", "section_id", "task_id"),
         Index("ix_dish_states_board", "generation_id", "completed", "section_id", "task_id"),
@@ -1070,7 +1069,8 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "NEW.completion_version, cv.created_dish_version) AND ("
             "r.content_changed <> (r.dish_version=cv.created_dish_version) OR "
             "r.placement_changed <> (r.dish_version=NEW.placement_version) OR "
-            "r.completion_changed <> (r.dish_version=NEW.completion_version))) OR "
+            "r.completion_changed <> (r.dish_version=NEW.completion_version) OR "
+            "r.archive_changed)) OR "
             "NOT EXISTS (SELECT 1 FROM section_registry_entries e WHERE e.registry_version_id=NEW.registry_version_id "
             "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)) OR "
             "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
@@ -1107,7 +1107,9 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "AND r.task_id=NEW.task_id AND r.dish_version=NEW.dish_version "
             "AND r.content_changed = (NEW.current_content_version_id IS NOT OLD.current_content_version_id) "
             "AND r.placement_changed = (NEW.placement_version <> OLD.placement_version) "
-            "AND r.completion_changed = (NEW.completion_version <> OLD.completion_version)) OR "
+            "AND r.completion_changed = (NEW.completion_version <> OLD.completion_version) "
+            "AND r.archive_changed = (NEW.archived_at IS NOT OLD.archived_at) "
+            "AND (r.archive_changed=0 OR r.source_route='command_execution')) OR "
             "((NEW.placement_version = OLD.placement_version) AND "
             "(NEW.section_id IS NOT OLD.section_id OR NEW.registry_version_id <> OLD.registry_version_id)) OR "
             "((NEW.placement_version <> OLD.placement_version) AND NEW.placement_version <> NEW.dish_version) OR "
@@ -1125,7 +1127,8 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
             "AND r.task_id=NEW.task_id AND r.dish_version=NEW.completion_version "
             "AND ((r.source_route='import' AND NEW.completion_reason='imported') OR "
-            "(r.source_route='command_execution' AND NEW.completion_reason IN ('cooked','archive','reopen_planning')))) "
+            "(r.source_route='command_execution' AND "
+            "NEW.completion_reason IN ('cooked','archive','reopen_planning')))) "
             "BEGIN SELECT RAISE(ABORT, 'invalid DishState transition'); END"
         ).execute_if(dialect="sqlite"),
     )

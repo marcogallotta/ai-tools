@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0043_archived_at"
+ALEMBIC_HEAD = "0044_independent_archive"
 
 
 class ReleaseCandidateService(

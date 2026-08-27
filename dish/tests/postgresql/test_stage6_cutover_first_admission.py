@@ -358,6 +358,6 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
             )
         assert index_sql is not None
         assert "WHERE state IN ('reserved','consumed')" in index_sql
-        assert ALEMBIC_HEAD == "0042_scalar_dish_state"
+        assert ALEMBIC_HEAD == "0044_independent_archive"
     finally:
         engine.dispose()
