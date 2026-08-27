@@ -327,9 +327,7 @@ def test_worker_policy_is_triggered_and_keeps_union_and_integration_authority_ou
   text=kernels.render_role(m,s,role)
   assert 'Worker dispatch / phase cutover' in text
   assert 'dish/docs/agents/review.md#Worker BLOCK' in text
- assert 'not a union role' in rule['text']
- assert 'HTTP 202 is admission only' in rule['text']
- assert 'Integration landing remains outside Worker authority' in rule['text']
+ assert all(x in rule['text'] for x in ('not a union role','HTTP 202 is admission only','Integration landing remains outside Worker authority'))
 
 def test_development_workflow_asana_mode_guard_reaches_every_project_and_worker():
  m,s=kernels.load_canonical(); rule=next(x for x in kernels.shared_rules(s) if x['id']=='development-workflow-asana-mode')
