@@ -275,6 +275,9 @@ def check_git(segments, cwd=None):
         if changed_cwd is not None:
             current_cwd = changed_cwd
 
+    if protected_checkout.prompt_free_git("\n".join(segments), cwd or os.getcwd()):
+        return None
+
     # Existing behavior remains unchanged outside active task worktrees.
     for seg in segments:
         tokens = tokenize(seg)
@@ -290,7 +293,7 @@ def check_git(segments, cwd=None):
     for seg in segments:
         tokens = tokenize(seg)
         sub = git_subcommand(tokens)
-        if sub in ("commit", "push", "clean", "checkout", "restore", "mv"):
+        if sub and sub != "add":
             return ask(
                 "[destructive-op-guard] Destructive git operation "
                 "(commit/push/checkout/restore/clean/mv) requires explicit approval."

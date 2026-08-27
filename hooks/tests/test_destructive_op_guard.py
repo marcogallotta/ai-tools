@@ -10,8 +10,7 @@ import pytest
 
 def run_hook(module, command, monkeypatch, capsys, cwd=None):
     payload = {"tool_input": {"command": command}}
-    if cwd is not None:
-        payload["cwd"] = cwd
+    payload["cwd"] = cwd or "/tmp"
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     exit_code = module.main()
     out = capsys.readouterr().out
@@ -102,23 +101,23 @@ class TestGitFalsePositiveRepros:
     # command, not just git's own subcommand position, so any subcommand
     # that happens to take a literal "add" argument (worktree/remote/
     # submodule) false-triggered the "don't run git add alone" denial.
-    def test_git_worktree_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+    def test_git_worktree_add_unknown_asks(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(
             destructive_op_guard, "git worktree add ../foo agent/some-branch", monkeypatch, capsys
         )
-        assert_allowed(decision)
+        assert_asked(decision, "Destructive git operation")
 
-    def test_git_remote_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+    def test_git_remote_add_unknown_asks(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(
             destructive_op_guard, "git remote add origin git@example.com:x/y.git", monkeypatch, capsys
         )
-        assert_allowed(decision)
+        assert_asked(decision, "Destructive git operation")
 
-    def test_git_submodule_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+    def test_git_submodule_add_unknown_asks(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(
             destructive_op_guard, "git submodule add https://example.com/x.git", monkeypatch, capsys
         )
-        assert_allowed(decision)
+        assert_asked(decision, "Destructive git operation")
 
 
 class TestRm:
@@ -269,11 +268,11 @@ class TestGitSubcommands:
 
     def test_git_reset_hard_asked(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git reset --hard HEAD~1", monkeypatch, capsys)
-        assert_asked(decision, "reset --hard")
+        assert_asked(decision, "Destructive git operation")
 
-    def test_git_reset_without_hard_allowed(self, destructive_op_guard, monkeypatch, capsys):
+    def test_git_reset_without_repo_asks(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git reset HEAD~1", monkeypatch, capsys)
-        assert_allowed(decision)
+        assert_asked(decision, "Destructive git operation")
 
     def test_git_add_denied(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git add foo.py", monkeypatch, capsys)
@@ -283,11 +282,11 @@ class TestGitSubcommands:
         decision = run_hook(destructive_op_guard, "git -C /some/repo add foo.py", monkeypatch, capsys)
         assert_denied(decision, "Don't run git add alone")
 
-    def test_git_dash_c_repo_worktree_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+    def test_git_dash_c_repo_worktree_add_asks(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(
             destructive_op_guard, "git -C /some/repo worktree add ../foo agent/x", monkeypatch, capsys
         )
-        assert_allowed(decision)
+        assert_asked(decision, "Destructive git operation")
 
 
 class TestPsql:
@@ -452,14 +451,14 @@ class TestProtectedCheckoutBranchIsolation:
         )
         assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
 
-    def test_checkout_in_linked_worktree_falls_through_to_ordinary_ask(
+    def test_checkout_in_linked_worktree_is_prompt_free(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
         decision = run_hook(
             destructive_op_guard, "git checkout -b agent/bar", monkeypatch, capsys,
             cwd=str(protected_repo["linked"]),
         )
-        assert_asked(decision, "Destructive git operation")
+        assert_allowed(decision)
 
     def test_checkout_in_unrelated_repo_unaffected(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
         decision = run_hook(
@@ -820,7 +819,7 @@ class TestProtectedCheckoutBranchIsolation:
         )
         assert_denied(decision, "unresolvable repository-location override")
 
-    def test_dash_c_config_option_does_not_break_ordinary_readonly_git(
+    def test_dash_c_config_option_is_outside_bare_bones_policy(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
         # Correct consumption of "-c <value>" must not misclassify an
@@ -829,7 +828,7 @@ class TestProtectedCheckoutBranchIsolation:
             destructive_op_guard, "git -c color.ui=false status", monkeypatch, capsys,
             cwd=str(protected_repo["primary"]),
         )
-        assert_allowed(decision)
+        assert_asked(decision, "Destructive git operation")
 
 
 def _register_active_task(protected_repo, monkeypatch, tmp_path, task_gid="12345"):
@@ -838,7 +837,8 @@ def _register_active_task(protected_repo, monkeypatch, tmp_path, task_gid="12345
 
     home = tmp_path / "home"
     root = home / ".local/state/dish/worktrees"
-    root.mkdir(parents=True)
+    state_dir = root / task_gid
+    state_dir.mkdir(parents=True)
     linked = protected_repo["linked"].resolve()
     git_dir = subprocess.run(
         ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-dir"],
@@ -848,7 +848,7 @@ def _register_active_task(protected_repo, monkeypatch, tmp_path, task_gid="12345
         ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-common-dir"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()
-    (root / f"{task_gid}.json").write_text(json.dumps({
+    (state_dir / ("a" * 24 + "-" + "b" * 32 + ".json")).write_text(json.dumps({
         "task_gid": task_gid,
         "branch": "agent/existing",
         "worktree_path": str(linked),
@@ -888,7 +888,7 @@ class TestActiveTaskGitBoundary:
         )
         assert_denied(decision, "agent-worktree publish")
 
-    def test_destructive_nonpublication_git_still_asks_in_active_task(
+    def test_branch_local_reset_is_prompt_free_in_active_task(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys, tmp_path
     ):
         _register_active_task(protected_repo, monkeypatch, tmp_path)
@@ -896,4 +896,14 @@ class TestActiveTaskGitBoundary:
             destructive_op_guard, "git reset --hard HEAD",
             monkeypatch, capsys, cwd=str(protected_repo["linked"]),
         )
-        assert_asked(decision, "reset --hard")
+        assert_allowed(decision)
+
+    def test_main_and_explicit_main_still_ask(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        main = run_hook(destructive_op_guard, "git reset --hard HEAD", monkeypatch, capsys,
+                        cwd=str(protected_repo["unrelated"]))
+        explicit = run_hook(destructive_op_guard, "git branch -D main", monkeypatch, capsys,
+                            cwd=str(protected_repo["linked"]))
+        assert_asked(main, "Destructive git operation")
+        assert_asked(explicit, "Destructive git operation")
