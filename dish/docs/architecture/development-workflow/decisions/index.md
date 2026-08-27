@@ -14,7 +14,7 @@ This is a focused ADR index under the canonical Dish architecture authority.
 |---|---|
 | [Authority is split by fact](0001-authority-is-split-by-fact.md) | Accepted |
 | [Durable PR and exact-head lifecycle](0002-durable-pr-exact-head-lifecycle.md) | Accepted |
-| [Lifecycle dispatcher design (never activated)](0003-single-restartable-lifecycle-dispatcher.md) | Not yet activated |
+| [Lifecycle dispatcher design (never activated)](0003-single-restartable-lifecycle-dispatcher.md) | Abandoned before activation |
 | [Lifecycle phases remain distinct](0004-phases-remain-distinct.md) | Accepted |
 | [Capability-grounded execution](0005-capability-grounded-execution.md) | Accepted |
 

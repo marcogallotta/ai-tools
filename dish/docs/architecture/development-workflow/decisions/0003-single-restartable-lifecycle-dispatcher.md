@@ -1,6 +1,6 @@
 # ADR 0003: Proposed restartable lifecycle dispatcher
 
-Status: Not yet activated
+Status: Abandoned before activation
 
 ## Read this when
 
