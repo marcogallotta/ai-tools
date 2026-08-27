@@ -21,7 +21,7 @@ A normal integration handoff identifies at least:
 - `TESTS TO RUN` or equivalent existing certification evidence;
 - any known mechanical integration dependency.
 
-The handoff is explicit authorization to integrate that reviewed candidate. Do not discover a reviewed-looking PR and decide independently to land it. The repository lifecycle dispatcher may act without a separate chat handoff only when its active workflow is explicitly configured for `bounded-reviewed-head` Integration composition under the Development Workflow contract. That standing configuration is the handoff authority for the narrow mechanical path; GitHub write capability alone is never authorization.
+The handoff is explicit authorization to integrate that reviewed candidate. Do not discover a reviewed-looking PR and decide independently to land it. There is no standing automated dispatcher or configuration that substitutes for the handoff; GitHub write capability alone is never authorization.
 
 Before any merge/integration action, resolve the PR from GitHub and verify that its current head SHA is exactly the supplied reviewed head SHA. If it moved, stop and apply the new-head rules below.
 
@@ -29,11 +29,9 @@ Before any merge/integration action, resolve the PR from GitHub and verify that 
 
 Final Integration landing is executable only on a local Claude Code/Codex host with a live checkout and real Git/worktree tooling. ChatGPT connector-native merge and GitHub Actions Integration consumers are unavailable for V1-A even when their underlying credentials could technically write. Remote ChatGPT remains valid upstream for authorized Implementation/fix/Review work.
 
-The repository lifecycle dispatcher may classify `INTEGRATION READY`, create/re-read the durable exact-head local handoff, and invoke the configured local Integration launcher. It may not perform the final merge itself and may not fall back to a remote/connector landing route when the laptop or launcher is unavailable.
+The acting Coordinator manually classifies `INTEGRATION READY` from live authority and persists an explicit exact-head local handoff. The local Integration agent accepts that handoff directly; no dispatcher or launcher service is assumed. If the required local host is unavailable, the candidate remains `INTEGRATION READY` and is not redirected to a remote/connector landing route.
 
-Consequential local Integration mutation requires the repository-owned per-PR/head fence in `scripts/pr_lifecycle_local_integration.py`. Its OS `fcntl` lock is the single-owner admission invariant; its JSON state under `~/.local/state/dish/integration/` is durable recovery context. The claim binds repository, PR, branch, exact reviewed head, exact Review id, observed target-branch SHA, owning task references, durable handoff comment, generation, current head/worktree, reconciliation state, and next action. A replacement may proceed only after acquiring the same OS lock and must reconstruct from the prior checkpoint plus fresh authority reads. An advisory `phase=integration` lease is visibility only and is never mutation admission.
-
-While the parent dispatcher holds that fence, the local Integration child checkpoints recovery state with `scripts/pr_lifecycle.py integration-checkpoint`. Before the first mutation and again immediately before the irreversible merge boundary, the local Integrator must re-read the live GitHub PR/head/base/Review/certification/current-main state and the explicit owning Asana task. Expected-head/CAS and local worktree/source-ownership protections remain mandatory. A head-changing reconciliation stops for fresh independent Review; the old verdict never transfers.
+Before the first mutation and again immediately before the irreversible merge boundary, the local Integrator must re-read the live GitHub PR/head/base/Review/certification/current-main state and the explicit owning Asana task. Expected-head/current-state protection and local worktree/source-ownership protections remain mandatory. A head-changing reconciliation stops for fresh independent Review; the old verdict never transfers. A replacement Integrator requires a fresh explicit handoff and reconstructs only from durable GitHub/Asana/Git state.
 
 GitHub is source/history authority. Local refs are caches and may be stale.
 
@@ -60,8 +58,8 @@ For local integration work:
 - never test or reconcile a candidate in a dirty shared `main` worktree;
 - use a dedicated worktree/temporary integration branch when local isolation is required;
 - do not reuse stale/merged/abandoned branches for unrelated work;
-- terminal implementation-lineage cleanup is owned by the repository PR lifecycle controller after authoritative landing/disposition;
-- Integration does not force-delete implementation recovery state when that controller refuses;
+- terminal implementation-lineage cleanup is a manual post-disposition action of the authorized Integration/Coordinator path;
+- Integration does not force-delete implementation recovery state when exact-lineage or recoverability checks refuse cleanup;
 - never delete the only recoverable copy of unlanded work.
 
 ## Verify review identity before integration
@@ -105,11 +103,11 @@ If the target base moved but GitHub can still integrate the exact reviewed PR he
 
 If integration requires changing the PR branch/head, Integration may reconcile content only when the result is mechanically or intentionally **uniquely determined by already-authorized changes**. Examples include a conflict-free rebase, a purely mechanical migration-number adjustment, or combining two already-reviewed outcomes whose merged text has only one policy-preserving result.
 
-Integration reconciliation may not introduce a new product decision, architecture decision, workflow-policy decision, PostgreSQL/schema decision, behavior choice, test weakening, or other semantic judgment. If more than one reasonable combined result exists, if an authorization conflict is exposed, or if intent must be inferred beyond durable authority, stop and return to the appropriate semantic owner/Implementation. The local Integration claim/fence cannot widen this boundary.
+Integration reconciliation may not introduce a new product decision, architecture decision, workflow-policy decision, PostgreSQL/schema decision, behavior choice, test weakening, or other semantic judgment. If more than one reasonable combined result exists, if an authorization conflict is exposed, or if intent must be inferred beyond durable authority, stop and return to the appropriate semantic owner/Implementation. The explicit manual handoff cannot widen this boundary.
 
 Any content-changing reconciliation creates a new PR head. Record the new head and obtain fresh independent Review before merge. A purely mechanical exact-head recheck is sufficient only where the repository Review contract explicitly classifies that exact movement as mechanical; semantic or intent-affecting reconciliation always receives substantive Review. The older verdict never silently transfers.
 
-Immediately before the first reconciliation mutation, re-read that the PR is still open/unmerged, the exact head and formal Review are unchanged, live Asana still permits the action, and the local per-PR/head fence is still the current claim. Head movement or landing/closure aborts reconciliation with zero further mutation.
+Immediately before the first reconciliation mutation, re-read that the PR is still open/unmerged, the exact head and formal Review are unchanged, live Asana still permits the action, and the explicit Integration handoff still binds that identity. Head movement or landing/closure aborts reconciliation with zero further mutation.
 
 ## Mechanical conflict boundary
 
@@ -129,19 +127,19 @@ Stop and hand back whenever integration requires a semantic decision, including:
 
 Implementation fixes belong to the implementation/fix role. Semantic acceptance belongs to review/coordinator authority.
 
-## Dispatcher-composed Integration
+## Manual Integration handoff
 
-After a formal exact-head `VERDICT: MERGE`, the dispatcher may compose this role only after re-evaluating the current head, required local work, exact-head selector certification, ordering, and mergeability. The dispatcher then creates/re-reads the durable `dish-local-integration-handoff:v1` record and acquires the local per-PR/head fence before invoking the configured local Claude/Codex Integration launcher. Existing or historical advisory `phase=integration` leases are visibility only; V1-A does not require one for local Integration admission.
+After a formal exact-head `VERDICT: MERGE`, the acting Coordinator re-evaluates the current head, required local work, exact-head selector certification, ordering, and mergeability. If the candidate is ready, it creates and re-reads the durable `dish-local-integration-handoff:v1` record before handing the exact PR/head to a local Claude/Codex Integrator. Existing or historical advisory `phase=integration` leases are visibility only and do not authorize Integration.
 
-This composition remains mechanical Integration. The dispatcher does not merge, resolve semantic conflicts, author fixes, weaken evidence, or substitute a remote consumer. The fenced local Integrator owns reconciliation/evidence/merge and must re-read live GitHub plus owning Asana authority at the irreversible boundary. If any semantic choice is required, return to Implementation and then exact-head Review. If reconciliation changes the head, publish that new head and stop for fresh independent Review.
+The local Integrator owns the bounded mechanical reconciliation/evidence/merge and must re-read live GitHub plus owning Asana authority at the irreversible boundary. It does not resolve semantic conflicts, author fixes, weaken evidence, or substitute a remote consumer. If any semantic choice is required, return to Implementation and then exact-head Review. If reconciliation changes the head, publish that new head and stop for fresh independent Review.
 
-When the child returns, the dispatcher re-reads GitHub. It reports `MERGED` only from authoritative PR readback, then performs scoped Asana landing reconciliation and safe cleanup. If the child returns with the same unmerged head, or the launcher is unavailable, the PR remains `INTEGRATION READY` with the exact residual reason and zero remote fallback mutation. See [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
+After the local Integrator returns, the acting Coordinator re-reads GitHub. It reports `MERGED` only from authoritative PR readback, then performs the separately authorized scoped Asana reconciliation and safe cleanup. If the PR remains on the same unmerged head, or the local host is unavailable, it remains `INTEGRATION READY` with the exact residual reason and zero remote fallback mutation.
 
 ## Merge/promotion rules
 
 Default: **no direct-to-`main` commits**.
 
-Normal landing happens through the approved PR and must leave that PR in GitHub's `MERGED` state. Under V1-A the merge is performed only by the fenced local Claude/Codex Integration execution. Re-resolve the remote PR/head and live owning Asana authority immediately before the final merge operation, use expected-head/current-state protection, and fail closed on movement or races. If a mechanical rebase changes the PR head, push that branch, obtain the required exact-head mechanical recheck, and only then resume Integration. Do not bypass the PR by pushing rewritten commits directly to the target branch.
+Normal landing happens through the approved PR and must leave that PR in GitHub's `MERGED` state. Under V1-A the merge is performed only by the explicitly authorized local Claude/Codex Integrator. Re-resolve the remote PR/head and live owning Asana authority immediately before the final merge operation, use expected-head/current-state protection, and fail closed on movement or races. If a mechanical rebase changes the PR head, push that branch, obtain the required exact-head mechanical recheck, and only then resume Integration. Do not bypass the PR by pushing rewritten commits directly to the target branch.
 
 Do not force-push `main`.
 
@@ -166,7 +164,7 @@ After remote landing is verified:
 - confirm the guarded local target-branch synchronization completed or was left untouched and reported pending;
 - local temporary integration worktrees/branches may be removed when safe;
 - the implementation branch may be deleted when the PR is merged/closed and no recoverability need remains;
-- eligible terminal implementation branches are cleaned by the repository PR lifecycle controller with exact-head/recoverability guards; residual or ambiguous cleanup remains manual and must not be forced.
+- eligible terminal implementation branches are cleaned manually by the authorized acting role with exact-head/recoverability guards; residual or ambiguous cleanup must not be forced.
 
 Do not delete an unlanded or superseded branch if it is still needed for provenance/recovery.
 

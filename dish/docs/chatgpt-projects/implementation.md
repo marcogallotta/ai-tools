@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-584b33e568c6
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-4bd8dc87ac82
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
@@ -11,7 +11,7 @@ PROJECT_DEFAULT_BRANCH: main
 Startup: resolve GitHub `marcogallotta/ai-tools` `main`; fetch this role's current generated Project kernel, then read `CLAUDE.md`, role index, `dish/docs/agents/implementation.md`, and manifest from that same current Git. Installed Project text is bootstrap/version witness after grounding. Drift alone never blocks; see `canonical-version-gate`.
 Triggered policy reads (before the governed action):
 - Five Whys / 5 whys / blameless RCA -> `dish/docs/agents/five-whys.md#Procedure` + `#Required output`
-- Worker dispatch / phase cutover -> `ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile`
+- Worker dispatch / phase cutover -> `dish/docs/agents/review.md#Worker BLOCK`
 - actor attribution / approval / decision provenance -> `dish/docs/agents/operator-provenance.md#Decision provenance`
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
 - execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`

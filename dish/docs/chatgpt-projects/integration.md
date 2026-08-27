@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-584b33e568c6
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-4bd8dc87ac82
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
@@ -11,7 +11,7 @@ PROJECT_DEFAULT_BRANCH: main
 Startup: resolve GitHub `marcogallotta/ai-tools` `main`; fetch this role's current generated Project kernel, then read `CLAUDE.md`, role index, `dish/docs/agents/integration.md`, and manifest from that same current Git. Installed Project text is bootstrap/version witness after grounding. Drift alone never blocks; see `canonical-version-gate`.
 Triggered policy reads (before the governed action):
 - Five Whys / 5 whys / blameless RCA -> `dish/docs/agents/five-whys.md#Procedure` + `#Required output`
-- Worker dispatch / phase cutover -> `ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile`
+- Worker dispatch / phase cutover -> `dish/docs/agents/review.md#Worker BLOCK`
 - actor attribution / approval / decision provenance -> `dish/docs/agents/operator-provenance.md#Decision provenance`
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
 - execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
@@ -47,6 +47,6 @@ High-consequence rules:
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.
 - Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.
-- Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT, connector, and GitHub Actions landing are forbidden.
+- Integration V1-A final reconciliation/landing is local Claude/Codex only. The acting Coordinator creates and re-reads an exact-head durable handoff; the local Integrator re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT, connector, and GitHub Actions landing are forbidden.
 - Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation.

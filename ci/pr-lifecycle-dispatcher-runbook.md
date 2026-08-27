@@ -1,6 +1,13 @@
-# PR lifecycle dispatcher runbook
+# PR lifecycle dispatcher runbook — historical
 
-This runbook operates the repository-owned Dish PR lifecycle dispatcher. It is an orchestration surface, not semantic Review or Implementation authority and not a replacement for Integration gates.
+> **NEVER ACTIVATED — historical/reference only.**
+>
+> The dispatcher/controller code was built but never deployed, commissioned, or used as standing
+> Dish infrastructure, and it will not be activated. Current PR discovery, classification, role
+> handoff, fix continuation, and Integration handoff are manual actions performed by the acting role
+> under `dish/docs/agents/`. Commands, environment variables, markers, and present-tense behavioral
+> descriptions below record the abandoned prototype design only. Do not execute them as the current
+> operating procedure or assume a background process will continue work.
 
 ## Navigation
 
@@ -15,15 +22,15 @@ This runbook operates the repository-owned Dish PR lifecycle dispatcher. It is a
 
 ## Authority and recovery model
 
-`scripts/pr_lifecycle.py` derives queue truth from durable GitHub PR state and the linked Asana task identity. It has no authoritative local database. Restart recovery is a fresh GitHub/Asana read.
+The prototype `scripts/pr_lifecycle.py` was designed to derive a queue view from durable GitHub PR state and the linked Asana task identity without an authoritative local database. It has never been the current lifecycle observer. Manual recovery starts with fresh GitHub/Asana reads by the acting role.
 
 The exact PR source head SHA is the lifecycle identity for Review, leases, local-work handoff, certification, and Integration. A head change immediately invalidates exact-head reviews, leases, local-work completion markers, and certification markers from the older head.
 
-The dispatcher reuses `scripts/pr_gate.py` for ordinary Review discoverability and exact-head ordinary-CI / Integration gate semantics. Do not create a second exact-head gate engine in this tool.
+The prototype reused `scripts/pr_gate.py` for ordinary Review discoverability and exact-head ordinary-CI / Integration gate semantics. The shared gate predicate remains current; this abandoned controller does not.
 
 ## Commands
 
-From the repository root:
+Historical prototype commands (retained for reference; do not run as the current operating procedure):
 
 ```sh
 python scripts/pr_lifecycle.py status --format json
@@ -33,7 +40,7 @@ python scripts/pr_lifecycle.py watch --interval 180
 python scripts/pr_lifecycle.py watch --dispatch --interval 180
 ```
 
-`status` is read-only. `dispatch` performs one idempotent routing pass. `watch --dispatch` repeats the same pass; repeated polls must be safe.
+`status`, `dispatch`, and `watch` described the prototype interface. No standing process invokes them.
 
 GitHub authentication comes from `GITHUB_TOKEN` or `GH_TOKEN`. `ASANA_ACCESS_TOKEN` is optional for linked-task metadata; missing Asana access is surfaced rather than replaced by local state.
 
@@ -56,26 +63,26 @@ The JSON schema is `dish-pr-lifecycle-status-v1`. The state engine distinguishes
 - `merged`;
 - `closed_superseded`.
 
-A draft PR that explicitly carries `IMPLEMENTATION EVIDENCE PENDING: <evidence>` is `IMPLEMENTATION CONTINUATION REQUIRED`, not Review/Integration/local certification. The dispatcher reuses the existing Implementation/fix consumer. If no current `phase=implementation`/`fix` owner is active, it first writes a durable `dish-implementation-continuation:v1` handoff on the same PR, then claims `phase=implementation` and dispatches the exact existing branch/task/head plus named evidence. That comment is the explicit replacement-owner handoff when the prior Implementation agent is unavailable. The consumer must follow the single canonical repository handoff contract at `dish/docs/agents/templates/implementation-handoff.md` and reconcile the matching local `tools/agent-worktree` claim before touching preserved state; the PR handoff/lease does not itself override a live local claim. The only human-facing message for this state is `PR #N still needs Implementation to finish <evidence>.`
+A draft PR that explicitly carries `IMPLEMENTATION EVIDENCE PENDING: <evidence>` remains `IMPLEMENTATION CONTINUATION REQUIRED`, not Review/Integration/local certification. Under the current manual procedure, the acting Coordinator or Implementation owner re-reads the exact PR/task/head and persists any replacement-owner handoff explicitly; no dispatcher writes or consumes that handoff.
 
 `VERDICT: MERGE` is not terminal. It starts Integration gate evaluation. Ordinary Review does not wait for pre-Review CI and does not require a pre-review sync to moved `main` unless that movement creates a known semantic dependency that invalidates the review question.
 
 ## Terminal disposition and cleanup
 
-Terminal handling is part of ordinary `dispatch` / `watch --dispatch` restart recovery. Dispatch scans closed PRs as well as open PRs so a crash after close/merge but before branch cleanup is reconciled on the next pass. Age, inactivity, stale leases, parking, and temporary blockers never create terminal authority.
+The prototype would have included terminal handling in `dispatch` / `watch --dispatch`. Current terminal reconciliation and cleanup are manual, use authoritative GitHub/Asana disposition, and preserve the same recoverability guards. Age, inactivity, stale leases, parking, and temporary blockers never create terminal authority.
 
-For an open PR, automatic close requires current linked Asana authority that explicitly marks the owning task `SUPERSEDED`, `ABANDONED`, or `REPLACED`, or explicitly names that exact `PR #N` as superseded/abandoned/not-to-be-revived. Generic task completion is insufficient. Before closing, the dispatcher writes and re-reads an exact-head `dish-terminal-disposition:v1` GitHub comment carrying the Asana task and replacement PR/task lineage when known. It then closes the PR unmerged and requires authoritative GitHub closed-state readback.
+For an open PR, manual close requires current linked Asana authority that explicitly marks the owning task `SUPERSEDED`, `ABANDONED`, or `REPLACED`, or explicitly names that exact `PR #N` as superseded/abandoned/not-to-be-revived. Generic task completion is insufficient. Before closing, the acting authorized role writes and re-reads the durable disposition required by current standing policy, then requires authoritative GitHub closed-state readback.
 
-For `MERGED`, `CLOSED`, or an explicitly closed `superseded`/`abandoned` lineage, cleanup is mechanical and recoverability-first. The dispatcher:
+For `MERGED`, `CLOSED`, or an explicitly closed `superseded`/`abandoned` lineage, current cleanup is manual and recoverability-first. The historical prototype would have:
 
-1. accepts only `agent/*` source branches and refuses a GitHub-protected branch;
-2. calls repository-owned `tools/agent-worktree cleanup` with task, PR number, branch, exact terminal head, and disposition;
-3. requires exact remote-head match before remote deletion;
-4. preserves dirty, ignored, unpublished-only, ambiguous, moved, or reused local state instead of forcing cleanup;
-5. conditionally removes the registered worktree and exact local branch when a matching task record exists;
-6. deletes the exact remote agent branch with expected-head protection and verifies readback;
-7. retains local `dish-terminal-cleanup-v1` journal/history when local state exists; and
-8. writes and re-reads a `dish-terminal-cleanup:v1` PR marker only after cleanup succeeds.
+1. accept only `agent/*` source branches and refuse a GitHub-protected branch;
+2. call repository-owned `tools/agent-worktree cleanup` with task, PR number, branch, exact terminal head, and disposition;
+3. require exact remote-head match before remote deletion;
+4. preserve dirty, ignored, unpublished-only, ambiguous, moved, or reused local state instead of forcing cleanup;
+5. conditionally remove the registered worktree and exact local branch when a matching task record exists;
+6. delete the exact remote agent branch with expected-head protection and verify readback;
+7. retain local `dish-terminal-cleanup-v1` journal/history when local state exists; and
+8. write and re-read a `dish-terminal-cleanup:v1` PR marker only after cleanup succeeds.
 
 If the process dies between steps, the local cleanup journal plus Git/worktree/remote readback makes the next pass idempotently continue from the already-completed step. A cleanup refusal leaves the PR terminal but records a concise recovery anomaly; it never reopens or force-deletes recovery state.
 
@@ -91,7 +98,7 @@ Active agent work uses exact-head PR comment leases:
 <!-- dish-agent-lease:v1 phase=review head=<40-char-sha> lease=<uuid> -->
 ```
 
-The dispatcher may add `owner=` and `class=` fields. Supported phases include `implementation`, `fix`, `review`, and `integration`.
+The historical prototype allowed `owner=` and `class=` fields. Current roles may still use advisory leases where their standing contracts say so; this runbook is not their authority.
 
 Lease rules:
 
@@ -114,6 +121,9 @@ A renewal repeats the lease marker with the same UUID on a new PR comment. Do no
 
 ## Review routing
 
+This section records the abandoned automatic routing design. Current Review routing is manual under
+`dish/docs/agents/review.md#Review claims and manual routing`.
+
 The default ordinary route is `substantive`. A durable explicit route may be placed in the PR body as `REVIEW CLASS: <class>` or in a PR comment:
 
 ```text
@@ -131,11 +141,14 @@ Ordinary substantive Review prefers a published ChatGPT Review Workspace Agent. 
 
 The adapter calls that one Workspace Agents Review trigger for both ordinary substantive and domain-deep Review, with the exact PR URL/number, exact current head, review class, owning Asana task identity, and instruction to follow `dish/docs/agents/review.md`. Its `Idempotency-Key` is deterministically derived from repository + PR + exact head + review class. A domain class changes review depth, not reviewer identity. Agent-chat output is never review completion; only the single formal exact-head GitHub `COMMENT` review with `VERDICT: MERGE` or `VERDICT: BLOCK` advances semantic Review state.
 
-If the required token or published trigger is unavailable, the dispatcher reports that exact configuration boundary. It does not silently substitute Claude/Codex as the semantic reviewer.
+The proposed automatic adapter would have reported a missing token or published trigger as a configuration boundary. No such trigger is part of the current manual route.
 
 ## BLOCK -> implementation/fix routing
 
-A formal exact-head `VERDICT: BLOCK` is not only a status classification. A `FAILED_REQUIRED_CI` diagnosis without a valid active external-dependency record is also PR-owned implementation/fix work even when the exact-head semantic Review verdict remains `MERGE`. `dispatch` routes either condition to the configured existing implementation/fix consumer. Host selection is deterministic: ordinary BLOCK/PR-owned-CI fixes default to `CHATGPT_IMPLEMENTATION`; `LOCAL_IMPLEMENTATION` requires the exact formal Review classification `IMPLEMENTATION / PUBLICATION — <exact unavailable remote capability>; fallbacks exhausted: <bounded list>`. Configure consumers separately:
+This section records the abandoned automatic fix-consumer design. Current formal-BLOCK continuation
+uses the manual Worker procedure or an explicit current Implementation handoff.
+
+A formal exact-head `VERDICT: BLOCK` remains durable fix input. The `dispatch` command and consumer configuration below were never activated; the acting Worker or Coordinator instead binds the exact live task/PR/branch/head/review identity manually before any fix.
 
 ```sh
 DISH_CHATGPT_IMPLEMENTATION_FIX_COMMAND='<hosted Implementation launcher>'
@@ -144,7 +157,7 @@ DISH_LOCAL_IMPLEMENTATION_FIX_COMMAND='<local Implementation launcher>'
 
 Legacy `DISH_IMPLEMENTATION_FIX_COMMAND` / `--implementation-fixer` remains accepted only when `DISH_IMPLEMENTATION_FIX_HOST=chatgpt|local` classifies it exactly; otherwise fix dispatch fails closed. The selected command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing `implementation_host`, the exact PR URL/number, branch, blocked head SHA, owning task IDs, the current lifecycle snapshot, and either the authoritative formal BLOCK review or the structured PR-owned CI diagnosis. The consumer must follow `dish/docs/agents/implementation.md` and the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md`, reconcile the matching `tools/agent-worktree` claim before touching local state, update only the authorized existing PR branch, and re-read GitHub before semantic work. Matching Asana task identity on another branch/PR is not authority. A CI-driven semantic fix changes head identity and therefore requires substantive Review on the new head.
 
-The dispatcher posts an exact-head advisory `phase=fix` lease before dispatch. It then re-reads the PR, branch, head, active lease, formal Review or CI ownership, and live task authority. Formal BLOCK eligibility is exact `(head, block_review_id)`; pre-BLOCK authoring leases/state and older Review rounds are ineligible. PR-owned CI failure may enter the same route only after failure ownership is durably `PR_OWNED`; current-main, infrastructure, or ambiguous failures do not mutate the candidate.
+The current manual fix owner may post an advisory `phase=fix` lease, then must re-read the PR, branch, head, formal Review or CI ownership, and live task authority. Formal BLOCK eligibility is exact `(head, block_review_id)`; pre-BLOCK authoring leases/state and older Review rounds are ineligible. PR-owned CI failure may enter the same route only after failure ownership is durably `PR_OWNED`; current-main, infrastructure, or ambiguous failures do not mutate the candidate.
 
 Immediately before consumer dispatch and publication, re-read those exact identities. Any authority movement produces zero semantic mutation. Local `tools/agent-worktree` ownership and non-force expected-head publication remain mandatory.
 
@@ -161,7 +174,7 @@ A failed exact-head required check may enter `WAITING ON EXTERNAL DEPENDENCY` on
 
 `pr=` is optional when no code PR owns the fix. `task=`, `check=`, `main=`, and `evidence=` are mandatory. New baseline-debt landing records also require exact `head=` and the shared causal `fingerprint=`; legacy records without them remain waiting-only evidence. The separate exact-head `dish-ci-failure-ownership:v1` record carries the classification, candidate disposition, workflow `generation=run-<id>-attempt-<n>`, causal basis/contrary evidence, repair owner, main reproduction, candidate-specific evidence, and semantic-interaction result. Values that may contain spaces are percent-encoded. Malformed or stale-generation records never authorize external ownership or landing. Records are ordered deterministically by comment timestamp, numeric comment id, then marker order; the newest valid record wins. Resolution/supersession uses the same full identity with `action=resolved`, or is observed from a merged owner PR / completed owner task when that authority is available. A closed-unmerged owner PR remains blocked explicitly and requires a replacement repair owner.
 
-While externally blocked the dispatcher does not launch Implementation/fix or local-certification work for the blocked PR and does not merge it. Human output is only the concise owner/check status. Once the owner resolves, the target PR returns to exact-head evidence evaluation; it does not inherit or skip CI/Review.
+While externally blocked, the acting role does not launch Implementation/fix or local-certification work for the blocked PR and does not merge it. Once the owner resolves, the target PR returns to exact-head evidence evaluation; it does not inherit or skip CI/Review.
 
 ## Local work after Review MERGE
 
@@ -185,36 +198,40 @@ Completion is recorded as:
 <!-- dish-local-completion:v1 kind=implementation head=<sha> result=complete -->
 ```
 
-Before notifying Marco about either local action, the dispatcher first writes the complete exact-head handoff to the PR with a `dish-local-handoff:v1` marker. For `kind=implementation`, the local worker must follow the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md` and reconcile the matching agent-worktree claim before touching prepared state. If the local implementation action changes the source head, the prior Review and completion marker are stale and the new head returns to Review/recheck under the normal rules.
+Before notifying Marco about either local action, the acting role first writes and re-reads the complete exact-head handoff on the PR. For `kind=implementation`, the local worker follows the canonical handoff contract. If the local implementation action changes the source head, the prior Review and completion marker are stale and the new head returns to Review/recheck under the normal rules.
 
-For reviewed exact heads with a complete durable certification handoff, bounded Integration executes that handoff on the same local Integration consumer used for final V1-A landing. Configure the sole local Integration consumer with:
+The prototype proposed one local Integration consumer for certification and final V1-A landing:
 
 ```sh
 DISH_LOCAL_INTEGRATION_COMMAND='<local Claude/Codex Integration launcher>'
 ```
 
-or `--local-integration-launcher`. The legacy `--local-integration-certifier` spelling remains an alias during rollout. The command receives `dish-pr-integration-certification-v1` JSON for local certification and `dish-pr-local-integration-v1` JSON for final Integration. Certification success never causes the dispatcher itself to merge; final landing is a separate fenced local Integration execution.
+The `--local-integration-launcher` and legacy `--local-integration-certifier` spellings were never activated. The intended command payloads were `dish-pr-integration-certification-v1` and `dish-pr-local-integration-v1`; they are historical protocol notes, not a current launch path.
 
 A synchronous certification return without a durable completion marker leaves `LOCAL CERTIFICATION REQUIRED` with a machine-actionable residual reason. A durable pass is re-read and the candidate advances through the remaining exact-head gates. A durable failure returns to the normal Implementation/fix path. Missing local launcher capability is not replaced by ChatGPT, connector, Actions, or broker landing.
 
 ## Integration composition
 
+This section records the abandoned automatic Integration-composition design. Current Integration
+requires an explicit manual exact-head handoff and follows
+`dish/docs/agents/integration.md#Manual Integration handoff`.
+
 All required local certification must be complete and `scripts/pr_gate.py integration` must pass on the exact reviewed head before ordinary landing. A reviewed head blocked only by mechanically resolvable base/mergeability/order movement may also be handed to the same local Integration consumer; semantic ambiguity still returns to Implementation.
 
-Tool capability does not grant Integration authority. Bounded dispatcher composition is enabled only by `--integration-authority` or:
+Tool capability does not grant Integration authority. The abandoned design proposed enabling bounded dispatcher composition with `--integration-authority` or:
 
 ```sh
 DISH_INTEGRATION_AUTHORITY=bounded-reviewed-head
 ```
 
-With that authority, the dispatcher is a deterministic classifier/handoff controller only. It:
+The never-activated design would have made the dispatcher a deterministic classifier/handoff controller only. It would have:
 
-1. re-reads the PR/current head, exact formal Review, certification, mergeability/order, and current target branch;
-2. writes and re-reads one durable `dish-local-integration-handoff:v1` record binding repository, PR, branch, exact reviewed head, exact Review id, and observed target-branch SHA;
-3. acquires the repository-owned local per-PR/head `fcntl` fence under `~/.local/state/dish/integration/`; the OS lock is consequential-mutation admission and the JSON claim is crash/compaction recovery state;
-4. while holding that fence, invokes only `DISH_LOCAL_INTEGRATION_COMMAND` and passes the exact handoff plus claim id/path/generation/recovery snapshot;
-5. after the child returns, re-reads GitHub. A new PR head stops for fresh independent exact-head Review; an unchanged unmerged head remains `INTEGRATION READY`; only authoritative GitHub `MERGED` readback enters post-merge reconciliation;
-6. after authoritative `MERGED`, performs the existing scoped residual-gate-aware Asana landing reconciliation/readback and safe terminal cleanup.
+1. re-read the PR/current head, exact formal Review, certification, mergeability/order, and current target branch;
+2. write and re-read one durable `dish-local-integration-handoff:v1` record binding repository, PR, branch, exact reviewed head, exact Review id, and observed target-branch SHA;
+3. acquire a local per-PR/head `fcntl` fence under `~/.local/state/dish/integration/`;
+4. invoke only `DISH_LOCAL_INTEGRATION_COMMAND` while holding that fence;
+5. re-read GitHub after the child returned and stop on any new PR head; and
+6. enter post-merge reconciliation only after authoritative `MERGED` readback.
 
 The local Integration child owns the irreversible boundary. It must use a live checkout and real Git/worktree tooling, fetch current origin state, run literal required PRE-INTEGRATION evidence, and re-read live GitHub plus the explicit owning Asana task before its first mutation and again immediately before merge. It may perform only conflict-free/mechanical reconciliation already determined by authority. Any content-changing reconciliation creates a new exact PR head and stops for fresh Review. Final merge must use expected-head/current-state protection and authoritative GitHub MERGED readback.
 
@@ -233,13 +250,13 @@ If the local launcher/laptop is unavailable, the PR remains `INTEGRATION READY` 
 
 ## Human notifications
 
-Routine queue movement is silent. Human messages are limited to a real local action/decision or useful terminal result. Every message shown directly to Marco states his next action first, then why, task state, consequential PR/head Review/gate state, and the next owner/system. Review PASS/BLOCK is explicit. Automatic continuation says Marco has no action and never asks him to relay a transcript. Local residuals are classified as `TESTS ONLY`, `IMPLEMENTATION / PUBLICATION`, or `LOCAL SYSTEM ACCESS`; elapsed runtime is reported separately and never changes the work type. The dispatcher records an exact-head `dish-human-notice:v1` idempotency marker before emitting a human-action notice, so repeated polls do not repeat the same notice. For local work, the complete `dish-local-handoff:v1` comment is written and re-read before that notice marker or human message. Detailed handoff remains on the PR.
+Current human messaging follows the role contracts: notify only for a real local action/decision or useful terminal result, preserve explicit Review PASS/BLOCK, and classify local residuals as `TESTS ONLY`, `IMPLEMENTATION / PUBLICATION`, or `LOCAL SYSTEM ACCESS`. The automatic notice-marker behavior described here was never activated.
 
 ## Pre-Review installed-host Implementation continuation
 
 A candidate that changes an active repository-owned hook, `.claude/settings.json`, `codex/hooks.json`, or repository install wiring is automatically gated on `exact-head installed Claude/Codex host certification`. The gate is derived from the exact PR changed-file surface, not from a human checklist line; removing draft status or deleting an `IMPLEMENTATION EVIDENCE PENDING` line does not bypass it. An explicit different authoring-evidence line is finished first, after which the host gate remains.
 
-This reuses `IMPLEMENTATION CONTINUATION REQUIRED`; it is not `LOCAL CERTIFICATION REQUIRED` and does not add a lifecycle state. Dispatch selects only `LOCAL_IMPLEMENTATION`, writes the same exact-head continuation handoff, claims the ordinary `phase=implementation` advisory lease, and sends the same PR/branch/task/head to the configured local Implementation consumer.
+This remains `IMPLEMENTATION CONTINUATION REQUIRED`; it is not `LOCAL CERTIFICATION REQUIRED` and does not add a lifecycle state. The current acting role manually writes and verifies the exact-head continuation handoff before a local Implementation owner accepts it.
 
 The local worker—not Marco—owns the routine real-host loop: re-read live lineage; consume fresh `tools/agent-worktree claim --require-launch-provenance` identity; capture installed versions plus effective config/symlink pre-state; fence all affected shared host-config producers/consumers for the full mutation/test/restore window (or use genuinely isolated host state); activate only the exact candidate; drive the actual installed Claude/Codex loader/tool; diagnose and fix source on the same lineage; repeat after every new head; prove stale removed references are absent; then restore exact prior state or read back separately authorized final activation.
 
@@ -259,8 +276,12 @@ The local worker executes this boundary through the checked-in one-command surfa
 
 ## Worker execution profile
 
+This section records an automated Workspace Agent path that was never commissioned. The current
+manual Worker profile is `dish/docs/chatgpt-projects/worker.md`; it requires no dispatcher trigger,
+provider run id, or automatic phase consumer.
+
 Worker is one execution host/profile, never a union semantic role. Every trigger binds one exact standing role, one phase, and exact durable task/PR/head/design context. The Worker loads that role contract and cannot self-select or compose another specialist authority.
 
-Use `DISH_WORKER_API_TRIGGER_ID` for the generalized Workspace Agent path. HTTP `202 Accepted`, including an empty response body, proves trigger admission only; repository-generated idempotency/context identity is the durable correlation. Do not require or fabricate provider run IDs or conversation URLs.
+The proposed `DISH_WORKER_API_TRIGGER_ID` path was never activated. Its HTTP/admission rules below are historical design notes only.
 
 A phase becomes active only after the exact trigger/config/kernel version produces its predetermined durable activation witness and that witness is authoritatively reread. Keep the existing legacy route for that phase until its smoke and first normal durable phase result succeed. Failure falls back per phase, not globally. Parallel executions are allowed on immutable/exact inputs; existing broker/CAS fencing applies only at real shared mutation boundaries. There is no global Worker lock, second scheduler, or queue. Integration landing remains outside Worker authority.

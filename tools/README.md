@@ -302,8 +302,8 @@ tools/agent-worktree cleanup --task <task_gid> --disposition superseded
 ```
 
 Cleanup refuses dirty/ignored task-local state, unpublished-only recovery state, ambiguous worktree/branch
-identity, and any explicit terminal head that no longer matches the remote `agent/*` branch. The terminal
-controller supplies the exact PR number, branch, and head; cleanup journals each destructive step before
+identity, and any explicit terminal head that no longer matches the remote `agent/*` branch. The acting
+terminal role supplies the exact PR number, branch, and head; cleanup journals each destructive step before
 continuing, removes the linked worktree non-force, conditionally deletes the exact local branch, and deletes
 the exact remote `agent/*` branch with `--force-with-lease` expected-head protection. It verifies each
 applicable deletion and retains the task record with `dish-terminal-cleanup-v1` historical provenance so a
