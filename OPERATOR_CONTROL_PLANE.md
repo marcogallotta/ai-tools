@@ -48,7 +48,7 @@ Stop autonomous recovery and surface the actual blocker when the same failure pe
 
 A source assertion/test failure is not automatically outside recovery, but this section never creates source mutation authority. An already-authorized Implementation role may diagnose/fix/retest an ordinary in-scope source bug under its standing authority for the same objective; a non-Implementation role may not use recovery as a route into source Implementation.
 
-Persist only the attempt/failure information actually required to avoid duplicate recovery across replacement agents or destructive replay, using existing task/PR/controller/local durable state. Never add a retry database or alternate lifecycle authority merely to remember attempts.
+Persist only the attempt/failure information actually required to avoid duplicate recovery across replacement agents or destructive replay, using existing task/PR/local durable state. Never add a retry database or alternate lifecycle authority merely to remember attempts.
 
 ## TRUE READY dispatch queue
 
