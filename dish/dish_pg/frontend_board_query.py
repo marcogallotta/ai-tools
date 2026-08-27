@@ -659,6 +659,7 @@ class FrontendBoardQuery:
             .where(
                 models.DishTask.existence_state.in_(("ordinary", "isolated")),
                 models.DishState.completed.is_(False),
+                models.DishState.archived_at.is_(None),
                 models.GovernedSection.lifecycle == "active",
                 models.GovernedProject.lifecycle == "active",
             )

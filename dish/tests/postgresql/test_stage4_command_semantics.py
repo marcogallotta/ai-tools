@@ -731,19 +731,13 @@ def test_hold_reject_supply_evidence_resumes_preconstruction_baseline(workflow_d
             )
         ) == 1
 
-@pytest.mark.parametrize(
-    ("command_name", "reason", "state"),
-    (("cooked", "cooked", "cooked"), ("archive", "archive", "archived")),
-)
-def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
-    workflow_db, command_name: str, reason: str, state: str
-) -> None:
+def test_cooked_uses_completion_authority_and_replay_idempotently(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     run_id, request_id = _next(ids), _next(ids)
     with session_scope(factory) as session:
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         port = _port(session, ids)
-        definition = definition_for(command_name)
+        definition = definition_for("cooked")
         assert (
             definition.principal,
             definition.request_replay,
@@ -751,7 +745,7 @@ def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
             definition.operation_required,
             definition.action_exposed,
         ) == ("agent", True, True, False, False)
-        assert command_name not in ACTION_COMMANDS
+        assert "cooked" not in ACTION_COMMANDS
 
         before_page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
             section_reference=context["section_id"]
@@ -761,7 +755,7 @@ def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
             select(func.count()).select_from(tx.ProjectionOutboxEvent)
         )
         call = _call(
-            command_name,
+            "cooked",
             run_id=run_id,
             request_id=request_id,
             arguments={"task_id": str(task_id)},
@@ -772,8 +766,8 @@ def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
 
         assert first.ok is True
         assert first.data["completed"] is True
-        assert first.data["completion_reason"] == reason
-        assert first.data["completion_state"] == state
+        assert first.data["completion_reason"] == "cooked"
+        assert first.data["completion_state"] == "cooked"
         assert replay.ok is True
         assert replay.request_replayed is True
         assert replay.data == first.data
@@ -782,11 +776,7 @@ def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
             models.DishState, (context["generation_id"], task_id)
         )
         assert current is not None and current.completed is True
-        if command_name == "archive":
-            assert current.archived_at is not None
-            assert current.archived_at.replace(tzinfo=timezone.utc) == NOW
-        else:
-            assert current.archived_at is None
+        assert current.archived_at is None
         latest = session.get(
             models.DishMutationReceipt,
             (context["generation_id"], task_id, current.completion_version),
@@ -806,8 +796,8 @@ def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
 
         view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
         assert view.completed is True
-        assert view.completion_reason == reason
-        assert view.completion_state == state
+        assert view.completion_reason == "cooked"
+        assert view.completion_state == "cooked"
         after_page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
             section_reference=context["section_id"]
         )
@@ -823,6 +813,9 @@ def test_archive_alone_accepts_private_admin_principal_without_projection(workfl
         before_projection_count = session.scalar(
             select(func.count()).select_from(tx.ProjectionOutboxEvent)
         )
+        before = session.get(models.DishState, (context["generation_id"], task_id))
+        assert before is not None
+        before_completion = (before.completed, before.completion_reason)
 
         archived = port.execute(
             _call(
@@ -843,8 +836,35 @@ def test_archive_alone_accepts_private_admin_principal_without_projection(workfl
         assert archived.data["authority_mode"] == "postgresql"
         current = session.get(models.DishState, (context["generation_id"], task_id))
         assert current is not None and current.archived_at is not None
+        assert (current.completed, current.completion_reason) == before_completion
+        assert archived.data["completed"] is False
+        assert archived.data["completion_reason"] == before_completion[1]
+        view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
+        assert view.completion_state == "archived"
+        assert view.completed is False
         archive = FrontendBoardQuery(session).archived_tasks(max_results=10)
         assert [item.task_id for item in archive.results] == [task_id]
+        page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
+            section_reference=context["section_id"]
+        )
+        assert task_id not in {item.task_id for item in page.items}
+        board = FrontendBoardQuery(session)
+        assert task_id not in {
+            item.task_id
+            for item in board.active_cards(
+                registry=board.bootstrap_registry(),
+                projection_delay=timedelta(minutes=15),
+                max_cards=10,
+            )
+        }
+        assert task_id not in {
+            item.task_id
+            for item in board.search_titles(
+                query="Dish",
+                projection_delay=timedelta(minutes=15),
+                max_results=10,
+            ).results
+        }
         assert session.scalar(
             select(func.count()).select_from(tx.ProjectionOutboxEvent)
         ) == before_projection_count

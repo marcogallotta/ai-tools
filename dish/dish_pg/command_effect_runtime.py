@@ -164,7 +164,7 @@ def assert_committed_command_effects(
         )
     )
     if scalar_receipt is not None and scalar_receipt.completion_changed:
-        observed.add("set_completion")
+        observed.add("archive_task" if command_name == "archive" else "set_completion")
     if scalar_receipt is not None and scalar_receipt.content_changed:
         observed.add(
             "activate_corrected_content_version"

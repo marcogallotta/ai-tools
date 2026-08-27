@@ -782,10 +782,6 @@ class DishState(Base):
             "completion_reason IN ('imported','cooked','archive','reopen_planning')",
             name="completion_reason_allowed",
         ),
-        CheckConstraint(
-            "(archived_at IS NOT NULL) = (completed AND completion_reason = 'archive')",
-            name="archived_at_matches_completion",
-        ),
         Index("ix_dish_states_section", "generation_id", "section_id", "task_id"),
         Index("ix_dish_states_board", "generation_id", "completed", "section_id", "task_id"),
         Index("ix_dish_states_registry", "generation_id", "registry_version_id", "task_id"),
@@ -1125,7 +1121,9 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
             "AND r.task_id=NEW.task_id AND r.dish_version=NEW.completion_version "
             "AND ((r.source_route='import' AND NEW.completion_reason='imported') OR "
-            "(r.source_route='command_execution' AND NEW.completion_reason IN ('cooked','archive','reopen_planning')))) "
+            "(r.source_route='command_execution' AND ("
+            "NEW.completion_reason IN ('cooked','archive','reopen_planning') OR "
+            "NEW.archived_at IS NOT OLD.archived_at)))) "
             "BEGIN SELECT RAISE(ABORT, 'invalid DishState transition'); END"
         ).execute_if(dialect="sqlite"),
     )

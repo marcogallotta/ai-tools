@@ -196,8 +196,10 @@ def effect_spec_for(
         return CommandEffectSpec(("begin_abandonment",))
     if command_name == "reconcile-abandonment":
         return CommandEffectSpec(("reconcile_abandonment",))
-    if command_name in {"cooked", "archive"}:
+    if command_name == "cooked":
         return CommandEffectSpec(("set_completion",), verify_mutation_effects=True)
+    if command_name == "archive":
+        return CommandEffectSpec(("archive_task",), verify_mutation_effects=True)
     if command_name == "reopen-planning":
         return CommandEffectSpec(("clear_completion_for_planning",), ("set_completion",))
     if command_name == "reopen":
