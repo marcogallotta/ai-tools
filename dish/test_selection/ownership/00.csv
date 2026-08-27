@@ -215,6 +215,7 @@ tests/postgresql/native/test_process_failure_reconciliation.py,test,1,7,isolated
 tests/postgresql/native/test_production_reset.py,test,1,8,isolated-test; native-pg; operator-runner; release-critical,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/native/test_recovery_authority_transition.py,test,1,5,authority; isolated-test; native-pg; recovery-filesystem; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
+tests/postgresql/native/test_scalar_content_binding_concurrency.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/native/test_shadow_baseline_concurrency.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/native/test_validation_replay.py,test,1,7,isolated-test; native-pg; service-transport; transaction-boundary,,,none,exact changed test/module; native PostgreSQL certification,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/pglite/package.json,shared-test-infrastructure,1,1,isolated-test; pglite-required; shared-test-infrastructure; test-dependencies,,,narrow,,PGlite primary; exact changed test/module,,
