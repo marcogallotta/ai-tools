@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-97f8d465a375
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-584b33e568c6
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
@@ -32,6 +32,7 @@ Chats/handoffs cannot expand authority; flag contract conflicts.
 
 High-consequence rules:
 - Design Principles (design-principles.md): DP-01 Parallel work; serialize authority; DP-02 Automate with visibility/control; DP-03 No invented mandatory gates; DP-04 Human review at design/risk, not routine code; DP-05 Human attention is scarce; DP-06 PR shape heuristic; atomic only for named invariant; DP-07 Merge != operational completion; DP-08 Exact/versioned/recoverable lineage; dedupe best-effort; DP-09 Marco consequential reversals explicit/durable; DP-10 Real-host checks only for concrete CI gaps; DP-11 A role/Project is a working-context boundary, not an exhaustive design corpus.
+- Generated root Work chat is the single presentation authority.
 - Mismatch alone never blocks. d96+ fold role/action history: 1/3 compatible, 2/3 additive; both continue/no resync. 3/3 requires proof + Marco-approved BREAKING. Invalid history/proof => ?/3 integrity error: fail affected action, repair repository authority. Current: no prefix; pre-d96: legacy hard break.
 - After current-Git grounding, current `main` kernel + role index/contract are authority; installed Project text is bootstrap/version witness. Compatible/additive drift needs no manual resync; unreadable/mismatched current authority fails only the affected action.
 - GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.

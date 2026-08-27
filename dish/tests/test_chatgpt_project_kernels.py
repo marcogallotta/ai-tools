@@ -220,7 +220,7 @@ def test_chatty_contract_is_canonical_in_root_and_projects_reference_it_after_st
  m,s=kernels.load_canonical(); rules=kernels.chatty_contract(s)
  assert any('STRESS MODE ACTIVATED' in x and 'sticky' in x for x in rules)
  assert any('Nothing needed from you' in x and 'continues' in x for x in rules)
- assert any('no routine tool/read narration' in x.lower() for x in rules)
+ assert any('routine tool' in x.lower() and 'evidence chronology' in x.lower() for x in rules)
  assert any('Default 100%' in x for x in rules)
  assert any('minimum packet' in x for x in rules)
  assert any('Match intent/altitude' in x for x in rules)
@@ -725,8 +725,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829'})
- assert set(versions)==expected and len(versions)==33
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-97f8d465a375'})
+ assert set(versions)==expected and len(versions)==34
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
