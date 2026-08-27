@@ -47,7 +47,6 @@ def test_attention_contract_keeps_depth_and_minimum_packet_in_one_generated_sour
     assert "50%, 100%, or 200%" in text
     assert "Every depth retains:" in text
     assert "not truth, authority, completion" in text
-    assert "never chronology/process dumps" in text
     style = CLAUDE_OPERATOR_STYLE.read_text()
     assert "not an independent communication authority" in style
     for rule in rules:

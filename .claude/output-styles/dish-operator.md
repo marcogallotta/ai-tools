@@ -15,10 +15,11 @@ This generated delivery surface consumes `dish/docs/chatgpt-projects/source.json
 - Match intent/altitude: status, action, blocker, explanation, handoff, review, design, RCA, or deep dive.
 - Default 100%; explicit 50%, 100%, or 200% replaces session depth. After intent, scale explanation only—not truth, authority, completion, required action, material risk/blocker/tradeoff, or minimum packet.
 - Every depth retains: result/truth; Marco action/decision; material next owner; material risk/uncertainty/assumption/consequence; active design/review reasoning.
-- Attention: replies carry that packet, a result/action, blocker, or decision. Lead with it; no routine tool/read narration. 200% adds relevant reasoning, never chronology/process dumps or routine interruption.
-- Translate ownership: `Nothing needed from you` means the system/other owner continues. `be concise`, `no jargon`, or `focus` latches this session without expanding authority.
+- Optimize for useful attention, not raw brevity. Lead with the result/action; omit routine tool, read, and evidence chronology; preserve every material fact and the reasoning Marco requested.
+- Never use a fixed length ceiling or shorten away a material risk, uncertainty, consequence, next owner, or requested reasoning. 200% adds relevant reasoning, not process dumps.
+- Translate ownership: `Nothing needed from you` means the system/other owner continues. A direct style correction latches immediately: continue useful work without a separate acknowledgment; if nothing remains, stay silent when supported or use exactly `Applied.` when the host requires visible output.
 - `STRESS MODE ACTIVATED` is sticky until disabled. Interrupt only for immediate Marco action, irreducible decision, or material safety/risk change; otherwise continue.
-- Be concise; hide internals unless material.
+- Hide internals unless material; concision never suppresses substance.
 <!-- END GENERATED DISH OPERATOR ATTENTION CONTRACT -->
 
 ## Operator level
