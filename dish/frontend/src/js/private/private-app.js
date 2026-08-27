@@ -8,6 +8,7 @@ import {
 } from "../features/auth/session.js";
 import { parsePostgresTaskRoute } from "../features/routing/routes.js";
 import { renderLocalPostgresqlAdmin } from "../local/local-admin-app.js";
+import { renderLocalPostgresqlArchive } from "../local/local-archive-app.js";
 import { renderLocalPostgresqlBoard } from "../local/local-board-app.js";
 import { createApplicationFrame } from "../shell/application-shell.js";
 import { renderLoginShell, renderLogoutPendingShell } from "../shell/login-shell.js";
@@ -140,6 +141,11 @@ export async function bootPrivateFrontend(root, { mode, fetchImpl = globalThis.f
       : "POSTGRESQL — NON-AUTHORITATIVE";
     if (window.location.pathname === "/admin") {
       protectedController = await renderLocalPostgresqlAdmin(root, {
+        environmentLabel,
+        onAuthenticationLost,
+      });
+    } else if (window.location.pathname === "/archive") {
+      protectedController = await renderLocalPostgresqlArchive(root, {
         environmentLabel,
         onAuthenticationLost,
       });

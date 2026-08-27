@@ -29,7 +29,10 @@ export function createApplicationFrame({ environmentLabel, navigationSuffix = ""
   const adminLink = document.createElement("a");
   adminLink.href = `/admin${navigationSuffix}`;
   adminLink.textContent = "Admin";
-  nav.append(boardLink, adminLink);
+  const archiveLink = document.createElement("a");
+  archiveLink.href = `/archive${navigationSuffix}`;
+  archiveLink.textContent = "Archived";
+  nav.append(boardLink, archiveLink, adminLink);
   header.append(nav);
   if (environmentLabel) {
     const badge = document.createElement("span");
