@@ -89,7 +89,7 @@ def test_test_service_is_pg_authority_and_legacy_oracle_is_isolated() -> None:
     assert authority["DISH_SERVICE_PORT"] == "8765"
     assert authority["DISH_ACTION_PORT"] == "8766"
     assert authority["DISH_DARK_LAUNCH_MODE"] == "off"
-    assert authority["DISH_PG_EXPECTED_SCHEMA_HEAD"] == "0042_scalar_dish_state"
+    assert authority["DISH_PG_EXPECTED_SCHEMA_HEAD"] == "0043_archived_at"
     assert authority["DISH_PG_EXPECTED_DATABASE_NAME"].endswith("_test")
     assert authority["DISH_PG_AUTHORITY_STATE_DIR"].startswith("/home/marco/.local/state/dish/test/")
     assert authority["DISH_FRONTEND_ENABLED"] == "1"

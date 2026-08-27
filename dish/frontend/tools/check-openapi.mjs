@@ -20,7 +20,7 @@ for (const [route, pathItem] of Object.entries(schema.paths ?? {})) {
     if (!operation.responses) errors.push(`${operation.operationId} has no responses`);
   }
 }
-for (const required of ["frontendLogin", "getFrontendSession", "frontendLogout", "getFrontendBoard", "getFrontendSectionTasks", "getFrontendTaskDetail"]) {
+for (const required of ["frontendLogin", "getFrontendSession", "frontendLogout", "getFrontendBoard", "getFrontendArchive", "getFrontendSectionTasks", "getFrontendTaskDetail"]) {
   if (!operationIds.has(required)) errors.push(`Required operation ${required} is missing`);
 }
 if (errors.length) {

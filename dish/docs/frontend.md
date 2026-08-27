@@ -17,11 +17,19 @@ task state without making the browser a second authority. The current product is
 a private, read-only board with active-title search, task detail, background
 refresh, warnings, and shared-password authentication.
 
-It does not provide completed-task browsing, history, body/ingredient/content
+It does not provide cooked-task browsing, general completion history, body/ingredient/content
 search, editing, task creation, drag-and-drop, workflow or recovery commands,
 administrative intervention, cutover controls, or direct PostgreSQL or Asana
 access.
 Frontend-owned authentication state is not task or workflow authority.
+
+## Archive
+
+The separate **Archived** page lists dishes whose current PostgreSQL Dish row
+has a non-null `archived_at`. It is ordered newest archive first and is bounded
+to 5,000 rows. Archived dishes do not remain on the Cooking board or enter
+active title search. The browser does not infer archive state from completion,
+placement, Asana membership, task titles, or audit history.
 
 ## Board
 

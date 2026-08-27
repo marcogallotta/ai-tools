@@ -1,6 +1,7 @@
 import { DOCUMENT_TITLE } from "./config.js";
 import { parsePostgresTaskRoute } from "./features/routing/routes.js";
 import { renderLocalPostgresqlAdmin } from "./local/local-admin-app.js";
+import { renderLocalPostgresqlArchive } from "./local/local-archive-app.js";
 import { renderLocalPostgresqlBoard } from "./local/local-board-app.js";
 import { frontendDataSource } from "./local/source-selection.js";
 import { bootPrivateFrontend } from "./private/private-app.js";
@@ -44,6 +45,10 @@ export async function boot(root = document.querySelector("#app")) {
   }
   if (window.location.pathname === "/admin") {
     await renderLocalPostgresqlAdmin(root);
+    return;
+  }
+  if (window.location.pathname === "/archive") {
+    await renderLocalPostgresqlArchive(root);
     return;
   }
   const route = parsePostgresTaskRoute(window.location.pathname);

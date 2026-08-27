@@ -29,6 +29,7 @@ MAX_TITLE_LENGTH = 500
 MAX_LABEL_LENGTH = 160
 MAX_SEARCH_QUERY_LENGTH = 160
 MAX_SEARCH_RESULTS = 50
+MAX_ARCHIVED_RESULTS = 5000
 
 
 class BoardConfigurationInvalid(RuntimeError):
@@ -210,6 +211,21 @@ class FrontendBoardService:
         )
         return {
             "results": [self._search_dto(result) for result in facts.results],
+            "truncated": facts.truncated,
+        }
+
+    def archive(self) -> dict[str, Any]:
+        facts = self.query.archived_tasks(max_results=MAX_ARCHIVED_RESULTS)
+        return {
+            "generated_at": facts.evaluation_time.isoformat(),
+            "dishes": [
+                {
+                    "task_id": self._task_route(item.task_id),
+                    "title": item.title.strip(),
+                    "archived_at": item.archived_at.isoformat(),
+                }
+                for item in facts.results
+            ],
             "truncated": facts.truncated,
         }
 

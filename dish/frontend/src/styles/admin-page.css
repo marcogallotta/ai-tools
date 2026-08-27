@@ -141,6 +141,11 @@
   background: #fbfcfe;
 }
 
+.admin-dish--archived {
+  border-inline-start-color: #7b7469;
+  background: #fbfaf8;
+}
+
 .admin-dish__header {
   display: flex;
   align-items: flex-start;

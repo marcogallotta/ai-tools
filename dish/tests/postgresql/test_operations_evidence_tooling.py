@@ -53,7 +53,7 @@ def _fingerprint(path: Path, *, digest: str, row_count: int = 1) -> None:
 
 
 def test_bootstrap_default_tracks_current_release_head() -> None:
-    assert DEFAULT_SCHEMA_HEAD == ALEMBIC_HEAD == "0042_scalar_dish_state"
+    assert DEFAULT_SCHEMA_HEAD == ALEMBIC_HEAD == "0043_archived_at"
 
 
 def test_database_fingerprint_comparison_is_machine_checkable(tmp_path: Path) -> None:

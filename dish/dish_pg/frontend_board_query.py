@@ -100,6 +100,20 @@ class SearchFacts:
     truncated: bool
 
 
+@dataclass(frozen=True, slots=True)
+class ArchivedTaskFact:
+    task_id: UUID
+    title: str
+    archived_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ArchivedTaskFacts:
+    results: tuple[ArchivedTaskFact, ...]
+    truncated: bool
+    evaluation_time: datetime
+
+
 class FrontendBoardQuery:
     """Bounded factual board reads over the currently active PG generation."""
 
@@ -221,6 +235,52 @@ class FrontendBoardQuery:
                 for row in rows[:max_results]
             ),
             truncated=len(rows) > max_results,
+        )
+
+    def archived_tasks(self, *, max_results: int) -> ArchivedTaskFacts:
+        """Return a bounded newest-first list selected only by PostgreSQL archive state."""
+        if max_results <= 0:
+            raise ValueError("archive result bound must be positive")
+        context = self.context()
+        rows = list(
+            self.session.execute(
+                select(
+                    models.DishTask.task_id,
+                    models.ContentVersion.title,
+                    models.DishState.archived_at,
+                )
+                .select_from(models.DishState)
+                .join(
+                    models.DishTask,
+                    models.DishTask.task_id == models.DishState.task_id,
+                )
+                .join(
+                    models.ContentVersion,
+                    and_(
+                        models.ContentVersion.generation_id
+                        == models.DishState.generation_id,
+                        models.ContentVersion.task_id == models.DishState.task_id,
+                        models.ContentVersion.content_version_id
+                        == models.DishState.current_content_version_id,
+                    ),
+                )
+                .where(
+                    models.DishState.generation_id == context.generation_id,
+                    models.DishState.archived_at.is_not(None),
+                    models.DishTask.existence_state.in_(("ordinary", "isolated")),
+                )
+                .order_by(
+                    models.DishState.archived_at.desc(),
+                    func.lower(models.ContentVersion.title),
+                    models.DishTask.task_id,
+                )
+                .limit(max_results + 1)
+            ).mappings()
+        )
+        return ArchivedTaskFacts(
+            results=tuple(ArchivedTaskFact(**dict(row)) for row in rows[:max_results]),
+            truncated=len(rows) > max_results,
+            evaluation_time=context.evaluation_time,
         )
 
     def continuation(
