@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Inspect the fixed Dish Action router, including the TEST comparator oracle."""
+"""Inspect the fixed Dish Action router and prove the effective Caddy config."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+from pathlib import Path
 import sys
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Mapping
 
 
 ADMIN_URL = "http://127.0.0.1:2019"
+SOURCE_CONFIG = Path("/home/marco/ai-tools/dish/deploy/caddy/dish-action-router.json")
 PROXY_PATHS = {
     "test": "/id/dish_action_test_proxy/upstreams",
     "test-legacy": "/id/dish_action_test_legacy_proxy/upstreams",
@@ -41,6 +44,28 @@ def _request_json(url: str) -> Any:
         raise RouteError(f"GET {url} failed: {exc}") from exc
 
 
+def _read_config(path: Path) -> Mapping[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RouteError(f"cannot read source Caddy config {path}: {exc}") from exc
+    if not isinstance(value, Mapping):
+        raise RouteError(f"source Caddy config {path} must be a JSON object")
+    return value
+
+
+def _config_digest(value: Mapping[str, Any]) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _effective_config(admin_url: str) -> Mapping[str, Any]:
+    value = _request_json(f"{admin_url}/config/")
+    if not isinstance(value, Mapping):
+        raise RouteError("Caddy admin /config/ readback must be a JSON object")
+    return value
+
+
 def _read_upstream(admin_url: str, environment: str) -> str:
     upstreams = _request_json(f"{admin_url}{PROXY_PATHS[environment]}")
     if not isinstance(upstreams, list) or len(upstreams) != 1:
@@ -51,14 +76,23 @@ def _read_upstream(admin_url: str, environment: str) -> str:
     return upstream["dial"]
 
 
-def status(admin_url: str) -> dict[str, Any]:
+def status(admin_url: str, *, source_config: Path = SOURCE_CONFIG) -> dict[str, Any]:
+    source = _read_config(source_config)
+    effective = _effective_config(admin_url)
+    source_digest = _config_digest(source)
+    effective_digest = _config_digest(effective)
     routes = {
         environment: _read_upstream(admin_url, environment)
         for environment in ("prod", "test", "test-legacy")
     }
-    expected = routes == EXPECTED_DIALS
+    source_is_effective = source_digest == effective_digest
+    expected = source_is_effective and routes == EXPECTED_DIALS
     return {
         "mode": "fixed-path-split-with-comparator",
+        "activation_source": f"file:{source_config}",
+        "source_config_sha256": source_digest,
+        "effective_config_sha256": effective_digest,
+        "source_is_effective": source_is_effective,
         "routes": routes,
         "status": "ready" if expected else "unexpected",
     }
@@ -67,8 +101,9 @@ def status(admin_url: str) -> dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--admin-url", default=ADMIN_URL, help=argparse.SUPPRESS)
+    parser.add_argument("--source-config", default=SOURCE_CONFIG, type=Path, help=argparse.SUPPRESS)
     parser.add_subparsers(dest="command", required=True).add_parser(
-        "status", help="read the fixed production, TEST authority, and comparator upstreams from Caddy"
+        "status", help="prove the checked-in router config is effective and read its fixed upstreams"
     )
     return parser
 
@@ -76,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        result = status(args.admin_url)
+        result = status(args.admin_url, source_config=args.source_config)
     except RouteError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

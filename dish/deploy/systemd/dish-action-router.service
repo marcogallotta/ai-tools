@@ -9,7 +9,7 @@ User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
 Environment=XDG_CONFIG_HOME=/home/marco/.local/state/dish/caddy/config
 Environment=XDG_DATA_HOME=/home/marco/.local/state/dish/caddy/data
-ExecStart=/usr/bin/caddy run --resume --config /home/marco/ai-tools/dish/deploy/caddy/dish-action-router.json
+ExecStart=/usr/bin/caddy run --config /home/marco/ai-tools/dish/deploy/caddy/dish-action-router.json
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=5min

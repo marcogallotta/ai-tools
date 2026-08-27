@@ -14,7 +14,7 @@ The development system recovers from durable GitHub, Asana, repository policy, a
 
 Ambiguous state-changing outcomes are reconciled before replay. A proven present effect is not repeated; a proven absent safe/idempotent effect may receive a bounded retry; unresolved ambiguity fails closed. Advisory activity signals help avoid duplicate work without becoming ownership or liveness proof.
 
-Source landing closes only the repository phase. Required rollout, activation, deployment, migration, runtime evidence, or operator acceptance remains owned by its actual post-merge gate. Terminal cleanup follows authoritative merged/closed/abandoned disposition and preserves the only recovery pointer when lineage is dirty or ambiguous.
+Source landing closes only the repository phase. Required rollout, activation, deployment, migration, runtime evidence, or operator acceptance remains owned by its actual post-merge gate. The shared staged-rollout authority records exact control generation, source/config identity, target/scope, one declared activation source, activation method, prior-state/fence identity, transition authority, and optional exact rollback target. Activation and rollback transitions become durable only after authoritative effective-state readback matches the intended target/source/config; a source write, restart, or rollback edit alone is not effective-state proof. Domain-specific stages such as `OBSERVE -> ASK -> ENFORCE` reuse this mechanism instead of creating a second flag service. Terminal cleanup follows authoritative merged/closed/abandoned disposition and preserves the only recovery pointer when lineage is dirty or ambiguous.
 
 ## Invariants
 
@@ -24,11 +24,14 @@ Source landing closes only the repository phase. Required rollout, activation, d
 - Recovery is bounded, causal, and candidate-preserving.
 - Cleanup never destroys the only recoverable unlanded work.
 - `merged`, `deployed`, `activated`, and `complete` remain different facts.
+- A rollout-controlled generation has one authoritative activation source; competing mutable sources must be removed or reconciled before activation can be proven.
+- Activation and rollback require effective target/config readback; expected or source-file state without runtime evidence remains unknown.
 - Existing audit/health machinery gardens stale architecture anchors and contradictions; documentation maintenance adds no scheduler or database.
 
 ## Current anchors
 
 - [`../../../../scripts/pr_lifecycle.py`](../../../../scripts/pr_lifecycle.py)
+- [`../../../../scripts/pr_lifecycle_rollout.py`](../../../../scripts/pr_lifecycle_rollout.py)
 - [`../../../../scripts/pr_lifecycle_local_integration.py`](../../../../scripts/pr_lifecycle_local_integration.py)
 - [`../../agents/audit.md`](../../agents/audit.md)
 - [`../../agents/development-workflow.md`](../../agents/development-workflow.md)

@@ -238,3 +238,312 @@ def test_merge_or_task_completion_cannot_imply_rollout_completion(tmp_path):
     value = build_projection([lifecycle], repository="r", tasks=[{"gid": "task", "rollout": rollout}])
     assert value["pull_requests"][0]["state"] == "merged"
     assert value["rollouts"][0]["complete"] is False
+
+
+def control_plan(*, generation=1, predecessor=None):
+    return {
+        "schema": "dish-rollout-plan-v2",
+        "control_id": "guard-release",
+        "plan_id": "guard-release",
+        "generation": generation,
+        "predecessor_plan_digest": predecessor,
+        "stages": [
+            {
+                "stage": "OBSERVE",
+                "artifact": "source-a",
+                "config": "guard-observe-a",
+                "target": "repo:marcogallotta/ai-tools profile:dish",
+                "scope": "local guard sample",
+                "activation_source": "file:dish/config/guard.json",
+                "activation_method": "reload:dish-guard",
+                "expected_prior_state": "OFF",
+                "fence": "repo-profile:marcogallotta/ai-tools:dish",
+                "authority": "Development Workflow rollout owner",
+                "rollback": {
+                    "state": "OFF",
+                    "artifact": "source-a",
+                    "config": "guard-off-a",
+                    "activation_source": "file:dish/config/guard.json",
+                    "activation_method": "reload:dish-guard",
+                },
+            },
+            {
+                "stage": "ASK",
+                "artifact": "source-a",
+                "config": "guard-ask-a",
+                "target": "repo:marcogallotta/ai-tools profile:dish",
+                "scope": "local guard sample",
+                "activation_source": "file:dish/config/guard.json",
+                "activation_method": "reload:dish-guard",
+                "expected_prior_state": "OBSERVE",
+                "fence": "repo-profile:marcogallotta/ai-tools:dish",
+                "authority": "Development Workflow rollout owner",
+                "rollback": {
+                    "state": "OBSERVE",
+                    "artifact": "source-a",
+                    "config": "guard-observe-a",
+                    "activation_source": "file:dish/config/guard.json",
+                    "activation_method": "reload:dish-guard",
+                },
+            },
+            {
+                "stage": "ENFORCE",
+                "artifact": "source-a",
+                "config": "guard-enforce-a",
+                "target": "repo:marcogallotta/ai-tools profile:dish",
+                "scope": "local guard sample",
+                "activation_source": "file:dish/config/guard.json",
+                "activation_method": "reload:dish-guard",
+                "expected_prior_state": "ASK",
+                "fence": "repo-profile:marcogallotta/ai-tools:dish",
+                "authority": "Development Workflow rollout owner",
+                "rollback": {
+                    "state": "ASK",
+                    "artifact": "source-a",
+                    "config": "guard-ask-a",
+                    "activation_source": "file:dish/config/guard.json",
+                    "activation_method": "reload:dish-guard",
+                },
+            },
+        ],
+    }
+
+
+def control_transition(stage, *, event="ACTIVATED", activated_identity=None, prior_state=None, readback=None):
+    configs = {
+        "OBSERVE": "guard-observe-a",
+        "ASK": "guard-ask-a",
+        "ENFORCE": "guard-enforce-a",
+    }
+    if prior_state is None:
+        prior_state = {"OBSERVE": "OFF", "ASK": "OBSERVE", "ENFORCE": "ASK"}[stage]
+    value = {
+        "plan_id": "guard-release",
+        "generation": 1,
+        "stage": stage,
+        "artifact": "source-a",
+        "config": configs[stage],
+        "event": event,
+        "prior_readback": {
+            "target": "repo:marcogallotta/ai-tools profile:dish",
+            "state": prior_state,
+            "evidence": f"runtime-before:{prior_state}",
+        },
+    }
+    if activated_identity:
+        value["activated_identity"] = activated_identity
+    if readback is None and event == "ACTIVATED":
+        readback = {
+            "target": "repo:marcogallotta/ai-tools profile:dish",
+            "state": stage,
+            "artifact": "source-a",
+            "config": configs[stage],
+            "activation_source": "file:dish/config/guard.json",
+            "evidence": f"runtime-after:{stage}",
+        }
+    if readback is not None:
+        value["readback"] = readback
+    return value
+
+
+def control_decision(event, activated, *, stage, config):
+    return {
+        "plan_id": "guard-release",
+        "generation": 1,
+        "stage": stage,
+        "artifact": "source-a",
+        "config": config,
+        "event": event,
+        "activated_identity": activated,
+        "human_decision": {
+            "decision": event,
+            "plan_id": "guard-release",
+            "generation": 1,
+            "stage": stage,
+            "activated_identity": activated,
+            "provenance": "marco-chat-exact-decision",
+            "source_id": f"chat:{stage.lower()}-{event.lower()}",
+        },
+    }
+
+
+def test_v2_plan_requires_one_explicit_activation_source_and_fence(tmp_path):
+    asana = FakeAsana()
+    bad = control_plan()
+    del bad["stages"][0]["activation_source"]
+    with pytest.raises(LifecycleError, match="activation source"):
+        install_plan(asana, "task", bad, fence_root=tmp_path)
+
+    ambiguous = control_plan()
+    ambiguous["stages"][0]["activation_source"] = ["file:a", "autosave:b"]
+    with pytest.raises(LifecycleError, match="activation source"):
+        install_plan(asana, "task", ambiguous, fence_root=tmp_path)
+
+
+def test_v2_activation_requires_prior_fence_and_effective_state_readback(tmp_path):
+    asana = FakeAsana()
+    installed_plan, changed = install_plan(asana, "task", control_plan(), fence_root=tmp_path)
+    assert changed and installed_plan["control_id"] == "guard-release"
+
+    missing_prior = control_transition("OBSERVE")
+    del missing_prior["prior_readback"]
+    with pytest.raises(LifecycleError, match="prior-state readback"):
+        commit_transition(asana, "task", missing_prior, fence_root=tmp_path)
+
+    wrong_effective = control_transition("OBSERVE")
+    wrong_effective["readback"]["config"] = "stale-config"
+    with pytest.raises(LifecycleError, match="intended config"):
+        commit_transition(asana, "task", wrong_effective, fence_root=tmp_path)
+
+    active, changed = commit_transition(asana, "task", control_transition("OBSERVE"), fence_root=tmp_path)
+    assert changed
+    assert active["readback"]["state"] == "OBSERVE"
+    projection = rollout_projection(reconstruct(asana.get_stories("task"), task_gid="task"))
+    assert projection["schema"] == "dish-rollout-projection-v2"
+    assert projection["control_id"] == "guard-release"
+    assert projection["stages"][0]["effective_state"] == "OBSERVE"
+
+
+def test_v2_progressive_guard_order_and_rollback_use_effective_readback(tmp_path):
+    asana = FakeAsana()
+    install_plan(asana, "task", control_plan(), fence_root=tmp_path)
+
+    observe, _ = commit_transition(asana, "task", control_transition("OBSERVE"), fence_root=tmp_path)
+    with pytest.raises(LifecycleError, match="predecessor stage is not accepted"):
+        commit_transition(asana, "task", control_transition("ASK"), fence_root=tmp_path)
+    commit_transition(
+        asana, "task",
+        control_decision("ACCEPTED", observe["transition_id"], stage="OBSERVE", config="guard-observe-a"),
+        fence_root=tmp_path,
+    )
+
+    ask, _ = commit_transition(asana, "task", control_transition("ASK"), fence_root=tmp_path)
+    commit_transition(
+        asana, "task",
+        control_decision("ACCEPTED", ask["transition_id"], stage="ASK", config="guard-ask-a"),
+        fence_root=tmp_path,
+    )
+
+    enforce, _ = commit_transition(asana, "task", control_transition("ENFORCE"), fence_root=tmp_path)
+    stale_runtime = control_transition(
+        "ENFORCE",
+        event="ROLLED_BACK",
+        activated_identity=enforce["transition_id"],
+        prior_state="ENFORCE",
+        readback={
+            "target": "repo:marcogallotta/ai-tools profile:dish",
+            "state": "ENFORCE",
+            "artifact": "source-a",
+            "config": "guard-enforce-a",
+            "activation_source": "file:dish/config/guard.json",
+            "evidence": "source-restored-but-runtime-stale",
+        },
+    )
+    with pytest.raises(LifecycleError, match="intended state"):
+        commit_transition(asana, "task", stale_runtime, fence_root=tmp_path)
+
+    rollback = control_transition(
+        "ENFORCE",
+        event="ROLLED_BACK",
+        activated_identity=enforce["transition_id"],
+        prior_state="ENFORCE",
+        readback={
+            "target": "repo:marcogallotta/ai-tools profile:dish",
+            "state": "ASK",
+            "artifact": "source-a",
+            "config": "guard-ask-a",
+            "activation_source": "file:dish/config/guard.json",
+            "evidence": "runtime-after:ASK",
+        },
+    )
+    rolled_back, changed = commit_transition(asana, "task", rollback, fence_root=tmp_path)
+    assert changed and rolled_back["event"] == "ROLLED_BACK"
+    projection = rollout_projection(reconstruct(asana.get_stories("task"), task_gid="task"))
+    assert projection["stages"][2]["state"] == "ROLLED_BACK"
+    assert projection["stages"][2]["effective_state"] == "ASK"
+    assert projection["complete"] is False
+
+
+def test_v2_rejected_stage_can_still_roll_back_effective_behavior(tmp_path):
+    asana = FakeAsana()
+    install_plan(asana, "task", control_plan(), fence_root=tmp_path)
+    observe, _ = commit_transition(asana, "task", control_transition("OBSERVE"), fence_root=tmp_path)
+    commit_transition(
+        asana, "task",
+        control_decision("REJECTED", observe["transition_id"], stage="OBSERVE", config="guard-observe-a"),
+        fence_root=tmp_path,
+    )
+    rollback = control_transition(
+        "OBSERVE",
+        event="ROLLED_BACK",
+        activated_identity=observe["transition_id"],
+        prior_state="OBSERVE",
+        readback={
+            "target": "repo:marcogallotta/ai-tools profile:dish",
+            "state": "OFF",
+            "artifact": "source-a",
+            "config": "guard-off-a",
+            "activation_source": "file:dish/config/guard.json",
+            "evidence": "runtime-after:OFF",
+        },
+    )
+    rolled_back, changed = commit_transition(asana, "task", rollback, fence_root=tmp_path)
+    assert changed and rolled_back["event"] == "ROLLED_BACK"
+    projection = rollout_projection(reconstruct(asana.get_stories("task"), task_gid="task"))
+    assert projection["stages"][0]["state"] == "ROLLED_BACK"
+    assert projection["stages"][0]["effective_state"] == "OFF"
+    assert projection["complete"] is False
+
+
+def test_v2_automatic_effect_requires_structured_effective_readback(tmp_path):
+    asana = FakeAsana()
+    install_plan(asana, "task", control_plan(), fence_root=tmp_path)
+    request = control_transition("OBSERVE")
+    request["automatic_effect"] = True
+    request["effect_mode"] = "target-fenced"
+    request.pop("readback")
+
+    with pytest.raises(LifecycleError, match="effective-state readback"):
+        commit_transition(
+            asana,
+            "task",
+            request,
+            effect=lambda key: None,
+            effect_readback=lambda key: True,
+            fence_root=tmp_path,
+        )
+
+    observed = {
+        "target": "repo:marcogallotta/ai-tools profile:dish",
+        "state": "OBSERVE",
+        "artifact": "source-a",
+        "config": "guard-observe-a",
+        "activation_source": "file:dish/config/guard.json",
+        "evidence": "runtime-api:digest-123",
+    }
+    transition, changed = commit_transition(
+        asana,
+        "task",
+        request,
+        effect=lambda key: None,
+        effect_readback=lambda key: observed,
+        fence_root=tmp_path,
+    )
+    assert changed and transition["readback"] == observed
+
+
+def test_v2_source_landing_does_not_claim_effective_activation(tmp_path):
+    asana = FakeAsana()
+    install_plan(asana, "task", control_plan(), fence_root=tmp_path)
+    lifecycle = PRLifecycle(
+        number=10, url="u", title="merged", head="b" * 40, branch="b", base="main", draft=False,
+        state=LifecycleState.MERGED, state_label="MERGED", asana=[{"gid": "task", "completed": True}],
+    )
+    rollout = rollout_projection(reconstruct(asana.get_stories("task"), task_gid="task"))
+    value = build_projection([lifecycle], repository="r", tasks=[{"gid": "task", "rollout": rollout}])
+
+    assert value["pull_requests"][0]["state"] == "merged"
+    assert value["rollouts"][0]["complete"] is False
+    assert rollout["stages"][0]["state"] == "PENDING"
+    assert rollout["stages"][0]["expected_prior_state"] == "OFF"
+    assert rollout["stages"][0]["effective_state"] == "UNKNOWN"
