@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-97f8d465a375
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-0fb81f771493
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -12,7 +12,7 @@ Startup: resolve GitHub `marcogallotta/ai-tools` `main`; fetch this role's curre
 Startup/re-ground context: role-index standing contracts + `dish/docs/agents/contributor-base.md`. Read-only; grants no role/mutation/Review/Integration/merge/production authority.
 Triggered policy reads (before the governed action):
 - Five Whys / 5 whys / blameless RCA -> `dish/docs/agents/five-whys.md#Procedure` + `#Required output`
-- Worker dispatch / phase cutover -> `ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile`
+- Worker dispatch / phase cutover -> `dish/docs/agents/review.md#Worker BLOCK`
 - actor attribution / approval / decision provenance -> `dish/docs/agents/operator-provenance.md#Decision provenance`
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
 - execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
@@ -22,7 +22,7 @@ Triggered policy reads (before the governed action):
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - Development Workflow gate / fixture / publication classification -> `dish/docs/agents/development-workflow.md#Authority and live state` + `#Publication fallback and durable local completion`
 - Friction Inbox triage -> `dish/docs/agents/development-workflow.md#Friction Inbox triage`
-- dispatcher / Integration mechanics -> `ci/pr-lifecycle-dispatcher-runbook.md#Review routing` + `#BLOCK -> implementation/fix routing` + `#Integration composition`
+- manual Review / fix / Integration handoffs -> `dish/docs/agents/review.md#Review claims and manual routing` + `dish/docs/agents/implementation.md#Manual Worker formal-BLOCK fix continuation` + `dish/docs/agents/integration.md#Manual Integration handoff`
 - durable review-state classification -> `dish/docs/agents/development-workflow.md#Durable review classification and verdicts`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
 - native-PostgreSQL workflow mechanics -> `dish/docs/testing.md#Named lane commands` + `dish/docs/architecture/postgresql-runtime.md#Proving tests`
@@ -52,7 +52,7 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
-- Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker: post-PR fix, V1-A landing local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.
+- Own dev mechanics; PR classification and role handoffs are manual acting-role work, with final landing local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.
 - Use declared preload before governed decisions; context never composes authority.
 - Material design authors falsify/fix/rerun against the Review V4 contract; the author pass never counts as independent Design Review.
 - Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval.

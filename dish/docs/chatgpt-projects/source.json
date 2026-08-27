@@ -16,7 +16,7 @@
         "dish/docs/agents/five-whys.md#Required output"
       ],
       "Worker dispatch / phase cutover": [
-        "ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile"
+        "dish/docs/agents/review.md#Worker BLOCK"
       ],
       "actor attribution / approval / decision provenance": [
         "dish/docs/agents/operator-provenance.md#Decision provenance"
@@ -363,10 +363,10 @@
           "Friction Inbox triage": [
             "dish/docs/agents/development-workflow.md#Friction Inbox triage"
           ],
-          "dispatcher / Integration mechanics": [
-            "ci/pr-lifecycle-dispatcher-runbook.md#Review routing",
-            "ci/pr-lifecycle-dispatcher-runbook.md#BLOCK -> implementation/fix routing",
-            "ci/pr-lifecycle-dispatcher-runbook.md#Integration composition"
+          "manual Review / fix / Integration handoffs": [
+            "dish/docs/agents/review.md#Review claims and manual routing",
+            "dish/docs/agents/implementation.md#Manual Worker formal-BLOCK fix continuation",
+            "dish/docs/agents/integration.md#Manual Integration handoff"
           ],
           "durable review-state classification": [
             "dish/docs/agents/development-workflow.md#Durable review classification and verdicts"
@@ -405,7 +405,7 @@
           "id": "development-workflow-boundary",
           "impact": "additive",
           "surface": "authority",
-          "text": "Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker: post-PR fix, V1-A landing local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only."
+          "text": "Own dev mechanics; PR classification and role handoffs are manual acting-role work, with final landing local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only."
         },
         {
           "action_boundaries": [
@@ -872,7 +872,7 @@
           "id": "integration-local-only",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT, connector, and GitHub Actions landing are forbidden."
+          "text": "Integration V1-A final reconciliation/landing is local Claude/Codex only. The acting Coordinator creates and re-reads an exact-head durable handoff; the local Integrator re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT, connector, and GitHub Actions landing are forbidden."
         },
         {
           "action_boundaries": [
@@ -1041,7 +1041,7 @@
           ],
           "review routing / BLOCK": [
             "dish/docs/agents/review.md#Blocker fixes and recheck",
-            "dish/docs/agents/review.md#Review claims and dispatcher routing",
+            "dish/docs/agents/review.md#Review claims and manual routing",
             "dish/docs/agents/review.md#Worker BLOCK"
           ],
           "Review V4 material review / findings": [

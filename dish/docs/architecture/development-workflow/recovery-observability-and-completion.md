@@ -10,7 +10,7 @@ This document records recovery and terminal-state boundaries. Operational retry 
 
 ## Current architecture
 
-The development system recovers from durable GitHub, Asana, repository policy, and local claim/fence checkpoints. The lifecycle dispatcher has no authoritative queue database; on restart it reconstructs current state and routes only after fresh authority reads. Local Implementation and Integration use external durable state for exact lineage recovery, but those records never create assignment authority.
+The development system recovers from durable GitHub, Asana, repository policy, and local Git/worktree state. After restart or session replacement, the acting role reconstructs current state and routes only after fresh authority reads; there is no authoritative queue database or active background dispatcher. Local Implementation and Integration use external durable state for exact lineage recovery, but those records never create assignment authority.
 
 Ambiguous state-changing outcomes are reconciled before replay. A proven present effect is not repeated; a proven absent safe/idempotent effect may receive a bounded retry; unresolved ambiguity fails closed. Advisory activity signals help avoid duplicate work without becoming ownership or liveness proof.
 
@@ -28,16 +28,13 @@ Source landing closes only the repository phase. Required rollout, activation, d
 
 ## Current anchors
 
-- [`../../../../scripts/pr_lifecycle.py`](../../../../scripts/pr_lifecycle.py)
-- [`../../../../scripts/pr_lifecycle_local_integration.py`](../../../../scripts/pr_lifecycle_local_integration.py)
 - [`../../agents/audit.md`](../../agents/audit.md)
 - [`../../agents/development-workflow.md`](../../agents/development-workflow.md)
-- [`../../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../../ci/pr-lifecycle-dispatcher-runbook.md)
 
 ## Related documents
 
 - [Authority and state](authority-and-state.md)
 - [Lifecycle](lifecycle.md)
 - [Work identity and concurrency](work-identity-and-concurrency.md)
-- [ADR 0003](decisions/0003-single-restartable-lifecycle-dispatcher.md)
+- [Historical ADR 0003](decisions/0003-single-restartable-lifecycle-dispatcher.md)
 - [ADR 0004](decisions/0004-phases-remain-distinct.md)

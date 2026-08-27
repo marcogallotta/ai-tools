@@ -95,7 +95,7 @@ A successor should be able to continue from:
 
 If Asana or the live delta is unavailable, repository HEAD remains durable truth but transient orchestration may be missing. Ask Marco for the latest handoff before making decisions about unmerged work.
 
-On every fresh or replacement Coordinator session, before ordinary status conclusions, next-work selection, or dispatch, reconcile maintained Ready / In Progress / Review / Blocked state needed for the decision, stale handoffs and owned queue inconsistencies, audit governance and the latest audit round, and whether an audit is due from cadence/prior yield/engineering movement/material authority or process migration. Surface due-but-unsent, active, incomplete, or returned audits before ordinary dispatch. Reuse maintained Asana/dispatcher truth and keep the fast path narrow unless drift is detected; do not create a scheduler, second queue, or parallel lifecycle.
+On every fresh or replacement Coordinator session, before ordinary status conclusions, next-work selection, or dispatch, reconcile maintained Ready / In Progress / Review / Blocked state needed for the decision, stale handoffs and owned queue inconsistencies, audit governance and the latest audit round, and whether an audit is due from cadence/prior yield/engineering movement/material authority or process migration. Surface due-but-unsent, active, incomplete, or returned audits before ordinary dispatch. Reuse maintained Asana and GitHub truth and keep the manual fast path narrow unless drift is detected; do not create a scheduler, second queue, or parallel lifecycle.
 
 ## Asana live coordination
 
@@ -156,7 +156,7 @@ For a required active gate, classify the residual path from supported capabiliti
 2. **Ownership escalation:** if the gate cannot be satisfied by an existing supported operation and success requires a new or changed repository capability, classify the blocker **IMPLEMENTATION REQUIRED** immediately and route it through the existing Implementation lifecycle. Do not relabel it local operations, fixture repair, or deferred design. If an existing supported operation can safely produce the required state, keep the work **LOCAL SYSTEM ACCESS** instead of falsely escalating to Implementation.
 3. **Blocker consistency:** before marking a blocker `deferred` or `not required`, reread the active gate and prove that gate can pass without the blocker. If it cannot, keep the blocker on the critical path with the correct next owner. A separate PR that fixes another defect does not discharge this blocker.
 
-When the ownership-escalation condition fires, Marco-facing output follows the canonical action-first contract and begins: `This needs an Implementation fix: <one-sentence scope>.` Diagnosis may follow, but not before that action. Use the existing dispatcher and canonical Implementation handoff; do not create another queue, scheduler, or lifecycle controller. Root-cause analysis remains governed by the canonical shared Five Whys procedure rather than a new incident method here.
+When the ownership-escalation condition fires, Marco-facing output follows the canonical action-first contract and begins: `This needs an Implementation fix: <one-sentence scope>.` Diagnosis may follow, but not before that action. Use the canonical Implementation handoff and the acting role's manual lifecycle procedure; do not create a queue, scheduler, or lifecycle controller. Root-cause analysis remains governed by the canonical shared Five Whys procedure rather than a new incident method here.
 
 ## PR intake and review routing
 
@@ -164,9 +164,9 @@ Ordinary review discovery must filter out GitHub draft PRs. `draft=true` means i
 
 `draft=false` is the explicit REVIEW-READY transition. Pending ordinary CI after that transition is Integration evidence and does not send the PR back to authoring. Marco may explicitly request an exceptional early review of a draft. `scripts/pr_gate.py review-ready` encodes the same Review predicate. If a human-facing status is required for unfinished draft evidence, use only `PR #N still needs Implementation to finish <evidence>.`; do not ask Marco to choose the next agent or certification route.
 
-The repository lifecycle dispatcher owns routine PR polling, exact-head state classification, Review dispatch, local-work handoff, and authorized mechanical Integration continuation. Coordinator should consume its durable state/output for cross-lane ordering or genuine decisions rather than manually forwarding agent transcripts between roles. Routine transitions remain silent; Marco is notified only for a real local action/decision or useful terminal result.
+PR discovery, exact-head state classification, Review handoff, local-work handoff, and mechanical Integration handoff are manual responsibilities of the acting Coordinator/Review/Integration role. At each boundary, re-read GitHub and the owning Asana task, persist the exact handoff on its existing authority surface, and verify readback before treating the next role as authorized. Do not make Marco carry hidden transcripts between roles. Routine transitions remain silent; Marco is notified only for a real local action/decision or useful terminal result.
 
-If the dispatcher is unavailable or reports a configuration/capability boundary, record that exact residual boundary; do not recreate a second ad hoc queue in coordinator chat.
+If the acting role cannot read or persist a required handoff, record that exact residual capability boundary; do not recreate an ad hoc queue or pretend an automated dispatcher will resume it.
 
 For each returned implementation PR:
 
@@ -202,7 +202,7 @@ After local completion:
 - if no independent Review existed, route the new head through normal Review;
 - if any exact-head Review existed, do not transfer it to the new SHA—apply the standing semantic/mechanical head-movement rules first.
 
-A lifecycle dispatcher must be able to classify `LOCAL IMPLEMENTATION COMPLETION REQUIRED` directly from durable PR state without coordinator chat history.
+The acting Coordinator must classify `LOCAL IMPLEMENTATION COMPLETION REQUIRED` directly from durable PR state without relying on coordinator chat history.
 
 ## Review V4 final admission, human decisions, and interaction mode
 
@@ -222,7 +222,7 @@ Day-one rules for new work:
 - one implementation agent owns semantic changes on a branch at a time;
 - Claude Code/Codex use local git/worktrees as appropriate; ChatGPT uses connected-GitHub connector-native operations as source/history authority;
 - stale/merged/abandoned branches are not reused for unrelated work;
-- eligible terminal implementation lineages are cleaned by the repository PR lifecycle controller only after authoritative disposition and exact-lineage/recoverability checks; Coordinator treats any refusal as a residual anomaly rather than asking an agent to force cleanup.
+- eligible terminal implementation lineages are cleaned manually by the authorized acting role only after authoritative disposition and exact-lineage/recoverability checks; Coordinator treats any refusal as a residual anomaly rather than asking an agent to force cleanup.
 
 Default: **no direct-to-`main` commits**.
 

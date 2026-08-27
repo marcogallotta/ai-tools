@@ -17,7 +17,7 @@ When a PR changes a documented boundary, update the owning architecture document
 ## Invariants
 
 - Extend the existing authority or derived consumer before creating another writer, queue, scheduler, database, service, identity system, or control plane.
-- Reuse [the lifecycle dispatcher](../../../../scripts/pr_lifecycle.py) and existing gate predicates instead of adding a competing lifecycle controller.
+- Reuse the manual acting-role procedure and existing gate predicates instead of adding a lifecycle controller, queue, scheduler, or background poller without an accepted new design.
 - Put commands in runbooks, role permissions in standing contracts, current architecture here, proposals in Asana, and executable guarantees in code/tests.
 - ADRs capture consequential settled choices, not temporary mechanics or generic design principles.
 - Capability claims name the actual target host/surface and current evidence; unavailable capability is not assumed into existence.

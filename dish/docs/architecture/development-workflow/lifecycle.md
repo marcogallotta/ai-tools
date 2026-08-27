@@ -45,7 +45,7 @@ Integration uses the exact reviewed candidate and performs only authorized mecha
 - [`../../agents/implementation.md`](../../agents/implementation.md)
 - [`../../agents/review.md`](../../agents/review.md)
 - [`../../agents/integration.md`](../../agents/integration.md)
-- [`../../../../scripts/pr_lifecycle.py`](../../../../scripts/pr_lifecycle.py)
+- [`../../agents/development-workflow.md`](../../agents/development-workflow.md)
 - [`../../../../scripts/pr_gate.py`](../../../../scripts/pr_gate.py)
 
 ## Related documents

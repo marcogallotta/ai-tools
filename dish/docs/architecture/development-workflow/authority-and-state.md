@@ -12,15 +12,15 @@ This document identifies authoritative facts and derived state. Detailed transit
 
 | Fact | Authority | Derived consumers |
 |---|---|---|
-| Repository source/history and branch/PR head | GitHub | local refs, bundles, dispatcher views |
+| Repository source/history and branch/PR head | GitHub | local refs, bundles, manual status views |
 | Formal PR Review and CI/check evidence | GitHub records bound to exact head | Integration gate, status projection |
 | Accepted design, task decisions, lifecycle section, and dependencies | Live owning Asana task/project | handoffs and PR context |
 | Role authority and process invariants | Current repository contracts | Project kernels and handoffs |
 | Actual TEST/PROD state | Direct runtime/environment evidence | Asana status summaries |
 | Local Implementation ownership | Repository worktree claim for the exact lineage | identity files and PR leases |
-| Local Integration admission | Per-PR/head fence and fresh GitHub/Asana reads | dispatcher status |
+| Local Integration admission | Explicit exact-head handoff and fresh GitHub/Asana reads | manual status presentation |
 
-[The lifecycle dispatcher](../../../../scripts/pr_lifecycle.py) reconstructs a queue view from durable GitHub and linked Asana facts. Its process memory and output are projections, not authoritative lifecycle storage.
+The acting role reconstructs the current lifecycle view from durable GitHub and linked Asana facts immediately before acting. Conversation memory, local process state, and rendered status are projections, not authoritative lifecycle storage.
 
 ## Invariants
 
@@ -35,7 +35,7 @@ This document identifies authoritative facts and derived state. Detailed transit
 
 - [`../../agents/operator-provenance.md`](../../agents/operator-provenance.md)
 - [`../../agents/development-workflow-asana-mode.md`](../../agents/development-workflow-asana-mode.md)
-- [`../../../../scripts/pr_lifecycle.py`](../../../../scripts/pr_lifecycle.py)
+- [`../../agents/index.md`](../../agents/index.md)
 - [`../../../../tools/agent-worktree`](../../../../tools/agent-worktree)
 
 ## Related documents

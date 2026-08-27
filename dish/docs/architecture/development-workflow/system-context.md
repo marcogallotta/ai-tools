@@ -28,7 +28,7 @@ The same semantic role may run on ChatGPT, Claude Code, or Codex, but hosts expo
 - [Standing roles](../../agents/index.md)
 - [Operator control plane](../../../../OPERATOR_CONTROL_PLANE.md)
 - [Implementation handoff](../../agents/templates/implementation-handoff.md)
-- [Dispatcher runbook](../../../../ci/pr-lifecycle-dispatcher-runbook.md)
+- [Historical, never-activated dispatcher design](../../../../ci/pr-lifecycle-dispatcher-runbook.md)
 
 ## Related documents
 
