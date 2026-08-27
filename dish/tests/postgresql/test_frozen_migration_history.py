@@ -107,6 +107,13 @@ def test_empty_sqlite_upgrade_uses_frozen_history_through_head(tmp_path: Path) -
         assert "causality_edges" not in actual
         with engine.connect() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
+            insert_guard = connection.execute(
+                text(
+                    "SELECT sql FROM sqlite_master WHERE type='trigger' "
+                    "AND name='dish_states_validate_insert'"
+                )
+            ).scalar_one()
+            assert "OR r.archive_changed" in insert_guard
     finally:
         engine.dispose()
 
@@ -125,6 +132,20 @@ def test_causality_edge_retirement_offline_sql_guards_before_drop() -> None:
     assert "refusing to drop non-empty causality_edges" in sql
     drop_position = sql.index("DROP TABLE causality_edges")
     assert guard_position < drop_position
+
+
+def test_independent_archive_offline_postgresql_sql_guards_populated_state() -> None:
+    buffer = io.StringIO()
+    command.upgrade(
+        _offline_postgresql_config(buffer),
+        "0043_archived_at:0044_independent_archive",
+        sql=True,
+    )
+    sql = buffer.getvalue()
+
+    guard_position = sql.index("0044_independent_archive upgrade refuses populated archived rows")
+    assert "EXISTS (SELECT 1 FROM dish_states WHERE archived_at IS NOT NULL)" in sql
+    assert guard_position < sql.index("ADD COLUMN archive_changed")
 
 
 @pytest.mark.database_boundary

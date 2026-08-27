@@ -14,6 +14,15 @@ _EFFECT_CONSTRAINT = "ck_dish_mutation_receipts_at_least_one_effect"
 
 
 def _require_no_archived_rows(*, direction: str) -> None:
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute(f"""
+            DO $$ BEGIN
+              IF EXISTS (SELECT 1 FROM dish_states WHERE archived_at IS NOT NULL) THEN
+                RAISE EXCEPTION '0044_independent_archive {direction} refuses populated archived rows; repair from authoritative history first';
+              END IF;
+            END $$
+        """)
+        return
     if context.is_offline_mode():
         return
     count = int(
@@ -45,6 +54,26 @@ def _suspend_sqlite_receipt_triggers() -> tuple[str, ...]:
 def _restore_sqlite_triggers(statements: tuple[str, ...]) -> None:
     for statement in statements:
         op.get_bind().exec_driver_sql(statement)
+
+
+def _replace_sqlite_insert_guard(*, independent: bool) -> None:
+    connection = op.get_bind()
+    sql = connection.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' "
+        "AND name='dish_states_validate_insert'"
+    ).scalar_one()
+    plain = "OR r.completion_changed <> (r.dish_version=NEW.completion_version))"
+    archive = (
+        "OR r.completion_changed <> (r.dish_version=NEW.completion_version) "
+        "OR r.archive_changed)"
+    )
+    source, replacement = (plain, archive) if independent else (archive, plain)
+    if sql.count(source) != 1:
+        raise RuntimeError(
+            "dish_states_validate_insert has an unexpected archive guard shape"
+        )
+    connection.exec_driver_sql("DROP TRIGGER dish_states_validate_insert")
+    connection.exec_driver_sql(sql.replace(source, replacement))
 
 
 def _add_archive_effect() -> None:
@@ -246,6 +275,7 @@ def upgrade() -> None:
         _replace_postgresql_guard(independent=True)
     elif dialect == "sqlite":
         _replace_sqlite_guard(independent=True)
+        _replace_sqlite_insert_guard(independent=True)
 
 
 def downgrade() -> None:
@@ -260,4 +290,5 @@ def downgrade() -> None:
         )
     elif dialect == "sqlite":
         _replace_sqlite_guard(independent=False)
+        _replace_sqlite_insert_guard(independent=False)
     _drop_archive_effect()
