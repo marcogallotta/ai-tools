@@ -130,7 +130,7 @@ def test_codex_permission_request_allows_feature_and_pr_but_not_main(
         }, monkeypatch, capsys)
         assert (decision is not None) is allowed
         if allowed:
-            assert decision["hookSpecificOutput"]["permissionDecision"] == "allow"
+            assert decision["hookSpecificOutput"]["decision"] == {"behavior": "allow"}
 
 
 def test_codex_adapter_denies_raw_commit_in_nested_active_worktree(
