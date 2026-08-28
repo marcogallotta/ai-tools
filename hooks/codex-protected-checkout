@@ -36,7 +36,8 @@ def main():
     if invocation_cwd and not os.path.isabs(invocation_cwd) and session_cwd:
         invocation_cwd = os.path.join(session_cwd, invocation_cwd)
     if event == "PermissionRequest":
-        if protected_checkout.prompt_free_git(command, invocation_cwd):
+        if (protected_checkout.prompt_free_workflow(command, invocation_cwd)
+                or protected_checkout.prompt_free_git(command, invocation_cwd)):
             print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
                 "decision": {"behavior": "allow"}}}))
         return 0
