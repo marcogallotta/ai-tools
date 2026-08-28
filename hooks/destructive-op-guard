@@ -66,6 +66,16 @@ def deny(reason):
     }
 
 
+def allow(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
 split_segments = protected_checkout.split_segments
 
 
@@ -243,7 +253,7 @@ def check_git(segments, cwd=None):
             current_cwd = changed_cwd
 
     if protected_checkout.prompt_free_workflow("\n".join(segments), cwd or os.getcwd()):
-        return None
+        return allow("[destructive-op-guard] Known prompt-free workflow.")
     if protected_checkout.prompt_free_git("\n".join(segments), cwd or os.getcwd()):
         return None
 
