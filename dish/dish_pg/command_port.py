@@ -289,6 +289,36 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             ):
                 if task is None:
                     raise CommandRuleError("TASK_REQUIRED", "planning start requires a task")
+                state_statement = select(models.DishState).where(
+                    models.DishState.generation_id == generation.generation_id,
+                    models.DishState.task_id == task.task_id,
+                )
+                if self.session.get_bind().dialect.name == "postgresql":
+                    state_statement = state_statement.with_for_update()
+                state = self.session.scalar(
+                    state_statement.execution_options(populate_existing=True)
+                )
+                if state is None:
+                    raise CommandRuleError(
+                        "TASK_AUTHORITY_MISSING",
+                        "planning start requires current Dish authority",
+                    )
+                if state.archived_at is not None:
+                    data = {"guidance": {}}
+                    self._store_outcome(
+                        call=call,
+                        execution_id=None,
+                        task_id=task.task_id,
+                        operation_id=None,
+                        ok=False,
+                        code="TASK_ARCHIVED",
+                        http_status=409,
+                        data=data,
+                        audit_event_type="archived_task_mutation_rejected",
+                    )
+                    return CommandResult(
+                        False, call.command_name, "TASK_ARCHIVED", 409, data
+                    )
                 self._validate_planning_intent_basis(call, initial=True)
                 self._validate_planning_agent(
                     generation_id=generation.generation_id, call=call
