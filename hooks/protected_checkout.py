@@ -98,7 +98,7 @@ def _git_mutates(subcommand, args):
 
 def _targets_main(subcommand, args):
     if subcommand != "branch":
-        return any(re.search(r"(^|[/:])main($|:)", arg) for arg in args)
+        return any(re.search(r"(^|[/:])main($|:)", arg.lstrip("+")) for arg in args)
     skip_value = False
     targets = []
     for arg in args:
@@ -110,7 +110,7 @@ def _targets_main(subcommand, args):
             continue
         else:
             targets.append(arg)
-    return any(re.search(r"(^|[/:])main($|:)", arg) for arg in targets)
+    return any(re.search(r"(^|[/:])main($|:)", arg.lstrip("+")) for arg in targets)
 
 
 def prompt_free_workflow(command, cwd=None):

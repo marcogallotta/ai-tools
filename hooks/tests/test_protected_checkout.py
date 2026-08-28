@@ -17,6 +17,7 @@ def test_prompt_free_git_accepts_ordinary_feature_mutations(
 @pytest.mark.parametrize("command,cwd", [
     ("git commit -m x", "primary"),
     ("git push origin HEAD:main", "linked"),
+    ("git push origin +main", "linked"),
     ("git branch -D main", "linked"),
     ("git branch --set-upstream-toorigin/main", "primary"),
     ("git push --all", "linked"),
