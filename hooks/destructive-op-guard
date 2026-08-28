@@ -77,11 +77,15 @@ def allow(reason):
 
 
 def prompt_free_read(segment):
+    if any(marker in segment for marker in ("$", "`", ">", "<")):
+        return False
     tokens = tokenize(segment)
+    if not tokens or basename_token(tokens[0]) != "git":
+        return False
     sub = git_subcommand(tokens)
-    return sub in protected_checkout.PROMPT_FREE_READS - {"branch"} or (
-        sub == "branch" and ("--show-current" in tokens or not any(token in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy") for token in tokens))
-    )
+    if sub == "branch":
+        return tokens[tokens.index("branch") + 1 :] in ([], ["--show-current"])
+    return sub in protected_checkout.PROMPT_FREE_READS - {"branch"}
 
 
 def split_segments(cmd):
@@ -297,7 +301,7 @@ def check_git(segments, cwd=None):
     if git_reads and all(prompt_free_read(seg) for seg in git_reads):
         return allow("[destructive-op-guard] Known read-only Git command.")
     if protected_checkout.prompt_free_git("\n".join(segments), cwd or os.getcwd()):
-        return allow("[destructive-op-guard] Known prompt-free Git command.")
+        return None
 
     # Existing behavior remains unchanged outside active task worktrees.
     for seg in segments:
