@@ -66,6 +66,24 @@ def deny(reason):
     }
 
 
+def allow(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def prompt_free_read(segment):
+    tokens = tokenize(segment)
+    sub = git_subcommand(tokens)
+    return sub in protected_checkout.PROMPT_FREE_READS - {"branch"} or (
+        sub == "branch" and ("--show-current" in tokens or not any(token in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy") for token in tokens))
+    )
+
+
 def split_segments(cmd):
     """Split on unquoted ; | & and bare newlines (single chars, so && / ||
     split into two segments with an empty one between — filtered out by
@@ -275,8 +293,11 @@ def check_git(segments, cwd=None):
         if changed_cwd is not None:
             current_cwd = changed_cwd
 
+    git_reads = [seg for seg in segments if seg.strip()]
+    if git_reads and all(prompt_free_read(seg) for seg in git_reads):
+        return allow("[destructive-op-guard] Known read-only Git command.")
     if protected_checkout.prompt_free_git("\n".join(segments), cwd or os.getcwd()):
-        return None
+        return allow("[destructive-op-guard] Known prompt-free Git command.")
 
     # Existing behavior remains unchanged outside active task worktrees.
     for seg in segments:
