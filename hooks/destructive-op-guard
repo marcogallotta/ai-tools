@@ -77,15 +77,19 @@ def allow(reason):
 
 
 def prompt_free_read(segment):
-    if any(marker in segment for marker in ("$", "`", ">", "<")):
+    if any(marker in segment.replace("2>&1", "") for marker in ("$", "`", ">", "<")):
         return False
     tokens = tokenize(segment)
-    if not tokens or basename_token(tokens[0]) != "git":
+    if not tokens:
+        return False
+    if basename_token(tokens[0]) in {"echo", "grep", "pwd"}:
+        return True
+    if basename_token(tokens[0]) != "git":
         return False
     sub = git_subcommand(tokens)
     if sub == "branch":
-        return tokens[tokens.index("branch") + 1 :] in ([], ["--show-current"])
-    return sub in protected_checkout.PROMPT_FREE_READS - {"branch"}
+        return tokens[tokens.index("branch") + 1 :] in ([], ["-a"], ["--all"], ["--show-current"])
+    return sub == "fetch" or sub in protected_checkout.PROMPT_FREE_READS - {"branch"}
 
 
 def split_segments(cmd):
@@ -114,6 +118,8 @@ def split_segments(cmd):
         elif not in_single and not in_double and c == "\\" and i + 1 < n and cmd[i + 1] == "\n":
             i += 2
             continue
+        elif not in_single and not in_double and c == "&" and seg and seg[-1] == ">":
+            seg.append(c)
         elif not in_single and not in_double and c in ";|&\n":
             segments.append("".join(seg))
             seg = []
