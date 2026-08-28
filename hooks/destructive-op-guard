@@ -88,7 +88,7 @@ def prompt_free_read(segment):
         return False
     sub = git_subcommand(tokens)
     if sub == "branch":
-        return all(token.startswith("-") for token in tokens[tokens.index("branch") + 1 :])
+        return tokens[tokens.index("branch") + 1 :] in ([], ["-a"], ["--all"], ["--show-current"])
     return sub == "fetch" or sub in protected_checkout.PROMPT_FREE_READS - {"branch"}
 
 
