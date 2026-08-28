@@ -66,6 +66,28 @@ def deny(reason):
     }
 
 
+def allow(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def prompt_free_read(segment):
+    if any(marker in segment for marker in ("$", "`", ">", "<")):
+        return False
+    tokens = tokenize(segment)
+    if not tokens or basename_token(tokens[0]) != "git":
+        return False
+    sub = git_subcommand(tokens)
+    if sub == "branch":
+        return tokens[tokens.index("branch") + 1 :] in ([], ["--show-current"])
+    return sub in protected_checkout.PROMPT_FREE_READS - {"branch"}
+
+
 def split_segments(cmd):
     """Split on unquoted ; | & and bare newlines (single chars, so && / ||
     split into two segments with an empty one between — filtered out by
@@ -275,6 +297,9 @@ def check_git(segments, cwd=None):
         if changed_cwd is not None:
             current_cwd = changed_cwd
 
+    git_reads = [seg for seg in segments if seg.strip()]
+    if git_reads and all(prompt_free_read(seg) for seg in git_reads):
+        return allow("[destructive-op-guard] Known read-only Git command.")
     if protected_checkout.prompt_free_git("\n".join(segments), cwd or os.getcwd()):
         return None
 
