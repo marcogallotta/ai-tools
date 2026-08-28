@@ -19,7 +19,7 @@ def run_hook(module, command, monkeypatch, capsys, cwd=None):
 
 
 def assert_allowed(decision):
-    assert decision is None
+    assert decision is None or decision["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
 def assert_asked(decision, substring):
@@ -265,6 +265,13 @@ class TestGitSubcommands:
     def test_git_status_allowed(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git status", monkeypatch, capsys)
         assert_allowed(decision)
+
+    def test_dash_c_read_compound_explicitly_allowed(
+        self, destructive_op_guard, monkeypatch, capsys
+    ):
+        command = "git -C /tmp status --short && git -C /tmp branch --show-current"
+        decision = run_hook(destructive_op_guard, command, monkeypatch, capsys)
+        assert decision["hookSpecificOutput"]["permissionDecision"] == "allow"
 
     def test_git_reset_hard_asked(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git reset --hard HEAD~1", monkeypatch, capsys)

@@ -24,6 +24,39 @@ COMMAND_WRAPPERS = {"command", "exec", "nohup", "sudo"}
 CONTROL_PREFIXES = {"!", "do", "elif", "else", "if", "then", "time", "until", "while"}
 PROMPT_FREE_READS = {"branch", "diff", "grep", "log", "ls-files", "merge-base", "rev-parse", "show", "status"}
 BRANCH_MUTATIONS = {"branch", "checkout", "cherry-pick", "clean", "commit", "merge", "mv", "push", "rebase", "reset", "restore", "revert", "switch"}
+PROMPT_FREE_UTILITIES = {"echo", "grep", "pwd"}
+PROMPT_FREE_BRANCH_ARGS = {(), ("-a",), ("--all",), ("--show-current",)}
+
+
+def _prompt_free_workflow_segment(segment, *, allow_utilities=True):
+    pairs = _classify_tokens(segment)
+    if not pairs or any(active & {"$", "`"} for _text, active in pairs):
+        return False
+    if any(("<" in text or ">" in text) and text != "2>&1" for text, _active in pairs):
+        return False
+    command_idx = _command_index(pairs)
+    if command_idx != 0:
+        return False
+    command = basename_token(pairs[0][0])
+    if command in PROMPT_FREE_UTILITIES:
+        return allow_utilities
+    if command != "git":
+        return False
+    location_args, global_args, subcommand_idx, ambiguous, alias_ambiguous = _resolve_git_invocation(pairs, 0)
+    if ambiguous or alias_ambiguous or subcommand_idx is None or global_args != location_args:
+        return False
+    if any(arg != "-C" and not arg.startswith("-C=") for arg in location_args[::2]):
+        return False
+    subcommand = pairs[subcommand_idx][0]
+    args = [text for text, _active in pairs[subcommand_idx + 1 :] if text != "2>&1"]
+    if subcommand == "branch":
+        return tuple(args) in PROMPT_FREE_BRANCH_ARGS
+    return subcommand == "fetch" or subcommand in PROMPT_FREE_READS - {"branch"}
+
+
+def prompt_free_workflow(command, _cwd=None):
+    segments = [part for part in split_segments(command) if part.strip()]
+    return bool(segments) and all(_prompt_free_workflow_segment(part) for part in segments)
 
 
 def prompt_free_git(command, cwd):
@@ -35,6 +68,8 @@ def prompt_free_git(command, cwd):
     except ValueError:
         return False
     if len(tokens) >= 2 and basename_token(tokens[0]) == "gh" and tokens[1] == "pr":
+        return True
+    if _prompt_free_workflow_segment(segments[0], allow_utilities=False):
         return True
     if len(tokens) < 2 or basename_token(tokens[0]) != "git" or tokens[1].startswith("-"):
         return False
@@ -70,6 +105,8 @@ def split_segments(command):
         elif not in_single and not in_double and char == "\\" and i + 1 < len(command) and command[i + 1] == "\n":
             i += 2
             continue
+        elif not in_single and not in_double and char == "&" and segment and segment[-1] == ">":
+            segment.append(char)
         elif not in_single and not in_double and char in ";|&\n":
             segments.append("".join(segment))
             segment = []

@@ -76,58 +76,7 @@ def allow(reason):
     }
 
 
-def prompt_free_read(segment):
-    if any(marker in segment.replace("2>&1", "") for marker in ("$", "`", ">", "<")):
-        return False
-    tokens = tokenize(segment)
-    if not tokens:
-        return False
-    if basename_token(tokens[0]) in {"echo", "grep", "pwd"}:
-        return True
-    if basename_token(tokens[0]) != "git":
-        return False
-    sub = git_subcommand(tokens)
-    if sub == "branch":
-        return tokens[tokens.index("branch") + 1 :] in ([], ["-a"], ["--all"], ["--show-current"])
-    return sub == "fetch" or sub in protected_checkout.PROMPT_FREE_READS - {"branch"}
-
-
-def split_segments(cmd):
-    """Split on unquoted ; | & and bare newlines (single chars, so && / ||
-    split into two segments with an empty one between — filtered out by
-    callers), leaving quoted spans untouched. A bare newline ends a command
-    exactly like ';' does in real bash, so it splits too — otherwise two
-    unrelated stacked commands (e.g. "rm -rf /tmp/x\npython foo --bar baz")
-    get tokenized as one segment and a later command's arguments get
-    misread as targets of an earlier command's check. An unquoted
-    backslash immediately before a newline is a shell line-continuation,
-    not a terminator, so that pair is elided and the segment stays open."""
-    segments = []
-    seg = []
-    in_single = in_double = False
-    i = 0
-    n = len(cmd)
-    while i < n:
-        c = cmd[i]
-        if c == "'" and not in_double:
-            in_single = not in_single
-            seg.append(c)
-        elif c == '"' and not in_single:
-            in_double = not in_double
-            seg.append(c)
-        elif not in_single and not in_double and c == "\\" and i + 1 < n and cmd[i + 1] == "\n":
-            i += 2
-            continue
-        elif not in_single and not in_double and c == "&" and seg and seg[-1] == ">":
-            seg.append(c)
-        elif not in_single and not in_double and c in ";|&\n":
-            segments.append("".join(seg))
-            seg = []
-        else:
-            seg.append(c)
-        i += 1
-    segments.append("".join(seg))
-    return segments
+split_segments = protected_checkout.split_segments
 
 
 def tokenize(segment):
@@ -303,9 +252,8 @@ def check_git(segments, cwd=None):
         if changed_cwd is not None:
             current_cwd = changed_cwd
 
-    git_reads = [seg for seg in segments if seg.strip()]
-    if git_reads and all(prompt_free_read(seg) for seg in git_reads):
-        return allow("[destructive-op-guard] Known read-only Git command.")
+    if protected_checkout.prompt_free_workflow("\n".join(segments), cwd or os.getcwd()):
+        return allow("[destructive-op-guard] Known prompt-free workflow.")
     if protected_checkout.prompt_free_git("\n".join(segments), cwd or os.getcwd()):
         return None
 
