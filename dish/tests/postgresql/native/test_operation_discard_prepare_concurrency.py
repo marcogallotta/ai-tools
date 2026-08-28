@@ -48,30 +48,6 @@ def _require_native_postgresql(request: pytest.FixtureRequest) -> None:
 
 
 
-class _DelayedOperationRepository(WorkflowAuthorityRepository):
-    def __init__(self, *args, gate: TransactionGate, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._gate = gate
-
-    def _locked_operation(self, *, generation_id, operation_id):
-        self._gate.block()
-        return super()._locked_operation(
-            generation_id=generation_id,
-            operation_id=operation_id,
-        )
-
-
-class _DelayedOperationPort(PostgresCommandPort):
-    def __init__(
-        self,
-        *args,
-        gate: TransactionGate,
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.workflow.repo = _DelayedOperationRepository(self.session, gate=gate)
-
-
 class _DelayedTaskAuthorityPort(PostgresCommandPort):
     def __init__(self, *args, gate: TransactionGate, **kwargs):
         super().__init__(*args, **kwargs)
@@ -83,7 +59,7 @@ class _DelayedTaskAuthorityPort(PostgresCommandPort):
 
 
 def _command_port(session, *, delayed=None) -> PostgresCommandPort:
-    cls = _DelayedOperationPort if delayed is not None else PostgresCommandPort
+    cls = _DelayedTaskAuthorityPort if delayed is not None else PostgresCommandPort
     kwargs = dict(
         cursor_secret=SECRET,
         uuid_factory=uuid.uuid4,
@@ -295,14 +271,14 @@ def test_native_archive_commits_before_inspect_authority_and_inspect_is_inert(
         ) == 0
 
 
-def test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_intent(
+def test_native_discard_commits_before_prepare_authority_and_leaves_no_actionable_intent(
     core_db,
 ) -> None:
     factory, ids, context, task_id = native_workflow_db(core_db)
     author_run, admin_run, operation_id = _seed_open_operation(
         factory, ids, context, task_id
     )
-    gate = TransactionGate(label="prepare waits before operation lock")
+    gate = TransactionGate(label="prepare waits before task authority lock")
     engine = factory.kw["bind"]
 
     def delayed_prepare():
@@ -371,14 +347,14 @@ def test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_int
         ) == 0
 
 
-def test_native_prepare_commits_before_discard_lock_and_discard_cannot_cancel(
+def test_native_prepare_commits_before_discard_authority_and_discard_cannot_cancel(
     core_db,
 ) -> None:
     factory, ids, context, task_id = native_workflow_db(core_db)
     author_run, admin_run, operation_id = _seed_open_operation(
         factory, ids, context, task_id
     )
-    gate = TransactionGate(label="discard waits before operation lock")
+    gate = TransactionGate(label="discard waits before task authority lock")
     engine = factory.kw["bind"]
 
     def delayed_discard():
