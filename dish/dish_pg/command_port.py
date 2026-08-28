@@ -281,6 +281,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         self._pending_scalar_mutations.clear()
         try:
             task, operation = self._resolve_targets(call)
+            task_state = (
+                self._lock_task_authority(generation.generation_id, task.task_id)
+                if task is not None
+                else None
+            )
             if (
                 call.command_name == "start"
                 and call.arguments.get("kind") == "planning"
@@ -289,21 +294,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             ):
                 if task is None:
                     raise CommandRuleError("TASK_REQUIRED", "planning start requires a task")
-                state_statement = select(models.DishState).where(
-                    models.DishState.generation_id == generation.generation_id,
-                    models.DishState.task_id == task.task_id,
-                )
-                if self.session.get_bind().dialect.name == "postgresql":
-                    state_statement = state_statement.with_for_update()
-                state = self.session.scalar(
-                    state_statement.execution_options(populate_existing=True)
-                )
-                if state is None:
-                    raise CommandRuleError(
-                        "TASK_AUTHORITY_MISSING",
-                        "planning start requires current Dish authority",
-                    )
-                if state.archived_at is not None:
+                assert task_state is not None
+                if task_state.archived_at is not None:
                     data = {"guidance": {}}
                     self._store_outcome(
                         call=call,
@@ -1245,6 +1237,25 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "OPEN_OPERATION_REQUIRED", "workflow operation no longer exists"
             )
         return operation
+
+    def _lock_task_authority(
+        self, generation_id: uuid.UUID, task_id: uuid.UUID
+    ) -> models.DishState:
+        statement = select(models.DishState).where(
+            models.DishState.generation_id == generation_id,
+            models.DishState.task_id == task_id,
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update()
+        state = self.session.scalar(
+            statement.execution_options(populate_existing=True)
+        )
+        if state is None:
+            raise CommandRuleError(
+                "TASK_AUTHORITY_MISSING",
+                "command requires current Dish authority",
+            )
+        return state
 
     def _change_intent(self, operation: wf.WorkflowOperation) -> tuple[str, str]:
         creation_execution_id = operation.creation_execution_id
