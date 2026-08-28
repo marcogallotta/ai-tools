@@ -190,7 +190,7 @@ def plan_command(
             fence=snapshot.fence,
             audit_event_type="task_missing",
         )
-    if snapshot.archived and intent.command_name not in {"read", "inspect"}:
+    if snapshot.archived:
         return CommandPlan(
             definition=definition,
             legal=False,
