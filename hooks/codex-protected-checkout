@@ -20,6 +20,18 @@ def deny(reason):
     }
 
 
+def active_task_mutation(command, cwd):
+    current_cwd = cwd or os.getcwd()
+    for segment in protected_checkout.split_segments(command):
+        active = protected_checkout.active_task_for_git_segment(segment, current_cwd)
+        if active and active[1] in ("add", "commit", "push"):
+            return active
+        changed_cwd = protected_checkout._literal_cd_target(segment, current_cwd)
+        if changed_cwd is not None:
+            current_cwd = changed_cwd
+    return None
+
+
 def main():
     payload = json.load(sys.stdin)
     event = payload.get("hook_event_name") or "PreToolUse"
@@ -41,8 +53,8 @@ def main():
             print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
                 "decision": {"behavior": "allow"}}}))
         return 0
-    active = protected_checkout.active_task_for_git_segment(command, invocation_cwd)
-    if active and active[1] in ("add", "commit", "push"):
+    active = active_task_mutation(command, invocation_cwd)
+    if active:
         print(json.dumps(deny(f"[protected-checkout] Raw git {active[1]} is denied in active Dish task {active[0]}; use tools/agent-worktree.")))
         return 0
     if not applies(payload):

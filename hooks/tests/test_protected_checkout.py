@@ -6,6 +6,7 @@ import pytest
 @pytest.mark.parametrize("command", [
     "git commit -m x", "git push --force", "git reset --hard HEAD",
     "git clean -fd", "git restore README.md", "git branch -D old",
+    "git branch -uorigin/main",
 ])
 def test_prompt_free_git_accepts_ordinary_feature_mutations(
     classifier_module, protected_repo, command
@@ -16,7 +17,9 @@ def test_prompt_free_git_accepts_ordinary_feature_mutations(
 @pytest.mark.parametrize("command,cwd", [
     ("git commit -m x", "primary"),
     ("git push origin HEAD:main", "linked"),
+    ("git push origin +main", "linked"),
     ("git branch -D main", "linked"),
+    ("git branch --set-upstream-toorigin/main", "primary"),
     ("git push --all", "linked"),
     ("git push --mirror", "linked"),
     ('git push origin "$DEST"', "linked"),
@@ -38,18 +41,23 @@ def test_prompt_free_git_accepts_direct_pr_command(classifier_module, protected_
     "git -C /tmp status --short && git -C /tmp branch --show-current",
     'git status; echo "---UPSTREAM---"; git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>&1',
     'git fetch origin pull/30/head:pr30 2>&1; pwd; git branch -a | grep -E "pr30"',
+    "git log --oneline -20 && echo --- && git status && echo --- && git branch -vv && echo --- && git remote -v",
+    "git status; git commit -m routine-feature-commit",
+    "git branch --unset-upstream",
 ])
-def test_prompt_free_workflow_accepts_routine_compounds(classifier_module, command):
-    assert classifier_module.prompt_free_workflow(command)
+def test_prompt_free_workflow_accepts_routine_compounds(
+    classifier_module, protected_repo, command
+):
+    assert classifier_module.prompt_free_workflow(command, protected_repo["linked"])
 
 
 @pytest.mark.parametrize("command", [
-    "git status; git commit -m bad",
     "git fetch origin; rm -rf /tmp/no",
-    "git branch --unset-upstream",
     'bash -c "echo x" git status',
     'git show "$(touch /tmp/no)"',
     "git status > /tmp/no",
+    "cd /tmp > /tmp/no && git status",
+    "cd /tmp $(touch /tmp/no) && git status",
 ])
 def test_prompt_free_workflow_rejects_unsafe_compounds(classifier_module, command):
     assert not classifier_module.prompt_free_workflow(command)

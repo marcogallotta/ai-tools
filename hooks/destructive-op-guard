@@ -252,12 +252,6 @@ def check_git(segments, cwd=None):
         if changed_cwd is not None:
             current_cwd = changed_cwd
 
-    if protected_checkout.prompt_free_workflow("\n".join(segments), cwd or os.getcwd()):
-        return allow("[destructive-op-guard] Known prompt-free workflow.")
-    if protected_checkout.prompt_free_git("\n".join(segments), cwd or os.getcwd()):
-        return None
-
-    # Existing behavior remains unchanged outside active task worktrees.
     for seg in segments:
         tokens = tokenize(seg)
         for i, t in enumerate(tokens):
@@ -271,27 +265,24 @@ def check_git(segments, cwd=None):
 
     for seg in segments:
         tokens = tokenize(seg)
-        sub = git_subcommand(tokens)
-        if sub and sub != "add":
-            return ask(
-                "[destructive-op-guard] Destructive git operation "
-                "(commit/push/checkout/restore/clean/mv) requires explicit approval."
-            )
-
-    for seg in segments:
-        tokens = tokenize(seg)
-        if git_subcommand(tokens) != "reset":
-            continue
-        if "--hard" in tokens:
-            return ask("[destructive-op-guard] Destructive git operation (reset --hard) requires explicit approval.")
-
-    for seg in segments:
-        tokens = tokenize(seg)
         if git_subcommand(tokens) == "add":
             return deny(
                 "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can "
                 "collide with another session's commit. Use the repository's bounded commit wrapper. "
                 "Run 'git-commit --help' first if unsure."
+            )
+
+    current_cwd = cwd or os.getcwd()
+    for seg in segments:
+        changed_cwd = protected_checkout._literal_cd_target(seg, current_cwd)
+        if changed_cwd is not None:
+            current_cwd = changed_cwd
+            continue
+        sub = git_subcommand(tokenize(seg))
+        if sub in protected_checkout.BRANCH_MUTATIONS and not protected_checkout.prompt_free_git(seg, current_cwd):
+            return ask(
+                "[destructive-op-guard] Destructive git operation on main or an unresolved target "
+                "requires explicit approval."
             )
 
     return None
@@ -361,15 +352,22 @@ def check_ssh(segments):
 
 def evaluate(cmd, cwd=None):
     segments = segments_of(cmd)
-    return (
-        check_rm(segments)
-        or check_docker(segments)
-        or check_protected_checkout(segments, cwd)
-        or check_git(segments, cwd)
-        #or check_psql(segments)
-        or check_rsync(segments)
-        or check_ssh(segments)
-    )
+    decisions = [
+        check_rm(segments),
+        check_docker(segments),
+        check_protected_checkout(segments, cwd),
+        check_git(segments, cwd),
+        # check_psql(segments),
+        check_rsync(segments),
+        check_ssh(segments),
+    ]
+    for priority in ("deny", "ask"):
+        for decision in decisions:
+            if decision and decision["hookSpecificOutput"]["permissionDecision"] == priority:
+                return decision
+    if protected_checkout.prompt_free_workflow(cmd, cwd or os.getcwd()):
+        return allow("[destructive-op-guard] Known prompt-free workflow.")
+    return None
 
 
 def main() -> int:
