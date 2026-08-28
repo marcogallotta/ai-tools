@@ -25,66 +25,119 @@ CONTROL_PREFIXES = {"!", "do", "elif", "else", "if", "then", "time", "until", "w
 PROMPT_FREE_READS = {"branch", "diff", "grep", "log", "ls-files", "merge-base", "rev-parse", "show", "status"}
 BRANCH_MUTATIONS = {"branch", "checkout", "cherry-pick", "clean", "commit", "merge", "mv", "push", "rebase", "reset", "restore", "revert", "switch"}
 PROMPT_FREE_UTILITIES = {"echo", "grep", "pwd"}
-PROMPT_FREE_BRANCH_ARGS = {(), ("-a",), ("--all",), ("--show-current",)}
+BRANCH_MUTATION_FLAGS = ("-c", "-C", "-d", "-D", "-m", "-M", "--copy", "--delete", "--edit-description", "--move", "--set-upstream-to", "--unset-upstream")
+BRANCH_READ_VALUE_FLAGS = {"--contains", "--format", "--merged", "--no-contains", "--no-merged", "--points-at", "--sort"}
+GIT_EXECUTION_FLAGS = ("--exec-path", "--ext-diff", "--open-files-in-pager", "--textconv")
 
 
-def _prompt_free_workflow_segment(segment, *, allow_utilities=True):
+def _safe_direct_tokens(segment):
     pairs = _classify_tokens(segment)
     if not pairs or any(active & {"$", "`"} for _text, active in pairs):
-        return False
+        return None
     if any(("<" in text or ">" in text) and text != "2>&1" for text, _active in pairs):
-        return False
-    command_idx = _command_index(pairs)
-    if command_idx != 0:
-        return False
-    command = basename_token(pairs[0][0])
-    if command in PROMPT_FREE_UTILITIES:
-        return allow_utilities
-    if command != "git":
-        return False
+        return None
+    return pairs if _command_index(pairs) == 0 else None
+
+
+def _only_dash_c(args):
+    index = 0
+    while index < len(args):
+        if args[index] == "-C" and index + 1 < len(args):
+            index += 2
+        elif args[index].startswith("-C="):
+            index += 1
+        else:
+            return False
+    return True
+
+
+def _direct_git_invocation(segment, cwd):
+    pairs = _safe_direct_tokens(segment)
+    if not pairs or basename_token(pairs[0][0]) != "git":
+        return None
     location_args, global_args, subcommand_idx, ambiguous, alias_ambiguous = _resolve_git_invocation(pairs, 0)
     if ambiguous or alias_ambiguous or subcommand_idx is None or global_args != location_args:
-        return False
-    if any(arg != "-C" and not arg.startswith("-C=") for arg in location_args[::2]):
-        return False
+        return None
+    if not _only_dash_c(location_args):
+        return None
     subcommand = pairs[subcommand_idx][0]
     args = [text for text, _active in pairs[subcommand_idx + 1 :] if text != "2>&1"]
+    if any(any(arg == flag or arg.startswith(flag + "=") for flag in GIT_EXECUTION_FLAGS) for arg in args):
+        return None
+    builtins = _run_git([*location_args, "--list-cmds=main,builtins"], {}, cwd)
+    if not builtins or builtins.returncode != 0 or subcommand not in builtins.stdout.splitlines():
+        return None
+    return location_args, subcommand, args
+
+
+def _branch_mutates(args):
+    if any(any(arg == flag or arg.startswith(flag + "=") for flag in BRANCH_MUTATION_FLAGS) for arg in args):
+        return True
+    if "--list" in args:
+        return False
+    consume_value = False
+    for arg in args:
+        if consume_value:
+            consume_value = False
+        elif arg in BRANCH_READ_VALUE_FLAGS:
+            consume_value = True
+        elif any(arg.startswith(flag + "=") for flag in BRANCH_READ_VALUE_FLAGS):
+            continue
+        elif not arg.startswith("-"):
+            return True
+    return False
+
+
+def _git_mutates(subcommand, args):
+    if subcommand == "add":
+        return True
     if subcommand == "branch":
-        return tuple(args) in PROMPT_FREE_BRANCH_ARGS
-    return subcommand == "fetch" or subcommand in PROMPT_FREE_READS - {"branch"}
+        return _branch_mutates(args)
+    return subcommand in BRANCH_MUTATIONS
 
 
-def prompt_free_workflow(command, _cwd=None):
+def prompt_free_workflow(command, cwd=None):
     segments = [part for part in split_segments(command) if part.strip()]
-    return bool(segments) and all(_prompt_free_workflow_segment(part) for part in segments)
+    if not segments:
+        return False
+    current_cwd = cwd or os.getcwd()
+    for segment in segments:
+        changed_cwd = _literal_cd_target(segment, current_cwd)
+        if changed_cwd is not None:
+            current_cwd = changed_cwd
+            continue
+        pairs = _safe_direct_tokens(segment)
+        if pairs and basename_token(pairs[0][0]) in PROMPT_FREE_UTILITIES:
+            continue
+        if pairs and len(pairs) >= 2 and basename_token(pairs[0][0]) == "gh" and pairs[1][0] == "pr":
+            continue
+        if not prompt_free_git(segment, current_cwd):
+            return False
+    return True
 
 
 def prompt_free_git(command, cwd):
     segments = [part for part in split_segments(command) if part.strip()]
     if len(segments) != 1:
         return False
-    try:
-        tokens = shlex.split(segments[0])
-    except ValueError:
-        return False
-    if len(tokens) >= 2 and basename_token(tokens[0]) == "gh" and tokens[1] == "pr":
+    pairs = _safe_direct_tokens(segments[0])
+    if pairs and len(pairs) >= 2 and basename_token(pairs[0][0]) == "gh" and pairs[1][0] == "pr":
         return True
-    if _prompt_free_workflow_segment(segments[0], allow_utilities=False):
+    invocation = _direct_git_invocation(segments[0], cwd)
+    if invocation is None:
+        return False
+    location_args, subcommand, args = invocation
+    if any(arg in ("-h", "--help") for arg in args):
         return True
-    if len(tokens) < 2 or basename_token(tokens[0]) != "git" or tokens[1].startswith("-"):
-        return False
-    subcommand = tokens[1]
-    if any(arg in ("-h", "--help") for arg in tokens[2:]):
+    if not _git_mutates(subcommand, args):
         return True
-    if subcommand in PROMPT_FREE_READS and (subcommand != "branch" or all(arg.startswith("-") and not arg.startswith(("-d", "-D", "-m", "-M", "-c", "-C")) for arg in tokens[2:])):
-        return True
-    if subcommand not in BRANCH_MUTATIONS or subcommand == "add":
+    if subcommand == "add":
         return False
-    if any(any(char in arg for char in SHELL_EXPANSION_CHARS) for arg in tokens[2:]) or (subcommand == "push" and any(arg in ("--all", "--mirror") for arg in tokens[2:])):
+    if subcommand == "push" and any(arg in ("--all", "--mirror") for arg in args):
         return False
-    if subcommand in {"branch", "checkout", "push", "switch"} and any(re.search(r"(^|[/:])main($|:)", arg) for arg in tokens[2:]):
+    if subcommand in {"branch", "checkout", "push", "switch"} and any(re.search(r"(^|[/:])main($|:)", arg) for arg in args):
         return False
-    result = _run_git(["branch", "--show-current"], {}, cwd)
+    result = _run_git([*location_args, "branch", "--show-current"], {}, cwd)
     return bool(result and result.returncode == 0 and result.stdout.strip() not in ("", "main"))
 
 

@@ -38,15 +38,16 @@ def test_prompt_free_git_accepts_direct_pr_command(classifier_module, protected_
     "git -C /tmp status --short && git -C /tmp branch --show-current",
     'git status; echo "---UPSTREAM---"; git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>&1',
     'git fetch origin pull/30/head:pr30 2>&1; pwd; git branch -a | grep -E "pr30"',
+    "git log --oneline -20 && echo --- && git status && echo --- && git branch -vv && echo --- && git remote -v",
+    "git status; git commit -m routine-feature-commit",
+    "git branch --unset-upstream",
 ])
 def test_prompt_free_workflow_accepts_routine_compounds(classifier_module, command):
     assert classifier_module.prompt_free_workflow(command)
 
 
 @pytest.mark.parametrize("command", [
-    "git status; git commit -m bad",
     "git fetch origin; rm -rf /tmp/no",
-    "git branch --unset-upstream",
     'bash -c "echo x" git status',
     'git show "$(touch /tmp/no)"',
     "git status > /tmp/no",
