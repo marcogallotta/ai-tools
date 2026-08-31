@@ -66,40 +66,17 @@ def deny(reason):
     }
 
 
-def split_segments(cmd):
-    """Split on unquoted ; | & and bare newlines (single chars, so && / ||
-    split into two segments with an empty one between — filtered out by
-    callers), leaving quoted spans untouched. A bare newline ends a command
-    exactly like ';' does in real bash, so it splits too — otherwise two
-    unrelated stacked commands (e.g. "rm -rf /tmp/x\npython foo --bar baz")
-    get tokenized as one segment and a later command's arguments get
-    misread as targets of an earlier command's check. An unquoted
-    backslash immediately before a newline is a shell line-continuation,
-    not a terminator, so that pair is elided and the segment stays open."""
-    segments = []
-    seg = []
-    in_single = in_double = False
-    i = 0
-    n = len(cmd)
-    while i < n:
-        c = cmd[i]
-        if c == "'" and not in_double:
-            in_single = not in_single
-            seg.append(c)
-        elif c == '"' and not in_single:
-            in_double = not in_double
-            seg.append(c)
-        elif not in_single and not in_double and c == "\\" and i + 1 < n and cmd[i + 1] == "\n":
-            i += 2
-            continue
-        elif not in_single and not in_double and c in ";|&\n":
-            segments.append("".join(seg))
-            seg = []
-        else:
-            seg.append(c)
-        i += 1
-    segments.append("".join(seg))
-    return segments
+def allow(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+split_segments = protected_checkout.split_segments
 
 
 def tokenize(segment):
@@ -232,8 +209,25 @@ def git_subcommand(tokens):
     return None
 
 
+def _is_isolated_worktree(cwd):
+    """True when cwd resolves to a linked worktree of *this* repository (not
+    the shared primary checkout, and not an unrelated repo) — the normal
+    home for task-scoped agent work, where the routine git-commit approval
+    prompt is friction rather than protection."""
+    identity = protected_checkout._resolve_repo_identity([], {}, cwd)
+    if identity is None:
+        return False
+    _toplevel, git_dir, common_dir = identity
+    protected_git_dir = os.path.realpath(os.path.join(PROTECTED_CHECKOUT_ROOT, ".git"))
+    return (
+        os.path.realpath(common_dir) == protected_git_dir
+        and os.path.realpath(git_dir) != os.path.realpath(common_dir)
+    )
+
+
 def check_git(segments, cwd=None):
     current_cwd = cwd or os.getcwd()
+    isolated_worktree = _is_isolated_worktree(current_cwd)
 
     # Active Dish task worktrees have a single canonical mutation boundary.
     # Raw staging/commit/publication paths are hard denials, not approval
@@ -275,10 +269,6 @@ def check_git(segments, cwd=None):
         if changed_cwd is not None:
             current_cwd = changed_cwd
 
-    if protected_checkout.prompt_free_git("\n".join(segments), cwd or os.getcwd()):
-        return None
-
-    # Existing behavior remains unchanged outside active task worktrees.
     for seg in segments:
         tokens = tokenize(seg)
         for i, t in enumerate(tokens):
@@ -288,23 +278,9 @@ def check_git(segments, cwd=None):
                 continue
             if tokens[i + 1] in ("--help", "-h"):
                 continue
+            if isolated_worktree:
+                continue
             return ask("[destructive-op-guard] git-commit (stage + commit) requires explicit approval.")
-
-    for seg in segments:
-        tokens = tokenize(seg)
-        sub = git_subcommand(tokens)
-        if sub and sub != "add":
-            return ask(
-                "[destructive-op-guard] Destructive git operation "
-                "(commit/push/checkout/restore/clean/mv) requires explicit approval."
-            )
-
-    for seg in segments:
-        tokens = tokenize(seg)
-        if git_subcommand(tokens) != "reset":
-            continue
-        if "--hard" in tokens:
-            return ask("[destructive-op-guard] Destructive git operation (reset --hard) requires explicit approval.")
 
     for seg in segments:
         tokens = tokenize(seg)
@@ -313,6 +289,19 @@ def check_git(segments, cwd=None):
                 "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can "
                 "collide with another session's commit. Use the repository's bounded commit wrapper. "
                 "Run 'git-commit --help' first if unsure."
+            )
+
+    current_cwd = cwd or os.getcwd()
+    for seg in segments:
+        changed_cwd = protected_checkout._literal_cd_target(seg, current_cwd)
+        if changed_cwd is not None:
+            current_cwd = changed_cwd
+            continue
+        sub = git_subcommand(tokenize(seg))
+        if sub in protected_checkout.BRANCH_MUTATIONS and not protected_checkout.prompt_free_git(seg, current_cwd):
+            return ask(
+                "[destructive-op-guard] Destructive git operation on main or an unresolved target "
+                "requires explicit approval."
             )
 
     return None
@@ -382,15 +371,22 @@ def check_ssh(segments):
 
 def evaluate(cmd, cwd=None):
     segments = segments_of(cmd)
-    return (
-        check_rm(segments)
-        or check_docker(segments)
-        or check_protected_checkout(segments, cwd)
-        or check_git(segments, cwd)
-        #or check_psql(segments)
-        or check_rsync(segments)
-        or check_ssh(segments)
-    )
+    decisions = [
+        check_rm(segments),
+        check_docker(segments),
+        check_protected_checkout(segments, cwd),
+        check_git(segments, cwd),
+        # check_psql(segments),
+        check_rsync(segments),
+        check_ssh(segments),
+    ]
+    for priority in ("deny", "ask"):
+        for decision in decisions:
+            if decision and decision["hookSpecificOutput"]["permissionDecision"] == priority:
+                return decision
+    if protected_checkout.prompt_free_workflow(cmd, cwd or os.getcwd()):
+        return allow("[destructive-op-guard] Known prompt-free workflow.")
+    return None
 
 
 def main() -> int:

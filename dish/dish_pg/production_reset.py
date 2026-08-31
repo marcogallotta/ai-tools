@@ -186,7 +186,7 @@ _RESET_RECOVERY_FORMAT = "dish-production-reset-recovery"
 _RESET_RECOVERY_VERSION = 2
 _SUPPORTED_RESET_RECOVERY_VERSIONS = {1, _RESET_RECOVERY_VERSION}
 RESET_GUARD_SETTING = "dish.production_reset_incomplete"
-_ACL_RESOLUTION_HEAD = "0042_scalar_dish_state"
+_ACL_RESOLUTION_HEAD = "0044_independent_archive"
 _RETIRED_0042_RELATIONS = frozenset(
     {
         ("public", "current_task_completion"),

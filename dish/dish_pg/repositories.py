@@ -75,6 +75,7 @@ class ScalarDishMutation:
         self._content: models.ContentVersion | None = None
         self._placement: tuple[uuid.UUID | None, uuid.UUID] | None = None
         self._completion: tuple[bool, str] | None = None
+        self._archived_at: datetime | None = None
         self._finalized = False
 
         self.state = session.scalar(
@@ -173,6 +174,11 @@ class ScalarDishMutation:
             raise CoreAuthorityError("command completion reason is invalid")
         self._completion = (completed, reason)
 
+    def archive(self) -> None:
+        if self._archived_at is not None or self.state.archived_at is not None:
+            raise CoreAuthorityError("Dish is already archived")
+        self._archived_at = self.source.occurred_at
+
     def finalize(self) -> ScalarDishMutationResult:
         if self._finalized:
             raise CoreAuthorityError("scalar mutation was already finalized")
@@ -183,6 +189,7 @@ class ScalarDishMutation:
                 ("content", self._content),
                 ("placement", self._placement),
                 ("completion", self._completion),
+                ("archive", self._archived_at),
             )
             if staged is not None
         )
@@ -200,6 +207,7 @@ class ScalarDishMutation:
             content_changed="content" in changed,
             placement_changed="placement" in changed,
             completion_changed="completion" in changed,
+            archive_changed="archive" in changed,
             occurred_at=self.source.occurred_at,
         )
         self.session.add(receipt)
@@ -226,6 +234,8 @@ class ScalarDishMutation:
                 completion_reason=self._completion[1],
                 completion_version=next_version,
             )
+        elif self._archived_at is not None:
+            values["archived_at"] = self._archived_at
         result = self.session.execute(
             update(models.DishState)
             .where(

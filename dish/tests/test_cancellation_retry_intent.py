@@ -193,5 +193,5 @@ def test_bounded_recovery_does_not_grant_source_mutation_authority() -> None:
 def test_bounded_recovery_attempt_memory_reuses_existing_durable_state() -> None:
     contract = _bounded_recovery_contract()
     assert "Persist only the attempt/failure information actually required" in contract
-    assert "using existing task/PR/controller/local durable state" in contract
+    assert "using existing task/PR/local durable state" in contract
     assert "Never add a retry database or alternate lifecycle authority" in contract

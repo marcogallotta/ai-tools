@@ -563,16 +563,19 @@ def build_legacy_envelope(
             lanes = list(full_lanes)
         elif forced:
             lanes = sorted(set(lanes) | set(full_lanes))
+        legacy_targets: dict[str, dict[str, object]] = {}
         for test in sorted(set(tests)):
             target = _test_target(test)
             target_id = str(target["id"])
             if target_id not in targets:
                 targets[target_id] = target
+            legacy_targets[target_id] = target
+        for target_id, target in sorted(legacy_targets.items()):
             boundary = str(target["execution_boundary"])
             obligations.append({
                 "path": path,
                 "key": f"legacy-target:{target_id}",
-                "guarantee": f"test-file:{test}",
+                "guarantee": str(target["guarantees"][0]),
                 "execution_boundary": boundary,
                 "preferred_targets": [target_id],
                 "fallback_target": ALL_FALLBACKS[boundary],

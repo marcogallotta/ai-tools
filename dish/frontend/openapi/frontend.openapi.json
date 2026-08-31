@@ -1179,6 +1179,31 @@
           }
         }
       }
+    },
+    "/frontend/archive": {
+      "get": {
+        "operationId": "getFrontendArchive",
+        "security": [{"frontendSession": []}],
+        "parameters": [{
+          "name": "X-Dish-Frontend-Contract",
+          "in": "header",
+          "required": true,
+          "schema": {"type": "string", "const": "dish-frontend-v1"}
+        }],
+        "responses": {
+          "200": {
+            "description": "Compatible response",
+            "headers": {"X-Dish-Frontend-Contract": {"schema": {"type": "string", "const": "dish-frontend-v1"}}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArchiveResponse"}}}
+          },
+          "400": {"description": "Compatible response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Compatible response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "Compatible response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "422": {"description": "Compatible response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Compatible response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        },
+        "summary": "Read the PostgreSQL archived Dish list"
+      }
     }
   },
   "components": {
@@ -2052,6 +2077,26 @@
           "diagnostics": {
             "$ref": "#/components/schemas/AdminJournalDiagnostics"
           }
+        }
+      },
+      "ArchiveDish": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_id", "title", "archived_at"],
+        "properties": {
+          "task_id": {"$ref": "#/components/schemas/TaskRouteIdentity"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 500},
+          "archived_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ArchiveResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["generated_at", "dishes", "truncated"],
+        "properties": {
+          "generated_at": {"type": "string", "format": "date-time"},
+          "dishes": {"type": "array", "maxItems": 5000, "items": {"$ref": "#/components/schemas/ArchiveDish"}},
+          "truncated": {"type": "boolean"}
         }
       },
       "AdminResponse": {

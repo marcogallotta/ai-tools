@@ -90,7 +90,7 @@ These are current implementation anchors, not promises that these exact modules 
 | Replay/leases | `dish_service/request_replay.py`, `dish_service/leases.py` |
 | PostgreSQL target | `dish_pg/command_port.py`, `dish_pg/postgres_service.py`, `dish_pg/transition.py` |
 | Dark launch | `dish_service/shadow_capture.py`, `dish_service/shadow_spool.py`, `dish_shadow/policy.py`, `dish_pg/shadow_worker.py` |
-| Development lifecycle orchestration | [PR lifecycle dispatcher](../../../scripts/pr_lifecycle.py), [PR gate](../../../scripts/pr_gate.py), [operator handoff](../../../scripts/operator_handoff.py) |
+| Development lifecycle orchestration | [Development Workflow roles](development-workflow/index.md), [PR gate](../../../scripts/pr_gate.py), [operator handoff](../../../scripts/operator_handoff.py) |
 
 ## Document status and ownership
 
@@ -119,7 +119,7 @@ Architecture documents are descriptive current-state records plus explicitly acc
 - [Development Workflow decisions](development-workflow/decisions/index.md)
 - [Development authority is split by fact](development-workflow/decisions/0001-authority-is-split-by-fact.md)
 - [Code changes use durable PR and exact-head lineage](development-workflow/decisions/0002-durable-pr-exact-head-lifecycle.md)
-- [The lifecycle dispatcher is restartable derived orchestration](development-workflow/decisions/0003-single-restartable-lifecycle-dispatcher.md)
+- [Historical unactivated lifecycle dispatcher design](development-workflow/decisions/0003-single-restartable-lifecycle-dispatcher.md)
 - [Review, certification, Integration, landing, and completion are distinct](development-workflow/decisions/0004-phases-remain-distinct.md)
 - [Execution choices are capability-grounded](development-workflow/decisions/0005-capability-grounded-execution.md)
 - [`../runtime-contract.md`](../runtime-contract.md)

@@ -26,14 +26,16 @@ test("same-origin client sends contract header and binds continuation cursor", a
     },
   });
   await client.board();
+  await client.archive();
   await client.search("curry / rice");
   await client.sectionTasks("r1s-safe", "c1.cursor/value");
   await client.taskDetail("r1t-safe/value");
   assert.equal(calls[0].path, "/frontend/board");
   assert.equal(calls[0].options.headers["X-Dish-Frontend-Contract"], FRONTEND_CONTRACT_VERSION);
-  assert.equal(calls[1].path, "/frontend/search?q=curry+%2F+rice");
-  assert.equal(calls[2].path, "/frontend/sections/r1s-safe/tasks?cursor=c1.cursor%2Fvalue");
-  assert.equal(calls[3].path, "/frontend/tasks/r1t-safe%2Fvalue");
+  assert.equal(calls[1].path, "/frontend/archive");
+  assert.equal(calls[2].path, "/frontend/search?q=curry+%2F+rice");
+  assert.equal(calls[3].path, "/frontend/sections/r1s-safe/tasks?cursor=c1.cursor%2Fvalue");
+  assert.equal(calls[4].path, "/frontend/tasks/r1t-safe%2Fvalue");
   assert.equal(calls[0].options.credentials, "same-origin");
   assert.equal(calls[0].options.redirect, "manual");
 });

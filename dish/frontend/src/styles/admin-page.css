@@ -126,6 +126,11 @@
   background: var(--color-surface);
 }
 
+.admin-dish--archived {
+  border-inline-start-color: #7b7469;
+  background: #fbfaf8;
+}
+
 .admin-dish--needs_you {
   border-inline-start-color: #b75c50;
   background: #fffaf9;

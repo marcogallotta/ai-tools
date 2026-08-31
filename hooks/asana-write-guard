@@ -41,6 +41,14 @@ from pathlib import Path
 # proof; keep moves behind the normal approval prompt.
 OWN_TASK_AUTO_ALLOW = {"set-notes", "append", "replace", "rename"}
 
+# `add_comment` has no single-op CLI subcommand (only inside batch-apply,
+# which requires >=3 operations), so posting one comment on the agent's own
+# active task had no prompt-free path at all — forcing an approval prompt
+# for routine same-task narration. Recognize the CLI's only single-comment
+# shape (JSON body piped into `asana raw POST /tasks/<gid>/stories`) as an
+# own-task write under the same ownership proof as OWN_TASK_AUTO_ALLOW.
+RAW_STORIES_RE = re.compile(r"^/tasks/(\d+)/stories$")
+
 WRITE_SUBCOMMANDS = {
     "set-notes", "append", "replace", "rename",
     "create-task", "create-subtask", "move", "batch-apply",
@@ -182,6 +190,29 @@ def _direct_own_task_write(cmd, payload):
     if task_gid is None or tokens[2] != task_gid:
         return None
     return task_gid, subcommand
+
+
+def _own_task_raw_comment(cmd, payload):
+    segments = [segment for segment in split_segments(cmd) if segment.strip()]
+    if len(segments) != 2:
+        return None
+    producer_tokens = tokenize(segments[0])
+    if not producer_tokens or basename_token(producer_tokens[0]) not in ("echo", "printf"):
+        return None
+    call_tokens = tokenize(segments[1])
+    if call_tokens and is_word(call_tokens[0], "bash") and len(call_tokens) >= 2 and is_word(call_tokens[1], "asana"):
+        call_tokens = call_tokens[1:]
+    if len(call_tokens) != 4 or not is_word(call_tokens[0], "asana"):
+        return None
+    if call_tokens[1].lower() != "raw" or call_tokens[2].upper() != "POST":
+        return None
+    match = RAW_STORIES_RE.match(call_tokens[3])
+    if not match:
+        return None
+    task_gid = _active_own_task(payload)
+    if task_gid is None or match.group(1) != task_gid:
+        return None
+    return task_gid, "add-comment"
 
 
 HEREDOC_RE = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
@@ -377,7 +408,7 @@ def evaluate(cmd, payload=None):
     payload = payload or {}
     cmd = strip_heredocs(cmd)
 
-    own_write = _direct_own_task_write(cmd, payload)
+    own_write = _direct_own_task_write(cmd, payload) or _own_task_raw_comment(cmd, payload)
     if own_write is not None:
         task_gid, subcommand = own_write
         return allow(f"[asana-write-guard] Routine same-task {subcommand} allowed for active task {task_gid}.")

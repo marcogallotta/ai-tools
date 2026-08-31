@@ -157,6 +157,24 @@ def _args(path: Path, *, resume: bool = False) -> list[str]:
     return args
 
 
+def _patch_target_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    globals_: dict[str, object],
+    calls: list[str] | None = None,
+) -> None:
+    @contextmanager
+    def fake_target_lock(*_args):
+        if calls is not None:
+            calls.append("lock-enter")
+        try:
+            yield
+        finally:
+            if calls is not None:
+                calls.append("lock-exit")
+
+    monkeypatch.setitem(globals_, "hold_reset_target_lock", fake_target_lock)
+
+
 def test_production_reset_target_gate_is_explicit_and_fail_closed() -> None:
     url = "postgresql+psycopg://dish:secret@127.0.0.1:55433/dish_stage_a_prod"
     validate_cli_target(
@@ -196,6 +214,16 @@ def test_production_reset_target_gate_is_explicit_and_fail_closed() -> None:
             confirmed_database_name="dish_stage_a_prod",
             capture_environment="test",
         )
+
+
+def test_reset_target_lock_key_is_stable_and_scoped_to_cluster_and_database() -> None:
+    namespace = runpy.run_path(str(RESET))
+    lock_key = namespace["_reset_target_lock_key"]
+    key = lock_key("cluster-a", "dish_stage_a_prod")
+
+    assert key == lock_key("cluster-a", "dish_stage_a_prod")
+    assert key != lock_key("cluster-b", "dish_stage_a_prod")
+    assert key != lock_key("cluster-a", "dish_other_prod")
 
 
 def test_test_reset_target_gate_accepts_only_disposable_test_database() -> None:
@@ -469,6 +497,7 @@ def test_reset_entrypoint_orders_lineage_before_snapshot_and_finalization(
 
     main = namespace["main"]
     globals_ = main.__globals__
+    _patch_target_lock(monkeypatch, globals_, calls)
     monkeypatch.setitem(
         globals_, "read_reset_guard", lambda *_args: calls.append("guard") or None
     )
@@ -531,6 +560,7 @@ def test_reset_entrypoint_orders_lineage_before_snapshot_and_finalization(
 
     assert main(_args(recovery_path)) == 0
     assert calls == [
+        "lock-enter",
         "guard",
         "preflight",
         "snapshot",
@@ -544,6 +574,7 @@ def test_reset_entrypoint_orders_lineage_before_snapshot_and_finalization(
         "state:access_restored",
         "clear",
         "state:completed",
+        "lock-exit",
     ]
 
 
@@ -559,6 +590,7 @@ def test_prepare_failure_retains_reset_started_lineage_and_guard(
 
     main = namespace["main"]
     globals_ = main.__globals__
+    _patch_target_lock(monkeypatch, globals_)
     monkeypatch.setitem(globals_, "read_reset_guard", lambda *_args: None)
 
     def fake_prepare(*, preflight_only: bool) -> None:
@@ -617,6 +649,7 @@ def test_explicit_resume_uses_retained_snapshot_and_never_snapshots_live_acl(
 
     main = namespace["main"]
     globals_ = main.__globals__
+    _patch_target_lock(monkeypatch, globals_)
     monkeypatch.setitem(globals_, "read_reset_guard", lambda *_args: RESET_ID)
     monkeypatch.setitem(globals_, "load_recovery_record", lambda *_args: record)
     monkeypatch.setitem(
@@ -699,6 +732,7 @@ def test_resume_access_restored_covers_both_finalization_crash_windows(
 
     main = namespace["main"]
     globals_ = main.__globals__
+    _patch_target_lock(monkeypatch, globals_)
     guard_values = [RESET_ID if guard_present else None]
     guard_values.append(RESET_ID if guard_present else None)
     monkeypatch.setitem(

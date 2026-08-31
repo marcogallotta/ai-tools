@@ -17,7 +17,7 @@ A completed obligation is historical evidence, not permanent satisfaction for fu
 
 The full reviewer reviews the exact head that actually merged; later `main` movement is context only. The formal exact-head GitHub `COMMENT` Review must contain a normal `VERDICT: MERGE` or `VERDICT: BLOCK` and the exact `dish-post-merge-full-review:v1 key=<key> head=<sha>` marker supplied by the current obligation. Historical pre-merge Review and formal Reviews from completed post-merge rounds cannot satisfy the new obligation because they lack its new round identity.
 
-The existing closed-PR lifecycle scan re-reads the durable Asana obligation and GitHub reviews. A matching full Review is written back with exact Review id/head/verdict before the obligation is marked complete. `BLOCK` creates or reuses one bounded corrective Implementation owner; if the thin pass already created it, the full Review links to that same owner rather than creating parallel work.
+The acting role explicitly re-reads the durable Asana obligation and GitHub reviews. It writes back a matching full Review with exact Review id/head/verdict before marking the obligation complete. `BLOCK` creates or reuses one bounded corrective Implementation owner; if the thin pass already created it, the full Review links to that same owner rather than creating parallel work.
 
 Corrective source work uses a new Implementation branch/PR from exact current `main`; `ci/source-recovery.md` describes the fail-closed inverse helper when reversal is appropriate. Source reversal never proves database/runtime/deployment/external effects were recovered. Those remain separate recovery gates under their existing authorities.
 

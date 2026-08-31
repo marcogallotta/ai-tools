@@ -1,22 +1,22 @@
-# ADR 0003: The lifecycle dispatcher is restartable derived orchestration
+# ADR 0003: Proposed restartable lifecycle dispatcher
 
-Status: Accepted
+Status: Abandoned before activation
 
 ## Read this when
 
-Read this when proposing another PR queue, poller, dispatcher database, lifecycle controller, or chat-owned routing loop.
+Read this as history when evaluating the never-activated dispatcher design or proposing new PR routing automation.
 
 ## Context
 
-Routine PR observation and routing must survive agent/session loss without making Marco poll or ferry transcripts. Multiple independent controllers would race and disagree.
+The design attempted to make routine PR observation and routing survive agent/session loss without making Marco poll or ferry transcripts. Multiple independent controllers would have raced and disagreed.
 
 ## Decision
 
-[The lifecycle dispatcher](../../../../../scripts/pr_lifecycle.py) is the single repository-owned lifecycle dispatcher. It reconstructs state from current GitHub and linked Asana facts on restart, reuses shared gate predicates, and stores no authoritative queue database.
+The repository contains an implementation of the proposed dispatcher in [scripts/pr_lifecycle.py](../../../../../scripts/pr_lifecycle.py), but it was never deployed or commissioned and will not be activated. It is not standing workflow infrastructure or authority. Current routing is manual: the acting role re-reads GitHub, the owning Asana task, and the applicable standing contracts at each handoff.
 
 ## Consequences
 
-Extensions add derived classifications or supported consumers to the existing dispatcher. Process memory, rendered tables, and leases remain projections/visibility rather than authority.
+The code and historical runbooks remain reference material only. Agents must not invoke them as the current operating procedure, infer that a background consumer will continue work, or extend them as though a live dispatcher exists. Any future automation would require a new explicit decision and current design review; meanwhile manual handoffs preserve the same exact-head, readback, role-separation, and fail-closed guards.
 
 ## Related documents
 

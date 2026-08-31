@@ -108,11 +108,11 @@ contract.
 
 `dish-admin` intentionally has a small normal operator surface even though older recovery and
 maintenance commands remain callable for exact handoffs and scripting. Root help presents the normal
-entry points in operator order: `inspect`, `queue`, `audit`, `active`, `kill`, `kill-all-expired`,
-then `kill-all`. `issues`, `attention`, `review-queue`, and `active-leases` remain hidden
-compatibility/detail aliases; low-level recovery, migration, backup, governance, and direct review
-mutation commands remain callable escape hatches. Hiding a command from root help does not remove or
-weaken its backend authority checks.
+entry points in operator order: `inspect`, `archive`, `queue`, `audit`, `active`, `kill`,
+`kill-all-expired`, then `kill-all`. `issues`, `attention`, `review-queue`, and `active-leases`
+remain hidden compatibility/detail aliases; low-level recovery, migration, backup, governance, and
+direct review mutation commands remain callable escape hatches. Hiding a command from root help does
+not remove or weaken its backend authority checks.
 
 `queue` is the primary "what Marco needs to do now" surface over durable Dish state. It groups
 Marco-required work by human consequence (Human Review, Evidence, change approval, then recovery),
@@ -142,8 +142,8 @@ Other. Semantic proposals retain exact governed before/after bundles. The queue 
 interactions directly, but approval/application authority remains in the existing review commands and
 workflow policy.
 
-`archive <dish>` is a hidden private-admin lifecycle command, never an Action/OpenAPI capability.
-It has no operator-supplied reason: the durable invocation provenance records
+`archive <dish>` is a private-admin lifecycle command shown in root help, never an Action/OpenAPI
+capability. It has no operator-supplied reason: the durable invocation provenance records
 `system_reason=admin_archive`. In the SQLite/Asana authority it requires confirmation, a resting
 incomplete Dish, and a distinct configured Cooking History project; it then marks the task complete,
 adds Cooking History, removes Cooking last, and confirms preserved identity from an exact reread.

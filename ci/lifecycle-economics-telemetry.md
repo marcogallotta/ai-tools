@@ -51,7 +51,7 @@ python3 scripts/lifecycle_economics_telemetry.py capture-pr \
   --output ~/.local/state/dish/telemetry/lifecycle-economics.jsonl
 ```
 
-Existing lifecycle/controller execution may call the same adapter seam where observational capture is desired; the adapter result grants no lifecycle authority.
+The acting role or one-shot manual lifecycle tooling may call the same adapter seam where observational capture is desired; the adapter result grants no lifecycle authority.
 
 ## Operator-touch categories and exact action counting
 

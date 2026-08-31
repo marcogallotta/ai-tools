@@ -246,7 +246,7 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  assert kernels.role_index_contracts()==expected
  assert deps['preload']=={'role_index_contracts':True,'additional':['dish/docs/agents/contributor-base.md']}
  assert deps['triggered_reads']['test-scope decisions']==['dish/docs/testing.md#Autonomous changed-path selection','dish/docs/architecture/testing-boundaries.md#Proving tests']
- assert deps['triggered_reads']['dispatcher / Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md#Review routing','ci/pr-lifecycle-dispatcher-runbook.md#BLOCK -> implementation/fix routing','ci/pr-lifecycle-dispatcher-runbook.md#Integration composition']
+ assert deps['triggered_reads']['manual Review / fix / Integration handoffs']==['dish/docs/agents/review.md#Review claims and manual routing','dish/docs/agents/implementation.md#Manual Worker formal-BLOCK fix continuation','dish/docs/agents/integration.md#Manual Integration handoff']
  assert deps['triggered_reads']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md#Named lane commands','dish/docs/architecture/postgresql-runtime.md#Proving tests']
  text=kernels.render_role(m,s,'development-workflow')
  assert text.index('Startup:')<text.index('Startup/re-ground context:')
@@ -263,7 +263,7 @@ def test_development_workflow_re_grounding_and_action_context_match_standing_con
  assert 'every standing role contract it lists' in role and 'contributor-base.md' in role
  assert 'compaction/session restart should trigger role/process re-grounding' in role
  assert 'Review evidence semantics' in role and "Integration's literal `TESTS TO RUN`" in role
- for path in ('../testing.md','../architecture/testing-boundaries.md','../../../ci/pr-lifecycle-dispatcher-runbook.md','../architecture/postgresql-runtime.md'):
+ for path in ('../testing.md','../architecture/testing-boundaries.md','review.md','implementation.md','integration.md','../architecture/postgresql-runtime.md'):
   assert path in role
 
 
@@ -325,9 +325,8 @@ def test_worker_policy_is_triggered_and_keeps_union_and_integration_authority_ou
  for role in s['roles']:
   text=kernels.render_role(m,s,role)
   assert 'Worker dispatch / phase cutover' in text
-  assert 'ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile' in text
- runbook=(DISH_ROOT.parent/'ci'/'pr-lifecycle-dispatcher-runbook.md').read_text()
- assert 'never a union semantic role' in runbook and '202 Accepted' in runbook and 'Integration landing remains outside Worker authority' in runbook
+  assert 'dish/docs/agents/review.md#Worker BLOCK' in text
+ assert all(x in rule['text'] for x in ('not a union role','HTTP 202 is admission only','Integration landing remains outside Worker authority'))
 
 def test_development_workflow_asana_mode_guard_reaches_every_project_and_worker():
  m,s=kernels.load_canonical(); rule=next(x for x in kernels.shared_rules(s) if x['id']=='development-workflow-asana-mode')
@@ -504,10 +503,10 @@ def test_eval_contract_matrix_and_oracle_free_prepared_cases():
 
 def test_five_whys_behavior_cases_cover_load_reground_evidence_branching_and_anti_patterns():
  initial=_scenario('five-whys-evidence-discipline'); reground=_scenario('five-whys-reground-reload')
- assert {'read_canonical_five_whys_method_before_substantive_rca','classify_verified_rejected_unknown','allow_fewer_or_more_than_five','branch_supported_causes'}<=set(initial['required_actions'])
- assert {'substantive_rca_before_method_load','force_exactly_five','stop_at_human_blame','present_hypothesis_as_fact'}<=set(initial['forbidden_actions'])
- assert {'reload_canonical_five_whys_method_after_regrounding','continue_evidence_classification','continue_branching_as_evidence_requires','preserve_role_authority'}<=set(reground['required_actions'])
- assert {'continue_from_stale_method_memory','invent_missing_evidence','treat_method_as_authority_expansion'}<=set(reground['forbidden_actions'])
+ assert {'read_canonical_five_whys_method_before_substantive_rca','classify_verified_rejected_unknown','allow_fewer_or_more_than_five','branch_supported_causes','inspect_each_applicable_authority_class','give_each_result_a_short_name_tag','report_plain_language_root_confidence_and_actionable_fix_only','keep_forensic_detail_off_marco_surface','ask_only_whether_to_add_to_asana','require_marco_confirmation_before_asana_write'}<=set(initial['required_actions'])
+ assert {'substantive_rca_before_method_load','force_exactly_five','stop_at_human_blame','present_hypothesis_as_fact','expose_forensic_chain_to_marco','omit_actionable_fix','use_heavy_jargon','ask_to_dig_deeper_when_all_roots_are_high_confidence','write_asana_without_marco_confirmation'}<=set(initial['forbidden_actions'])
+ assert {'reload_canonical_five_whys_method_after_regrounding','continue_evidence_classification','continue_branching_as_evidence_requires','preserve_role_authority','report_inconclusive_in_plain_language','give_safe_actionable_next_step','ask_whether_to_dig_deeper_or_add_to_asana','require_marco_confirmation_before_asana_write'}<=set(reground['required_actions'])
+ assert {'continue_from_stale_method_memory','invent_missing_evidence','treat_method_as_authority_expansion','promote_inconclusive_mechanism_to_root_cause','create_implementation_work_from_inconclusive_result','omit_actionable_next_step','write_asana_without_marco_confirmation'}<=set(reground['forbidden_actions'])
  for q in (initial,reground):
   assert q['required_observations']==[{'equals':{'connector':'GitHub','path':'dish/docs/agents/five-whys.md','repository':'marcogallotta/ai-tools'},'kind':'connector_read','operation':'repository_file_read'}]
 

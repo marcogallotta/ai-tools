@@ -107,6 +107,13 @@ def test_empty_sqlite_upgrade_uses_frozen_history_through_head(tmp_path: Path) -
         assert "causality_edges" not in actual
         with engine.connect() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
+            insert_guard = connection.execute(
+                text(
+                    "SELECT sql FROM sqlite_master WHERE type='trigger' "
+                    "AND name='dish_states_validate_insert'"
+                )
+            ).scalar_one()
+            assert "OR r.archive_changed" in insert_guard
     finally:
         engine.dispose()
 
@@ -125,6 +132,20 @@ def test_causality_edge_retirement_offline_sql_guards_before_drop() -> None:
     assert "refusing to drop non-empty causality_edges" in sql
     drop_position = sql.index("DROP TABLE causality_edges")
     assert guard_position < drop_position
+
+
+def test_independent_archive_offline_postgresql_sql_guards_populated_state() -> None:
+    buffer = io.StringIO()
+    command.upgrade(
+        _offline_postgresql_config(buffer),
+        "0043_archived_at:0044_independent_archive",
+        sql=True,
+    )
+    sql = buffer.getvalue()
+
+    guard_position = sql.index("0044_independent_archive upgrade refuses populated archived rows")
+    assert "EXISTS (SELECT 1 FROM dish_states WHERE archived_at IS NOT NULL)" in sql
+    assert guard_position < sql.index("ADD COLUMN archive_changed")
 
 
 @pytest.mark.database_boundary
@@ -200,6 +221,77 @@ def test_frozen_history_downgrades_to_stage2_and_reupgrades(tmp_path: Path) -> N
     try:
         with engine.connect() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
+    finally:
+        engine.dispose()
+
+
+def _insert_archived_state(path: Path, *, completed: bool) -> None:
+    engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("DROP TRIGGER dish_states_validate_insert")
+            connection.execute(
+                text(
+                    """INSERT INTO dish_states(
+                           generation_id,task_id,current_content_version_id,section_id,
+                           registry_version_id,completed,completion_reason,dish_version,
+                           placement_version,completion_version,updated_at,archived_at
+                       ) VALUES (
+                           :generation_id,:task_id,:content_id,NULL,:registry_id,
+                           :completed,'archive',1,1,1,:at,:at
+                       )"""
+                ),
+                {
+                    "generation_id": "1" * 32,
+                    "task_id": "2" * 32,
+                    "content_id": "3" * 32,
+                    "registry_id": "4" * 32,
+                    "completed": completed,
+                    "at": "2026-08-27 12:00:00",
+                },
+            )
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.database_boundary
+def test_independent_archive_upgrade_refuses_coupled_0043_rows(tmp_path: Path) -> None:
+    path = tmp_path / "coupled-archive.sqlite3"
+    config = _config(path)
+    command.upgrade(config, "0043_archived_at")
+    _insert_archived_state(path, completed=True)
+
+    with pytest.raises(RuntimeError, match="upgrade refuses 1 populated archived row"):
+        command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0043_archived_at"
+            assert "archive_changed" not in {
+                column["name"] for column in inspect(connection).get_columns("dish_mutation_receipts")
+            }
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.database_boundary
+def test_independent_archive_downgrade_refuses_populated_0044_rows(tmp_path: Path) -> None:
+    path = tmp_path / "independent-archive.sqlite3"
+    config = _config(path)
+    command.upgrade(config, "head")
+    _insert_archived_state(path, completed=False)
+
+    with pytest.raises(RuntimeError, match="downgrade refuses 1 populated archived row"):
+        command.downgrade(config, "0043_archived_at")
+
+    engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
+            assert "archive_changed" in {
+                column["name"] for column in inspect(connection).get_columns("dish_mutation_receipts")
+            }
     finally:
         engine.dispose()
 

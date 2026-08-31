@@ -534,7 +534,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "abandon-operation": self._abandon,
             "reconcile-abandonment": self._reconcile_abandonment,
             "cooked": self._complete_semantically,
-            "archive": self._complete_semantically,
+            "archive": self._archive,
             "reopen-planning": self._reopen_planning,
             "reopen": self._reopen,
             "supply-evidence": self._supply_evidence,
@@ -3176,7 +3176,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             )
         if current.completed:
             raise CommandRuleError(
-                "TASK_NOT_ACTIVE", "Cooked/Archive requires an active Dish"
+                "TASK_NOT_ACTIVE", "Cooked requires an active Dish"
             )
         blocking_operation = self.session.scalar(
             select(wf.WorkflowOperation.operation_id)
@@ -3190,15 +3190,14 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         if blocking_operation is not None:
             raise CommandRuleError(
                 "TASK_NOT_RESTING",
-                "Cooked/Archive requires a resting Dish with no open workflow operation",
+                "Cooked requires a resting Dish with no open workflow operation",
                 data={"open_operation_id": str(blocking_operation)},
             )
-        reason = "cooked" if call.command_name == "cooked" else "archive"
         self._set_completion(
             generation.generation_id,
             task.task_id,
             True,
-            reason,
+            "cooked",
             execution.execution_id,
             call.now,
         )
@@ -3206,14 +3205,47 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "dish_id": str(task.task_id),
             "task_id": str(task.task_id),
             "completed": True,
-            "completion_reason": reason,
-            "completion_state": "cooked" if reason == "cooked" else "archived",
+            "completion_reason": "cooked",
+            "completion_state": "cooked",
         }
-        if reason == "archive" and call.principal_class == "admin":
-            data.update({
-                "system_reason": "admin_archive",
-                "authority_mode": "postgresql",
-            })
+        return data
+
+    def _archive(self, call, generation, _binding, execution, task, _operation) -> dict[str, Any]:
+        assert task is not None
+        self.workflow.repo.assert_task_fence(execution.execution_id)
+        current = self.session.get(models.DishState, (generation.generation_id, task.task_id))
+        if current is None:
+            raise CommandRuleError("ARCHIVE_AUTHORITY_MISSING", "task archive authority is incomplete")
+        if current.completed or current.archived_at is not None:
+            raise CommandRuleError("TASK_NOT_ACTIVE", "Archive requires an active Dish")
+        blocking_operation = self.session.scalar(
+            select(wf.WorkflowOperation.operation_id).where(
+                wf.WorkflowOperation.generation_id == generation.generation_id,
+                wf.WorkflowOperation.task_id == task.task_id,
+                wf.WorkflowOperation.lifecycle == "open",
+            ).limit(1)
+        )
+        if blocking_operation is not None:
+            raise CommandRuleError(
+                "TASK_NOT_RESTING",
+                "Archive requires a resting Dish with no open workflow operation",
+                data={"open_operation_id": str(blocking_operation)},
+            )
+        self._scalar_mutation(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            execution_id=execution.execution_id,
+            at=call.now,
+        ).archive()
+        data = {
+            "dish_id": str(task.task_id),
+            "task_id": str(task.task_id),
+            "completed": current.completed,
+            "completion_reason": current.completion_reason,
+            "completion_state": "archived",
+        }
+        if call.principal_class == "admin":
+            data.update(system_reason="admin_archive", authority_mode="postgresql")
         return data
 
     def _reopen_planning(self, call, generation, _binding, execution, task, _operation) -> dict[str, Any]:

@@ -14,11 +14,9 @@ flowchart LR
     PR --> CI[Exact-head certification]
     Review --> Gate[Integration gates]
     CI --> Gate
-    Gate --> Local[Local fenced Integration]
+    Gate --> Local[Authorized local Integration]
     Local --> Main[GitHub main]
     Main --> Completion[Rollout and acceptance when required]
-    Dispatcher[Restartable lifecycle dispatcher] -. derives and routes .-> PR
-    Dispatcher -. derives and routes .-> Gate
 ```
 
 ## Current authority summary
@@ -29,7 +27,7 @@ flowchart LR
 | Development task state, accepted design, decisions, and orchestration | Owning Asana project/task under its repository-owned project contract |
 | Product/runtime behavior actually deployed | Direct environment evidence |
 | Role permissions and lifecycle invariants | Repository standing contracts and accepted ADRs |
-| Routine PR state projection and routing | Derived by [the lifecycle dispatcher](../../../../scripts/pr_lifecycle.py); never a second authority |
+| Routine PR state classification and routing | Manual, by the acting role from fresh GitHub/Asana reads and the standing contracts |
 
 ## Start here for…
 
@@ -51,7 +49,7 @@ Read only the relevant routed documents after this index. A change that alters a
 
 | Change | Usually relevant |
 |---|---|
-| Lifecycle phase or dispatcher classification | [Lifecycle](lifecycle.md), [Authority and state](authority-and-state.md) |
+| Lifecycle phase or manual classification | [Lifecycle](lifecycle.md), [Authority and state](authority-and-state.md) |
 | Branch/worktree ownership, takeover, stack or concurrency mechanics | [Work identity and concurrency](work-identity-and-concurrency.md) |
 | Review, exact-head CI, certification, or merge admission | [Review, certification, and Integration](review-certification-integration.md) |
 | Host routing, local-only classification, relay, or operator attention | [Execution hosts and operator boundary](execution-hosts-and-operator-boundary.md) |
@@ -62,12 +60,12 @@ Read only the relevant routed documents after this index. A change that alters a
 
 | Concern | Current anchor |
 |---|---|
-| PR lifecycle derivation/routing | [`../../../../scripts/pr_lifecycle.py`](../../../../scripts/pr_lifecycle.py) |
+| PR lifecycle classification/routing | [Lifecycle](lifecycle.md) and the acting [standing role](../../agents/index.md) |
 | Review/Integration predicates | [`../../../../scripts/pr_gate.py`](../../../../scripts/pr_gate.py) |
 | Local Implementation worktrees and claims | [`../../../../tools/agent-worktree`](../../../../tools/agent-worktree) |
-| Local Integration fence/checkpoints | [`../../../../scripts/pr_lifecycle_local_integration.py`](../../../../scripts/pr_lifecycle_local_integration.py) |
+| Local Integration procedure | [`../../agents/integration.md#Manual Integration handoff`](../../agents/integration.md#manual-integration-handoff) |
 | Test selection/planning | [`../../testing.md`](../../testing.md), [`../../../scripts/dish-test-plan`](../../../scripts/dish-test-plan) |
-| Operating the dispatcher | [`../../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../../ci/pr-lifecycle-dispatcher-runbook.md) |
+| Historical, never-activated dispatcher design | [`../../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../../ci/pr-lifecycle-dispatcher-runbook.md) |
 | Standing role authority | [`../../agents/index.md`](../../agents/index.md) |
 | Operator presentation/orchestration mechanics | [`../../../../OPERATOR_CONTROL_PLANE.md`](../../../../OPERATOR_CONTROL_PLANE.md) |
 
@@ -79,7 +77,7 @@ These documents record current landed architecture and accepted ADRs. Standing r
 
 - [Authority is split by fact](decisions/0001-authority-is-split-by-fact.md)
 - [Durable PR and exact-head lifecycle](decisions/0002-durable-pr-exact-head-lifecycle.md)
-- [Single restartable lifecycle dispatcher](decisions/0003-single-restartable-lifecycle-dispatcher.md)
+- [Unactivated lifecycle dispatcher design](decisions/0003-single-restartable-lifecycle-dispatcher.md)
 - [Lifecycle phases remain distinct](decisions/0004-phases-remain-distinct.md)
 - [Capability-grounded execution](decisions/0005-capability-grounded-execution.md)
 

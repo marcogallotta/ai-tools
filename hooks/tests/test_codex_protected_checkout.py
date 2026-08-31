@@ -122,7 +122,7 @@ def test_codex_permission_request_allows_feature_and_pr_but_not_main(
         ("git push origin HEAD:main", protected_repo["linked"], False),
         ("git commit -m x", protected_repo["primary"], False),
         ("gh pr merge 42", protected_repo["primary"], True),
-        ("git status; git commit -m x", protected_repo["linked"], False),
+        ("git status; git commit -m x", protected_repo["linked"], True),
     ):
         decision = run_adapter(codex_protected_checkout, {
             "hook_event_name": "PermissionRequest", "tool_name": "Bash",
@@ -131,6 +131,34 @@ def test_codex_permission_request_allows_feature_and_pr_but_not_main(
         assert (decision is not None) is allowed
         if allowed:
             assert decision["hookSpecificOutput"]["decision"] == {"behavior": "allow"}
+
+
+def test_codex_permission_request_allows_reported_workflows(
+    codex_protected_checkout, protected_repo, monkeypatch, capsys
+):
+    linked = str(protected_repo["linked"])
+    commands = (
+        f"git -C {linked} status --short && git -C {linked} branch --show-current",
+        'git status; echo "---UPSTREAM---"; git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>&1',
+        'git fetch origin pull/30/head:pr30 2>&1; pwd; git branch -a | grep -E "pr30"',
+        "git log --oneline -20 && echo --- && git status && echo --- && git branch -vv && echo --- && git remote -v",
+    )
+    for command in commands:
+        decision = run_adapter(codex_protected_checkout, {
+            "hook_event_name": "PermissionRequest", "tool_name": "Bash",
+            "cwd": linked, "tool_input": {"command": command},
+        }, monkeypatch, capsys)
+        assert decision["hookSpecificOutput"]["decision"] == {"behavior": "allow"}
+    for command in (
+        "git status; rm -rf relative-path",
+        "git status; ssh host uname",
+        "git -c alias.x='!echo x' x",
+    ):
+        decision = run_adapter(codex_protected_checkout, {
+            "hook_event_name": "PermissionRequest", "tool_name": "Bash",
+            "cwd": linked, "tool_input": {"command": command},
+        }, monkeypatch, capsys)
+        assert decision is None
 
 
 def test_codex_adapter_denies_raw_commit_in_nested_active_worktree(
@@ -164,16 +192,17 @@ def test_codex_adapter_denies_raw_commit_in_nested_active_worktree(
         "DEFAULT_PROTECTED_CHECKOUT_ROOT",
         str(protected_repo["primary"]),
     )
-    decision = run_adapter(
-        codex_protected_checkout,
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Bash",
-            "cwd": str(linked),
-            "tool_input": {"command": "git commit -m x"},
-        },
-        monkeypatch,
-        capsys,
-    )
-    assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "agent-worktree" in decision["hookSpecificOutput"]["permissionDecisionReason"]
+    for command in ("git commit -m x", "git status; git add README.md"):
+        decision = run_adapter(
+            codex_protected_checkout,
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "cwd": str(linked),
+                "tool_input": {"command": command},
+            },
+            monkeypatch,
+            capsys,
+        )
+        assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "agent-worktree" in decision["hookSpecificOutput"]["permissionDecisionReason"]
