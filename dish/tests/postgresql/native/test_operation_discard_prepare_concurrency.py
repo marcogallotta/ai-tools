@@ -641,19 +641,18 @@ class _TaskFenceGateRepository(WorkflowAuthorityRepository):
         *args,
         before_lock: TransactionGate | None = None,
         after_lock: TransactionGate | None = None,
-        entered: Event | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self._before_lock = before_lock
         self._after_lock = after_lock
-        self._entered = entered
 
-    def assert_task_fence(self, execution_id):
-        if self._entered is not None:
-            self._entered.set()
+    def capture_task_fence(self, **kwargs):
         if self._before_lock is not None:
             self._before_lock.block()
+        return super().capture_task_fence(**kwargs)
+
+    def assert_task_fence(self, execution_id):
         state = super().assert_task_fence(execution_id)
         if self._after_lock is not None:
             self._after_lock.block()
@@ -665,15 +664,13 @@ def _task_fence_port(
     *,
     before_lock: TransactionGate | None = None,
     after_lock: TransactionGate | None = None,
-    entered: Event | None = None,
 ) -> PostgresCommandPort:
     port = _command_port(session)
-    if before_lock is not None or after_lock is not None or entered is not None:
+    if before_lock is not None or after_lock is not None:
         port.workflow.repo = _TaskFenceGateRepository(
             session,
             before_lock=before_lock,
             after_lock=after_lock,
-            entered=entered,
         )
     return port
 
@@ -710,6 +707,12 @@ def test_native_task_transition_commits_before_final_fence_and_stale_start_rejec
 
     def stale_start():
         with managed_session(stale_connection) as session:
+            assert session.get(
+                models.DishState, (context["generation_id"], task_id)
+            ) is not None
+            assert session.get(
+                models.TaskMembershipHead, (context["generation_id"], task_id)
+            ) is not None
             return _task_fence_port(session, before_lock=before_lock).execute(
                 CommandCall(
                     command_name="start",
@@ -791,7 +794,8 @@ def test_native_start_holds_final_task_fence_until_commit_and_cooked_observes_op
 
     def blocked_cooked():
         with managed_session(cooked_connection) as session:
-            return _task_fence_port(session, entered=cooked_entered).execute(
+            cooked_entered.set()
+            return _task_fence_port(session).execute(
                 CommandCall(
                     command_name="cooked",
                     arguments={"task_id": str(task_id)},
