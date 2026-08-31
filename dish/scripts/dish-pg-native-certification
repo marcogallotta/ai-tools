@@ -17,8 +17,10 @@ import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, quote_plus, unquote
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -40,6 +42,7 @@ CANONICAL_LOCAL_POSTGRESQL_DSN = (
     "postgresql+psycopg://dish_test:0ddca88b81a8bf1a15d84caa78efd7b3"
     "@localhost:5432/dish_test"
 )
+FAILURE_OUTPUT_TAIL_CHARACTERS = 32_000
 
 
 class LocalPostgreSQLUnavailable(RuntimeError):
@@ -389,6 +392,41 @@ def _run(command: list[str], *, env: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def _failure_output_tail(output: str, dsn: str | None) -> str:
+    """Return a bounded, credential-safe pytest failure tail for CI logs."""
+
+    safe = output
+    if dsn:
+        url = make_url(dsn)
+        log_safe_dsn = url.set(query={}).render_as_string(hide_password=True)
+        safe = safe.replace(dsn, log_safe_dsn)
+        sensitive_values: set[str] = set()
+        if url.password:
+            sensitive_values.add(url.password)
+        for value in url.query.values():
+            if isinstance(value, tuple):
+                sensitive_values.update(item for item in value if item)
+            elif value:
+                sensitive_values.add(value)
+        for value in sorted(sensitive_values, key=len, reverse=True):
+            variants = {
+                value,
+                unquote(value),
+                quote(value, safe=""),
+                quote_plus(value, safe=""),
+            }
+            for variant in sorted(
+                (item for item in variants if item), key=len, reverse=True
+            ):
+                safe = safe.replace(variant, "***")
+
+    if len(safe) <= FAILURE_OUTPUT_TAIL_CHARACTERS:
+        return safe
+    marker = "[... pytest output truncated to final characters ...]\n"
+    retained = FAILURE_OUTPUT_TAIL_CHARACTERS - len(marker)
+    return marker + safe[-retained:]
+
+
 def _base_report(
     *,
     dsn: str,
@@ -541,6 +579,13 @@ def main(argv: list[str] | None = None) -> int:
         if test_files:
             env["DISH_INTERNAL_GOVERNED_RUNNER"] = "1"
         run = _run(command, env=env)
+        if run["exit_code"] != 0:
+            print(
+                "--- native PostgreSQL pytest failure output (redacted tail) ---",
+                file=sys.stderr,
+            )
+            print(_failure_output_tail(run["output"], dsn), file=sys.stderr)
+            print("--- end native PostgreSQL pytest failure output ---", file=sys.stderr)
         if pytest_report.is_file():
             pytest_payload = json.loads(pytest_report.read_text(encoding="utf-8"))
         else:

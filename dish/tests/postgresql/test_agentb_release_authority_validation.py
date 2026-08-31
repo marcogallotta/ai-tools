@@ -16,8 +16,8 @@ from dish_pg import stage5_models as tx
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.release import EVIDENCE_ARTIFACT_KINDS, ReleaseAuthorityError
-from dish_pg.repositories import RegistryRepository
 from dish_pg.transition import ProjectionService, TransitionAuthorityError
+from tests.support.postgresql.core import _activate_cloned_registry_revision
 from tests.support.postgresql.release import (
     HASH_A,
     _independent_active_mapping_membership,
@@ -185,56 +185,12 @@ def test_candidate_reconciliation_writer_rejects_wrong_run_and_registry_change(
             adapter_contract_version="asana-high-water-v1",
             started_at=started_at,
         )
-        active = session.get(models.ActiveSectionRegistry, candidate.generation_id)
-        current = session.get(models.SectionRegistryVersion, active.registry_version_id)
-        entries = session.scalars(
-            select(models.SectionRegistryEntry).where(
-                models.SectionRegistryEntry.registry_version_id
-                == current.registry_version_id
-            )
-        ).all()
-        replacement_id = _next(ids)
-        replacement_activation_id = _next(ids)
-        repo = RegistryRepository(session)
-        repo.add_registry_version(
-            models.SectionRegistryVersion(
-                registry_version_id=replacement_id,
-                generation_id=current.generation_id,
-                version_number=current.version_number + 1,
-                import_run_id=current.import_run_id,
-                contract_binding_id=current.contract_binding_id,
-                registry_sha256="b" * 64,
-                created_at=started_at,
-            ),
-            [
-                models.SectionRegistryEntry(
-                    registry_version_id=replacement_id,
-                    section_id=entry.section_id,
-                    ordinal=entry.ordinal,
-                    display_name=entry.display_name,
-                    workflow_role=entry.workflow_role,
-                )
-                for entry in entries
-            ],
-        )
-        repo.activate_registry(
-            activation=models.SectionRegistryActivation(
-                registry_activation_id=replacement_activation_id,
-                generation_id=current.generation_id,
-                registry_version_id=replacement_id,
-                activation_route="command_execution",
-                import_run_id=None,
-                command_execution_id=_next(ids),
-                registry_revision=active.registry_revision + 1,
-                activated_at=started_at,
-            ),
-            current=models.ActiveSectionRegistry(
-                generation_id=current.generation_id,
-                registry_version_id=replacement_id,
-                registry_activation_id=replacement_activation_id,
-                registry_revision=active.registry_revision + 1,
-                updated_at=started_at,
-            ),
+        _activate_cloned_registry_revision(
+            session,
+            ids,
+            generation_id=candidate.generation_id,
+            registry_sha256="b" * 64,
+            activated_at=started_at,
         )
         with pytest.raises(
             ReleaseAuthorityError,

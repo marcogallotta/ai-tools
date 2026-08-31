@@ -11,26 +11,27 @@ from .database_migrations import (
 )
 from .database_schema import MIGRATIONS, _validate_semantic_evidence
 from .errors import DishRuleError
-from .transactions import immediate_transaction
+from .transactions import immediate_transaction, read_transaction
 
 
 def validate_runtime_schema_state(conn: sqlite3.Connection) -> None:
     """Check only the bounded schema facts required at request admission."""
 
-    current = max(MIGRATIONS)
-    _validate_version_claims(conn)
-    user_version, ledger_version = _schema_version_state(conn)
-    if user_version != current or ledger_version != current:
-        raise DishRuleError(
-            "VALIDATION_FAILED",
-            "database did not converge to the current schema",
-            rule="database_schema_not_current",
-            details={
-                "user_version": user_version,
-                "ledger_version": ledger_version,
-                "current": current,
-            },
-        )
+    with read_transaction(conn):
+        current = max(MIGRATIONS)
+        _validate_version_claims(conn)
+        user_version, ledger_version = _schema_version_state(conn)
+        if user_version != current or ledger_version != current:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "database did not converge to the current schema",
+                rule="database_schema_not_current",
+                details={
+                    "user_version": user_version,
+                    "ledger_version": ledger_version,
+                    "current": current,
+                },
+            )
 
 
 def validate_current_schema(conn: sqlite3.Connection) -> None:
