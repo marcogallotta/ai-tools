@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import event
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
@@ -108,6 +108,43 @@ def _import_title(session, ids, context, *, title: str, asana_gid: str, complete
     )
 
 
+def _leave_project(session, ids, context, *, task_id: UUID) -> None:
+    membership = session.get(
+        models.CurrentTaskProjectMembership,
+        (context["generation_id"], task_id, context["project_id"]),
+    )
+    head = session.get(
+        models.TaskMembershipHead,
+        (context["generation_id"], task_id),
+    )
+    assert membership is not None
+    assert head is not None
+    revision = membership.membership_revision + 1
+    occurred_at = NOW + timedelta(seconds=revision)
+    event_id = _next(ids)
+    session.add(
+        models.TaskProjectMembershipEvent(
+            membership_event_id=event_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            project_id=context["project_id"],
+            event_kind="left",
+            membership_revision=revision,
+            provenance_route="import",
+            import_run_id=context["import_run_id"],
+            command_execution_id=None,
+            occurred_at=occurred_at,
+        )
+    )
+    session.flush()
+    membership.latest_event_id = event_id
+    membership.is_member = False
+    membership.membership_revision = revision
+    membership.updated_at = occurred_at
+    head.membership_revision = revision
+    head.updated_at = occurred_at
+
+
 def test_workflow_status_openapi_matches_server_presentation_registry() -> None:
     schema = json.loads(
         (Path(__file__).resolve().parents[2] / "frontend" / "openapi" / "frontend.openapi.json").read_text()
@@ -187,15 +224,7 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
         assert retired_row is not None
         retired_row.existence_state = "retired"
         retired_row.retired_at = NOW
-        membership = session.scalar(
-            select(models.CurrentTaskProjectMembership).where(
-                models.CurrentTaskProjectMembership.generation_id == context["generation_id"],
-                models.CurrentTaskProjectMembership.task_id == nonmember.task_id,
-                models.CurrentTaskProjectMembership.project_id == context["project_id"],
-            )
-        )
-        assert membership is not None
-        membership.is_member = False
+        _leave_project(session, ids, context, task_id=nonmember.task_id)
 
     with session_scope(factory) as session:
         service = _service(session, first_page_size=2, continuation_page_size=2)
@@ -293,15 +322,7 @@ def test_active_title_search_is_global_case_insensitive_and_board_eligible(core_
         assert archived_row is not None
         archived_row.existence_state = "retired"
         archived_row.retired_at = NOW
-        membership = session.scalar(
-            select(models.CurrentTaskProjectMembership).where(
-                models.CurrentTaskProjectMembership.generation_id == context["generation_id"],
-                models.CurrentTaskProjectMembership.task_id == inactive.task_id,
-                models.CurrentTaskProjectMembership.project_id == context["project_id"],
-            )
-        )
-        assert membership is not None
-        membership.is_member = False
+        _leave_project(session, ids, context, task_id=inactive.task_id)
 
     with session_scope(factory) as session:
         service = _service(session, first_page_size=1)

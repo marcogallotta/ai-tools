@@ -423,6 +423,30 @@ def test_native_certification_passes_without_skips_or_waivers(monkeypatch, tmp_p
     assert report["unused_waivers"] == []
 
 
+def test_native_certification_failure_tail_is_bounded_and_redacted() -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
+    failure_output_tail = namespace["_failure_output_tail"]
+    limit = namespace["FAILURE_OUTPUT_TAIL_CHARACTERS"]
+    password = "native-test-secret"
+    query_secret = "ssl-query-secret"
+    dsn = (
+        f"postgresql+psycopg://dish:{password}@127.0.0.1:5432/dish_test"
+        f"?sslpassword={query_secret}"
+    )
+    # Place a DSN across the eventual tail boundary. Redaction must happen
+    # before truncation so no credential fragment survives at the cutoff.
+    output = "x" * (limit - len(dsn) // 2) + dsn + "\ntraceback sentinel\n"
+
+    rendered = failure_output_tail(output, dsn)
+
+    assert len(rendered) <= limit
+    assert password not in rendered
+    assert query_secret not in rendered
+    assert "sslpassword" not in rendered
+    assert "postgresql+psycopg://dish:***@127.0.0.1:5432/dish_test" in rendered
+    assert rendered.endswith("traceback sentinel\n")
+
+
 def test_native_certification_accepts_only_matching_structured_skip_waiver(
     monkeypatch, tmp_path: Path
 ) -> None:

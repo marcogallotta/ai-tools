@@ -18,10 +18,9 @@ from dish_pg.recovery_control import (
     RestoreControlError,
     promote_restored_generation,
 )
-from dish_pg.repositories import RegistryRepository
 from dish_pg import recovery_rehearsal
 from dish_pg.recovery_rehearsal import _cleanup_rehearsal, _source_manifest
-from tests.support.postgresql.core import NOW
+from tests.support.postgresql.core import NOW, _activate_cloned_registry_revision
 from tests.support.postgresql.workflow import NOW as WORKFLOW_NOW
 from tests.support.postgresql.recovery_control import _control, _physical_state, recovery_db
 from tests.support.postgresql.stage8_cutover_evidence_gates import _burn_rollback
@@ -142,57 +141,12 @@ def test_recovery_accepts_current_coherent_registry_evolution_and_clones_it(reco
     with session_scope(factory) as session:
         candidate = session.get(release_models.ReleaseCandidate, candidate_id)
         assert candidate is not None
-        active = session.get(models.ActiveSectionRegistry, candidate.generation_id)
-        assert active is not None
-        source = session.get(models.SectionRegistryVersion, active.registry_version_id)
-        assert source is not None
-        entries = session.scalars(
-            select(models.SectionRegistryEntry).where(
-                models.SectionRegistryEntry.registry_version_id == source.registry_version_id
-            )
-        ).all()
-        version_id = next(ids)
-        activation_id = next(ids)
-        repo = RegistryRepository(session)
-        repo.add_registry_version(
-            models.SectionRegistryVersion(
-                registry_version_id=version_id,
-                generation_id=candidate.generation_id,
-                version_number=source.version_number + 1,
-                import_run_id=source.import_run_id,
-                contract_binding_id=source.contract_binding_id,
-                registry_sha256="d" * 64,
-                created_at=WORKFLOW_NOW + timedelta(minutes=7),
-            ),
-            [
-                models.SectionRegistryEntry(
-                    registry_version_id=version_id,
-                    section_id=entry.section_id,
-                    ordinal=entry.ordinal,
-                    display_name=entry.display_name,
-                    workflow_role=entry.workflow_role,
-                )
-                for entry in entries
-            ],
-        )
-        repo.activate_registry(
-            activation=models.SectionRegistryActivation(
-                registry_activation_id=activation_id,
-                generation_id=candidate.generation_id,
-                registry_version_id=version_id,
-                activation_route="import",
-                import_run_id=source.import_run_id,
-                command_execution_id=None,
-                registry_revision=active.registry_revision + 1,
-                activated_at=WORKFLOW_NOW + timedelta(minutes=7),
-            ),
-            current=models.ActiveSectionRegistry(
-                generation_id=candidate.generation_id,
-                registry_version_id=version_id,
-                registry_activation_id=activation_id,
-                registry_revision=active.registry_revision + 1,
-                updated_at=WORKFLOW_NOW + timedelta(minutes=7),
-            ),
+        _activate_cloned_registry_revision(
+            session,
+            ids,
+            generation_id=candidate.generation_id,
+            registry_sha256="d" * 64,
+            activated_at=WORKFLOW_NOW + timedelta(minutes=7),
         )
 
     with session_scope(factory) as session:
