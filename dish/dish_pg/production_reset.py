@@ -10,21 +10,30 @@ The operator-facing entrypoint is ``scripts/dish-pg-production-reset``.  Keeping
 this logic importable lets native PostgreSQL tests exercise the same DDL and ACL
 paths without ever targeting production.
 """
+
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterable
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Connection, URL, make_url
+from sqlalchemy.engine import Connection, make_url
+from sqlalchemy.orm import Session
+
+from dish_pg.frontend_board_query import (
+    BoardContext,
+    BoardRegistryFacts,
+    FrontendBoardQuery,
+)
 
 
 class ProductionResetError(RuntimeError):
@@ -95,6 +104,35 @@ class ResetTargetIdentity:
     cluster_system_identifier: str
 
 
+@dataclass(frozen=True, order=True)
+class SkippedAccessGrant:
+    reset_id: str
+    schema_head: str
+    source: ObjectGrant
+    target: None
+    disposition: str
+
+
+@dataclass(frozen=True, order=True)
+class AccessGrantReplacement:
+    reset_id: str
+    schema_head: str
+    source: ObjectGrant
+    target: ObjectGrant
+    disposition: str
+
+
+@dataclass(frozen=True)
+class AccessResolution:
+    reset_id: str
+    schema_head: str
+    snapshot_sha256: str
+    effective_grants: tuple[ObjectGrant, ...]
+    skipped_grants: tuple[SkippedAccessGrant, ...]
+    replacements: tuple[AccessGrantReplacement, ...]
+    checksum: str
+
+
 @dataclass(frozen=True)
 class ResetRecoveryRecord:
     format: str
@@ -104,6 +142,7 @@ class ResetRecoveryRecord:
     snapshot: ResetSnapshot
     state: str
     checksum: str
+    access_resolution: AccessResolution | None = None
 
 
 _PROVIDER_NAMES = {
@@ -144,8 +183,30 @@ _ALLOWED_DEFAULT_PRIVILEGES = {
 _SETTING_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 _SYSTEM_DATABASES = {"postgres", "template0", "template1"}
 _RESET_RECOVERY_FORMAT = "dish-production-reset-recovery"
-_RESET_RECOVERY_VERSION = 1
+_RESET_RECOVERY_VERSION = 2
+_SUPPORTED_RESET_RECOVERY_VERSIONS = {1, _RESET_RECOVERY_VERSION}
 RESET_GUARD_SETTING = "dish.production_reset_incomplete"
+_ACL_RESOLUTION_HEAD = "0042_scalar_dish_state"
+_RETIRED_0042_RELATIONS = frozenset(
+    {
+        ("public", "current_task_completion"),
+        ("public", "current_task_section_placements"),
+        ("public", "task_authority_heads"),
+        ("public", "task_completion_events"),
+        ("public", "task_content_activations"),
+        ("public", "task_section_placement_events"),
+    }
+)
+_OBSERVER_ROLE = "dish_frontend_observer"
+_OBSERVER_REPLACEMENT_TARGET = ObjectGrant(
+    object_type="TABLE",
+    schema_name="public",
+    object_name="dish_states",
+    column_name=None,
+    grantee=_OBSERVER_ROLE,
+    privilege="SELECT",
+    grantable=False,
+)
 _RESET_RECOVERY_STATES = {
     "snapshot_captured",
     "reset_started",
@@ -162,8 +223,10 @@ _RESET_STATE_TRANSITIONS = {
 
 def maintenance_database_url(database_url: str) -> str:
     """Return the same server/user URL targeting the maintenance database."""
-    return make_url(database_url).set(database="postgres").render_as_string(
-        hide_password=False
+    return (
+        make_url(database_url)
+        .set(database="postgres")
+        .render_as_string(hide_password=False)
     )
 
 
@@ -197,10 +260,14 @@ def _validated_reset_id(value: str) -> str:
 
 def _snapshot_from_payload(value: object) -> ResetSnapshot:
     if not isinstance(value, dict):
-        raise ProductionResetError("production-reset recovery snapshot is not an object")
+        raise ProductionResetError(
+            "production-reset recovery snapshot is not an object"
+        )
     expected = {"database", "object_grants", "settings", "default_privileges"}
     if set(value) != expected:
-        raise ProductionResetError("production-reset recovery snapshot has unexpected fields")
+        raise ProductionResetError(
+            "production-reset recovery snapshot has unexpected fields"
+        )
     try:
         database_raw = value["database"]
         grants_raw = value["object_grants"]
@@ -243,23 +310,222 @@ def _snapshot_from_payload(value: object) -> ResetSnapshot:
     return snapshot
 
 
+def _snapshot_sha256(snapshot: ResetSnapshot) -> str:
+    return hashlib.sha256(_canonical_json_bytes(asdict(snapshot))).hexdigest()
+
+
+def _access_resolution_payload(
+    *,
+    reset_id: str,
+    schema_head: str,
+    snapshot_sha256: str,
+    effective_grants: tuple[ObjectGrant, ...],
+    skipped_grants: tuple[SkippedAccessGrant, ...],
+    replacements: tuple[AccessGrantReplacement, ...],
+) -> dict[str, object]:
+    return {
+        "reset_id": reset_id,
+        "schema_head": schema_head,
+        "snapshot_sha256": snapshot_sha256,
+        "effective_grants": [asdict(grant) for grant in effective_grants],
+        "skipped_grants": [asdict(grant) for grant in skipped_grants],
+        "replacements": [asdict(replacement) for replacement in replacements],
+    }
+
+
+def _new_access_resolution(
+    *,
+    reset_id: str,
+    snapshot: ResetSnapshot,
+    effective_grants: Iterable[ObjectGrant],
+    skipped_grants: Iterable[ObjectGrant],
+    replacement_sources: Iterable[ObjectGrant],
+) -> AccessResolution:
+    effective = tuple(sorted(set(effective_grants)))
+    validated_reset_id = _validated_reset_id(reset_id)
+    skipped = tuple(
+        SkippedAccessGrant(
+            reset_id=validated_reset_id,
+            schema_head=_ACL_RESOLUTION_HEAD,
+            source=grant,
+            target=None,
+            disposition="retired_relation_skipped",
+        )
+        for grant in sorted(set(skipped_grants))
+    )
+    replacement_values = tuple(
+        AccessGrantReplacement(
+            reset_id=validated_reset_id,
+            schema_head=_ACL_RESOLUTION_HEAD,
+            source=grant,
+            target=_OBSERVER_REPLACEMENT_TARGET,
+            disposition="retired_observer_grant_replaced",
+        )
+        for grant in sorted(set(replacement_sources))
+    )
+    snapshot_sha256 = _snapshot_sha256(snapshot)
+    payload = _access_resolution_payload(
+        reset_id=validated_reset_id,
+        schema_head=_ACL_RESOLUTION_HEAD,
+        snapshot_sha256=snapshot_sha256,
+        effective_grants=effective,
+        skipped_grants=skipped,
+        replacements=replacement_values,
+    )
+    return AccessResolution(
+        reset_id=validated_reset_id,
+        schema_head=_ACL_RESOLUTION_HEAD,
+        snapshot_sha256=snapshot_sha256,
+        effective_grants=effective,
+        skipped_grants=skipped,
+        replacements=replacement_values,
+        checksum=hashlib.sha256(_canonical_json_bytes(payload)).hexdigest(),
+    )
+
+
+def _access_resolution_from_payload(
+    value: object, *, snapshot: ResetSnapshot
+) -> AccessResolution:
+    if not isinstance(value, dict):
+        raise ProductionResetError(
+            "production-reset access resolution is not an object"
+        )
+    expected = {
+        "reset_id",
+        "schema_head",
+        "snapshot_sha256",
+        "effective_grants",
+        "skipped_grants",
+        "replacements",
+        "checksum",
+    }
+    if set(value) != expected:
+        raise ProductionResetError(
+            "production-reset access resolution has unexpected fields"
+        )
+    try:
+        effective = tuple(ObjectGrant(**grant) for grant in value["effective_grants"])
+        skipped = tuple(
+            SkippedAccessGrant(
+                reset_id=_validated_reset_id(grant["reset_id"]),
+                schema_head=grant["schema_head"],
+                source=ObjectGrant(**grant["source"]),
+                target=grant["target"],
+                disposition=grant["disposition"],
+            )
+            for grant in value["skipped_grants"]
+        )
+        replacements = tuple(
+            AccessGrantReplacement(
+                reset_id=_validated_reset_id(replacement["reset_id"]),
+                schema_head=replacement["schema_head"],
+                source=ObjectGrant(**replacement["source"]),
+                target=ObjectGrant(**replacement["target"]),
+                disposition=replacement["disposition"],
+            )
+            for replacement in value["replacements"]
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ProductionResetError(
+            "production-reset access resolution is malformed"
+        ) from exc
+    reset_id = _validated_reset_id(value["reset_id"])
+    schema_head = value["schema_head"]
+    snapshot_sha256 = value["snapshot_sha256"]
+    checksum = value["checksum"]
+    if schema_head != _ACL_RESOLUTION_HEAD:
+        raise ProductionResetError(
+            "production-reset access resolution schema head mismatch"
+        )
+    if snapshot_sha256 != _snapshot_sha256(snapshot):
+        raise ProductionResetError(
+            "production-reset access resolution snapshot mismatch"
+        )
+    if effective != tuple(sorted(set(effective))) or skipped != tuple(
+        sorted(set(skipped))
+    ):
+        raise ProductionResetError(
+            "production-reset access resolution grants are not canonical"
+        )
+    if replacements != tuple(sorted(set(replacements))):
+        raise ProductionResetError(
+            "production-reset access replacements are not canonical"
+        )
+    if any(
+        entry.reset_id != reset_id
+        or entry.schema_head != schema_head
+        or entry.target is not None
+        or entry.disposition != "retired_relation_skipped"
+        for entry in skipped
+    ):
+        raise ProductionResetError("production-reset skipped grant evidence is invalid")
+    if any(
+        entry.reset_id != reset_id
+        or entry.schema_head != schema_head
+        or entry.target != _OBSERVER_REPLACEMENT_TARGET
+        or entry.disposition != "retired_observer_grant_replaced"
+        for entry in replacements
+    ):
+        raise ProductionResetError(
+            "production-reset replacement grant evidence is invalid"
+        )
+    payload = _access_resolution_payload(
+        reset_id=reset_id,
+        schema_head=schema_head,
+        snapshot_sha256=snapshot_sha256,
+        effective_grants=effective,
+        skipped_grants=skipped,
+        replacements=replacements,
+    )
+    expected_checksum = hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+    if not isinstance(checksum, str) or checksum != expected_checksum:
+        raise ProductionResetError(
+            "production-reset access resolution checksum mismatch"
+        )
+    return AccessResolution(
+        reset_id=reset_id,
+        schema_head=schema_head,
+        snapshot_sha256=snapshot_sha256,
+        effective_grants=effective,
+        skipped_grants=skipped,
+        replacements=replacements,
+        checksum=checksum,
+    )
+
+
 def _recovery_payload(
     *,
     reset_id: str,
     target: ResetTargetIdentity,
     snapshot: ResetSnapshot,
     state: str,
+    version: int,
+    access_resolution: AccessResolution | None,
 ) -> dict[str, object]:
     if state not in _RESET_RECOVERY_STATES:
         raise ProductionResetError(f"invalid production-reset recovery state {state!r}")
-    return {
+    payload: dict[str, object] = {
         "format": _RESET_RECOVERY_FORMAT,
-        "version": _RESET_RECOVERY_VERSION,
+        "version": version,
         "reset_id": _validated_reset_id(reset_id),
         "target": asdict(target),
         "snapshot": asdict(snapshot),
         "state": state,
     }
+    if version == 1:
+        if access_resolution is not None:
+            raise ProductionResetError(
+                "v1 recovery record cannot contain access resolution"
+            )
+    elif version == _RESET_RECOVERY_VERSION:
+        payload["access_resolution"] = (
+            None if access_resolution is None else asdict(access_resolution)
+        )
+    else:
+        raise ProductionResetError(
+            f"unsupported production-reset recovery record version {version!r}"
+        )
+    return payload
 
 
 def _record_from_values(
@@ -268,22 +534,27 @@ def _record_from_values(
     target: ResetTargetIdentity,
     snapshot: ResetSnapshot,
     state: str,
+    version: int = _RESET_RECOVERY_VERSION,
+    access_resolution: AccessResolution | None = None,
 ) -> ResetRecoveryRecord:
     payload = _recovery_payload(
         reset_id=reset_id,
         target=target,
         snapshot=snapshot,
         state=state,
+        version=version,
+        access_resolution=access_resolution,
     )
     checksum = hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
     return ResetRecoveryRecord(
         format=_RESET_RECOVERY_FORMAT,
-        version=_RESET_RECOVERY_VERSION,
+        version=version,
         reset_id=reset_id,
         target=target,
         snapshot=snapshot,
         state=state,
         checksum=checksum,
+        access_resolution=access_resolution,
     )
 
 
@@ -307,10 +578,14 @@ def _record_document(record: ResetRecoveryRecord) -> dict[str, object]:
         target=record.target,
         snapshot=record.snapshot,
         state=record.state,
+        version=record.version,
+        access_resolution=record.access_resolution,
     )
     expected_checksum = hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
     if record.checksum != expected_checksum:
-        raise ProductionResetError("production-reset recovery record checksum is inconsistent")
+        raise ProductionResetError(
+            "production-reset recovery record checksum is inconsistent"
+        )
     return {**payload, "checksum": expected_checksum}
 
 
@@ -407,7 +682,7 @@ def load_recovery_record(path: Path) -> ResetRecoveryRecord:
         ) from exc
     if not isinstance(document, dict):
         raise ProductionResetError("production-reset recovery record is not an object")
-    expected_fields = {
+    base_fields = {
         "format",
         "version",
         "reset_id",
@@ -416,13 +691,19 @@ def load_recovery_record(path: Path) -> ResetRecoveryRecord:
         "state",
         "checksum",
     }
-    if set(document) != expected_fields:
-        raise ProductionResetError("production-reset recovery record has unexpected fields")
-    if document["format"] != _RESET_RECOVERY_FORMAT:
-        raise ProductionResetError("unsupported production-reset recovery record format")
-    if document["version"] != _RESET_RECOVERY_VERSION:
+    version = document.get("version")
+    if version not in _SUPPORTED_RESET_RECOVERY_VERSIONS:
         raise ProductionResetError(
-            f"unsupported production-reset recovery record version {document['version']!r}"
+            f"unsupported production-reset recovery record version {version!r}"
+        )
+    expected_fields = base_fields | ({"access_resolution"} if version == 2 else set())
+    if set(document) != expected_fields:
+        raise ProductionResetError(
+            "production-reset recovery record has unexpected fields"
+        )
+    if document["format"] != _RESET_RECOVERY_FORMAT:
+        raise ProductionResetError(
+            "unsupported production-reset recovery record format"
         )
     reset_id = _validated_reset_id(str(document["reset_id"]))
     state = document["state"]
@@ -434,37 +715,54 @@ def load_recovery_record(path: Path) -> ResetRecoveryRecord:
         "owner",
         "cluster_system_identifier",
     }:
-        raise ProductionResetError("production-reset recovery target identity is malformed")
+        raise ProductionResetError(
+            "production-reset recovery target identity is malformed"
+        )
     target = ResetTargetIdentity(
         database_name=str(target_raw["database_name"]),
         owner=str(target_raw["owner"]),
         cluster_system_identifier=str(target_raw["cluster_system_identifier"]),
     )
     snapshot = _snapshot_from_payload(document["snapshot"])
+    access_resolution = (
+        None
+        if version == 1 or document["access_resolution"] is None
+        else _access_resolution_from_payload(
+            document["access_resolution"], snapshot=snapshot
+        )
+    )
     payload = _recovery_payload(
         reset_id=reset_id,
         target=target,
         snapshot=snapshot,
         state=state,
+        version=version,
+        access_resolution=access_resolution,
     )
     checksum = document["checksum"]
     if not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum):
-        raise ProductionResetError("production-reset recovery record checksum is malformed")
+        raise ProductionResetError(
+            "production-reset recovery record checksum is malformed"
+        )
     expected_checksum = hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
     if checksum != expected_checksum:
         raise ProductionResetError("production-reset recovery record checksum mismatch")
-    if target.database_name != snapshot.database.name or target.owner != snapshot.database.owner:
+    if (
+        target.database_name != snapshot.database.name
+        or target.owner != snapshot.database.owner
+    ):
         raise ProductionResetError(
             "production-reset recovery target identity does not match its original snapshot"
         )
     return ResetRecoveryRecord(
         format=_RESET_RECOVERY_FORMAT,
-        version=_RESET_RECOVERY_VERSION,
+        version=version,
         reset_id=reset_id,
         target=target,
         snapshot=snapshot,
         state=state,
         checksum=checksum,
+        access_resolution=access_resolution,
     )
 
 
@@ -494,11 +792,60 @@ def transition_recovery_record(
         target=record.target,
         snapshot=record.snapshot,
         state=new_state,
+        version=record.version,
+        access_resolution=record.access_resolution,
     )
     _replace_recovery_record(path, updated)
     verified = load_recovery_record(path)
     if verified != updated:
-        raise ProductionResetError("production-reset recovery record write verification failed")
+        raise ProductionResetError(
+            "production-reset recovery record write verification failed"
+        )
+    return verified
+
+
+def persist_access_resolution(
+    path: Path,
+    *,
+    expected_reset_id: str,
+    expected_state: str,
+    resolution: AccessResolution,
+) -> ResetRecoveryRecord:
+    """Upgrade/bind one in-flight lineage to its deterministic post-migration ACL set."""
+    record = load_recovery_record(path)
+    if record.reset_id != expected_reset_id or record.state != expected_state:
+        raise ProductionResetError(
+            "production-reset recovery identity/state changed before ACL resolution"
+        )
+    if resolution.snapshot_sha256 != _snapshot_sha256(record.snapshot):
+        raise ProductionResetError("production-reset ACL resolution snapshot mismatch")
+    if resolution.reset_id != record.reset_id:
+        raise ProductionResetError("production-reset ACL resolution reset-id mismatch")
+    parsed_resolution = _access_resolution_from_payload(
+        asdict(resolution), snapshot=record.snapshot
+    )
+    if parsed_resolution != resolution:
+        raise ProductionResetError("production-reset ACL resolution is not canonical")
+    if record.access_resolution is not None:
+        if record.access_resolution != resolution:
+            raise ProductionResetError(
+                "production-reset persisted ACL resolution changed unexpectedly"
+            )
+        return record
+    updated = _record_from_values(
+        reset_id=record.reset_id,
+        target=record.target,
+        snapshot=record.snapshot,
+        state=record.state,
+        version=_RESET_RECOVERY_VERSION,
+        access_resolution=resolution,
+    )
+    _replace_recovery_record(path, updated)
+    verified = load_recovery_record(path)
+    if verified != updated:
+        raise ProductionResetError(
+            "production-reset access resolution write verification failed"
+        )
     return verified
 
 
@@ -521,8 +868,7 @@ def validate_cli_target(
         )
     if confirmed_database_name != expected_database_name:
         raise ProductionResetError(
-            "--confirm-database-name must exactly match "
-            "DISH_PG_EXPECTED_DATABASE_NAME"
+            "--confirm-database-name must exactly match DISH_PG_EXPECTED_DATABASE_NAME"
         )
     if expected_database_name in _SYSTEM_DATABASES:
         raise ProductionResetError(
@@ -563,9 +909,10 @@ def _role_sql(connection: Connection, role_name: str) -> str:
 def _load_database_definition(
     connection: Connection, expected_database_name: str
 ) -> DatabaseDefinition:
-    row = connection.execute(
-        text(
-            """
+    row = (
+        connection.execute(
+            text(
+                """
             SELECT
                 d.datname,
                 owner.rolname AS owner,
@@ -584,9 +931,12 @@ def _load_database_definition(
             JOIN pg_tablespace AS tablespace ON tablespace.oid = d.dattablespace
             WHERE d.datname = :database_name
             """
-        ),
-        {"database_name": expected_database_name},
-    ).mappings().one_or_none()
+            ),
+            {"database_name": expected_database_name},
+        )
+        .mappings()
+        .one_or_none()
+    )
     if row is None:
         raise ProductionResetError(
             f"target database {expected_database_name!r} does not exist"
@@ -616,19 +966,25 @@ def _load_database_definition(
 def _database_exists(connection: Connection, database_name: str) -> bool:
     return bool(
         connection.execute(
-            text("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = :database_name)"),
+            text(
+                "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = :database_name)"
+            ),
             {"database_name": database_name},
         ).scalar_one()
     )
 
 
 def _maintenance_actor_identity(connection: Connection) -> tuple[str, bool]:
-    row = connection.execute(
-        text(
-            "SELECT current_user AS role_name, role.rolsuper AS is_superuser "
-            "FROM pg_roles AS role WHERE role.rolname = current_user"
+    row = (
+        connection.execute(
+            text(
+                "SELECT current_user AS role_name, role.rolsuper AS is_superuser "
+                "FROM pg_roles AS role WHERE role.rolname = current_user"
+            )
         )
-    ).mappings().one()
+        .mappings()
+        .one()
+    )
     return str(row["role_name"]), bool(row["is_superuser"])
 
 
@@ -779,7 +1135,9 @@ def clear_reset_guard(
                 f"ALTER DATABASE {database_sql} RESET {RESET_GUARD_SETTING}"
             )
             if _load_reset_guard(connection, expected_database_name) is not None:
-                raise ProductionResetError("production-reset guard clear verification failed")
+                raise ProductionResetError(
+                    "production-reset guard clear verification failed"
+                )
     finally:
         engine.dispose()
 
@@ -787,17 +1145,21 @@ def clear_reset_guard(
 def _validate_connected_identity(
     connection: Connection, database: DatabaseDefinition
 ) -> None:
-    identity = connection.execute(
-        text(
-            """
+    identity = (
+        connection.execute(
+            text(
+                """
             SELECT current_database() AS database_name,
                    current_user AS role_name,
                    role.rolsuper AS is_superuser
             FROM pg_roles AS role
             WHERE role.rolname = current_user
             """
+            )
         )
-    ).mappings().one()
+        .mappings()
+        .one()
+    )
     if str(identity["database_name"]) != database.name:
         raise ProductionResetError("connected database changed during reset preflight")
     if str(identity["role_name"]) != database.owner:
@@ -918,7 +1280,9 @@ def _load_object_grants(
             )
         grantee = str(row["grantee"])
         if not grantee:
-            raise ProductionResetError("reset snapshot contains an unresolved grantee role")
+            raise ProductionResetError(
+                "reset snapshot contains an unresolved grantee role"
+            )
         grants.append(
             ObjectGrant(
                 object_type=object_type,
@@ -974,9 +1338,7 @@ def _load_database_settings(
             )
         settings.append(
             DatabaseSetting(
-                role_name=None
-                if row["role_name"] is None
-                else str(row["role_name"]),
+                role_name=None if row["role_name"] is None else str(row["role_name"]),
                 name=name,
                 value=value,
             )
@@ -985,9 +1347,10 @@ def _load_database_settings(
 
 
 def _load_default_privileges(connection: Connection) -> tuple[DefaultPrivilegeSet, ...]:
-    row_metadata = connection.execute(
-        text(
-            """
+    row_metadata = (
+        connection.execute(
+            text(
+                """
             SELECT defaults.oid,
                    owner.rolname AS owner,
                    namespace.nspname AS schema_name,
@@ -997,8 +1360,11 @@ def _load_default_privileges(connection: Connection) -> tuple[DefaultPrivilegeSe
             LEFT JOIN pg_namespace AS namespace ON namespace.oid = defaults.defaclnamespace
             ORDER BY owner.rolname, namespace.nspname NULLS FIRST, defaults.defaclobjtype
             """
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     sets: list[DefaultPrivilegeSet] = []
     for metadata in row_metadata:
         object_type_code = str(metadata["object_type"])
@@ -1059,10 +1425,14 @@ def _load_default_privileges(connection: Connection) -> tuple[DefaultPrivilegeSe
     return tuple(sets)
 
 
-def _check_non_session_drop_blockers(connection: Connection, database_name: str) -> None:
+def _check_non_session_drop_blockers(
+    connection: Connection, database_name: str
+) -> None:
     prepared_count = int(
         connection.execute(
-            text("SELECT count(*) FROM pg_prepared_xacts WHERE database = :database_name"),
+            text(
+                "SELECT count(*) FROM pg_prepared_xacts WHERE database = :database_name"
+            ),
             {"database_name": database_name},
         ).scalar_one()
     )
@@ -1092,7 +1462,9 @@ def snapshot_database_state(
             database = _load_database_definition(connection, expected_database_name)
             _validate_connected_identity(connection, database)
             subscription_count = int(
-                connection.execute(text("SELECT count(*) FROM pg_subscription")).scalar_one()
+                connection.execute(
+                    text("SELECT count(*) FROM pg_subscription")
+                ).scalar_one()
             )
             if subscription_count:
                 raise ProductionResetError(
@@ -1112,12 +1484,16 @@ def snapshot_database_state(
                 raise ProductionResetError(
                     "database identity changed between target and maintenance preflight"
                 )
-            identity = connection.execute(
-                text(
-                    "SELECT current_user AS role_name, role.rolsuper AS is_superuser "
-                    "FROM pg_roles AS role WHERE role.rolname = current_user"
+            identity = (
+                connection.execute(
+                    text(
+                        "SELECT current_user AS role_name, role.rolsuper AS is_superuser "
+                        "FROM pg_roles AS role WHERE role.rolname = current_user"
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             if str(identity["role_name"]) != database.owner or not bool(
                 identity["is_superuser"]
             ):
@@ -1181,14 +1557,17 @@ def _database_create_sql(
     parts.extend(
         [
             f"TABLESPACE = {tablespace}",
-            "ALLOW_CONNECTIONS = " + ("true" if effective_allow_connections else "false"),
+            "ALLOW_CONNECTIONS = "
+            + ("true" if effective_allow_connections else "false"),
             f"CONNECTION LIMIT = {database.connection_limit}",
         ]
     )
     return " ".join(parts)
 
 
-def _active_sessions(connection: Connection, database_name: str) -> list[dict[str, object]]:
+def _active_sessions(
+    connection: Connection, database_name: str
+) -> list[dict[str, object]]:
     return [
         dict(row)
         for row in connection.execute(
@@ -1242,9 +1621,11 @@ def recreate_database(
                     raise ProductionResetError(
                         "production-reset guard/reset-id mismatch; refusing to mutate target"
                     )
-                if current is not None and replace(
-                    current, allow_connections=database.allow_connections
-                ) != database:
+                if (
+                    current is not None
+                    and replace(current, allow_connections=database.allow_connections)
+                    != database
+                ):
                     raise ProductionResetError(
                         "database identity/configuration changed from the retained original snapshot"
                     )
@@ -1411,8 +1792,8 @@ def _restore_default_privileges(
             raise ProductionResetError(
                 "PostgreSQL does not allow IN SCHEMA for default schema privileges"
             )
-        schema_clause = (
-            " IN SCHEMA " + _quote_identifier(connection, default_set.schema_name)
+        schema_clause = " IN SCHEMA " + _quote_identifier(
+            connection, default_set.schema_name
         )
     prefix = f"ALTER DEFAULT PRIVILEGES FOR ROLE {owner}{schema_clause}"
 
@@ -1464,9 +1845,7 @@ def _restore_settings(connection: Connection, snapshot: ResetSnapshot) -> None:
 
 def _assert_roles_exist(connection: Connection, snapshot: ResetSnapshot) -> None:
     roles = {
-        grant.grantee
-        for grant in snapshot.object_grants
-        if grant.grantee != "PUBLIC"
+        grant.grantee for grant in snapshot.object_grants if grant.grantee != "PUBLIC"
     }
     roles.update(
         grant.grantee
@@ -1475,7 +1854,9 @@ def _assert_roles_exist(connection: Connection, snapshot: ResetSnapshot) -> None
         if grant.grantee != "PUBLIC"
     )
     roles.update(
-        setting.role_name for setting in snapshot.settings if setting.role_name is not None
+        setting.role_name
+        for setting in snapshot.settings
+        if setting.role_name is not None
     )
     roles.update(default_set.owner for default_set in snapshot.default_privileges)
     if not roles:
@@ -1495,22 +1876,224 @@ def _assert_roles_exist(connection: Connection, snapshot: ResetSnapshot) -> None
         )
 
 
-def _verify_restored_state(connection: Connection, snapshot: ResetSnapshot) -> None:
+def _relation_kind(
+    connection: Connection, schema_name: str, object_name: str
+) -> str | None:
+    value = connection.execute(
+        text(
+            "SELECT c.relkind FROM pg_class AS c "
+            "JOIN pg_namespace AS n ON n.oid=c.relnamespace "
+            "WHERE n.nspname=:schema_name AND c.relname=:object_name"
+        ),
+        {"schema_name": schema_name, "object_name": object_name},
+    ).scalar_one_or_none()
+    return None if value is None else str(value)
+
+
+def _validate_surviving_grant_target(
+    connection: Connection, snapshot: ResetSnapshot, grant: ObjectGrant
+) -> None:
+    if grant.object_type == "DATABASE":
+        current_database = str(
+            connection.execute(text("SELECT current_database()")).scalar_one()
+        )
+        if (
+            grant.object_name != snapshot.database.name
+            or current_database != snapshot.database.name
+        ):
+            raise ProductionResetError("snapshot grant targets an unexpected database")
+        return
+    if grant.object_type == "SCHEMA":
+        exists = connection.execute(
+            text("SELECT 1 FROM pg_namespace WHERE nspname=:name"),
+            {"name": grant.object_name},
+        ).scalar_one_or_none()
+        if exists is None:
+            raise ProductionResetError(
+                f"snapshot grant target schema is missing: {grant.object_name}"
+            )
+        return
+    if grant.schema_name is None:
+        raise ProductionResetError("relation grant is missing its schema identity")
+    kind = _relation_kind(connection, grant.schema_name, grant.object_name)
+    if kind is None:
+        raise ProductionResetError(
+            "snapshot grant target relation is missing and is not reviewed as retired: "
+            f"{grant.schema_name}.{grant.object_name}"
+        )
+    allowed_kinds = (
+        {"S"} if grant.object_type == "SEQUENCE" else {"r", "p", "v", "m", "f"}
+    )
+    if (
+        grant.object_type not in {"TABLE", "SEQUENCE", "COLUMN"}
+        or kind not in allowed_kinds
+    ):
+        raise ProductionResetError(
+            "snapshot grant target relation type changed unexpectedly: "
+            f"{grant.schema_name}.{grant.object_name}"
+        )
+    if grant.object_type == "COLUMN":
+        exists = connection.execute(
+            text(
+                "SELECT 1 FROM pg_attribute AS a "
+                "JOIN pg_class AS c ON c.oid=a.attrelid "
+                "JOIN pg_namespace AS n ON n.oid=c.relnamespace "
+                "WHERE n.nspname=:schema_name AND c.relname=:object_name "
+                "AND a.attname=:column_name AND a.attnum > 0 AND NOT a.attisdropped"
+            ),
+            {
+                "schema_name": grant.schema_name,
+                "object_name": grant.object_name,
+                "column_name": grant.column_name,
+            },
+        ).scalar_one_or_none()
+        if exists is None:
+            raise ProductionResetError(
+                "snapshot column grant target is missing from a surviving relation: "
+                f"{grant.schema_name}.{grant.object_name}.{grant.column_name}"
+            )
+
+
+def derive_access_resolution(
+    database_url: str, snapshot: ResetSnapshot, *, reset_id: str
+) -> AccessResolution:
+    """Resolve the immutable snapshot against the one reviewed replacement schema."""
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            _assert_roles_exist(connection, snapshot)
+            heads = tuple(
+                str(value)
+                for value in connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalars()
+            )
+            if heads != (_ACL_RESOLUTION_HEAD,):
+                raise ProductionResetError(
+                    "production-reset ACL resolution requires exact schema head "
+                    f"{_ACL_RESOLUTION_HEAD}"
+                )
+            for schema_name, relation_name in sorted(_RETIRED_0042_RELATIONS):
+                if _relation_kind(connection, schema_name, relation_name) is not None:
+                    raise ProductionResetError(
+                        "0042-retired ACL target unexpectedly exists; schema drift: "
+                        f"{schema_name}.{relation_name}"
+                    )
+
+            skipped: list[ObjectGrant] = []
+            effective: list[ObjectGrant] = []
+            for grant in snapshot.object_grants:
+                relation_identity = (grant.schema_name, grant.object_name)
+                if relation_identity in _RETIRED_0042_RELATIONS:
+                    if grant.object_type not in {"TABLE", "COLUMN"}:
+                        raise ProductionResetError(
+                            "0042-retired target has an incompatible snapshotted object type"
+                        )
+                    skipped.append(grant)
+                    continue
+                _validate_surviving_grant_target(connection, snapshot, grant)
+                effective.append(grant)
+
+            observer_sources = tuple(
+                sorted(grant for grant in skipped if grant.grantee == _OBSERVER_ROLE)
+            )
+            expected_observer_sources = tuple(
+                sorted(
+                    ObjectGrant(
+                        object_type="TABLE",
+                        schema_name=schema_name,
+                        object_name=relation_name,
+                        column_name=None,
+                        grantee=_OBSERVER_ROLE,
+                        privilege="SELECT",
+                        grantable=False,
+                    )
+                    for schema_name, relation_name in _RETIRED_0042_RELATIONS
+                )
+            )
+            replacement_sources: tuple[ObjectGrant, ...] = ()
+            if observer_sources:
+                if observer_sources != expected_observer_sources:
+                    raise ProductionResetError(
+                        "0042 observer replacement requires the exact six retired SELECT grants"
+                    )
+                _validate_surviving_grant_target(
+                    connection, snapshot, _OBSERVER_REPLACEMENT_TARGET
+                )
+                current_target_grants = {
+                    grant
+                    for grant in _load_object_grants(connection, snapshot.database)
+                    if grant.schema_name == _OBSERVER_REPLACEMENT_TARGET.schema_name
+                    and grant.object_name == _OBSERVER_REPLACEMENT_TARGET.object_name
+                    and grant.grantee == _OBSERVER_ROLE
+                }
+                if current_target_grants not in (
+                    set(),
+                    {_OBSERVER_REPLACEMENT_TARGET},
+                ):
+                    raise ProductionResetError(
+                        "0042 observer replacement target has incompatible existing ACL"
+                    )
+                effective.append(_OBSERVER_REPLACEMENT_TARGET)
+                replacement_sources = expected_observer_sources
+
+            for default_set in snapshot.default_privileges:
+                if default_set.schema_name is not None:
+                    exists = connection.execute(
+                        text("SELECT 1 FROM pg_namespace WHERE nspname=:name"),
+                        {"name": default_set.schema_name},
+                    ).scalar_one_or_none()
+                    if exists is None:
+                        raise ProductionResetError(
+                            "default privilege target schema is missing: "
+                            f"{default_set.schema_name}"
+                        )
+            return _new_access_resolution(
+                reset_id=reset_id,
+                snapshot=snapshot,
+                effective_grants=effective,
+                skipped_grants=skipped,
+                replacement_sources=replacement_sources,
+            )
+    finally:
+        engine.dispose()
+
+
+def validate_access_resolution(
+    database_url: str,
+    snapshot: ResetSnapshot,
+    resolution: AccessResolution,
+) -> None:
+    current = derive_access_resolution(
+        database_url, snapshot, reset_id=resolution.reset_id
+    )
+    if current != resolution:
+        raise ProductionResetError(
+            "production-reset persisted ACL resolution no longer matches exact schema/ACL state"
+        )
+
+
+def _verify_restored_state(
+    connection: Connection,
+    snapshot: ResetSnapshot,
+    resolution: AccessResolution | None = None,
+) -> None:
     current_database = _load_database_definition(connection, snapshot.database.name)
     if current_database != snapshot.database:
         raise ProductionResetError(
             "recreated database identity/configuration does not match the pre-reset snapshot"
         )
     current_grants = set(_load_object_grants(connection, snapshot.database))
-    missing_grants = sorted(set(snapshot.object_grants) - current_grants)
+    expected_grants = (
+        snapshot.object_grants if resolution is None else resolution.effective_grants
+    )
+    missing_grants = sorted(set(expected_grants) - current_grants)
     if missing_grants:
         raise ProductionResetError(
             f"grant verification failed; {len(missing_grants)} pre-reset grant(s) are missing"
         )
     current_settings = set(
-        _load_database_settings(
-            connection, snapshot.database, allow_reset_guard=True
-        )
+        _load_database_settings(connection, snapshot.database, allow_reset_guard=True)
     )
     missing_settings = sorted(set(snapshot.settings) - current_settings)
     if missing_settings:
@@ -1527,15 +2110,38 @@ def _verify_restored_state(connection: Connection, snapshot: ResetSnapshot) -> N
             "default-privilege verification failed; "
             f"{len(missing_defaults)} pre-reset definition(s) are missing"
         )
+    if resolution is not None and any(
+        replacement.target == _OBSERVER_REPLACEMENT_TARGET
+        for replacement in resolution.replacements
+    ):
+        observer = _quote_identifier(connection, _OBSERVER_ROLE)
+        connection.exec_driver_sql(f"SET LOCAL ROLE {observer}")
+        context = BoardContext(
+            generation_id=uuid.uuid4(),
+            registry_version_id=uuid.uuid4(),
+            registry_revision=1,
+            evaluation_time=datetime.now(timezone.utc),
+        )
+        registry = BoardRegistryFacts(context=context, sections=())
+        FrontendBoardQuery(Session(bind=connection)).active_cards(
+            registry=registry,
+            projection_delay=timedelta(seconds=1),
+            max_cards=1,
+        )
+        connection.exec_driver_sql("RESET ROLE")
 
 
-def verify_database_access(database_url: str, snapshot: ResetSnapshot) -> None:
+def verify_database_access(
+    database_url: str,
+    snapshot: ResetSnapshot,
+    resolution: AccessResolution | None = None,
+) -> None:
     """Verify the retained original access snapshot without changing PostgreSQL state."""
     engine = create_engine(database_url)
     try:
         with engine.connect() as connection:
             _assert_roles_exist(connection, snapshot)
-            _verify_restored_state(connection, snapshot)
+            _verify_restored_state(connection, snapshot, resolution)
     finally:
         engine.dispose()
 
@@ -1545,9 +2151,14 @@ def restore_database_access(
     snapshot: ResetSnapshot,
     *,
     reset_id: str,
+    resolution: AccessResolution | None = None,
 ) -> None:
     """Restore the retained original grants/settings under the matching active guard."""
     reset_id = _validated_reset_id(reset_id)
+    if resolution is not None and resolution.reset_id != reset_id:
+        raise ProductionResetError(
+            "production-reset ACL resolution reset-id mismatch; refusing access restore"
+        )
     actual_guard = read_reset_guard(database_url, snapshot.database.name)
     if actual_guard != reset_id:
         raise ProductionResetError(
@@ -1577,9 +2188,14 @@ def restore_database_access(
 
             for default_set in snapshot.default_privileges:
                 _restore_default_privileges(connection, default_set)
-            for grant in snapshot.object_grants:
+            grants = (
+                snapshot.object_grants
+                if resolution is None
+                else resolution.effective_grants
+            )
+            for grant in grants:
                 connection.exec_driver_sql(_grant_statement(connection, grant))
             _restore_settings(connection, snapshot)
-            _verify_restored_state(connection, snapshot)
+            _verify_restored_state(connection, snapshot, resolution)
     finally:
         engine.dispose()

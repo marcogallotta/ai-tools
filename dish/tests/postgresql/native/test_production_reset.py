@@ -1,21 +1,35 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import os
-from pathlib import Path
 import runpy
 import uuid
+from contextlib import contextmanager
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
 
+from dish_pg import production_reset
+from dish_pg.frontend_board_query import (
+    BoardContext,
+    BoardRegistryFacts,
+    FrontendBoardQuery,
+)
 from dish_pg.production_reset import (
+    ObjectGrant,
     ProductionResetError,
+    derive_access_resolution,
     load_recovery_record,
     read_reset_guard,
     recreate_database,
+    restore_database_access,
     snapshot_database_state,
 )
 
@@ -58,15 +72,19 @@ def _native_reset_fixture(base):
     try:
         with admin_engine.connect() as raw_connection:
             connection = raw_connection.execution_options(isolation_level="AUTOCOMMIT")
-            identity = connection.execute(
-                text(
-                    """
+            identity = (
+                connection.execute(
+                    text(
+                        """
                     SELECT current_user AS role, rolsuper AS superuser
                     FROM pg_roles
                     WHERE rolname = current_user
                     """
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             owner = str(identity["role"])
             if not bool(identity["superuser"]):
                 pytest.skip(
@@ -137,7 +155,9 @@ def _native_reset_fixture(base):
             target_engine.dispose()
         try:
             with admin_engine.connect() as raw_connection:
-                connection = raw_connection.execution_options(isolation_level="AUTOCOMMIT")
+                connection = raw_connection.execution_options(
+                    isolation_level="AUTOCOMMIT"
+                )
                 connection.exec_driver_sql(
                     f"DROP DATABASE IF EXISTS {_q(database_name)} WITH (FORCE)"
                 )
@@ -208,9 +228,7 @@ def _assert_original_authority(
                 "CREATE TABLE app.future_items (id bigint PRIMARY KEY)"
             )
             assert connection.execute(
-                text(
-                    "SELECT has_table_privilege(:role, 'app.future_items', 'SELECT')"
-                ),
+                text("SELECT has_table_privilege(:role, 'app.future_items', 'SELECT')"),
                 {"role": observer},
             ).scalar_one()
     finally:
@@ -296,6 +314,14 @@ def test_native_partial_reset_retry_refuses_and_resume_restores_original_authori
                 with engine.begin() as connection:
                     connection.exec_driver_sql("CREATE SCHEMA app")
                     connection.exec_driver_sql(
+                        "CREATE TABLE alembic_version ("
+                        "version_num varchar(32) NOT NULL PRIMARY KEY)"
+                    )
+                    connection.exec_driver_sql(
+                        "INSERT INTO alembic_version (version_num) "
+                        "VALUES ('0042_scalar_dish_state')"
+                    )
+                    connection.exec_driver_sql(
                         "CREATE TABLE app.items ("
                         "id bigint PRIMARY KEY, payload text, private_note text)"
                     )
@@ -363,6 +389,7 @@ def test_native_guard_reset_id_mismatch_cannot_mutate_target(
 
         recreate_database(database_url, snapshot, reset_id=RESET_ID)
         assert read_reset_guard(database_url, database_name) == RESET_ID
+
         with admin_engine.connect() as connection:
             before_oid = connection.execute(
                 text("SELECT oid FROM pg_database WHERE datname = :database"),
@@ -388,3 +415,383 @@ def test_native_guard_reset_id_mismatch_cannot_mutate_target(
         assert after_oid == before_oid
         assert allow_connections is True
         assert read_reset_guard(database_url, database_name) == RESET_ID
+
+
+def test_native_0041_to_0042_acl_resolution_restores_real_observer_query(
+    native_migration_database,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    with _native_reset_fixture(native_migration_database) as fixture:
+        database_url = fixture["database_url"]
+        database_name = fixture["database_name"]
+        observer = fixture["observer"]
+        writer = fixture["writer"]
+        owner = fixture["owner"]
+        engine = create_engine(database_url)
+        config = Config(str(ROOT / "alembic.ini"))
+        config.set_main_option("sqlalchemy.url", database_url)
+        try:
+            with engine.begin() as connection:
+                connection.exec_driver_sql("DROP SCHEMA public CASCADE")
+                connection.exec_driver_sql("CREATE SCHEMA public")
+            command.upgrade(config, "0041_test_generation_rollover")
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"GRANT USAGE ON SCHEMA public TO {_q(observer)}"
+                )
+                connection.exec_driver_sql(
+                    f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {_q(observer)}"
+                )
+            snapshot = snapshot_database_state(database_url, database_name)
+
+            command.upgrade(config, "0042_scalar_dish_state")
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"REVOKE SELECT ON TABLE public.dish_tasks FROM {_q(observer)}"
+                )
+            with fixture["admin_engine"].connect() as raw_connection:
+                connection = raw_connection.execution_options(
+                    isolation_level="AUTOCOMMIT"
+                )
+                connection.exec_driver_sql(
+                    f"ALTER DATABASE {_q(database_name)} "
+                    f"SET dish.production_reset_incomplete TO '{RESET_ID}'"
+                )
+
+            monkeypatch.setattr(production_reset, "_OBSERVER_ROLE", observer)
+            replacement = production_reset.ObjectGrant(
+                object_type="TABLE",
+                schema_name="public",
+                object_name="dish_states",
+                column_name=None,
+                grantee=observer,
+                privilege="SELECT",
+                grantable=False,
+            )
+            monkeypatch.setattr(
+                production_reset, "_OBSERVER_REPLACEMENT_TARGET", replacement
+            )
+
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "CREATE TABLE public.current_task_completion (id bigint)"
+                )
+            with pytest.raises(ProductionResetError, match="schema drift"):
+                derive_access_resolution(database_url, snapshot, reset_id=RESET_ID)
+            with engine.begin() as connection:
+                connection.exec_driver_sql("DROP TABLE public.current_task_completion")
+
+            partial_snapshot = replace(
+                snapshot,
+                object_grants=tuple(
+                    grant
+                    for grant in snapshot.object_grants
+                    if not (
+                        grant.grantee == observer
+                        and grant.object_name == "task_completion_events"
+                    )
+                ),
+            )
+            with pytest.raises(ProductionResetError, match="exact six"):
+                derive_access_resolution(
+                    database_url, partial_snapshot, reset_id=RESET_ID
+                )
+
+            mismatched_observer_snapshot = replace(
+                snapshot,
+                object_grants=tuple(
+                    replace(grant, grantable=True)
+                    if grant.grantee == observer
+                    and grant.object_name == "task_completion_events"
+                    else grant
+                    for grant in snapshot.object_grants
+                ),
+            )
+            with pytest.raises(ProductionResetError, match="exact six"):
+                derive_access_resolution(
+                    database_url,
+                    mismatched_observer_snapshot,
+                    reset_id=RESET_ID,
+                )
+
+            missing_relation = ObjectGrant(
+                object_type="TABLE",
+                schema_name="public",
+                object_name="not_reviewed_as_retired",
+                column_name=None,
+                grantee=observer,
+                privilege="SELECT",
+                grantable=False,
+            )
+            with pytest.raises(ProductionResetError, match="not reviewed as retired"):
+                derive_access_resolution(
+                    database_url,
+                    replace(
+                        snapshot,
+                        object_grants=(*snapshot.object_grants, missing_relation),
+                    ),
+                    reset_id=RESET_ID,
+                )
+
+            missing_role = replace(missing_relation, grantee="absent_reset_role")
+            with pytest.raises(ProductionResetError, match=r"role\(s\) are missing"):
+                derive_access_resolution(
+                    database_url,
+                    replace(
+                        snapshot,
+                        object_grants=(*snapshot.object_grants, missing_role),
+                    ),
+                    reset_id=RESET_ID,
+                )
+
+            missing_column = replace(
+                missing_relation,
+                object_type="COLUMN",
+                object_name="dish_tasks",
+                column_name="retired_column",
+            )
+            with pytest.raises(ProductionResetError, match="missing from a surviving"):
+                derive_access_resolution(
+                    database_url,
+                    replace(
+                        snapshot,
+                        object_grants=(*snapshot.object_grants, missing_column),
+                    ),
+                    reset_id=RESET_ID,
+                )
+
+            with engine.begin() as connection:
+                connection.exec_driver_sql("CREATE SEQUENCE public.kind_mismatch")
+            wrong_kind = replace(missing_relation, object_name="kind_mismatch")
+            with pytest.raises(ProductionResetError, match="type changed"):
+                derive_access_resolution(
+                    database_url,
+                    replace(
+                        snapshot,
+                        object_grants=(*snapshot.object_grants, wrong_kind),
+                    ),
+                    reset_id=RESET_ID,
+                )
+            with engine.begin() as connection:
+                connection.exec_driver_sql("DROP SEQUENCE public.kind_mismatch")
+
+            missing_schema = replace(
+                missing_relation,
+                object_type="SCHEMA",
+                schema_name="absent_schema",
+                object_name="absent_schema",
+            )
+            with pytest.raises(ProductionResetError, match="target schema is missing"):
+                derive_access_resolution(
+                    database_url,
+                    replace(
+                        snapshot,
+                        object_grants=(*snapshot.object_grants, missing_schema),
+                    ),
+                    reset_id=RESET_ID,
+                )
+
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"GRANT UPDATE ON TABLE public.dish_states TO {_q(observer)}"
+                )
+            with pytest.raises(ProductionResetError, match="incompatible existing ACL"):
+                derive_access_resolution(database_url, snapshot, reset_id=RESET_ID)
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"REVOKE UPDATE ON TABLE public.dish_states FROM {_q(observer)}"
+                )
+
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE public.dish_states RENAME TO dish_states_missing"
+                )
+            with pytest.raises(ProductionResetError, match="not reviewed as retired"):
+                derive_access_resolution(database_url, snapshot, reset_id=RESET_ID)
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE public.dish_states_missing RENAME TO dish_states"
+                )
+
+            snapshot_with_retired_column = replace(
+                snapshot,
+                object_grants=(
+                    *snapshot.object_grants,
+                    ObjectGrant(
+                        object_type="COLUMN",
+                        schema_name="public",
+                        object_name="task_completion_events",
+                        column_name="completed_at",
+                        grantee=writer,
+                        privilege="SELECT",
+                        grantable=False,
+                    ),
+                ),
+            )
+            resolution = derive_access_resolution(
+                database_url,
+                snapshot_with_retired_column,
+                reset_id=RESET_ID,
+            )
+            assert {
+                (grant.schema_name, grant.object_name)
+                for entry in resolution.skipped_grants
+                for grant in (entry.source,)
+            } == production_reset._RETIRED_0042_RELATIONS
+            assert all(
+                entry.reset_id == RESET_ID
+                and entry.schema_head == "0042_scalar_dish_state"
+                and entry.target is None
+                and entry.disposition == "retired_relation_skipped"
+                for entry in resolution.skipped_grants
+            )
+            assert {entry.source for entry in resolution.replacements} == {
+                ObjectGrant(
+                    object_type="TABLE",
+                    schema_name=schema_name,
+                    object_name=relation_name,
+                    column_name=None,
+                    grantee=observer,
+                    privilege="SELECT",
+                    grantable=False,
+                )
+                for schema_name, relation_name in production_reset._RETIRED_0042_RELATIONS
+            }
+            assert all(
+                entry.target == replacement
+                and entry.reset_id == RESET_ID
+                and entry.schema_head == "0042_scalar_dish_state"
+                and entry.disposition == "retired_observer_grant_replaced"
+                for entry in resolution.replacements
+            )
+
+            recovery_path = tmp_path / "v1-acl-resolution.json"
+            v1_record = production_reset._record_from_values(
+                reset_id=RESET_ID,
+                target=production_reset.ResetTargetIdentity(
+                    database_name=database_name,
+                    owner=owner,
+                    cluster_system_identifier="native-certification",
+                ),
+                snapshot=snapshot_with_retired_column,
+                state="reset_started",
+                version=1,
+            )
+            production_reset.create_recovery_record(recovery_path, v1_record)
+            durable_record = production_reset.persist_access_resolution(
+                recovery_path,
+                expected_reset_id=RESET_ID,
+                expected_state="reset_started",
+                resolution=resolution,
+            )
+            assert durable_record.version == 2
+            assert durable_record.snapshot == snapshot_with_retired_column
+            assert durable_record.access_resolution == resolution
+            assert (
+                production_reset.load_recovery_record(recovery_path).access_resolution
+                == resolution
+            )
+
+            tampered_resolution = production_reset._new_access_resolution(
+                reset_id=RESET_ID,
+                snapshot=snapshot_with_retired_column,
+                effective_grants=resolution.effective_grants,
+                skipped_grants=tuple(
+                    entry.source
+                    for entry in resolution.skipped_grants
+                    if entry.source.object_type != "COLUMN"
+                ),
+                replacement_sources=tuple(
+                    entry.source for entry in resolution.replacements
+                ),
+            )
+            with pytest.raises(ProductionResetError, match="no longer matches"):
+                production_reset.validate_access_resolution(
+                    database_url,
+                    snapshot_with_retired_column,
+                    tampered_resolution,
+                )
+
+            original_grant_statement = production_reset._grant_statement
+            saw_survivor = False
+
+            def fail_after_survivor(connection, grant):
+                nonlocal saw_survivor
+                if saw_survivor:
+                    return "THIS IS NOT SQL"
+                statement = original_grant_statement(connection, grant)
+                if (
+                    grant.grantee == observer
+                    and grant.object_name == "dish_tasks"
+                    and grant.privilege == "SELECT"
+                ):
+                    saw_survivor = True
+                return statement
+
+            monkeypatch.setattr(
+                production_reset, "_grant_statement", fail_after_survivor
+            )
+            with pytest.raises(DBAPIError):
+                restore_database_access(
+                    database_url,
+                    snapshot_with_retired_column,
+                    reset_id=RESET_ID,
+                    resolution=resolution,
+                )
+            with engine.connect() as connection:
+                assert not connection.execute(
+                    text(
+                        "SELECT has_table_privilege(:role, "
+                        "'public.dish_tasks', 'SELECT')"
+                    ),
+                    {"role": observer},
+                ).scalar_one()
+            monkeypatch.setattr(
+                production_reset, "_grant_statement", original_grant_statement
+            )
+
+            restore_database_access(
+                database_url,
+                snapshot_with_retired_column,
+                reset_id=RESET_ID,
+                resolution=resolution,
+            )
+            assert (
+                derive_access_resolution(
+                    database_url,
+                    snapshot_with_retired_column,
+                    reset_id=RESET_ID,
+                )
+                == resolution
+            )
+            restore_database_access(
+                database_url,
+                snapshot_with_retired_column,
+                reset_id=RESET_ID,
+                resolution=resolution,
+            )
+            with engine.begin() as connection:
+                connection.exec_driver_sql(f"SET LOCAL ROLE {_q(observer)}")
+                session = Session(bind=connection)
+                context = BoardContext(
+                    generation_id=uuid.uuid4(),
+                    registry_version_id=uuid.uuid4(),
+                    registry_revision=1,
+                    evaluation_time=datetime.now(timezone.utc),
+                )
+                registry = BoardRegistryFacts(context=context, sections=())
+                assert (
+                    FrontendBoardQuery(session).active_cards(
+                        registry=registry,
+                        projection_delay=timedelta(seconds=1),
+                        max_cards=1,
+                    )
+                    == ()
+                )
+                with pytest.raises(DBAPIError):
+                    connection.exec_driver_sql(
+                        "INSERT INTO public.dish_states DEFAULT VALUES"
+                    )
+        finally:
+            engine.dispose()
