@@ -8,15 +8,13 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 
-from dish_pg.release import ALEMBIC_HEAD
-
 from tests.support.postgresql.core import ROOT
 
 from tests.support.postgresql.pglite_fixtures import insert_generation, insert_request, insert_run, upgrade_on
 
 pytestmark = pytest.mark.pglite
 
-
+TARGET_REVISION = "0027_server_default_alignment"
 
 
 def test_populated_0018_predecessor_upgrades_linearly_to_0027(pglite) -> None:
@@ -50,11 +48,11 @@ def test_populated_0018_predecessor_upgrades_linearly_to_0027(pglite) -> None:
                 owner_id="owner-a",
             )
             raw.autocommit = False
-            upgrade_on(connection, pglite.sqlalchemy_url, "head")
+            upgrade_on(connection, pglite.sqlalchemy_url, TARGET_REVISION)
             connection.commit()
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == ALEMBIC_HEAD
+            ).scalar_one() == TARGET_REVISION
             assert connection.execute(
                 text(
                     "SELECT owner_id FROM service_requests "
