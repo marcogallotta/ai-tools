@@ -134,6 +134,71 @@ def test_concurrent_initializers_serialize_migrations(tmp_path: Path) -> None:
         conn.close()
 
 
+@pytest.mark.database_boundary
+@pytest.mark.real_database_bootstrap
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_concurrency
+def test_runtime_schema_validation_uses_one_version_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "runtime-schema-snapshot.sqlite"
+    setup = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        assert setup.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+    finally:
+        setup.close()
+
+    writer = sqlite3.connect(db_path, isolation_level=None)
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute(
+        "CREATE TABLE schema_migrations "
+        "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    for version in sorted(MIGRATIONS):
+        _execute_script_statements(writer, MIGRATIONS[version])
+        writer.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'now')",
+            (version,),
+        )
+        writer.execute(f"PRAGMA user_version = {version}")
+
+    real_connect = sqlite3.connect
+
+    class _CommitMigrationBetweenVersionReads(sqlite3.Connection):
+        committed = False
+
+        def execute(self, sql, *args, **kwargs):
+            if (
+                not type(self).committed
+                and "FROM sqlite_master" in sql
+                and "schema_migrations" in sql
+            ):
+                type(self).committed = True
+                writer.execute("COMMIT")
+            return super().execute(sql, *args, **kwargs)
+
+    def racing_connect(database, *args, **kwargs):
+        if Path(database) == db_path:
+            kwargs["factory"] = _CommitMigrationBetweenVersionReads
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(database_initialization.sqlite3, "connect", racing_connect)
+    runtime = None
+    try:
+        runtime = database_initialization.open_runtime_database(db_path)
+        assert _CommitMigrationBetweenVersionReads.committed
+        assert runtime.execute("PRAGMA user_version").fetchone()[0] == max(MIGRATIONS)
+        assert runtime.execute(
+            "SELECT MAX(version) FROM schema_migrations"
+        ).fetchone()[0] == max(MIGRATIONS)
+    finally:
+        if runtime is not None:
+            runtime.close()
+        if writer.in_transaction:
+            writer.execute("ROLLBACK")
+        writer.close()
+
+
 def _base_operation(conn: sqlite3.Connection, operation_id: str = "op") -> None:
     conn.execute(
         """
