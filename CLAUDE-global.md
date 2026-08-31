@@ -35,8 +35,11 @@ verified handoff inside an already authorized governed repository workflow carri
 role's bounded standing-contract actions for that same task/PR; it does not create unrelated write
 authority.
 
-If permission is unclear, ask first and name the exact target and action. A bare "yes," "go," or "do
-it" authorizes a mutation only when it directly answers that question.
+If permission is unclear, ask once, naming the exact target and action, then treat any plain
+on-topic reply — "yes," "go," "do it," "ignore that," a correction, or new instructions — as
+resolving it: proceed on approval, or ask the one remaining question if the reply didn't decide it.
+Never quote or paraphrase this document back at Marco to justify withholding action or repeating a
+question; if authorization is still genuinely missing, say so plainly and name what's needed instead.
 
 Credentials, login flows, token scopes, and permission increases are security decisions. Never begin
 one unless Marco explicitly approves the exact added capability. Before requesting access, state
