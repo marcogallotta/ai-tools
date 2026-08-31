@@ -209,8 +209,25 @@ def git_subcommand(tokens):
     return None
 
 
+def _is_isolated_worktree(cwd):
+    """True when cwd resolves to a linked worktree of *this* repository (not
+    the shared primary checkout, and not an unrelated repo) — the normal
+    home for task-scoped agent work, where the routine git-commit approval
+    prompt is friction rather than protection."""
+    identity = protected_checkout._resolve_repo_identity([], {}, cwd)
+    if identity is None:
+        return False
+    _toplevel, git_dir, common_dir = identity
+    protected_git_dir = os.path.realpath(os.path.join(PROTECTED_CHECKOUT_ROOT, ".git"))
+    return (
+        os.path.realpath(common_dir) == protected_git_dir
+        and os.path.realpath(git_dir) != os.path.realpath(common_dir)
+    )
+
+
 def check_git(segments, cwd=None):
     current_cwd = cwd or os.getcwd()
+    isolated_worktree = _is_isolated_worktree(current_cwd)
 
     # Active Dish task worktrees have a single canonical mutation boundary.
     # Raw staging/commit/publication paths are hard denials, not approval
@@ -260,6 +277,8 @@ def check_git(segments, cwd=None):
             if i + 1 >= len(tokens):
                 continue
             if tokens[i + 1] in ("--help", "-h"):
+                continue
+            if isolated_worktree:
                 continue
             return ask("[destructive-op-guard] git-commit (stage + commit) requires explicit approval.")
 
