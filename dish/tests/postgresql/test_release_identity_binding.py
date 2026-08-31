@@ -12,7 +12,8 @@ from dish_pg.candidate_manifest import build_candidate_manifest
 from dish_pg.command_port import PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.release import ReleaseAuthorityError, ReleaseCandidateService
-from dish_pg.repositories import DishRepository, RegistryRepository, ScalarMutationSource
+from dish_pg.repositories import RegistryRepository
+from tests.support.postgresql.core import _activate_cloned_registry_revision
 from tests.support.postgresql.release import HASH_A, HASH_B, _prepare_candidate, _record_final_closure
 from tests.support.postgresql.release_oracles import EXPECTED_EVIDENCE_ARTIFACT_KINDS
 from tests.support.postgresql.stage8_cutover_evidence_gates import (
@@ -55,87 +56,14 @@ def _add_release_binding(
 
 
 def _move_active_registry_to_binding(session, ids, context, *, binding, activated_at):
-    current = session.get(models.ActiveSectionRegistry, context["generation_id"])
-    assert current is not None
-    previous = session.get(models.SectionRegistryVersion, current.registry_version_id)
-    assert previous is not None
-    entries = session.scalars(
-        select(models.SectionRegistryEntry).where(
-            models.SectionRegistryEntry.registry_version_id == previous.registry_version_id
-        )
-    ).all()
-    registry = models.SectionRegistryVersion(
-        registry_version_id=_next(ids),
+    return _activate_cloned_registry_revision(
+        session,
+        ids,
         generation_id=context["generation_id"],
-        version_number=previous.version_number + 1,
-        import_run_id=previous.import_run_id,
         contract_binding_id=binding.binding_id,
         registry_sha256="e" * 64,
-        created_at=activated_at,
-    )
-    repo = RegistryRepository(session)
-    repo.add_registry_version(
-        registry,
-        [
-            models.SectionRegistryEntry(
-                registry_version_id=registry.registry_version_id,
-                section_id=entry.section_id,
-                ordinal=entry.ordinal,
-                display_name=entry.display_name,
-                workflow_role=entry.workflow_role,
-            )
-            for entry in entries
-        ],
-    )
-    dishes = DishRepository(session, uuid_factory=lambda: _next(ids))
-    states = session.scalars(
-        select(models.DishState)
-        .where(models.DishState.generation_id == context["generation_id"])
-        .order_by(models.DishState.task_id)
-    ).all()
-    for state in states:
-        membership = session.get(
-            models.TaskMembershipHead,
-            (context["generation_id"], state.task_id),
-        )
-        assert membership is not None
-        mutation = dishes.begin_scalar_mutation(
-            generation_id=context["generation_id"],
-            task_id=state.task_id,
-            expected_dish_version=state.dish_version,
-            expected_membership_revision=membership.membership_revision,
-            source=ScalarMutationSource(
-                route="import",
-                import_run_id=registry.import_run_id,
-                occurred_at=activated_at,
-            ),
-        )
-        mutation.place(
-            section_id=state.section_id,
-            registry_version_id=registry.registry_version_id,
-        )
-        mutation.finalize()
-    activation = models.SectionRegistryActivation(
-        registry_activation_id=_next(ids),
-        generation_id=context["generation_id"],
-        registry_version_id=registry.registry_version_id,
-        activation_route="import",
-        import_run_id=registry.import_run_id,
-        command_execution_id=None,
-        registry_revision=current.registry_revision + 1,
         activated_at=activated_at,
     )
-    repo.activate_registry(
-        activation=activation,
-        current=models.ActiveSectionRegistry(
-            generation_id=context["generation_id"],
-            registry_version_id=registry.registry_version_id,
-            registry_activation_id=activation.registry_activation_id,
-            registry_revision=activation.registry_revision,
-            updated_at=activated_at,
-        ),
-    )
-    return registry
 
 
 def test_candidate_b_rejects_source_a_evidence_and_rehearsal(workflow_db) -> None:
