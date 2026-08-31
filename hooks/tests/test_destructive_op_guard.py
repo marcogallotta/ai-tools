@@ -237,6 +237,42 @@ class TestGitCommitWrapper:
         decision = run_hook(destructive_op_guard, "git-commit", monkeypatch, capsys)
         assert_allowed(decision)
 
+    def test_wrapper_in_linked_worktree_of_this_repo_not_asked(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard,
+            'git-commit foo.py -m "msg"',
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["linked"]),
+        )
+        assert decision is None
+
+    def test_wrapper_in_primary_checkout_still_asked(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard,
+            'git-commit foo.py -m "msg"',
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_asked(decision, "git-commit (stage + commit)")
+
+    def test_wrapper_in_unrelated_repo_still_asked(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard,
+            'git-commit foo.py -m "msg"',
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_asked(decision, "git-commit (stage + commit)")
+
 
 class TestGitSubcommands:
     def test_git_commit_asked(self, destructive_op_guard, monkeypatch, capsys):

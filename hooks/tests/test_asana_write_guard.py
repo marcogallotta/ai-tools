@@ -368,3 +368,31 @@ class TestOwnTaskAutoAllow:
             asana_write_guard, "asana rename 12345 x", agent_id, monkeypatch, capsys
         )
         assert_asked(decision, "Approve this Asana write")
+
+    def test_own_task_comment_via_raw_stories_post_is_allowed(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, task_gid = _install_agent_identity(monkeypatch, tmp_path)
+        command = (
+            "echo '{\"text\": \"correction\"}' | ~/.local/bin/asana raw POST '/tasks/12345/stories'"
+        )
+        decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_explicitly_allowed(decision, f"active task {task_gid}")
+
+    def test_other_task_comment_via_raw_stories_post_remains_gated(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        command = (
+            "echo '{\"text\": \"correction\"}' | ~/.local/bin/asana raw POST '/tasks/54321/stories'"
+        )
+        decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_asked(decision, "Approve this Asana write")
+
+    def test_raw_post_to_non_stories_endpoint_remains_gated(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        command = "echo '{}' | ~/.local/bin/asana raw POST '/tasks/12345'"
+        decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_asked(decision, "Approve this Asana write")
