@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import pytest
 
-from dish_pg.release import ALEMBIC_HEAD
 from tests.support.postgresql.projection_attempt_migration import (
     PREDECESSOR_REVISION,
     TARGET_REVISION,
@@ -21,7 +20,7 @@ def test_pglite_upgrades_populated_projection_attempt_predecessor(
     database = pglite_migration_database
     database.initialize(PREDECESSOR_REVISION)
     seed = seed_valid_projection_attempt_predecessor(database)
-    database.upgrade(ALEMBIC_HEAD)
-    database.assert_revision(ALEMBIC_HEAD)
+    database.upgrade(TARGET_REVISION)
+    database.assert_revision(TARGET_REVISION)
     assert_projection_attempt_backfill(database, seed)
     assert_projection_attempt_constraints_present(database)
