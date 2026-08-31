@@ -707,12 +707,13 @@ def test_native_task_transition_commits_before_final_fence_and_stale_start_rejec
 
     def stale_start():
         with managed_session(stale_connection) as session:
-            assert session.get(
+            stale_state = session.get(
                 models.DishState, (context["generation_id"], task_id)
-            ) is not None
-            assert session.get(
+            )
+            stale_membership = session.get(
                 models.TaskMembershipHead, (context["generation_id"], task_id)
-            ) is not None
+            )
+            assert stale_state is not None and stale_membership is not None
             return _task_fence_port(session, before_lock=before_lock).execute(
                 CommandCall(
                     command_name="start",
