@@ -15,7 +15,7 @@ from dish_pg import models
 from dish_pg import stage6_models as release_models
 from dish_pg.database import session_scope
 from dish_pg.release import ALEMBIC_HEAD, ReleaseCandidateService
-from dish_pg.repositories import RegistryRepository
+from dish_pg.repositories import DishRepository, RegistryRepository, ScalarMutationSource
 from tests.support.postgresql.core import (
     _bootstrap_registry,
     _import_one,
@@ -107,11 +107,12 @@ def _stage_replacement_registry(session, ids, context, *, suffix: str, activated
         "honest_binding_id": replacement_binding.binding_id,
         "registry_activation_id": replacement_activation.registry_activation_id,
         "registry_revision": replacement_activation.registry_revision,
+        "import_run_id": replacement_version.import_run_id,
         "updated_at": activated_at,
     }
 
 
-def _switch_active_registry(session, *, generation_id, replacement) -> None:
+def _switch_active_registry(session, ids, *, generation_id, replacement) -> None:
     session.execute(
         text(
             """UPDATE active_section_registries
@@ -129,6 +130,34 @@ def _switch_active_registry(session, *, generation_id, replacement) -> None:
             "generation_id": generation_id,
         },
     )
+    dishes = DishRepository(session, uuid_factory=lambda: _next(ids))
+    states = session.scalars(
+        select(models.DishState)
+        .where(models.DishState.generation_id == generation_id)
+        .order_by(models.DishState.task_id)
+    ).all()
+    for state in states:
+        membership = session.get(
+            models.TaskMembershipHead,
+            (generation_id, state.task_id),
+        )
+        assert membership is not None
+        mutation = dishes.begin_scalar_mutation(
+            generation_id=generation_id,
+            task_id=state.task_id,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=membership.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
+                import_run_id=replacement["import_run_id"],
+                occurred_at=replacement["updated_at"],
+            ),
+        )
+        mutation.place(
+            section_id=state.section_id,
+            registry_version_id=replacement["registry_version_id"],
+        )
+        mutation.finalize()
 
 
 def _assert_lock_timeout(outcome) -> None:
@@ -194,6 +223,7 @@ def test_native_candidate_validation_serializes_active_registry_switch(
         session.execute(text("SET LOCAL lock_timeout = '250ms'"))
         _switch_active_registry(
             session,
+            ids,
             generation_id=context["generation_id"],
             replacement=replacement,
         )
@@ -201,6 +231,7 @@ def test_native_candidate_validation_serializes_active_registry_switch(
     def switch_after_boundary(session):
         _switch_active_registry(
             session,
+            ids,
             generation_id=context["generation_id"],
             replacement=replacement,
         )
@@ -311,6 +342,7 @@ def test_native_candidate_approval_serializes_manifest_identity(
         session.execute(text("SET LOCAL lock_timeout = '250ms'"))
         _switch_active_registry(
             session,
+            ids,
             generation_id=context["generation_id"],
             replacement=replacement,
         )
@@ -318,6 +350,7 @@ def test_native_candidate_approval_serializes_manifest_identity(
     def switch_after_boundary(session):
         _switch_active_registry(
             session,
+            ids,
             generation_id=context["generation_id"],
             replacement=replacement,
         )
@@ -390,6 +423,7 @@ def test_native_direct_validation_transition_locks_active_registry_pointer(core_
         session.execute(text("SET LOCAL lock_timeout = '250ms'"))
         _switch_active_registry(
             session,
+            ids,
             generation_id=context["generation_id"],
             replacement=replacement,
         )
@@ -397,6 +431,7 @@ def test_native_direct_validation_transition_locks_active_registry_pointer(core_
     def switch_after_boundary(session):
         _switch_active_registry(
             session,
+            ids,
             generation_id=context["generation_id"],
             replacement=replacement,
         )
