@@ -14,21 +14,5 @@
         ]
       }
     ]
-  },
-  "sandbox": {
-    "enabled": true,
-    "failIfUnavailable": true,
-    "autoAllowBashIfSandboxed": true,
-    "allowUnsandboxedCommands": false,
-    "filesystem": {
-      "denyWrite": [
-        "~/ai-tools"
-      ]
-    }
-  },
-  "permissions": {
-    "deny": [
-      "Edit(~/ai-tools/**)"
-    ]
   }
 }

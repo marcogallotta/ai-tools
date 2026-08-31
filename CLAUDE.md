@@ -26,6 +26,11 @@ switching, and the generic `git-commit` wrapper are not mutation paths for an ac
 Outside a registered Dish task worktree, follow the generic Git policy in the global agent
 instructions (`~/.claude/CLAUDE.md`) unchanged.
 
+## Mutation authorization scope
+
+In ai-tools, mutations genuinely part of an assigned task proceed without re-confirming each step;
+tool permission prompts are the gate. Elsewhere, or outside task scope, `~/.claude/CLAUDE.md` governs.
+
 ## Marco-facing workflow policy
 
 Anything shown directly to Marco must explain the workflow state and next action in plain English rather than relying on internal codenames or unexplained process shorthand. Technical IDs may be included when useful, but they do not carry the meaning by themselves.
