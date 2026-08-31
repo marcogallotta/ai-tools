@@ -463,6 +463,27 @@ def test_recovery_record_rejects_reserved_guard_contamination() -> None:
         _load_database_settings(connection, database)
 
 
+def test_restored_access_verification_normalizes_only_the_active_reset_guard() -> None:
+    database = _snapshot().database
+    result = SimpleNamespace(
+        mappings=lambda: [
+            {
+                "role_name": None,
+                "setting": f"{RESET_GUARD_SETTING}={RESET_ID}",
+            },
+            {
+                "role_name": None,
+                "setting": "lock_timeout=3s",
+            },
+        ]
+    )
+    connection = SimpleNamespace(execute=lambda *_args, **_kwargs: result)
+
+    assert _load_database_settings(
+        connection, database, allow_reset_guard=True
+    ) == (DatabaseSetting(role_name=None, name="lock_timeout", value="3s"),)
+
+
 def test_lineage_gate_refuses_active_guard_unresolved_artifact_and_completed_reuse(
     tmp_path: Path,
 ) -> None:
@@ -635,6 +656,74 @@ def test_prepare_failure_retains_reset_started_lineage_and_guard(
 
     assert main(_args(recovery_path)) == 1
     assert calls == ["preflight", "state:reset_started", "recreate", "prepare"]
+
+
+def test_access_mismatch_keeps_recovery_incomplete_and_never_clears_guard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    namespace = runpy.run_path(str(RESET))
+    _configure_cli(monkeypatch)
+    recovery_path = tmp_path / "lineage.json"
+    recovery_path.touch(mode=0o600)
+    record = _record("reset_started")
+    calls: list[str] = []
+
+    main = namespace["main"]
+    globals_ = main.__globals__
+    _patch_target_lock(monkeypatch, globals_)
+    monkeypatch.setitem(globals_, "read_reset_guard", lambda *_args: RESET_ID)
+    monkeypatch.setitem(globals_, "load_recovery_record", lambda *_args: record)
+    monkeypatch.setitem(
+        globals_,
+        "validate_recovery_record_target",
+        lambda *_args: calls.append("identity"),
+    )
+    monkeypatch.setitem(
+        globals_,
+        "_run_prepare",
+        lambda *, preflight_only: calls.append(
+            "preflight" if preflight_only else "prepare"
+        ),
+    )
+    monkeypatch.setitem(
+        globals_,
+        "recreate_database",
+        lambda *_args, **_kwargs: calls.append("recreate"),
+    )
+    monkeypatch.setitem(
+        globals_,
+        "_ensure_access_resolution",
+        lambda **_kwargs: (
+            calls.append("resolve")
+            or replace(record, access_resolution=_resolution(record.snapshot))
+        ),
+    )
+
+    def reject_extra_access(*_args, **_kwargs):
+        calls.append("restore-rejected")
+        raise ProductionResetError("unexpected grant remains")
+
+    monkeypatch.setitem(globals_, "restore_database_access", reject_extra_access)
+    monkeypatch.setitem(
+        globals_,
+        "transition_recovery_record",
+        lambda *_args, **_kwargs: pytest.fail("mismatch advanced recovery state"),
+    )
+    monkeypatch.setitem(
+        globals_,
+        "clear_reset_guard",
+        lambda *_args, **_kwargs: pytest.fail("mismatch cleared reset guard"),
+    )
+
+    assert main(_args(recovery_path, resume=True)) == 1
+    assert calls == [
+        "identity",
+        "preflight",
+        "recreate",
+        "prepare",
+        "resolve",
+        "restore-rejected",
+    ]
 
 
 def test_explicit_resume_uses_retained_snapshot_and_never_snapshots_live_acl(
@@ -894,3 +983,75 @@ def test_guard_reset_id_mismatch_refuses_before_any_mutation(
             resume=True,
         )
     assert sql == []
+
+
+@pytest.mark.parametrize(
+    ("extra_kind", "error_match"),
+    [
+        ("grant", "unexpected grant"),
+        ("setting", "unexpected setting"),
+        ("default_privilege", "unexpected definition"),
+    ],
+)
+def test_restored_access_verification_rejects_unexpected_state(
+    monkeypatch: pytest.MonkeyPatch,
+    extra_kind: str,
+    error_match: str,
+) -> None:
+    snapshot = _snapshot()
+    extra_grant = ObjectGrant(
+        object_type="TABLE",
+        schema_name="public",
+        object_name="tasks",
+        column_name=None,
+        grantee="dish_frontend_observer",
+        privilege="INSERT",
+        grantable=False,
+    )
+    extra_setting = DatabaseSetting(
+        role_name="dish_frontend_observer",
+        name="statement_timeout",
+        value="5s",
+    )
+    extra_default = DefaultPrivilegeSet(
+        owner="dish",
+        schema_name="public",
+        object_type="SEQUENCES",
+        grants=(
+            DefaultGrant(
+                grantee="dish_frontend_observer",
+                privilege="USAGE",
+                grantable=False,
+            ),
+        ),
+    )
+    current_grants = snapshot.object_grants + (
+        (extra_grant,) if extra_kind == "grant" else ()
+    )
+    current_settings = snapshot.settings + (
+        (extra_setting,) if extra_kind == "setting" else ()
+    )
+    current_defaults = snapshot.default_privileges + (
+        (extra_default,) if extra_kind == "default_privilege" else ()
+    )
+
+    monkeypatch.setattr(
+        production_reset,
+        "_load_database_definition",
+        lambda *_args: snapshot.database,
+    )
+    monkeypatch.setattr(
+        production_reset, "_load_object_grants", lambda *_args: current_grants
+    )
+
+    def load_settings(*_args, **kwargs):
+        assert kwargs == {"allow_reset_guard": True}
+        return current_settings
+
+    monkeypatch.setattr(production_reset, "_load_database_settings", load_settings)
+    monkeypatch.setattr(
+        production_reset, "_load_default_privileges", lambda *_args: current_defaults
+    )
+
+    with pytest.raises(ProductionResetError, match=error_match):
+        production_reset._verify_restored_state(SimpleNamespace(), snapshot)
