@@ -217,6 +217,67 @@ def _assert_original_authority(
         engine.dispose()
 
 
+def test_native_concurrent_reset_contender_fails_before_lineage_or_destructive_mutation(
+    native_migration_database,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    with _native_reset_fixture(native_migration_database) as fixture:
+        database_url = fixture["database_url"]
+        database_name = fixture["database_name"]
+        admin_engine = fixture["admin_engine"]
+        contender_recovery = tmp_path / "contender-reset.json"
+
+        namespace = runpy.run_path(str(RESET))
+        main = namespace["main"]
+        hold_reset_target_lock = namespace["hold_reset_target_lock"]
+        globals_ = main.__globals__
+        monkeypatch.setenv("DISH_PG_DATABASE_URL", database_url)
+        monkeypatch.setenv("DISH_PG_EXPECTED_DATABASE_NAME", database_name)
+        monkeypatch.setenv("DISH_PG_CAPTURE_ENVIRONMENT", "production")
+        monkeypatch.setitem(
+            globals_,
+            "_run_prepare",
+            lambda **_kwargs: pytest.fail(
+                "contending reset reached prepare while target lock was owned"
+            ),
+        )
+
+        with admin_engine.connect() as connection:
+            before_oid, before_allow_connections = connection.execute(
+                text(
+                    "SELECT oid, datallowconn FROM pg_database "
+                    "WHERE datname = :database"
+                ),
+                {"database": database_name},
+            ).one()
+
+        with hold_reset_target_lock(database_url, database_name):
+            assert main(
+                [
+                    "--confirm-database-name",
+                    database_name,
+                    "--recovery-record",
+                    str(contender_recovery),
+                ]
+            ) == 1
+
+            assert not contender_recovery.exists()
+            assert read_reset_guard(database_url, database_name) is None
+            with admin_engine.connect() as connection:
+                after_oid, after_allow_connections = connection.execute(
+                    text(
+                        "SELECT oid, datallowconn FROM pg_database "
+                        "WHERE datname = :database"
+                    ),
+                    {"database": database_name},
+                ).one()
+
+        assert after_oid == before_oid
+        assert before_allow_connections is True
+        assert after_allow_connections is True
+
+
 def test_native_partial_reset_retry_refuses_and_resume_restores_original_authority(
     native_migration_database,
     monkeypatch: pytest.MonkeyPatch,
