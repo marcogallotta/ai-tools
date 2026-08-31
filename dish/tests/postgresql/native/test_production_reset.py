@@ -481,64 +481,60 @@ def test_native_guard_reset_id_mismatch_cannot_mutate_target(
         assert read_reset_guard(database_url, database_name) == RESET_ID
 
 
-@pytest.mark.parametrize(
-    ("extra_kind", "error_match"),
-    [
+def test_native_access_restore_rejects_unexpected_state_and_keeps_guard(
+    native_migration_database,
+) -> None:
+    cases = (
         ("grant", "unexpected grant"),
         ("setting", "unexpected setting"),
         ("default_privilege", "unexpected definition"),
-    ],
-)
-def test_native_access_restore_rejects_unexpected_state_and_keeps_guard(
-    native_migration_database,
-    extra_kind: str,
-    error_match: str,
-) -> None:
-    with _native_reset_fixture(native_migration_database) as fixture:
-        database_url = fixture["database_url"]
-        database_name = fixture["database_name"]
-        observer = fixture["observer"]
-        writer = fixture["writer"]
-        owner = fixture["owner"]
-        snapshot = snapshot_database_state(database_url, database_name)
+    )
+    for extra_kind, error_match in cases:
+        with _native_reset_fixture(native_migration_database) as fixture:
+            database_url = fixture["database_url"]
+            database_name = fixture["database_name"]
+            observer = fixture["observer"]
+            writer = fixture["writer"]
+            owner = fixture["owner"]
+            snapshot = snapshot_database_state(database_url, database_name)
 
-        with fixture["admin_engine"].connect() as raw_connection:
-            connection = raw_connection.execution_options(
-                isolation_level="AUTOCOMMIT"
-            )
-            connection.exec_driver_sql(
-                f"ALTER DATABASE {_q(database_name)} "
-                f"SET {production_reset.RESET_GUARD_SETTING} TO '{RESET_ID}'"
-            )
-
-        engine = create_engine(database_url)
-        try:
-            with engine.begin() as connection:
-                if extra_kind == "grant":
-                    connection.exec_driver_sql(
-                        f"GRANT INSERT ON TABLE app.items TO {_q(observer)}"
-                    )
-                elif extra_kind == "setting":
-                    connection.exec_driver_sql(
-                        f"ALTER ROLE {_q(writer)} IN DATABASE {_q(database_name)} "
-                        "SET statement_timeout TO '5s'"
-                    )
-                else:
-                    connection.exec_driver_sql(
-                        f"ALTER DEFAULT PRIVILEGES FOR ROLE {_q(owner)} IN SCHEMA app "
-                        f"GRANT INSERT ON TABLES TO {_q(writer)}"
-                    )
-
-            with pytest.raises(ProductionResetError, match=error_match):
-                restore_database_access(
-                    database_url,
-                    snapshot,
-                    reset_id=RESET_ID,
+            with fixture["admin_engine"].connect() as raw_connection:
+                connection = raw_connection.execution_options(
+                    isolation_level="AUTOCOMMIT"
+                )
+                connection.exec_driver_sql(
+                    f"ALTER DATABASE {_q(database_name)} "
+                    f"SET {production_reset.RESET_GUARD_SETTING} TO '{RESET_ID}'"
                 )
 
-            assert read_reset_guard(database_url, database_name) == RESET_ID
-        finally:
-            engine.dispose()
+            engine = create_engine(database_url)
+            try:
+                with engine.begin() as connection:
+                    if extra_kind == "grant":
+                        connection.exec_driver_sql(
+                            f"GRANT INSERT ON TABLE app.items TO {_q(observer)}"
+                        )
+                    elif extra_kind == "setting":
+                        connection.exec_driver_sql(
+                            f"ALTER ROLE {_q(writer)} IN DATABASE {_q(database_name)} "
+                            "SET statement_timeout TO '5s'"
+                        )
+                    else:
+                        connection.exec_driver_sql(
+                            f"ALTER DEFAULT PRIVILEGES FOR ROLE {_q(owner)} IN SCHEMA app "
+                            f"GRANT INSERT ON TABLES TO {_q(writer)}"
+                        )
+
+                with pytest.raises(ProductionResetError, match=error_match):
+                    restore_database_access(
+                        database_url,
+                        snapshot,
+                        reset_id=RESET_ID,
+                    )
+
+                assert read_reset_guard(database_url, database_name) == RESET_ID
+            finally:
+                engine.dispose()
 
 
 def test_native_0041_to_0044_acl_resolution_restores_real_observer_query(
