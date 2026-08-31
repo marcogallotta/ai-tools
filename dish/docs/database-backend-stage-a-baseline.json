@@ -74,8 +74,8 @@
     "live Asana governed projects/sections/tasks"
   ],
   "governing_source_sha256": {
-    "dish_pg/release.py": "23fb23ddedf7002acf92d9b487501584b6521efe9f4edfef252bb504821802e5",
-    "dish_service/admin_cli.py": "92c9ce9c7cb6d72cce388818d6e25ace0af228d6859043aa35b2fc3050db5b0d",
+    "dish_pg/release.py": "6c5c052ebef3d2d7fde10ec3832b335de5d7aa15705f77c65eed49d5e3e8e17d",
+    "dish_service/admin_cli.py": "3401aaf5ced340ea02384f8895d56eb13962873c6cc9d85bb1fa42883a58a7a7",
     "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
     "dish_service/command_spec.py": "fc1c609f63389aa8685a8ce5c594d5e95857d8fa56a47555d41faecd4ab318b2",
@@ -86,14 +86,14 @@
     "dish_tool/database_migrations.py": "31bdbf9966f399ce7a21966e35ff9183f75958911456d9a80a68c1e54a8af6b9",
     "dish_tool/database_schema.py": "5b576d60885f4891227d04c87d4cb98d0ac7831adb600355543dfabfda973708",
     "dish_tool/database_schema_migrations.py": "c3ca81d3bebdd68564069b061220d7b8a9af42b274cd632aaaff5f0bf7449982",
-    "dish_tool/database_schema_validation.py": "2c04862bf1f3bcd35aa7b14aa2cad3edbe5e7312f4e3d0afd42007cb17af3f4b",
+    "dish_tool/database_schema_validation.py": "1e234fe7b2b0c3e70dae1da41de6d2c553ce128695bd7f5d6c166a1d009c96b2",
     "dish_tool/workflow_policy.py": "213219dfc857a65b9720043426f9ddb6c7ea68706086322648051da3f7775fe9",
     "docs/runtime-contract.md": "8d2880929ae8acac1a871d458c4bc2eb610250318e90f50db15e8aa531a3beb9",
     "openapi/dish-action.openapi.json": "86e25682a9035a76190cc90cafcbc0c8b23ed5a7b9d87c3e7d5cb01ac69e9296",
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "PR #269 adds the reviewed private-admin archive command classification and runtime result guidance",
+  "last_rebaseline_reason": "Rebaseline reviewed 0044 independent archive schema head, visible archive admin help, and atomic runtime schema validation",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
@@ -101,7 +101,7 @@
     "The evidence characterizes immutable source commit 7dff85921f005c62929c46d347a7ab29ae463480; this evidence-only commit follows it and does not alter characterized runtime source."
   ],
   "production_change_epoch": "2026-08-05",
-  "schema_head": "0042_scalar_dish_state",
+  "schema_head": "0044_independent_archive",
   "source_commit": "7dff85921f005c62929c46d347a7ab29ae463480",
   "source_commit_time": "2026-08-05T11:09:00+00:00",
   "source_only_commands": [
