@@ -12,7 +12,7 @@ from dish_pg.candidate_manifest import build_candidate_manifest
 from dish_pg.command_port import PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.release import ReleaseAuthorityError, ReleaseCandidateService
-from dish_pg.repositories import RegistryRepository
+from dish_pg.repositories import DishRepository, RegistryRepository, ScalarMutationSource
 from tests.support.postgresql.release import HASH_A, HASH_B, _prepare_candidate, _record_final_closure
 from tests.support.postgresql.release_oracles import EXPECTED_EVIDENCE_ARTIFACT_KINDS
 from tests.support.postgresql.stage8_cutover_evidence_gates import (
@@ -87,6 +87,34 @@ def _move_active_registry_to_binding(session, ids, context, *, binding, activate
             for entry in entries
         ],
     )
+    dishes = DishRepository(session, uuid_factory=lambda: _next(ids))
+    states = session.scalars(
+        select(models.DishState)
+        .where(models.DishState.generation_id == context["generation_id"])
+        .order_by(models.DishState.task_id)
+    ).all()
+    for state in states:
+        membership = session.get(
+            models.TaskMembershipHead,
+            (context["generation_id"], state.task_id),
+        )
+        assert membership is not None
+        mutation = dishes.begin_scalar_mutation(
+            generation_id=context["generation_id"],
+            task_id=state.task_id,
+            expected_dish_version=state.dish_version,
+            expected_membership_revision=membership.membership_revision,
+            source=ScalarMutationSource(
+                route="import",
+                import_run_id=registry.import_run_id,
+                occurred_at=activated_at,
+            ),
+        )
+        mutation.place(
+            section_id=state.section_id,
+            registry_version_id=registry.registry_version_id,
+        )
+        mutation.finalize()
     activation = models.SectionRegistryActivation(
         registry_activation_id=_next(ids),
         generation_id=context["generation_id"],
