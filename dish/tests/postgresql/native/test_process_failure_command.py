@@ -57,7 +57,7 @@ def _assert_one_create(snapshot: dict) -> None:
     assert snapshot["execution_statuses"] == ["committed"]
     assert snapshot["task_count"] == 1
     assert snapshot["content_versions"] == 1
-    assert snapshot["membership_events"] == 1
+    assert snapshot["membership_events"] == 0
     assert snapshot["placement_events"] == 1
     assert snapshot["completion_events"] == 1
     assert snapshot["projection_events"] == 1

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import pytest
 
-from dish_pg.release import ALEMBIC_HEAD
 from tests.support.postgresql.cutover_authority_migration import (
     PREDECESSOR_REVISION as CUTOVER_PREDECESSOR_REVISION,
     TARGET_REVISION as CUTOVER_TARGET_REVISION,
@@ -28,7 +27,7 @@ def test_native_postgresql_upgrades_populated_projection_attempt_predecessor(
     database.initialize(PREDECESSOR_REVISION)
     seed = seed_valid_projection_attempt_predecessor(database)
     database.upgrade(TARGET_REVISION)
-    database.assert_revision(ALEMBIC_HEAD)
+    database.assert_revision(TARGET_REVISION)
     assert_projection_attempt_backfill(database, seed)
     assert_projection_attempt_constraints(database, seed)
 
@@ -40,8 +39,8 @@ def test_native_postgresql_upgrades_matching_cutover_candidate_lineage(
     database = native_migration_database
     database.initialize(CUTOVER_PREDECESSOR_REVISION)
     seed_candidate_dependency_predecessor(database, mismatched=False)
-    database.upgrade(ALEMBIC_HEAD)
-    database.assert_revision(ALEMBIC_HEAD)
+    database.upgrade(CUTOVER_TARGET_REVISION)
+    database.assert_revision(CUTOVER_TARGET_REVISION)
 
 
 def test_native_postgresql_rejects_mismatched_cutover_candidate_lineage(

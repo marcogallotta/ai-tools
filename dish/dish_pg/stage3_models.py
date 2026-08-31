@@ -264,12 +264,6 @@ class TaskExecutionFence(Base):
             ondelete="RESTRICT",
             name="fk_task_execution_fence_dish_state",
         ),
-        ForeignKeyConstraint(
-            ["generation_id", "task_id"],
-            ["task_membership_heads.generation_id", "task_membership_heads.task_id"],
-            ondelete="RESTRICT",
-            name="fk_task_execution_fence_membership_head",
-        ),
         CheckConstraint(
             "expected_dish_version > 0 AND expected_membership_revision >= 0",
             name="valid_versions",

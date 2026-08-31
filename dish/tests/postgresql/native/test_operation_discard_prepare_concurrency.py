@@ -17,6 +17,7 @@ import dish_pg.test_generation_rollover as rollover_module
 from dish_pg import stage5_models as tx
 from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.database import session_scope
+from dish_pg.release_evidence import sha256_json
 from dish_pg.test_generation_rollover import _rollover_generation_transaction
 from dish_pg.transition import ProjectionService, ShadowService
 from dish_pg.workflow import StaleAuthorityError, WorkflowAuthorityRepository
@@ -361,6 +362,71 @@ def _install_synthetic_contamination(monkeypatch, factory, context):
             activation_reason="native generation-liveness race",
             created_at=NOW,
             external_effects_enabled=True,
+        )
+        active_catalog = session.get(
+            models.ActiveSectionCatalog, context["generation_id"]
+        )
+        assert active_catalog is not None
+        activation_id = uuid.uuid4()
+        session.add(
+            models.AuthorityActivation(
+                activation_id=activation_id,
+                generation_id=context["generation_id"],
+                import_run_id=context["import_run_id"],
+                cutover_approval_id="native-rollover-race",
+                legacy_bundle_id="native-rollover-race",
+                registry_version_id=context["registry_version_id"],
+                catalog_version_id=active_catalog.catalog_version_id,
+                honest_binding_id=context["binding_id"],
+                rehearsal_id=None,
+                schema_head="0045_native_section_authority",
+                dish_release="dish-42619b9",
+                honest_release="honest-1",
+                protocol_release="protocol-1",
+                openapi_release="openapi-1",
+                routing_release="route-1",
+                projection_epoch=epoch.projection_epoch_id,
+                outcome="activated",
+                rollback_burned_at=NOW,
+                recorded_at=NOW,
+            )
+        )
+        session.flush()
+        attestation_id = uuid.uuid4()
+        attestation_sha256 = sha256_json(
+            {
+                "contract": "native-section-runtime-attestation-v1",
+                "generation_id": str(context["generation_id"]),
+                "catalog_version_id": str(active_catalog.catalog_version_id),
+                "catalog_activation_id": str(active_catalog.catalog_activation_id),
+                "catalog_revision": active_catalog.catalog_revision,
+                "authority_activation_id": str(activation_id),
+                "attestation_revision": 1,
+            }
+        )
+        session.add(
+            models.NativeCatalogRuntimeAttestation(
+                attestation_id=attestation_id,
+                generation_id=context["generation_id"],
+                catalog_version_id=active_catalog.catalog_version_id,
+                catalog_activation_id=active_catalog.catalog_activation_id,
+                predecessor_attestation_id=None,
+                authority_activation_id=activation_id,
+                attestation_revision=1,
+                attestation_sha256=attestation_sha256,
+                recorded_at=NOW,
+            )
+        )
+        session.flush()
+        session.add(
+            models.CurrentNativeCatalogRuntime(
+                generation_id=context["generation_id"],
+                attestation_id=attestation_id,
+                catalog_version_id=active_catalog.catalog_version_id,
+                catalog_activation_id=active_catalog.catalog_activation_id,
+                attestation_revision=1,
+                updated_at=NOW,
+            )
         )
 
     candidate_id = uuid.uuid4()

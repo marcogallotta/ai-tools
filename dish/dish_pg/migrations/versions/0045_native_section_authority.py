@@ -350,6 +350,10 @@ def upgrade() -> None:
     op.execute("UPDATE authority_activations SET catalog_version_id=registry_version_id")
     op.execute("UPDATE release_candidates SET catalog_version_id=registry_version_id")
     op.execute("UPDATE release_candidate_manifests SET catalog_version_id=registry_version_id")
+    fence_triggers = _sqlite_suspend_triggers_referencing("task_execution_fences")
+    with op.batch_alter_table("task_execution_fences", recreate=_constraint_batch_mode()) as batch:
+        batch.drop_constraint("fk_task_execution_fence_membership_head", type_="foreignkey")
+    _sqlite_restore_triggers(fence_triggers)
     candidate_triggers = _sqlite_suspend_triggers_referencing("release_candidates")
     with op.batch_alter_table("release_candidates", recreate=_constraint_batch_mode()) as batch:
         batch.drop_constraint(op.f("ck_release_candidates_identity_contract_complete"), type_="check")
@@ -547,6 +551,16 @@ def downgrade() -> None:
             "AND honest_binding_id IS NOT NULL)",
         )
     _sqlite_restore_triggers(candidate_triggers)
+    fence_triggers = _sqlite_suspend_triggers_referencing("task_execution_fences")
+    with op.batch_alter_table("task_execution_fences", recreate=_constraint_batch_mode()) as batch:
+        batch.create_foreign_key(
+            "fk_task_execution_fence_membership_head",
+            "task_membership_heads",
+            ["generation_id", "task_id"],
+            ["generation_id", "task_id"],
+            ondelete="RESTRICT",
+        )
+    _sqlite_restore_triggers(fence_triggers)
     _drop_column("authority_activations", "catalog_version_id")
     _drop_column("release_candidate_manifests", "catalog_version_id")
     _drop_column("release_candidates", "catalog_version_id")
