@@ -146,7 +146,10 @@ def test_registry_presentation_tiers_match_operator_surface() -> None:
     )
     assert not (PRIMARY_ADMIN_COMMANDS & DETAIL_ADMIN_COMMANDS)
     assert not (PRIMARY_ADMIN_COMMANDS & COMPATIBILITY_ADMIN_COMMANDS)
-    assert _visible_subcommand_names(admin_cli.build_parser()) == PRIMARY_ADMIN_COMMANDS
+    # Archive is detail-tier for discovery, but remains explicit in root help.
+    assert _visible_subcommand_names(admin_cli.build_parser()) == (
+        PRIMARY_ADMIN_COMMANDS | {"archive"}
+    )
 
 
 def test_maintained_operator_docs_do_not_recommend_non_primary_commands() -> None:
