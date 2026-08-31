@@ -348,7 +348,8 @@ def test_active_old_postgresql_content_version_projects_raw_then_compares_canoni
             generation_id=context["generation_id"],
             task_id=task_id,
             expected_dish_version=state.dish_version,
-            expected_membership_revision=membership.membership_revision,
+            expected_placement_version=state.placement_version,
+            expected_catalog_version_id=state.catalog_version_id,
             source=ScalarMutationSource(
                 route="import",
                 import_run_id=context["import_run_id"],

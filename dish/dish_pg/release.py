@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0044_independent_archive"
+ALEMBIC_HEAD = "0045_native_section_authority"
 
 
 class ReleaseCandidateService(
@@ -107,6 +107,7 @@ class ReleaseCandidateService(
             or candidate.source_manifest_sha256 is None
             or candidate.rehearsal_environment_identity is None
             or candidate.registry_version_id is None
+            or candidate.catalog_version_id is None
             or candidate.honest_binding_id is None
         ):
             raise ReleaseAuthorityError(
@@ -118,9 +119,12 @@ class ReleaseCandidateService(
             "candidate rehearsal_environment_identity",
         )
         contract = self._active_release_contract(candidate.generation_id)
+        active_catalog = self.session.get(models.ActiveSectionCatalog, candidate.generation_id)
         binding = contract.honest_binding
         if (
             candidate.registry_version_id != contract.registry_version.registry_version_id
+            or active_catalog is None
+            or candidate.catalog_version_id != active_catalog.catalog_version_id
             or candidate.honest_binding_id != binding.binding_id
             or candidate.schema_head != contract.generation.schema_head
             or candidate.dish_release != contract.generation.dish_release
@@ -634,6 +638,10 @@ class ReleaseCandidateService(
         honest_release = binding.honest_release
         protocol_release = binding.protocol_release
         registry_version_id = contract.registry_version.registry_version_id
+        active_catalog = self.session.get(models.ActiveSectionCatalog, generation_id)
+        if active_catalog is None:
+            raise ReleaseAuthorityError("active generation has no native Section catalog")
+        catalog_version_id = active_catalog.catalog_version_id
         honest_binding_id = binding.binding_id
         existing = self.session.get(rel.ReleaseCandidate, candidate_id)
         identity = {
@@ -645,6 +653,7 @@ class ReleaseCandidateService(
             "source_manifest_sha256": source_manifest_sha256,
             "rehearsal_environment_identity": rehearsal_environment_identity,
             "registry_version_id": registry_version_id,
+            "catalog_version_id": catalog_version_id,
             "honest_binding_id": honest_binding_id,
             "source_release": source_release,
             "source_commit": source_commit,
@@ -705,6 +714,7 @@ class ReleaseCandidateService(
             source_manifest_sha256=source_manifest_sha256,
             rehearsal_environment_identity=rehearsal_environment_identity,
             registry_version_id=registry_version_id,
+            catalog_version_id=catalog_version_id,
             honest_binding_id=honest_binding_id,
             source_release=source_release,
             source_commit=source_commit,

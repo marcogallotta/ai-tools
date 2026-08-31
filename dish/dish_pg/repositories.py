@@ -61,7 +61,8 @@ class ScalarDishMutation:
         generation_id: uuid.UUID,
         task_id: uuid.UUID,
         expected_dish_version: int,
-        expected_membership_revision: int,
+        expected_placement_version: int,
+        expected_catalog_version_id: uuid.UUID,
         source: ScalarMutationSource,
         uuid_factory=uuid.uuid4,
     ) -> None:
@@ -69,7 +70,8 @@ class ScalarDishMutation:
         self.generation_id = generation_id
         self.task_id = task_id
         self.expected_dish_version = expected_dish_version
-        self.expected_membership_revision = expected_membership_revision
+        self.expected_placement_version = expected_placement_version
+        self.expected_catalog_version_id = expected_catalog_version_id
         self.source = source
         self.uuid_factory = uuid_factory
         self._content: models.ContentVersion | None = None
@@ -87,21 +89,14 @@ class ScalarDishMutation:
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        membership = session.scalar(
-            select(models.TaskMembershipHead)
-            .where(
-                models.TaskMembershipHead.generation_id == generation_id,
-                models.TaskMembershipHead.task_id == task_id,
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if self.state is None or membership is None:
-            raise CoreAuthorityError("Dish scalar or membership authority is missing")
+        if self.state is None:
+            raise CoreAuthorityError("Dish scalar authority is missing")
         if self.state.dish_version != expected_dish_version:
             raise CoreAuthorityError("Dish scalar authority is stale")
-        if membership.membership_revision != expected_membership_revision:
-            raise CoreAuthorityError("Dish membership authority is stale")
+        if self.state.placement_version != expected_placement_version:
+            raise CoreAuthorityError("Dish placement authority is stale")
+        if self.state.catalog_version_id != expected_catalog_version_id:
+            raise CoreAuthorityError("Dish catalog authority is stale")
 
     @property
     def resulting_dish_version(self) -> int:
@@ -152,14 +147,14 @@ class ScalarDishMutation:
         )
         return content_version_id
 
-    def place(self, *, section_id: uuid.UUID | None, registry_version_id: uuid.UUID) -> None:
+    def place(self, *, section_id: uuid.UUID | None, catalog_version_id: uuid.UUID) -> None:
         if self._placement is not None:
             raise CoreAuthorityError("placement may be staged only once")
         if section_id is not None and self.session.get(
-            models.SectionRegistryEntry, (registry_version_id, section_id)
+            models.SectionCatalogEntry, (catalog_version_id, section_id)
         ) is None:
-            raise CoreAuthorityError("placement is not present in the selected registry")
-        self._placement = (section_id, registry_version_id)
+            raise CoreAuthorityError("placement is not present in the selected catalog")
+        self._placement = (section_id, catalog_version_id)
 
     def set_completion(self, *, completed: bool, reason: str) -> None:
         if self._completion is not None:
@@ -225,7 +220,7 @@ class ScalarDishMutation:
         if self._placement is not None:
             values.update(
                 section_id=self._placement[0],
-                registry_version_id=self._placement[1],
+                catalog_version_id=self._placement[1],
                 placement_version=next_version,
             )
         if self._completion is not None:
@@ -264,7 +259,8 @@ class DishRepository:
         generation_id: uuid.UUID,
         task_id: uuid.UUID,
         expected_dish_version: int,
-        expected_membership_revision: int,
+        expected_placement_version: int,
+        expected_catalog_version_id: uuid.UUID,
         source: ScalarMutationSource,
     ) -> ScalarDishMutation:
         return ScalarDishMutation(
@@ -272,7 +268,8 @@ class DishRepository:
             generation_id=generation_id,
             task_id=task_id,
             expected_dish_version=expected_dish_version,
-            expected_membership_revision=expected_membership_revision,
+            expected_placement_version=expected_placement_version,
+            expected_catalog_version_id=expected_catalog_version_id,
             source=source,
             uuid_factory=self.uuid_factory,
         )
@@ -284,14 +281,16 @@ class DishRepository:
         generation_id: uuid.UUID,
         task_id: uuid.UUID,
         expected_dish_version: int,
-        expected_membership_revision: int,
+        expected_placement_version: int,
+        expected_catalog_version_id: uuid.UUID,
         source: ScalarMutationSource,
     ) -> Iterator[ScalarDishMutation]:
         mutation = self.begin_scalar_mutation(
             generation_id=generation_id,
             task_id=task_id,
             expected_dish_version=expected_dish_version,
-            expected_membership_revision=expected_membership_revision,
+            expected_placement_version=expected_placement_version,
+            expected_catalog_version_id=expected_catalog_version_id,
             source=source,
         )
         yield mutation

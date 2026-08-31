@@ -85,7 +85,7 @@ def test_post_burn_readiness_does_not_stale_approved_manifest(workflow_db) -> No
         manifest = session.scalar(
             select(manifest_models.ReleaseCandidateManifest).where(
                 manifest_models.ReleaseCandidateManifest.candidate_id == candidate_id,
-                manifest_models.ReleaseCandidateManifest.manifest_version == 4,
+                manifest_models.ReleaseCandidateManifest.manifest_version == 5,
             )
         )
         assert manifest is not None

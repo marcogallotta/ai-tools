@@ -545,8 +545,8 @@ class PostgresRuntimeService:
             expected = {
                 "kind": _SEARCH_CURSOR_KIND,
                 "generation_id": str(context.generation_id),
-                "registry_version_id": str(context.registry_version_id),
-                "registry_revision": context.registry_revision,
+                "catalog_version_id": str(context.catalog_version_id),
+                "catalog_revision": context.catalog_revision,
                 "query": normalized_query,
                 "page_size": page_size,
             }
@@ -578,7 +578,7 @@ class PostgresRuntimeService:
                 )
 
         # The settled frontend primitive owns title matching, active-corpus membership,
-        # placement, section-registry metadata, and deterministic ordering. Passing the
+        # placement, native section-catalog metadata, and deterministic ordering. Passing the
         # captured context makes every returned Search fact belong to the same authority
         # identity that validates and signs the continuation cursor.
         facts = board.search_titles(
@@ -591,46 +591,26 @@ class PostgresRuntimeService:
         has_more = facts.truncated or len(facts.results) > offset + page_size
         results: list[dict[str, Any]] = []
         for fact in visible:
-            task_gid = session.scalar(
-                select(models.TaskExternalAlias.external_id).where(
-                    models.TaskExternalAlias.task_id == fact.task_id,
-                    models.TaskExternalAlias.external_system == "asana",
-                    models.TaskExternalAlias.state == "active",
-                )
-            )
-            if task_gid is None:
-                return CommandResult(
-                    False,
-                    SEARCH_COMMAND,
-                    "BACKEND_REJECTED",
-                    409,
-                    {
-                        "message": "active Search result lacks its exact persisted task alias",
-                        "dish_id": str(fact.task_id),
-                    },
-                )
             results.append(
                 {
                     "dish_id": str(fact.task_id),
-                    "task_gid": str(task_gid),
                     "title": fact.title,
                     "section_id": str(fact.section_id),
                     "section_label": fact.section_label,
                     "workflow_role": fact.workflow_role,
-                    "project_label": fact.project_label,
                 }
             )
 
         current_context = board.context()
         current_identity = (
             current_context.generation_id,
-            current_context.registry_version_id,
-            current_context.registry_revision,
+            current_context.catalog_version_id,
+            current_context.catalog_revision,
         )
         captured_identity = (
             context.generation_id,
-            context.registry_version_id,
-            context.registry_revision,
+            context.catalog_version_id,
+            context.catalog_revision,
         )
         if current_identity != captured_identity:
             return CommandResult(
@@ -641,8 +621,8 @@ class PostgresRuntimeService:
                 {
                     "message": "Search authority context changed during the read; retry from the first page",
                     "captured_generation_id": str(context.generation_id),
-                    "captured_registry_version_id": str(context.registry_version_id),
-                    "captured_registry_revision": context.registry_revision,
+                    "captured_catalog_version_id": str(context.catalog_version_id),
+                    "captured_catalog_revision": context.catalog_revision,
                 },
                 retryable=True,
             )
@@ -653,8 +633,8 @@ class PostgresRuntimeService:
                 {
                     "kind": _SEARCH_CURSOR_KIND,
                     "generation_id": str(context.generation_id),
-                    "registry_version_id": str(context.registry_version_id),
-                    "registry_revision": context.registry_revision,
+                    "catalog_version_id": str(context.catalog_version_id),
+                    "catalog_revision": context.catalog_revision,
                     "query": normalized_query,
                     "page_size": page_size,
                     "offset": offset + page_size,
@@ -671,8 +651,8 @@ class PostgresRuntimeService:
                 "next_cursor": next_cursor,
                 "page_size": page_size,
                 "generation_id": str(context.generation_id),
-                "registry_version_id": str(context.registry_version_id),
-                "registry_revision": context.registry_revision,
+                "catalog_version_id": str(context.catalog_version_id),
+                "catalog_revision": context.catalog_revision,
             },
         )
 

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
 
-from dish_pg import models, test_comparator as comparator
+from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg.database import session_scope
 from dish_pg.read_model import PostgresReadModel
@@ -29,7 +28,6 @@ SECRET = b"registry-membership-regression-secret!"
 # while its stale predecessor Asana alias is replaced by the exact live identity.
 GIDS = ("1217084805070732", "1217084805070799", "1217084805070800", "1217084805070801")
 NAMES = ("Research Queue", "Verification Queue", "Sourcing", "Reference")
-PLAN = Path(__file__).resolve().parents[2] / "deploy/comparator/test-qualification-plan.json"
 
 
 def _call(session, ids, context, **overrides):
@@ -72,7 +70,7 @@ def _active(session, generation_id):
     return row.registry_version_id, row.registry_revision
 
 
-def test_test_membership_revision_creates_exact_four_preserves_history_and_matches_comparator(workflow_db) -> None:
+def test_transition_registry_revision_preserves_native_catalog_and_dish_placement(workflow_db) -> None:
     factory, ids, context, _task_id = workflow_db
     with session_scope(factory) as session:
         old_entries = tuple(session.scalars(select(models.SectionRegistryEntry).where(
@@ -96,11 +94,8 @@ def test_test_membership_revision_creates_exact_four_preserves_history_and_match
         assert result["after"]["registry_version_id"] != str(context["registry_version_id"])
         assert result["after"]["registry_revision"] == 2
         sections = list(PostgresReadModel(session, cursor_secret=SECRET).sections())
-        assert [x["name"] for x in sections] == list(NAMES)
-        assert [x["section_gid"] for x in sections] == list(GIDS)
-        assert [x["workflow_role"] for x in sections] == [
-            "research_queue", "verification_queue", f"imported-section-{GIDS[2]}", f"imported-section-{GIDS[3]}"
-        ]
+        assert [x["name"] for x in sections] == ["Research Queue"]
+        assert [x["workflow_role"] for x in sections] == ["research_queue"]
         historical = tuple(session.scalars(select(models.SectionRegistryEntry).where(
             models.SectionRegistryEntry.registry_version_id == context["registry_version_id"]
         )))
@@ -119,32 +114,14 @@ def test_test_membership_revision_creates_exact_four_preserves_history_and_match
 
         session.refresh(state)
         assert state.section_id == context["section_id"]
-        assert state.registry_version_id == uuid.UUID(result["after"]["registry_version_id"])
-        assert state.dish_version == dish_version + 1
-        assert state.placement_version == state.dish_version
-        assert state.placement_version != placement_version
-        receipt = session.get(
-            models.DishMutationReceipt,
-            (context["generation_id"], _task_id, state.dish_version),
-        )
-        assert receipt is not None
-        assert receipt.placement_changed is True
-        assert receipt.content_changed is False
-        assert receipt.completion_changed is False
-        assert receipt.source_route == "import"
-        assert receipt.import_run_id == uuid.UUID(result["import_run_id"])
+        assert state.registry_version_id == context["registry_version_id"]
+        assert state.catalog_version_id == context["catalog_version_id"]
+        assert state.dish_version == dish_version
+        assert state.placement_version == placement_version
         task_page = PostgresReadModel(session, cursor_secret=SECRET).section_tasks(
-            section_reference=GIDS[0]
+            section_reference=context["section_id"]
         )
         assert [item.task_id for item in task_page.items] == [_task_id]
-
-        authority = {"ok": True, "command": "sections", "data": {"sections": sections}}
-        legacy = {"ok": True, "command": "sections", "data": {"sections": [
-            {"gid": gid, "name": name} for gid, name in zip(GIDS, NAMES, strict=True)
-        ]}}
-        scenario = next(x for x in comparator.load_plan(PLAN)["scenarios"] if x["id"] == "sections")
-        drop_keys = frozenset(scenario["compare"]["drop_keys"])
-        assert comparator.normalize_value(authority, drop_keys=drop_keys) == comparator.normalize_value(legacy, drop_keys=drop_keys)
 
 
 def test_test_membership_revision_refuses_true_current_membership_removal(workflow_db) -> None:

@@ -279,7 +279,7 @@ def test_independent_archive_upgrade_refuses_coupled_0043_rows(tmp_path: Path) -
 def test_independent_archive_downgrade_refuses_populated_0044_rows(tmp_path: Path) -> None:
     path = tmp_path / "independent-archive.sqlite3"
     config = _config(path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0044_independent_archive")
     _insert_archived_state(path, completed=False)
 
     with pytest.raises(RuntimeError, match="downgrade refuses 1 populated archived row"):
@@ -288,7 +288,7 @@ def test_independent_archive_downgrade_refuses_populated_0044_rows(tmp_path: Pat
     engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
     try:
         with engine.connect() as connection:
-            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0044_independent_archive"
             assert "archive_changed" in {
                 column["name"] for column in inspect(connection).get_columns("dish_mutation_receipts")
             }

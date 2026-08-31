@@ -1521,18 +1521,6 @@
                 "properties": {
                   "arguments": {
                     "additionalProperties": false,
-                    "oneOf": [
-                      {
-                        "required": [
-                          "section_id"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "section_gid"
-                        ]
-                      }
-                    ],
                     "properties": {
                       "agent": {
                         "enum": [
@@ -1546,11 +1534,6 @@
                         "description": "Opaque next_cursor returned by a prior section-tasks call. Omit for the first page; repeat the call with the returned next_cursor to fetch the next page. A null next_cursor means there are no more tasks.",
                         "type": "string"
                       },
-                      "section_gid": {
-                        "maxLength": 19,
-                        "pattern": "^[1-9][0-9]*$",
-                        "type": "string"
-                      },
                       "section_id": {
                         "format": "uuid",
                         "maxLength": 36,
@@ -1560,6 +1543,7 @@
                       }
                     },
                     "required": [
+                      "section_id",
                       "agent"
                     ],
                     "type": "object"

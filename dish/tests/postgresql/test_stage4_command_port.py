@@ -1131,7 +1131,7 @@ def test_planner_delegates_legality_and_adjudicates_exact_effects() -> None:
     assert (uncertain.outcome, uncertain.retry_safe) == ("uncertain", False)
 
 
-def test_authoritative_sections_and_registry_bound_pagination(workflow_db) -> None:
+def test_authoritative_sections_and_catalog_bound_pagination(workflow_db) -> None:
     factory, ids, context, _task_id = workflow_db
     with session_scope(factory) as session:
         _import_one(session, ids, context, asana_gid="123456790")
@@ -1143,7 +1143,7 @@ def test_authoritative_sections_and_registry_bound_pagination(workflow_db) -> No
             _call(
                 "section-tasks",
                 run_id=_next(ids),
-                arguments={"section_gid": "1217084805070731", "page_size": 2},
+                arguments={"section_id": str(context["section_id"]), "page_size": 2},
             )
         )
         assert len(first.data["tasks"]) == 2
@@ -1153,7 +1153,7 @@ def test_authoritative_sections_and_registry_bound_pagination(workflow_db) -> No
                 "section-tasks",
                 run_id=_next(ids),
                 arguments={
-                    "section_gid": "1217084805070731",
+                    "section_id": str(context["section_id"]),
                     "page_size": 2,
                     "cursor": first.data["next_cursor"],
                 },
@@ -1166,7 +1166,7 @@ def test_authoritative_sections_and_registry_bound_pagination(workflow_db) -> No
                     "section-tasks",
                     run_id=_next(ids),
                     arguments={
-                        "section_gid": "1217084805070731",
+                        "section_id": str(context["section_id"]),
                         "page_size": 3,
                         "cursor": first.data["next_cursor"],
                     },
@@ -1663,6 +1663,10 @@ Destination section: Sichuan — 12345
         destination_section_id = _add_destination_section(
             session, ids, context, external_id="12345"
         )
+        planning = planning.replace(
+            "Destination section: Sichuan — 12345",
+            f"Destination section: Sichuan — section:{destination_section_id}",
+        )
         if start_away_from_research:
             state = session.get(
                 models.DishState,
@@ -1675,7 +1679,8 @@ Destination section: Sichuan — 12345
                 generation_id=context["generation_id"],
                 task_id=task_id,
                 expected_dish_version=state.dish_version,
-                expected_membership_revision=membership.membership_revision,
+                expected_placement_version=state.placement_version,
+                expected_catalog_version_id=state.catalog_version_id,
                 source=ScalarMutationSource(
                     route="import",
                     import_run_id=context["import_run_id"],
@@ -1684,7 +1689,7 @@ Destination section: Sichuan — 12345
             )
             mutation.place(
                 section_id=destination_section_id,
-                registry_version_id=state.registry_version_id,
+                catalog_version_id=state.catalog_version_id,
             )
             mutation.finalize()
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
@@ -1748,5 +1753,8 @@ Destination section: Sichuan — 12345
         state = session.get(models.DishState, (context["generation_id"], task_id))
         current = session.get(models.ContentVersion, state.current_content_version_id)
         assert current.body.startswith("### Planning brief\n")
-        assert "Destination section: Sichuan — 12345" in current.body
+        assert (
+            f"Destination section: Sichuan — section:{destination_section_id}"
+            in current.body
+        )
         assert state.section_id == context["section_id"]

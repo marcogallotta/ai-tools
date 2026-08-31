@@ -222,7 +222,8 @@ def test_task_and_operation_fences_reject_stale_execution(workflow_db) -> None:
             generation_id=context["generation_id"],
             task_id=task_id,
             expected_dish_version=state.dish_version,
-            expected_membership_revision=membership.membership_revision,
+            expected_placement_version=state.placement_version,
+            expected_catalog_version_id=state.catalog_version_id,
             source=ScalarMutationSource(
                 route="import",
                 import_run_id=context["import_run_id"],
@@ -231,7 +232,7 @@ def test_task_and_operation_fences_reject_stale_execution(workflow_db) -> None:
         )
         mutation.place(
             section_id=state.section_id,
-            registry_version_id=state.registry_version_id,
+            catalog_version_id=state.catalog_version_id,
         )
         mutation.finalize()
         operation.phase = "await_verification"

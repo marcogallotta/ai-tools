@@ -66,6 +66,8 @@ class GenerationRolloverResult:
     import_run_id: uuid.UUID
     registry_version_id: uuid.UUID
     registry_activation_id: uuid.UUID
+    catalog_version_id: uuid.UUID
+    catalog_activation_id: uuid.UUID
     shadow_baseline_id: uuid.UUID
     projection_epoch_id: uuid.UUID
     contamination: ContaminationEvidence
@@ -83,6 +85,8 @@ class GenerationRolloverResult:
             "import_run_id": str(self.import_run_id),
             "registry_version_id": str(self.registry_version_id),
             "registry_activation_id": str(self.registry_activation_id),
+            "catalog_version_id": str(self.catalog_version_id),
+            "catalog_activation_id": str(self.catalog_activation_id),
             "shadow_baseline_id": str(self.shadow_baseline_id),
             "projection_epoch_id": str(self.projection_epoch_id),
             "contaminated_candidate_id": str(self.contamination.candidate_id),
@@ -467,6 +471,7 @@ def _clone_task_authority(
     generation_id: uuid.UUID,
     import_run_id: uuid.UUID,
     registry_version_id: uuid.UUID,
+    catalog_version_id: uuid.UUID,
     tasks: list[dict[str, Any]],
     at: datetime,
     uuid_factory: Callable[[], uuid.UUID],
@@ -518,6 +523,7 @@ def _clone_task_authority(
                 current_content_version_id=version_id,
                 section_id=snapshot["placement"]["section_id"],
                 registry_version_id=registry_version_id,
+                catalog_version_id=catalog_version_id,
                 completed=snapshot["completion"]["completed"],
                 completion_reason="imported",
                 dish_version=1,
@@ -674,6 +680,8 @@ def _rollover_generation_transaction(
     import_run_id = uuid_factory()
     registry_version_id = uuid_factory()
     registry_activation_id = uuid_factory()
+    catalog_version_id = uuid_factory()
+    catalog_activation_id = uuid_factory()
     receipt = {
         "format": "dish-test-generation-rollover-receipt-v1",
         "reason": ROLLOVER_REASON,
@@ -764,11 +772,111 @@ def _rollover_generation_transaction(
             updated_at=now,
         ),
     )
+    predecessor_runtime = session.get(
+        models.CurrentNativeCatalogRuntime, predecessor_generation_id
+    )
+    predecessor_attestation = (
+        None
+        if predecessor_runtime is None
+        else session.get(
+            models.NativeCatalogRuntimeAttestation,
+            predecessor_runtime.attestation_id,
+        )
+    )
+    if predecessor_attestation is None:
+        raise GenerationRolloverError(
+            "predecessor has no current native Section runtime attestation"
+        )
+    session.add(
+        models.SectionCatalogVersion(
+            catalog_version_id=catalog_version_id,
+            generation_id=generation_id,
+            version_number=1,
+            contract_binding_id=source_registry.contract_binding_id,
+            catalog_sha256=registry_sha256,
+            source_registry_version_id=registry_version_id,
+            transform_sha256=registry_sha256,
+            created_at=now,
+        )
+    )
+    session.flush()
+    session.add_all(
+        models.SectionCatalogEntry(
+            catalog_version_id=catalog_version_id,
+            section_id=entry["section_id"],
+            ordinal=entry["ordinal"],
+            display_name=entry["display_name"],
+            workflow_role=entry["workflow_role"],
+        )
+        for entry in registry_entries
+    )
+    session.flush()
+    session.add(
+        models.SectionCatalogActivation(
+            catalog_activation_id=catalog_activation_id,
+            generation_id=generation_id,
+            catalog_version_id=catalog_version_id,
+            activation_route="transition",
+            import_run_id=import_run_id,
+            command_execution_id=None,
+            catalog_revision=1,
+            activated_at=now,
+        )
+    )
+    session.flush()
+    session.add(
+        models.ActiveSectionCatalog(
+            generation_id=generation_id,
+            catalog_version_id=catalog_version_id,
+            catalog_activation_id=catalog_activation_id,
+            catalog_revision=1,
+            updated_at=now,
+        )
+    )
+    attestation_id = uuid_factory()
+    attestation_revision = predecessor_attestation.attestation_revision + 1
+    attestation_sha256 = _canonical_sha256(
+        {
+            "contract": "native-section-runtime-attestation-v1",
+            "generation_id": str(generation_id),
+            "catalog_version_id": str(catalog_version_id),
+            "catalog_activation_id": str(catalog_activation_id),
+            "catalog_revision": 1,
+            "authority_activation_id": None,
+            "attestation_revision": attestation_revision,
+        }
+    )
+    session.add(
+        models.NativeCatalogRuntimeAttestation(
+            attestation_id=attestation_id,
+            generation_id=generation_id,
+            catalog_version_id=catalog_version_id,
+            catalog_activation_id=catalog_activation_id,
+            predecessor_attestation_id=predecessor_attestation.attestation_id,
+            authority_activation_id=None,
+            attestation_revision=attestation_revision,
+            attestation_sha256=attestation_sha256,
+            recorded_at=now,
+        )
+    )
+    session.flush()
+    session.add(
+        models.CurrentNativeCatalogRuntime(
+            generation_id=generation_id,
+            attestation_id=attestation_id,
+            catalog_version_id=catalog_version_id,
+            catalog_activation_id=catalog_activation_id,
+            attestation_revision=attestation_revision,
+            updated_at=now,
+        )
+    )
+    session.flush()
     _clone_task_authority(
         session,
         generation_id=generation_id,
         import_run_id=import_run_id,
         registry_version_id=registry_version_id,
+        catalog_version_id=catalog_version_id,
         tasks=tasks,
         at=now,
         uuid_factory=uuid_factory,
@@ -803,6 +911,8 @@ def _rollover_generation_transaction(
         import_run_id=import_run_id,
         registry_version_id=registry_version_id,
         registry_activation_id=registry_activation_id,
+        catalog_version_id=catalog_version_id,
+        catalog_activation_id=catalog_activation_id,
         shadow_baseline_id=new_baseline.shadow_baseline_id,
         projection_epoch_id=new_epoch.projection_epoch_id,
         contamination=contamination,

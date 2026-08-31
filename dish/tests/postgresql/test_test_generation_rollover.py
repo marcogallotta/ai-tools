@@ -12,6 +12,7 @@ from dish_pg import stage5_models as tx
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.repositories import DishRepository, RegistryRepository, ScalarMutationSource
+from dish_pg.release_evidence import sha256_json
 from dish_pg.test_generation_rollover import (
     CREATION_REASON,
     TEST_DATABASE_NAME,
@@ -51,6 +52,80 @@ def _install_verification_queue(factory, ids, context) -> uuid.UUID:
                 retired_at=None,
             )
         )
+        session.add(
+            models.Section(
+                section_id=section_id,
+                logical_name="Verification Queue",
+                lifecycle="active",
+                created_at=NOW,
+                retired_at=None,
+            )
+        )
+        session.flush()
+        current = session.get(models.ActiveSectionRegistry, context["generation_id"])
+        assert current is not None
+        source = session.get(models.SectionRegistryVersion, current.registry_version_id)
+        assert source is not None
+        current_catalog = session.get(
+            models.ActiveSectionCatalog, context["generation_id"]
+        )
+        current_runtime = session.get(
+            models.CurrentNativeCatalogRuntime, context["generation_id"]
+        )
+        assert current_catalog is not None
+        predecessor_attestation = (
+            None
+            if current_runtime is None
+            else session.get(
+                models.NativeCatalogRuntimeAttestation, current_runtime.attestation_id
+            )
+        )
+        catalog_version_id = _next(ids)
+        catalog_activation_id = _next(ids)
+        session.add(
+            models.SectionCatalogVersion(
+                catalog_version_id=catalog_version_id,
+                generation_id=context["generation_id"],
+                version_number=2,
+                contract_binding_id=source.contract_binding_id,
+                catalog_sha256="d" * 64,
+                source_registry_version_id=None,
+                transform_sha256=None,
+                created_at=NOW,
+            )
+        )
+        session.flush()
+        session.add_all(
+            [
+                models.SectionCatalogEntry(
+                    catalog_version_id=catalog_version_id,
+                    section_id=context["section_id"],
+                    ordinal=0,
+                    display_name="Research Queue",
+                    workflow_role="research_queue",
+                ),
+                models.SectionCatalogEntry(
+                    catalog_version_id=catalog_version_id,
+                    section_id=section_id,
+                    ordinal=1,
+                    display_name="Verification Queue",
+                    workflow_role="verification_queue",
+                ),
+            ]
+        )
+        session.flush()
+        session.add(
+            models.SectionCatalogActivation(
+                catalog_activation_id=catalog_activation_id,
+                generation_id=context["generation_id"],
+                catalog_version_id=catalog_version_id,
+                activation_route="recovery",
+                import_run_id=None,
+                command_execution_id=None,
+                catalog_revision=2,
+                activated_at=NOW,
+            )
+        )
         session.flush()
         session.add(
             models.SectionExternalAlias(
@@ -66,8 +141,6 @@ def _install_verification_queue(factory, ids, context) -> uuid.UUID:
                 retired_at=None,
             )
         )
-        current = session.get(models.ActiveSectionRegistry, context["generation_id"])
-        source = session.get(models.SectionRegistryVersion, current.registry_version_id)
         version_id = _next(ids)
         activation_id = _next(ids)
         RegistryRepository(session).add_registry_version(
@@ -116,18 +189,14 @@ def _install_verification_queue(factory, ids, context) -> uuid.UUID:
             .order_by(models.DishState.task_id)
         ).all()
         for state in states:
-            head = session.get(
-                models.TaskMembershipHead,
-                (context["generation_id"], state.task_id),
-            )
-            assert head is not None
             mutation = DishRepository(
                 session, uuid_factory=lambda: _next(ids)
             ).begin_scalar_mutation(
                 generation_id=context["generation_id"],
                 task_id=state.task_id,
                 expected_dish_version=state.dish_version,
-                expected_membership_revision=head.membership_revision,
+                expected_placement_version=state.placement_version,
+                expected_catalog_version_id=state.catalog_version_id,
                 source=ScalarMutationSource(
                     route="import",
                     import_run_id=context["import_run_id"],
@@ -136,13 +205,49 @@ def _install_verification_queue(factory, ids, context) -> uuid.UUID:
             )
             mutation.place(
                 section_id=state.section_id,
-                registry_version_id=version_id,
+                catalog_version_id=catalog_version_id,
             )
             mutation.finalize()
         current.registry_version_id = version_id
         current.registry_activation_id = activation_id
         current.registry_revision = 2
         current.updated_at = NOW
+        current_catalog.catalog_version_id = catalog_version_id
+        current_catalog.catalog_activation_id = catalog_activation_id
+        current_catalog.catalog_revision = 2
+        current_catalog.updated_at = NOW
+        if predecessor_attestation is not None and current_runtime is not None:
+            attestation_id = _next(ids)
+            attestation_revision = predecessor_attestation.attestation_revision + 1
+            session.add(
+                models.NativeCatalogRuntimeAttestation(
+                attestation_id=attestation_id,
+                generation_id=context["generation_id"],
+                catalog_version_id=catalog_version_id,
+                catalog_activation_id=catalog_activation_id,
+                predecessor_attestation_id=predecessor_attestation.attestation_id,
+                authority_activation_id=None,
+                attestation_revision=attestation_revision,
+                attestation_sha256=sha256_json(
+                    {
+                        "contract": "native-section-runtime-attestation-v1",
+                        "generation_id": str(context["generation_id"]),
+                        "catalog_version_id": str(catalog_version_id),
+                        "catalog_activation_id": str(catalog_activation_id),
+                        "catalog_revision": 2,
+                        "authority_activation_id": None,
+                        "attestation_revision": attestation_revision,
+                    }
+                ),
+                recorded_at=NOW,
+                )
+            )
+            session.flush()
+            current_runtime.attestation_id = attestation_id
+            current_runtime.catalog_version_id = catalog_version_id
+            current_runtime.catalog_activation_id = catalog_activation_id
+            current_runtime.attestation_revision = attestation_revision
+            current_runtime.updated_at = NOW
     return section_id
 
 

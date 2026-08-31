@@ -718,6 +718,7 @@ class CutoverControlAuthority:
             if (
                 existing.legacy_bundle_id != legacy_bundle_id
                 or existing.registry_version_id != candidate.registry_version_id
+                or existing.catalog_version_id is None
                 or existing.honest_binding_id != candidate.honest_binding_id
                 or existing.rollback_burned_at is None
                 or _utc_comparable(existing.rollback_burned_at)
@@ -809,6 +810,15 @@ class CutoverControlAuthority:
         batch = self.session.get(tx.SourceImportBatch, candidate.source_import_batch_id)
         if batch is None:
             raise ReleaseAuthorityError("release candidate import batch is missing")
+        active_catalog = self.session.scalar(
+            select(models.ActiveSectionCatalog)
+            .where(models.ActiveSectionCatalog.generation_id == candidate.generation_id)
+            .execution_options(populate_existing=True)
+        )
+        if active_catalog is None:
+            raise ReleaseAuthorityError(
+                "rollback burn requires the exact active native Section catalog"
+            )
 
         from .transition import ProjectionService
 
@@ -834,6 +844,7 @@ class CutoverControlAuthority:
             cutover_approval_id=str(approval.approval_id),
             legacy_bundle_id=legacy_bundle_id,
             registry_version_id=contract.registry_version.registry_version_id,
+            catalog_version_id=active_catalog.catalog_version_id,
             honest_binding_id=contract.honest_binding.binding_id,
             rehearsal_id=run.rehearsal_id,
             schema_head=candidate.schema_head,
@@ -848,6 +859,43 @@ class CutoverControlAuthority:
             recorded_at=burned_at,
         )
         self.session.add(row)
+        self.session.flush()
+        attestation_id = self.uuid_factory()
+        attestation_sha256 = sha256_json(
+            {
+                "contract": "native-section-runtime-attestation-v1",
+                "generation_id": str(candidate.generation_id),
+                "catalog_version_id": str(active_catalog.catalog_version_id),
+                "catalog_activation_id": str(active_catalog.catalog_activation_id),
+                "catalog_revision": active_catalog.catalog_revision,
+                "authority_activation_id": str(row.activation_id),
+                "attestation_revision": 1,
+            }
+        )
+        self.session.add(
+            models.NativeCatalogRuntimeAttestation(
+                attestation_id=attestation_id,
+                generation_id=candidate.generation_id,
+                catalog_version_id=active_catalog.catalog_version_id,
+                catalog_activation_id=active_catalog.catalog_activation_id,
+                predecessor_attestation_id=None,
+                authority_activation_id=row.activation_id,
+                attestation_revision=1,
+                attestation_sha256=attestation_sha256,
+                recorded_at=burned_at,
+            )
+        )
+        self.session.flush()
+        self.session.add(
+            models.CurrentNativeCatalogRuntime(
+                generation_id=candidate.generation_id,
+                attestation_id=attestation_id,
+                catalog_version_id=active_catalog.catalog_version_id,
+                catalog_activation_id=active_catalog.catalog_activation_id,
+                attestation_revision=1,
+                updated_at=burned_at,
+            )
+        )
         self._advance_cutover(run, "rollback_burned")
         candidate.status = "activated"
         candidate.candidate_revision += 1
@@ -860,6 +908,8 @@ class CutoverControlAuthority:
                 "rehearsal_id": None if run.rehearsal_id is None else str(run.rehearsal_id),
                 "legacy_bundle_id": legacy_bundle_id,
                 "registry_version_id": str(contract.registry_version.registry_version_id),
+                "catalog_version_id": str(active_catalog.catalog_version_id),
+                "native_runtime_attestation_id": str(attestation_id),
                 "honest_binding_id": str(contract.honest_binding.binding_id),
                 "fresh_candidate_checks": evaluation.as_dict(),
                 "fresh_manifest_revalidation_id": str(revalidation.revalidation_id),

@@ -256,6 +256,61 @@ def _bootstrap_registry(
             updated_at=NOW,
         ),
     )
+    session.add(
+        models.Section(
+            section_id=section_id,
+            logical_name="Research Queue",
+            lifecycle="active",
+            created_at=NOW,
+            retired_at=None,
+        )
+    )
+    session.add(
+        models.SectionCatalogVersion(
+            catalog_version_id=registry_version_id,
+            generation_id=generation_id,
+            version_number=1,
+            contract_binding_id=binding_id,
+            catalog_sha256=HASH_C,
+            source_registry_version_id=registry_version_id,
+            transform_sha256=HASH_C,
+            created_at=NOW,
+        )
+    )
+    session.flush()
+    session.add(
+        models.SectionCatalogEntry(
+            catalog_version_id=registry_version_id,
+            section_id=section_id,
+            ordinal=0,
+            display_name=section_display_name,
+            workflow_role=section_workflow_role,
+        )
+    )
+    session.flush()
+    session.add(
+        models.SectionCatalogActivation(
+            catalog_activation_id=registry_activation_id,
+            generation_id=generation_id,
+            catalog_version_id=registry_version_id,
+            activation_route="transition",
+            import_run_id=import_run_id,
+            command_execution_id=None,
+            catalog_revision=1,
+            activated_at=NOW,
+        )
+    )
+    session.flush()
+    session.add(
+        models.ActiveSectionCatalog(
+            generation_id=generation_id,
+            catalog_version_id=registry_version_id,
+            catalog_activation_id=registry_activation_id,
+            catalog_revision=1,
+            updated_at=NOW,
+        )
+    )
+    session.flush()
     return {
         "import_run_id": import_run_id,
         "generation_id": generation_id,
@@ -263,6 +318,7 @@ def _bootstrap_registry(
         "project_id": project_id,
         "section_id": section_id,
         "registry_version_id": registry_version_id,
+        "catalog_version_id": registry_version_id,
     }
 
 
@@ -273,7 +329,7 @@ def _activate_role_only_registry_revision(
     *,
     workflow_role: str,
 ) -> uuid.UUID:
-    """Revise registry metadata and atomically rebind every Dish placement."""
+    """Revise retained transition metadata without rebinding native placement."""
     current = session.get(models.ActiveSectionRegistry, context["generation_id"])
     source = session.get(
         models.SectionRegistryEntry,
@@ -308,33 +364,6 @@ def _activate_role_only_registry_revision(
             )
         ],
     )
-    dishes = DishRepository(session, uuid_factory=lambda: _next(ids))
-    states = session.scalars(
-        select(models.DishState)
-        .where(models.DishState.generation_id == context["generation_id"])
-        .order_by(models.DishState.task_id)
-    ).all()
-    for state in states:
-        membership = session.get(
-            models.TaskMembershipHead, (context["generation_id"], state.task_id)
-        )
-        assert membership is not None
-        mutation = dishes.begin_scalar_mutation(
-            generation_id=context["generation_id"],
-            task_id=state.task_id,
-            expected_dish_version=state.dish_version,
-            expected_membership_revision=membership.membership_revision,
-            source=ScalarMutationSource(
-                route="import",
-                import_run_id=context["import_run_id"],
-                occurred_at=NOW,
-            ),
-        )
-        mutation.place(
-            section_id=state.section_id,
-            registry_version_id=registry_version_id,
-        )
-        mutation.finalize()
     activation_id = _next(ids)
     revision = current.registry_revision + 1
     registry.activate_registry(

@@ -44,7 +44,7 @@ from .repositories import AuthorityRepository, ContractBindingRepository, Regist
 
 DEFAULT_DISH_COMMIT = "9926e511297af94e3897eb65f02c902cadcc016f"
 DEFAULT_HONEST_COMMIT = "f4e16e369c4ea90fe287c13975a35ab0afd985d5"
-DEFAULT_SCHEMA_HEAD = "0044_independent_archive"
+DEFAULT_SCHEMA_HEAD = "0045_native_section_authority"
 DEFAULT_DATABASE_NAME = "dish_stage_a_dark_test"
 DEFAULT_PROJECT_GID = "1216693403164366"
 DEFAULT_PROJECT_ID = uuid.UUID("1ae6e7ba-31e3-5dc5-9565-4ea37b49ac97")
@@ -726,6 +726,67 @@ def bootstrap_initial_generation(
             updated_at=now,
         ),
     )
+    # Materialize the permanent Section/catalog authority beside the frozen
+    # Asana-shaped import witness. The shared transition identifiers make the
+    # source-to-native derivation auditable without making aliases or Projects
+    # part of ordinary runtime resolution.
+    for section in spec.sections:
+        session.add(
+            models.Section(
+                section_id=section.section_id,
+                logical_name=section.section_name,
+                lifecycle="active",
+                created_at=now,
+                retired_at=None,
+            )
+        )
+    session.add(
+        models.SectionCatalogVersion(
+            catalog_version_id=registry_version_id,
+            generation_id=generation_id,
+            version_number=1,
+            contract_binding_id=binding_id,
+            catalog_sha256=registry_sha256,
+            source_registry_version_id=registry_version_id,
+            transform_sha256=registry_sha256,
+            created_at=now,
+        )
+    )
+    session.flush()
+    session.add_all(
+        models.SectionCatalogEntry(
+            catalog_version_id=registry_version_id,
+            section_id=section.section_id,
+            ordinal=ordinal,
+            display_name=section.section_name,
+            workflow_role=section.workflow_role,
+        )
+        for ordinal, section in enumerate(spec.sections)
+    )
+    session.flush()
+    session.add(
+        models.SectionCatalogActivation(
+            catalog_activation_id=registry_activation_id,
+            generation_id=generation_id,
+            catalog_version_id=registry_version_id,
+            activation_route="transition",
+            import_run_id=import_run_id,
+            command_execution_id=None,
+            catalog_revision=1,
+            activated_at=now,
+        )
+    )
+    session.flush()
+    session.add(
+        models.ActiveSectionCatalog(
+            generation_id=generation_id,
+            catalog_version_id=registry_version_id,
+            catalog_activation_id=registry_activation_id,
+            catalog_revision=1,
+            updated_at=now,
+        )
+    )
+    session.flush()
     return InitialBootstrapResult(
         import_run_id=import_run_id,
         generation_id=generation_id,

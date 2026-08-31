@@ -583,7 +583,9 @@ def test_postgresql_action_canonical_ids_work_without_asana_identity(
     assert alias_read_status == 200
     assert alias_read_result["data"]["dish_id"] == str(task_id)
     assert alias_section_status == 200
-    assert alias_section_result["data"]["tasks"][0]["dish_id"] == str(task_id)
+    assert alias_section_result["ok"] is False
+    assert alias_section_result["code"] == "INVALID_ARGUMENT"
+    assert "section_gid is transition-only" in alias_section_result["data"]["message"]
     assert proposals_status == 200
     assert proposals_result["data"]["count"] == 0
     assert proposals_result["data"]["proposals"] == []

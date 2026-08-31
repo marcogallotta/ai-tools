@@ -23,8 +23,8 @@ from .release_history import (
     exact_revocation_reconciliation_matches,
 )
 
-MANIFEST_VERSION = 4
-BUILDER_CONTRACT_VERSION = "candidate-authority-v4"
+MANIFEST_VERSION = 5
+BUILDER_CONTRACT_VERSION = "candidate-authority-v5"
 
 COMPONENT_FIELDS = (
     "mapping_membership_sha256",
@@ -715,6 +715,7 @@ def _identity(
         or candidate.source_manifest_sha256 is None
         or candidate.rehearsal_environment_identity is None
         or candidate.registry_version_id is None
+        or candidate.catalog_version_id is None
         or candidate.honest_binding_id is None
     ):
         raise ReleaseAuthorityError(
@@ -728,6 +729,16 @@ def _identity(
     active = session.scalar(
         select(models.ActiveSectionRegistry)
         .where(models.ActiveSectionRegistry.generation_id == candidate.generation_id)
+        .execution_options(populate_existing=True)
+    )
+    active_catalog = session.scalar(
+        select(models.ActiveSectionCatalog)
+        .where(models.ActiveSectionCatalog.generation_id == candidate.generation_id)
+        .execution_options(populate_existing=True)
+    )
+    catalog = session.scalar(
+        select(models.SectionCatalogVersion)
+        .where(models.SectionCatalogVersion.catalog_version_id == candidate.catalog_version_id)
         .execution_options(populate_existing=True)
     )
     registry = session.scalar(
@@ -754,6 +765,16 @@ def _identity(
     ):
         raise _CandidateManifestReleaseIdentityMismatch(
             "candidate manifest active registry does not match candidate release identity"
+        )
+    if (
+        active_catalog is None
+        or catalog is None
+        or active_catalog.catalog_version_id != candidate.catalog_version_id
+        or catalog.generation_id != candidate.generation_id
+        or catalog.contract_binding_id != candidate.honest_binding_id
+    ):
+        raise _CandidateManifestReleaseIdentityMismatch(
+            "candidate manifest native Section catalog does not match candidate release identity"
         )
     if (
         registry is None
@@ -806,6 +827,7 @@ def _identity(
         "source_manifest_sha256": candidate.source_manifest_sha256,
         "rehearsal_environment_identity": candidate.rehearsal_environment_identity,
         "registry_version_id": str(registry.registry_version_id),
+        "catalog_version_id": str(catalog.catalog_version_id),
         "honest_binding_id": str(binding.binding_id),
         "schema_head": generation.schema_head,
         "dish_release": generation.dish_release,
@@ -872,6 +894,7 @@ def build_candidate_manifest(
         shadow_baseline_id=candidate.shadow_baseline_id,
         projection_epoch_id=candidate.projection_epoch_id,
         registry_version_id=uuid.UUID(str(identity["registry_version_id"])),
+        catalog_version_id=uuid.UUID(str(identity["catalog_version_id"])),
         honest_binding_id=uuid.UUID(str(identity["honest_binding_id"])),
         approval_reconciliation_run_id=uuid.UUID(
             str(identity["approval_reconciliation_run_id"])

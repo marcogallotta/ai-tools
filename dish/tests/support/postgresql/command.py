@@ -49,6 +49,39 @@ def _call(command, *, run_id, request_id=None, arguments=None, principal="agent"
 
 def _add_verification_queue(session, ids, context) -> uuid.UUID:
     section_id = _next(ids)
+    next_registry_ordinal = int(
+        session.scalar(
+            select(models.SectionRegistryEntry.ordinal)
+            .where(
+                models.SectionRegistryEntry.registry_version_id
+                == context["registry_version_id"]
+            )
+            .order_by(models.SectionRegistryEntry.ordinal.desc())
+            .limit(1)
+        )
+        or 0
+    ) + 1
+    next_catalog_ordinal = int(
+        session.scalar(
+            select(models.SectionCatalogEntry.ordinal)
+            .where(
+                models.SectionCatalogEntry.catalog_version_id
+                == context["catalog_version_id"]
+            )
+            .order_by(models.SectionCatalogEntry.ordinal.desc())
+            .limit(1)
+        )
+        or 0
+    ) + 1
+    session.add(
+        models.Section(
+            section_id=section_id,
+            logical_name="Verification Queue",
+            lifecycle="active",
+            created_at=NOW,
+            retired_at=None,
+        )
+    )
     session.add(
         models.GovernedSection(
             section_id=section_id,
@@ -78,7 +111,16 @@ def _add_verification_queue(session, ids, context) -> uuid.UUID:
         models.SectionRegistryEntry(
             registry_version_id=context["registry_version_id"],
             section_id=section_id,
-            ordinal=1,
+            ordinal=next_registry_ordinal,
+            display_name="Verification Queue",
+            workflow_role="verification_queue",
+        )
+    )
+    session.add(
+        models.SectionCatalogEntry(
+            catalog_version_id=context["catalog_version_id"],
+            section_id=section_id,
+            ordinal=next_catalog_ordinal,
             display_name="Verification Queue",
             workflow_role="verification_queue",
         )
@@ -90,6 +132,15 @@ def _add_verification_queue(session, ids, context) -> uuid.UUID:
 
 def _add_destination_section(session, ids, context, *, external_id="12345") -> uuid.UUID:
     section_id = _next(ids)
+    session.add(
+        models.Section(
+            section_id=section_id,
+            logical_name="Sichuan",
+            lifecycle="active",
+            created_at=NOW,
+            retired_at=None,
+        )
+    )
     session.add(
         models.GovernedSection(
             section_id=section_id,
@@ -136,6 +187,27 @@ def _add_destination_section(session, ids, context, *, external_id="12345") -> u
             workflow_role="destination",
         )
     )
+    next_catalog_ordinal = int(
+        session.scalar(
+            select(models.SectionCatalogEntry.ordinal)
+            .where(
+                models.SectionCatalogEntry.catalog_version_id
+                == context["catalog_version_id"]
+            )
+            .order_by(models.SectionCatalogEntry.ordinal.desc())
+            .limit(1)
+        )
+        or 0
+    ) + 1
+    session.add(
+        models.SectionCatalogEntry(
+            catalog_version_id=context["catalog_version_id"],
+            section_id=section_id,
+            ordinal=next_catalog_ordinal,
+            display_name="Sichuan",
+            workflow_role="destination",
+        )
+    )
     session.flush()
     return section_id
 
@@ -164,6 +236,31 @@ def _prepare_for_verification(
     agent="claude",
     model="test-model",
 ):
+    active = port.session.scalar(
+        select(models.ActiveSectionCatalog)
+        .join(
+            models.AuthorityGeneration,
+            models.AuthorityGeneration.generation_id
+            == models.ActiveSectionCatalog.generation_id,
+        )
+        .where(models.AuthorityGeneration.status == "active")
+    )
+    assert active is not None
+    destination = port.session.scalar(
+        select(models.SectionCatalogEntry).where(
+            models.SectionCatalogEntry.catalog_version_id
+            == active.catalog_version_id,
+            models.SectionCatalogEntry.workflow_role == "destination",
+        )
+    )
+    file_text = (
+        TASK
+        if destination is None
+        else TASK.replace(
+            "Destination section: Sichuan — 12345",
+            f"Destination section: {destination.display_name} — section:{destination.section_id}",
+        )
+    )
     result = port.execute(
         _call(
             "prepare",
@@ -173,7 +270,7 @@ def _prepare_for_verification(
             arguments={
                 "task_id": str(task_id),
                 "operation_id": operation_id,
-                "file_text": TASK,
+                "file_text": file_text,
                 "agent": agent,
                 "model": model,
             },

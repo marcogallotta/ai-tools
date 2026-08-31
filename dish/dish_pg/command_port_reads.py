@@ -51,7 +51,7 @@ class PostgresCommandReadMixin:
         if call.command_name == "sections":
             data: Mapping[str, Any] = {"sections": self.reads.sections()}
         elif call.command_name == "section-tasks":
-            reference = call.arguments.get("section_id") or call.arguments.get("section_gid")
+            reference = call.arguments.get("section_id")
             if reference is None:
                 raise CommandRuleError("SECTION_REQUIRED", "section reference is required", http_status=400)
             try:
@@ -80,8 +80,8 @@ class PostgresCommandReadMixin:
                     for item in page.items
                 ],
                 "next_cursor": page.next_cursor,
-                "registry_version_id": str(page.registry_version_id),
-                "registry_revision": page.registry_revision,
+                "catalog_version_id": str(page.catalog_version_id),
+                "catalog_revision": page.catalog_revision,
             }
         elif call.command_name == "proposals":
             data = self._proposals()
@@ -945,8 +945,8 @@ class PostgresCommandReadMixin:
             if creation_fence is not None:
                 hold_reject_baseline_matches = bool(
                     view.dish_version == creation_fence.expected_dish_version
-                    and view.membership_revision
-                    == creation_fence.expected_membership_revision
+                    and view.placement_revision
+                    == creation_fence.expected_placement_version
                 )
             hold_reject_candidate_activation_exists = self.session.scalar(
                 select(models.DishMutationReceipt.dish_version)
@@ -1010,7 +1010,12 @@ class PostgresCommandReadMixin:
             task_id=str(task.task_id),
             fence=AuthorityFence(
                 dish_version=view.dish_version,
-                membership_revision=view.membership_revision,
+                placement_version=view.placement_revision,
+                catalog_version_id=str(
+                    self.session.get(
+                        models.DishState, (generation_id, task.task_id)
+                    ).catalog_version_id
+                ),
                 operation_revision=operation.operation_revision if operation else None,
                 operation_phase=operation.phase if operation else None,
             ),

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, aliased
 from dish_pg import models
 from dish_pg import stage3_models as workflow
 from dish_pg import stage5_models as projection
+from dish_pg.read_model import ReadModelError, assert_native_catalog_runtime_current
 
 
 class BoardReadUnavailable(RuntimeError):
@@ -26,8 +27,8 @@ class BoardReadUnavailable(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class BoardContext:
     generation_id: UUID
-    registry_version_id: UUID
-    registry_revision: int
+    catalog_version_id: UUID
+    catalog_revision: int
     evaluation_time: datetime
 
 
@@ -37,10 +38,7 @@ class SectionFact:
     ordinal: int
     section_label: str
     workflow_role: str
-    project_id: UUID
-    project_label: str
     section_lifecycle: str
-    project_lifecycle: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +89,6 @@ class SearchFact:
     section_id: UUID
     section_label: str
     workflow_role: str
-    project_label: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +174,7 @@ class FrontendBoardQuery:
             self.session.execute(
                 self._base_card_statement(context=context, projection_delay=projection_delay)
                 .order_by(
-                    models.SectionRegistryEntry.ordinal,
+                    models.SectionCatalogEntry.ordinal,
                     func.lower(models.ContentVersion.title),
                     models.DishTask.task_id,
                 )
@@ -230,7 +227,6 @@ class FrontendBoardQuery:
                     section_id=row["section_id"],
                     section_label=row["section_label"],
                     workflow_role=row["workflow_role"],
-                    project_label=row["project_label"],
                 )
                 for row in rows[:max_results]
             ),
@@ -313,13 +309,13 @@ class FrontendBoardQuery:
         statement = (
             select(
                 models.AuthorityGeneration.generation_id,
-                models.ActiveSectionRegistry.registry_version_id,
-                models.ActiveSectionRegistry.registry_revision,
+                models.ActiveSectionCatalog.catalog_version_id,
+                models.ActiveSectionCatalog.catalog_revision,
                 func.current_timestamp().label("evaluation_time"),
             )
             .join(
-                models.ActiveSectionRegistry,
-                models.ActiveSectionRegistry.generation_id
+                models.ActiveSectionCatalog,
+                models.ActiveSectionCatalog.generation_id
                 == models.AuthorityGeneration.generation_id,
             )
             .where(models.AuthorityGeneration.status == "active")
@@ -327,57 +323,54 @@ class FrontendBoardQuery:
         )
         rows = list(self.session.execute(statement).mappings())
         if len(rows) != 1:
-            raise BoardReadUnavailable("exactly one active generation and registry are required")
+            raise BoardReadUnavailable("exactly one active generation and section catalog are required")
         row = rows[0]
+        try:
+            assert_native_catalog_runtime_current(self.session, row["generation_id"])
+        except ReadModelError as exc:
+            raise BoardReadUnavailable(str(exc)) from exc
         evaluation_time = row["evaluation_time"]
         if evaluation_time.tzinfo is None:
             # SQLite test rendering loses tzinfo; PostgreSQL returns timestamptz.
             evaluation_time = evaluation_time.replace(tzinfo=timezone.utc)
         return BoardContext(
             generation_id=row["generation_id"],
-            registry_version_id=row["registry_version_id"],
-            registry_revision=int(row["registry_revision"]),
+            catalog_version_id=row["catalog_version_id"],
+            catalog_revision=int(row["catalog_revision"]),
             evaluation_time=evaluation_time,
         )
 
     def _sections(self, context: BoardContext) -> tuple[SectionFact, ...]:
         statement = (
             select(
-                models.SectionRegistryEntry.section_id,
-                models.SectionRegistryEntry.ordinal,
+                models.SectionCatalogEntry.section_id,
+                models.SectionCatalogEntry.ordinal,
                 case(
                     (
                         and_(
-                            models.SectionRegistryEntry.display_name.like("Imported section %"),
-                            models.SectionRegistryEntry.workflow_role == "research_queue",
+                            models.SectionCatalogEntry.display_name.like("Imported section %"),
+                            models.SectionCatalogEntry.workflow_role == "research_queue",
                         ),
                         literal("Research Queue"),
                     ),
                     (
                         and_(
-                            models.SectionRegistryEntry.display_name.like("Imported section %"),
-                            models.SectionRegistryEntry.workflow_role == "verification_queue",
+                            models.SectionCatalogEntry.display_name.like("Imported section %"),
+                            models.SectionCatalogEntry.workflow_role == "verification_queue",
                         ),
                         literal("Verification Queue"),
                     ),
-                    else_=models.SectionRegistryEntry.display_name,
+                    else_=models.SectionCatalogEntry.display_name,
                 ).label("section_label"),
-                models.SectionRegistryEntry.workflow_role,
-                models.GovernedSection.project_id,
-                models.GovernedProject.logical_name.label("project_label"),
-                models.GovernedSection.lifecycle.label("section_lifecycle"),
-                models.GovernedProject.lifecycle.label("project_lifecycle"),
+                models.SectionCatalogEntry.workflow_role,
+                models.Section.lifecycle.label("section_lifecycle"),
             )
             .join(
-                models.GovernedSection,
-                models.GovernedSection.section_id == models.SectionRegistryEntry.section_id,
+                models.Section,
+                models.Section.section_id == models.SectionCatalogEntry.section_id,
             )
-            .join(
-                models.GovernedProject,
-                models.GovernedProject.project_id == models.GovernedSection.project_id,
-            )
-            .where(models.SectionRegistryEntry.registry_version_id == context.registry_version_id)
-            .order_by(models.SectionRegistryEntry.ordinal)
+            .where(models.SectionCatalogEntry.catalog_version_id == context.catalog_version_id)
+            .order_by(models.SectionCatalogEntry.ordinal)
         )
         return tuple(SectionFact(**dict(row)) for row in self.session.execute(statement).mappings())
 
@@ -574,28 +567,27 @@ class FrontendBoardQuery:
         return (
             select(
                 models.DishState.section_id.label("section_id"),
-                models.SectionRegistryEntry.ordinal.label("section_ordinal"),
+                models.SectionCatalogEntry.ordinal.label("section_ordinal"),
                 task_id.label("task_id"),
                 models.ContentVersion.title.label("title"),
                 case(
                     (
                         and_(
-                            models.SectionRegistryEntry.display_name.like("Imported section %"),
-                            models.SectionRegistryEntry.workflow_role == "research_queue",
+                            models.SectionCatalogEntry.display_name.like("Imported section %"),
+                            models.SectionCatalogEntry.workflow_role == "research_queue",
                         ),
                         literal("Research Queue"),
                     ),
                     (
                         and_(
-                            models.SectionRegistryEntry.display_name.like("Imported section %"),
-                            models.SectionRegistryEntry.workflow_role == "verification_queue",
+                            models.SectionCatalogEntry.display_name.like("Imported section %"),
+                            models.SectionCatalogEntry.workflow_role == "verification_queue",
                         ),
                         literal("Verification Queue"),
                     ),
-                    else_=models.SectionRegistryEntry.display_name,
+                    else_=models.SectionCatalogEntry.display_name,
                 ).label("section_label"),
-                models.SectionRegistryEntry.workflow_role.label("workflow_role"),
-                models.GovernedProject.logical_name.label("project_label"),
+                models.SectionCatalogEntry.workflow_role.label("workflow_role"),
                 sort_title.label("sort_title"),
                 models.DishTask.existence_state.label("existence_state"),
                 workflow.WorkflowOperation.kind.label("operation_kind"),
@@ -621,32 +613,19 @@ class FrontendBoardQuery:
                 ),
             )
             .join(
-                models.SectionRegistryEntry,
+                models.SectionCatalogEntry,
                 and_(
-                    models.SectionRegistryEntry.registry_version_id
-                    == context.registry_version_id,
-                    models.SectionRegistryEntry.section_id
+                    models.SectionCatalogEntry.catalog_version_id
+                    == context.catalog_version_id,
+                    models.SectionCatalogEntry.section_id
                     == models.DishState.section_id,
+                    models.DishState.catalog_version_id == context.catalog_version_id,
                 ),
             )
             .join(
-                models.GovernedSection,
-                models.GovernedSection.section_id
+                models.Section,
+                models.Section.section_id
                 == models.DishState.section_id,
-            )
-            .join(
-                models.GovernedProject,
-                models.GovernedProject.project_id == models.GovernedSection.project_id,
-            )
-            .join(
-                models.CurrentTaskProjectMembership,
-                and_(
-                    models.CurrentTaskProjectMembership.generation_id == context.generation_id,
-                    models.CurrentTaskProjectMembership.task_id == task_id,
-                    models.CurrentTaskProjectMembership.project_id
-                    == models.GovernedSection.project_id,
-                    models.CurrentTaskProjectMembership.is_member.is_(True),
-                ),
             )
             .outerjoin(
                 workflow.WorkflowOperation,
@@ -660,8 +639,7 @@ class FrontendBoardQuery:
                 models.DishTask.existence_state.in_(("ordinary", "isolated")),
                 models.DishState.completed.is_(False),
                 models.DishState.archived_at.is_(None),
-                models.GovernedSection.lifecycle == "active",
-                models.GovernedProject.lifecycle == "active",
+                models.Section.lifecycle == "active",
             )
         )
 

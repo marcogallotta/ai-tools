@@ -180,22 +180,12 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
             session, ids, context, title="Completed", asana_gid="1004", completed=True
         )
         retired = _import_title(session, ids, context, title="Retired", asana_gid="1005")
-        nonmember = _import_title(session, ids, context, title="Nonmember", asana_gid="1006")
 
         session.get(models.DishTask, isolated.task_id).existence_state = "isolated"
         retired_row = session.get(models.DishTask, retired.task_id)
         assert retired_row is not None
         retired_row.existence_state = "retired"
         retired_row.retired_at = NOW
-        membership = session.scalar(
-            select(models.CurrentTaskProjectMembership).where(
-                models.CurrentTaskProjectMembership.generation_id == context["generation_id"],
-                models.CurrentTaskProjectMembership.task_id == nonmember.task_id,
-                models.CurrentTaskProjectMembership.project_id == context["project_id"],
-            )
-        )
-        assert membership is not None
-        membership.is_member = False
 
     with session_scope(factory) as session:
         service = _service(session, first_page_size=2, continuation_page_size=2)
@@ -225,10 +215,9 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
         }
         assert _task_route(completed.task_id) not in returned
         assert _task_route(retired.task_id) not in returned
-        assert _task_route(nonmember.task_id) not in returned
 
 
-def test_board_and_search_keep_placement_from_prior_registry_revision(core_db) -> None:
+def test_transition_registry_revision_does_not_rebind_native_board_placement(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
         context = _bootstrap_registry(
@@ -256,7 +245,9 @@ def test_board_and_search_keep_placement_from_prior_registry_revision(core_db) -
             (context["generation_id"], imported.task_id),
         )
         assert state is not None
-        assert state.registry_version_id == revised_registry
+        assert state.registry_version_id == context["registry_version_id"]
+        assert state.catalog_version_id == context["catalog_version_id"]
+        assert revised_registry != state.registry_version_id
 
     with session_scope(factory) as session:
         service = _service(session)
@@ -287,21 +278,11 @@ def test_active_title_search_is_global_case_insensitive_and_board_eligible(core_
             session, ids, context, title="Completed Curry", asana_gid="1104", completed=True
         )
         archived = _import_title(session, ids, context, title="Archived Curry", asana_gid="1105")
-        inactive = _import_title(session, ids, context, title="Inactive Curry", asana_gid="1106")
 
         archived_row = session.get(models.DishTask, archived.task_id)
         assert archived_row is not None
         archived_row.existence_state = "retired"
         archived_row.retired_at = NOW
-        membership = session.scalar(
-            select(models.CurrentTaskProjectMembership).where(
-                models.CurrentTaskProjectMembership.generation_id == context["generation_id"],
-                models.CurrentTaskProjectMembership.task_id == inactive.task_id,
-                models.CurrentTaskProjectMembership.project_id == context["project_id"],
-            )
-        )
-        assert membership is not None
-        membership.is_member = False
 
     with session_scope(factory) as session:
         service = _service(session, first_page_size=1)
@@ -315,7 +296,6 @@ def test_active_title_search_is_global_case_insensitive_and_board_eligible(core_
             _task_route(beyond_page.task_id),
         }
         assert partial_result["truncated"] is False
-        assert all(item["project_label"] == "Cooking" for item in partial_result["results"])
         assert all(item["section_label"] == "Research Queue" for item in partial_result["results"])
 
         board = service.bootstrap()
@@ -332,7 +312,6 @@ def test_active_title_search_is_global_case_insensitive_and_board_eligible(core_
         assert service.search("does not exist") == {"results": [], "truncated": False}
         assert _task_route(completed.task_id) not in {item["task_id"] for item in partial_result["results"]}
         assert _task_route(archived.task_id) not in {item["task_id"] for item in partial_result["results"]}
-        assert _task_route(inactive.task_id) not in {item["task_id"] for item in partial_result["results"]}
 
 
 def test_active_title_search_follows_inactive_section_eligibility_without_asana(core_db) -> None:
@@ -353,7 +332,7 @@ def test_active_title_search_follows_inactive_section_eligibility_without_asana(
         ]
 
     with session_scope(factory) as session:
-        section = session.get(models.GovernedSection, context["section_id"])
+        section = session.get(models.Section, context["section_id"])
         assert section is not None
         section.lifecycle = "retired"
         section.retired_at = NOW
@@ -486,7 +465,7 @@ def test_empty_section_is_explicit_and_bootstrap_query_count_is_constant(core_db
         finally:
             event.remove(engine, "before_cursor_execute", count_sql)
 
-    assert len(statements) == 3
+    assert len(statements) == 4
     assert len(board["sections"]) == 1
     assert board["sections"][0]["cards"] == []
     assert board["sections"][0]["next_cursor"] is None
@@ -504,6 +483,15 @@ def test_section_capacity_is_rejected_before_bootstrap_card_query(core_db) -> No
         )
         second_section_id = _next(ids)
         session.add(
+            models.Section(
+                section_id=second_section_id,
+                logical_name="Second Queue",
+                lifecycle="active",
+                created_at=NOW,
+                retired_at=None,
+            )
+        )
+        session.add(
             models.GovernedSection(
                 section_id=second_section_id,
                 project_id=context["project_id"],
@@ -517,6 +505,15 @@ def test_section_capacity_is_rejected_before_bootstrap_card_query(core_db) -> No
         session.add(
             models.SectionRegistryEntry(
                 registry_version_id=context["registry_version_id"],
+                section_id=second_section_id,
+                ordinal=1,
+                display_name="Second Queue",
+                workflow_role="second_queue",
+            )
+        )
+        session.add(
+            models.SectionCatalogEntry(
+                catalog_version_id=context["catalog_version_id"],
                 section_id=second_section_id,
                 ordinal=1,
                 display_name="Second Queue",
@@ -538,7 +535,7 @@ def test_section_capacity_is_rejected_before_bootstrap_card_query(core_db) -> No
         finally:
             event.remove(engine, "before_cursor_execute", count_sql)
 
-    assert len(statements) == 2
+    assert len(statements) == 3
 
 
 @pytest.mark.parametrize("later_state", ["active", "released", "recovered"])

@@ -540,7 +540,8 @@ def test_submit_rejects_when_current_content_no_longer_matches_signoff(workflow_
             generation_id=context["generation_id"],
             task_id=task_id,
             expected_dish_version=state.dish_version,
-            expected_membership_revision=membership.membership_revision,
+            expected_placement_version=state.placement_version,
+            expected_catalog_version_id=state.catalog_version_id,
             source=ScalarMutationSource(
                 route="import",
                 import_run_id=context["import_run_id"],

@@ -30,10 +30,10 @@ from tests.support.postgresql.workflow import _next, _register_run, workflow_db
 def test_approval_creates_ready_occurrence_and_submit_derives_destination(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
+        destination_section_id = _add_destination_section(session, ids, context)
         port, author_run, verifier_run, started, prepared, _inspection = _verification_ready(
             session, ids, context, task_id
         )
-        destination_section_id = _add_destination_section(session, ids, context)
         reviewed = session.get(
             models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
         )
