@@ -838,3 +838,88 @@ def test_native_start_holds_final_task_fence_until_commit_and_cooked_observes_op
         )
         assert len(operations) == 1
         assert operations[0].operation_id == uuid.UUID(started.data["operation_id"])
+
+
+def test_native_confirmed_planning_observes_completion_committed_before_final_fence(
+    core_db,
+) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    planning_run, cooked_run = _seed_task_fence_runs(factory, ids, context)
+    before_fence = TransactionGate(
+        label="confirmed Planning waits before task-fence capture"
+    )
+    engine = factory.kw["bind"]
+
+    with session_scope(factory) as session:
+        initial = _task_fence_port(session).execute(
+            CommandCall(
+                command_name="start",
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "planning",
+                    "agent": "claude",
+                },
+                owner_id="owner-1",
+                principal_class="agent",
+                run_id=planning_run,
+                request_id=uuid.uuid4(),
+                now=NOW,
+            )
+        )
+        assert initial.code == "CONFIRMATION_REQUIRED"
+        challenge_id = initial.data["intent_challenge_id"]
+
+    def confirmed_planning():
+        with managed_session(planning_connection) as session:
+            return _task_fence_port(session, before_lock=before_fence).execute(
+                CommandCall(
+                    command_name="start",
+                    arguments={
+                        "task_id": str(task_id),
+                        "kind": "planning",
+                        "agent": "claude",
+                        "intent_challenge_id": challenge_id,
+                        "intent_basis": "user_requested",
+                    },
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    run_id=planning_run,
+                    request_id=uuid.uuid4(),
+                    now=NOW + timedelta(seconds=1),
+                )
+            )
+
+    with independent_connections(engine) as (planning_connection, cooked_connection):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(confirmed_planning)
+            before_fence.wait_until_blocked()
+            assert_transaction_blocked(future)
+
+            with managed_session(cooked_connection) as session:
+                cooked = _task_fence_port(session).execute(
+                    CommandCall(
+                        command_name="cooked",
+                        arguments={"task_id": str(task_id)},
+                        owner_id="owner-1",
+                        principal_class="agent",
+                        run_id=cooked_run,
+                        request_id=uuid.uuid4(),
+                        now=NOW + timedelta(seconds=2),
+                    )
+                )
+                assert cooked.ok is True
+
+            before_fence.release()
+            rejected = future.result()
+
+    assert rejected.ok is False
+    assert rejected.code == "WRONG_STATE"
+    assert rejected.data["rule"] == "planning_completed_task_reopen_required"
+    with session_scope(factory) as session:
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        assert state is not None and state.completed is True
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.WorkflowOperation)
+            .where(wf.WorkflowOperation.task_id == task_id)
+        ) == 0
