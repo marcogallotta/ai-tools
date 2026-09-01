@@ -13,9 +13,11 @@ from sqlalchemy.orm import Session
 
 from dish_pg import reservation_models as reservations
 from dish_pg import stage3_models as wf
+from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.workflow import (
     ContentionLost,
+    MutationAdmissionClosed,
     OperationRunRevoked,
     RequestIdentityConflict,
     RequestSpec,
@@ -136,22 +138,45 @@ def _admit_with_reservation_lock_probe(
     backend_pid: dict[str, int],
     backend_ready: Event,
     lock_started: Event,
+    after_lock: TransactionGate | None = None,
 ):
+    reservation_lock_seen = False
+
+    def is_reservation_lock(statement: str) -> bool:
+        normalized = " ".join(statement.upper().split())
+        return (
+            "FROM FIRST_REQUEST_RESERVATIONS" in normalized
+            and "FOR UPDATE" in normalized
+        )
+
     def before_cursor_execute(
         _conn, _cursor, statement, _parameters, _context, _executemany
     ) -> None:
-        normalized = " ".join(statement.upper().split())
-        if "FROM FIRST_REQUEST_RESERVATIONS" in normalized and "FOR UPDATE" in normalized:
+        if is_reservation_lock(statement):
             lock_started.set()
+
+    def after_cursor_execute(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        nonlocal reservation_lock_seen
+        if (
+            after_lock is not None
+            and not reservation_lock_seen
+            and is_reservation_lock(statement)
+        ):
+            reservation_lock_seen = True
+            after_lock.block()
 
     with managed_session(connection) as session:
         backend_pid["value"] = session.scalar(select(func.pg_backend_pid()))
         backend_ready.set()
         sa_event.listen(connection, "before_cursor_execute", before_cursor_execute)
+        sa_event.listen(connection, "after_cursor_execute", after_cursor_execute)
         try:
             return WorkflowAuthorityService(session).admit_request(spec)
         finally:
             sa_event.remove(connection, "before_cursor_execute", before_cursor_execute)
+            sa_event.remove(connection, "after_cursor_execute", after_cursor_execute)
 
 
 def _prepare_authorization_race(factory, ids) -> tuple[uuid.UUID, list[_ReservationContender]]:
@@ -688,6 +713,161 @@ def test_payload_mismatch_reserved_first_request_conflicts_after_reservation_con
         assert request.canonical_payload == payload
         reservation = session.scalar(select(reservations.FirstRequestReservation))
         assert reservation is not None and reservation.state == "consumed"
+
+
+def _run_first_request_verification_transition_race(
+    factory, ids, contender_spec_factory
+):
+    generation_id, request_id, run_id, payload = _seed_first_request(factory, ids)
+    winning_spec = _first_request_spec(
+        request_id=request_id,
+        generation_id=generation_id,
+        run_id=run_id,
+        payload=payload,
+    )
+    contender_spec = contender_spec_factory(winning_spec)
+    engine = factory.kw["bind"]
+    result = None
+
+    with independent_connections(engine, count=3) as (
+        winner_connection,
+        loser_connection,
+        verifier_connection,
+    ):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            winning_admission = WorkflowAuthorityService(winner).admit_request(
+                winning_spec
+            )
+            assert winning_admission.replayed is False
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            lock_started = Event()
+            after_lock = TransactionGate(
+                label="contender holds consumed first-request reservation"
+            )
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_reservation_lock_probe,
+                    loser_connection,
+                    contender_spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    lock_started=lock_started,
+                    after_lock=after_lock,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert lock_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                after_lock.wait_until_blocked()
+                assert_transaction_blocked(loser_future)
+
+                with managed_session(verifier_connection) as verifier:
+                    cutover = verifier.scalar(select(rel.CutoverRun))
+                    control = verifier.get(rel.MutationAdmissionControl, generation_id)
+                    assert cutover is not None and cutover.state == "admission_open"
+                    assert control is not None and control.state == "closed"
+                    cutover.state = "first_admission_verified"
+                    cutover.state_revision += 1
+                    verifier.flush()
+                    control.state = "open"
+                    control.control_revision += 1
+                    control.opened_at = NOW + timedelta(minutes=9)
+                    control.updated_at = NOW + timedelta(minutes=9)
+                    verifier.flush()
+
+                after_lock.release()
+                try:
+                    result = loser_future.result(
+                        timeout=DEFAULT_RACE_TIMEOUT_SECONDS
+                    )
+                except (RequestIdentityConflict, MutationAdmissionClosed) as exc:
+                    result = exc
+        finally:
+            winner.rollback()
+            winner.close()
+
+    with session_scope(factory) as session:
+        control = session.get(rel.MutationAdmissionControl, generation_id)
+        cutover = session.scalar(select(rel.CutoverRun))
+        assert control is not None and control.state == "open"
+        assert cutover is not None and cutover.state == "first_admission_verified"
+        assert session.scalar(
+            select(func.count()).select_from(wf.ServiceRequest).where(
+                wf.ServiceRequest.request_id == request_id
+            )
+        ) == 1
+    assert result is not None
+    return winning_spec, contender_spec, result
+
+
+def test_exact_duplicate_recovers_across_first_admission_verification_transition(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    winning_spec, _contender_spec, result = (
+        _run_first_request_verification_transition_race(
+            factory, ids, lambda spec: spec
+        )
+    )
+    assert not isinstance(result, BaseException)
+    assert result.replayed is True
+    assert result.request.request_id == winning_spec.request_id
+    assert result.outcome is None
+
+
+def test_payload_mismatch_conflicts_across_first_admission_verification_transition(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    _winning_spec, _contender_spec, result = (
+        _run_first_request_verification_transition_race(
+            factory,
+            ids,
+            lambda spec: replace(
+                spec,
+                canonical_payload={
+                    "command": "start",
+                    "arguments": {"task_id": "different-after-verification"},
+                },
+            ),
+        )
+    )
+    assert isinstance(result, RequestIdentityConflict)
+    assert str(result) == "service request identity conflict"
+
+
+def test_unrelated_request_remains_closed_across_first_admission_verification_transition(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    _winning_spec, contender_spec, result = (
+        _run_first_request_verification_transition_race(
+            factory,
+            ids,
+            lambda spec: replace(
+                spec,
+                request_id=uuid.uuid4(),
+                canonical_payload={
+                    "command": "start",
+                    "arguments": {"task_id": "unrelated-after-verification"},
+                },
+            ),
+        )
+    )
+    assert isinstance(result, MutationAdmissionClosed)
+    assert "closed pending first-request gate" in str(result)
+    with session_scope(factory) as session:
+        assert session.get(wf.ServiceRequest, contender_spec.request_id) is None
 
 
 @pytest.mark.flake_stress

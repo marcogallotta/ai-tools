@@ -653,6 +653,16 @@ class WorkflowAuthorityRepository:
                 )
                 .with_for_update()
             )
+            if (
+                self.session.get_bind().dialect.name == "postgresql"
+                and reservation is not None
+                and reservation.state == "consumed"
+            ):
+                recovered = self._recover_request_admission(
+                    spec=spec, payload_sha=payload_sha
+                )
+                if recovered is not None:
+                    return recovered
             cutover = (
                 None
                 if reservation is None
@@ -681,15 +691,6 @@ class WorkflowAuthorityRepository:
                         "PostgreSQL mutation admission is closed pending first-request gate"
                     )
                 if reservation.state != "reserved":
-                    if (
-                        self.session.get_bind().dialect.name == "postgresql"
-                        and reservation.state == "consumed"
-                    ):
-                        recovered = self._recover_request_admission(
-                            spec=spec, payload_sha=payload_sha
-                        )
-                        if recovered is not None:
-                            return recovered
                     raise MutationAdmissionClosed(
                         "PostgreSQL mutation admission is closed pending first-admission verification"
                     )
