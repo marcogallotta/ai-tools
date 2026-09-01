@@ -1,25 +1,31 @@
 from __future__ import annotations
 
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from threading import Barrier, Event
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event as sa_event, func, select
 from sqlalchemy.orm import Session
 
+from dish_pg import reservation_models as reservations
 from dish_pg import stage3_models as wf
+from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.workflow import (
     ContentionLost,
+    MutationAdmissionClosed,
     OperationRunRevoked,
+    RequestIdentityConflict,
     RequestSpec,
     WorkflowAuthorityRepository,
     WorkflowAuthorityService,
 )
 from tests.support.postgresql.concurrency import (
+    DEFAULT_RACE_TIMEOUT_SECONDS,
     TransactionGate,
     assert_transaction_blocked,
     independent_connections,
@@ -28,6 +34,12 @@ from tests.support.postgresql.concurrency import (
     wait_at_barrier,
 )
 from tests.support.postgresql.core import _bootstrap_registry, _import_one, core_db
+from tests.support.postgresql.native_first_request_reservation_single_gate import (
+    _seed as _seed_first_request,
+)
+from tests.support.postgresql.native_first_request_reservation_single_gate import (
+    _spec as _first_request_spec,
+)
 from tests.support.postgresql.workflow import NOW, _admit, _execution, _next, _register_run
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
@@ -74,11 +86,97 @@ def _run_duplicate_admission_race(factory, spec: RequestSpec) -> list[str]:
                 wait_at_barrier(barrier, checkpoint="duplicate admission ready")
                 admission = WorkflowAuthorityService(session).admit_request(spec)
             return "replayed" if admission.replayed else "inserted"
-        except ContentionLost as exc:
-            assert str(exc) == "concurrent request admission won"
+        except ContentionLost:
             return "contention_lost"
 
     return run_concurrent_workers(10, admit)
+
+
+def _wait_for_backend_blocked_by(
+    session: Session, *, blocked_pid: int, blocking_pid: int
+) -> None:
+    deadline = time.monotonic() + DEFAULT_RACE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        blocking_pids = session.scalar(select(func.pg_blocking_pids(blocked_pid)))
+        if blocking_pids is not None and blocking_pid in blocking_pids:
+            return
+        time.sleep(0.01)
+    raise AssertionError(
+        f"backend {blocked_pid} was not observed blocked by backend {blocking_pid}"
+    )
+
+
+def _admit_with_insert_probe(
+    connection,
+    spec: RequestSpec,
+    *,
+    backend_pid: dict[str, int],
+    backend_ready: Event,
+    insert_started: Event,
+):
+    def before_cursor_execute(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        normalized = " ".join(statement.upper().split())
+        if "INSERT INTO SERVICE_REQUESTS" in normalized and "ON CONFLICT" in normalized:
+            insert_started.set()
+
+    with managed_session(connection) as session:
+        backend_pid["value"] = session.scalar(select(func.pg_backend_pid()))
+        backend_ready.set()
+        sa_event.listen(connection, "before_cursor_execute", before_cursor_execute)
+        try:
+            return WorkflowAuthorityService(session).admit_request(spec)
+        finally:
+            sa_event.remove(connection, "before_cursor_execute", before_cursor_execute)
+
+
+def _admit_with_reservation_lock_probe(
+    connection,
+    spec: RequestSpec,
+    *,
+    backend_pid: dict[str, int],
+    backend_ready: Event,
+    lock_started: Event,
+    after_lock: TransactionGate | None = None,
+):
+    reservation_lock_seen = False
+
+    def is_reservation_lock(statement: str) -> bool:
+        normalized = " ".join(statement.upper().split())
+        return (
+            "FROM FIRST_REQUEST_RESERVATIONS" in normalized
+            and "FOR UPDATE" in normalized
+        )
+
+    def before_cursor_execute(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        if is_reservation_lock(statement):
+            lock_started.set()
+
+    def after_cursor_execute(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        nonlocal reservation_lock_seen
+        if (
+            after_lock is not None
+            and not reservation_lock_seen
+            and is_reservation_lock(statement)
+        ):
+            reservation_lock_seen = True
+            after_lock.block()
+
+    with managed_session(connection) as session:
+        backend_pid["value"] = session.scalar(select(func.pg_backend_pid()))
+        backend_ready.set()
+        sa_event.listen(connection, "before_cursor_execute", before_cursor_execute)
+        sa_event.listen(connection, "after_cursor_execute", after_cursor_execute)
+        try:
+            return WorkflowAuthorityService(session).admit_request(spec)
+        finally:
+            sa_event.remove(connection, "before_cursor_execute", before_cursor_execute)
+            sa_event.remove(connection, "after_cursor_execute", after_cursor_execute)
 
 
 def _prepare_authorization_race(factory, ids) -> tuple[uuid.UUID, list[_ReservationContender]]:
@@ -396,6 +494,382 @@ def test_independent_tasks_acquire_authority_without_global_serialization(core_d
         ) == 2
 
 
+def test_exact_duplicate_request_recovers_after_overlapping_insert_contention(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    spec = _prepare_duplicate_admission_race(factory, ids)
+    engine = factory.kw["bind"]
+
+    with independent_connections(engine) as (winner_connection, loser_connection):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            winning_admission = WorkflowAuthorityService(winner).admit_request(spec)
+            assert winning_admission.replayed is False
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            insert_started = Event()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_insert_probe,
+                    loser_connection,
+                    spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    insert_started=insert_started,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert insert_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                recovered = loser_future.result(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+
+            assert recovered.replayed is True
+            assert recovered.request.request_id == spec.request_id
+            assert recovered.outcome is None
+        finally:
+            winner.rollback()
+            winner.close()
+
+    with session_scope(factory) as session:
+        assert session.scalar(
+            select(func.count()).select_from(wf.ServiceRequest).where(
+                wf.ServiceRequest.request_id == spec.request_id
+            )
+        ) == 1
+
+
+def test_payload_mismatch_request_fails_distinctly_after_overlapping_insert_contention(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    spec = _prepare_duplicate_admission_race(factory, ids)
+    conflicting_spec = replace(
+        spec, canonical_payload={"task": "different-duplicate-delivery"}
+    )
+    engine = factory.kw["bind"]
+
+    with independent_connections(engine) as (winner_connection, loser_connection):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            WorkflowAuthorityService(winner).admit_request(spec)
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            insert_started = Event()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_insert_probe,
+                    loser_connection,
+                    conflicting_spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    insert_started=insert_started,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert insert_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                with pytest.raises(
+                    RequestIdentityConflict, match="service request identity conflict"
+                ):
+                    loser_future.result(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+        finally:
+            winner.rollback()
+            winner.close()
+
+
+def test_exact_duplicate_reserved_first_request_recovers_after_reservation_contention(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    generation_id, request_id, run_id, payload = _seed_first_request(factory, ids)
+    spec = _first_request_spec(
+        request_id=request_id,
+        generation_id=generation_id,
+        run_id=run_id,
+        payload=payload,
+    )
+    engine = factory.kw["bind"]
+
+    with independent_connections(engine) as (winner_connection, loser_connection):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            winning_admission = WorkflowAuthorityService(winner).admit_request(spec)
+            assert winning_admission.replayed is False
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            lock_started = Event()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_reservation_lock_probe,
+                    loser_connection,
+                    spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    lock_started=lock_started,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert lock_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                recovered = loser_future.result(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+
+            assert recovered.replayed is True
+            assert recovered.request.request_id == request_id
+            assert recovered.outcome is None
+        finally:
+            winner.rollback()
+            winner.close()
+
+    with session_scope(factory) as session:
+        assert session.scalar(
+            select(func.count()).select_from(wf.ServiceRequest).where(
+                wf.ServiceRequest.request_id == request_id
+            )
+        ) == 1
+        reservation = session.scalar(select(reservations.FirstRequestReservation))
+        assert reservation is not None and reservation.state == "consumed"
+
+
+def test_payload_mismatch_reserved_first_request_conflicts_after_reservation_contention(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    generation_id, request_id, run_id, payload = _seed_first_request(factory, ids)
+    spec = _first_request_spec(
+        request_id=request_id,
+        generation_id=generation_id,
+        run_id=run_id,
+        payload=payload,
+    )
+    conflicting_spec = replace(
+        spec, canonical_payload={"command": "start", "arguments": {"task_id": "different"}}
+    )
+    engine = factory.kw["bind"]
+
+    with independent_connections(engine) as (winner_connection, loser_connection):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            WorkflowAuthorityService(winner).admit_request(spec)
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            lock_started = Event()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_reservation_lock_probe,
+                    loser_connection,
+                    conflicting_spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    lock_started=lock_started,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert lock_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                with pytest.raises(
+                    RequestIdentityConflict, match="service request identity conflict"
+                ):
+                    loser_future.result(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+        finally:
+            winner.rollback()
+            winner.close()
+
+    with session_scope(factory) as session:
+        request = session.get(wf.ServiceRequest, request_id)
+        assert request is not None
+        assert request.canonical_payload == payload
+        reservation = session.scalar(select(reservations.FirstRequestReservation))
+        assert reservation is not None and reservation.state == "consumed"
+
+
+def _run_first_request_verification_transition_race(
+    factory, ids, contender_spec_factory
+):
+    generation_id, request_id, run_id, payload = _seed_first_request(factory, ids)
+    winning_spec = _first_request_spec(
+        request_id=request_id,
+        generation_id=generation_id,
+        run_id=run_id,
+        payload=payload,
+    )
+    contender_spec = contender_spec_factory(winning_spec)
+    engine = factory.kw["bind"]
+    result = None
+
+    with independent_connections(engine, count=3) as (
+        winner_connection,
+        loser_connection,
+        verifier_connection,
+    ):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            winning_admission = WorkflowAuthorityService(winner).admit_request(
+                winning_spec
+            )
+            assert winning_admission.replayed is False
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            lock_started = Event()
+            after_lock = TransactionGate(
+                label="contender holds consumed first-request reservation"
+            )
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_reservation_lock_probe,
+                    loser_connection,
+                    contender_spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    lock_started=lock_started,
+                    after_lock=after_lock,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert lock_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                after_lock.wait_until_blocked()
+                assert_transaction_blocked(loser_future)
+
+                with managed_session(verifier_connection) as verifier:
+                    cutover = verifier.scalar(select(rel.CutoverRun))
+                    control = verifier.get(rel.MutationAdmissionControl, generation_id)
+                    assert cutover is not None and cutover.state == "admission_open"
+                    assert control is not None and control.state == "closed"
+                    cutover.state = "first_admission_verified"
+                    cutover.state_revision += 1
+                    verifier.flush()
+                    control.state = "open"
+                    control.control_revision += 1
+                    control.opened_at = NOW + timedelta(minutes=9)
+                    control.updated_at = NOW + timedelta(minutes=9)
+                    verifier.flush()
+
+                after_lock.release()
+                try:
+                    result = loser_future.result(
+                        timeout=DEFAULT_RACE_TIMEOUT_SECONDS
+                    )
+                except (RequestIdentityConflict, MutationAdmissionClosed) as exc:
+                    result = exc
+        finally:
+            winner.rollback()
+            winner.close()
+
+    with session_scope(factory) as session:
+        control = session.get(rel.MutationAdmissionControl, generation_id)
+        cutover = session.scalar(select(rel.CutoverRun))
+        assert control is not None and control.state == "open"
+        assert cutover is not None and cutover.state == "first_admission_verified"
+        assert session.scalar(
+            select(func.count()).select_from(wf.ServiceRequest).where(
+                wf.ServiceRequest.request_id == request_id
+            )
+        ) == 1
+    assert result is not None
+    return winning_spec, contender_spec, result
+
+
+def test_exact_duplicate_recovers_across_first_admission_verification_transition(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    winning_spec, _contender_spec, result = (
+        _run_first_request_verification_transition_race(
+            factory, ids, lambda spec: spec
+        )
+    )
+    assert not isinstance(result, BaseException)
+    assert result.replayed is True
+    assert result.request.request_id == winning_spec.request_id
+    assert result.outcome is None
+
+
+def test_payload_mismatch_conflicts_across_first_admission_verification_transition(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    _winning_spec, _contender_spec, result = (
+        _run_first_request_verification_transition_race(
+            factory,
+            ids,
+            lambda spec: replace(
+                spec,
+                canonical_payload={
+                    "command": "start",
+                    "arguments": {"task_id": "different-after-verification"},
+                },
+            ),
+        )
+    )
+    assert isinstance(result, RequestIdentityConflict)
+    assert str(result) == "service request identity conflict"
+
+
+def test_unrelated_request_remains_closed_across_first_admission_verification_transition(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    _winning_spec, contender_spec, result = (
+        _run_first_request_verification_transition_race(
+            factory,
+            ids,
+            lambda spec: replace(
+                spec,
+                request_id=uuid.uuid4(),
+                canonical_payload={
+                    "command": "start",
+                    "arguments": {"task_id": "unrelated-after-verification"},
+                },
+            ),
+        )
+    )
+    assert isinstance(result, MutationAdmissionClosed)
+    assert "closed pending first-request gate" in str(result)
+    with session_scope(factory) as session:
+        assert session.get(wf.ServiceRequest, contender_spec.request_id) is None
+
+
 @pytest.mark.flake_stress
 def test_ten_simultaneous_duplicate_request_admissions_perform_one_logical_execution(
     core_db,
@@ -404,7 +878,8 @@ def test_ten_simultaneous_duplicate_request_admissions_perform_one_logical_execu
     spec = _prepare_duplicate_admission_race(factory, ids)
     results = _run_duplicate_admission_race(factory, spec)
     assert results.count("inserted") == 1
-    assert results.count("replayed") + results.count("contention_lost") == 9
+    assert results.count("replayed") == 9
+    assert results.count("contention_lost") == 0
 
     with session_scope(factory) as session:
         rows = session.scalars(
