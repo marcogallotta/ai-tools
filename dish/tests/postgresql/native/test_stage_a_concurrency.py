@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from threading import Barrier, Event
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event as sa_event, func, select
 from sqlalchemy.orm import Session
 
 from dish_pg import stage3_models as wf
@@ -15,11 +16,13 @@ from dish_pg.database import session_scope
 from dish_pg.workflow import (
     ContentionLost,
     OperationRunRevoked,
+    RequestIdentityConflict,
     RequestSpec,
     WorkflowAuthorityRepository,
     WorkflowAuthorityService,
 )
 from tests.support.postgresql.concurrency import (
+    DEFAULT_RACE_TIMEOUT_SECONDS,
     TransactionGate,
     assert_transaction_blocked,
     independent_connections,
@@ -74,11 +77,49 @@ def _run_duplicate_admission_race(factory, spec: RequestSpec) -> list[str]:
                 wait_at_barrier(barrier, checkpoint="duplicate admission ready")
                 admission = WorkflowAuthorityService(session).admit_request(spec)
             return "replayed" if admission.replayed else "inserted"
-        except ContentionLost as exc:
-            assert str(exc) == "concurrent request admission won"
+        except ContentionLost:
             return "contention_lost"
 
     return run_concurrent_workers(10, admit)
+
+
+def _wait_for_backend_blocked_by(
+    session: Session, *, blocked_pid: int, blocking_pid: int
+) -> None:
+    deadline = time.monotonic() + DEFAULT_RACE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        blocking_pids = session.scalar(select(func.pg_blocking_pids(blocked_pid)))
+        if blocking_pids is not None and blocking_pid in blocking_pids:
+            return
+        time.sleep(0.01)
+    raise AssertionError(
+        f"backend {blocked_pid} was not observed blocked by backend {blocking_pid}"
+    )
+
+
+def _admit_with_insert_probe(
+    connection,
+    spec: RequestSpec,
+    *,
+    backend_pid: dict[str, int],
+    backend_ready: Event,
+    insert_started: Event,
+):
+    def before_cursor_execute(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        normalized = " ".join(statement.upper().split())
+        if "INSERT INTO SERVICE_REQUESTS" in normalized and "ON CONFLICT" in normalized:
+            insert_started.set()
+
+    with managed_session(connection) as session:
+        backend_pid["value"] = session.scalar(select(func.pg_backend_pid()))
+        backend_ready.set()
+        sa_event.listen(connection, "before_cursor_execute", before_cursor_execute)
+        try:
+            return WorkflowAuthorityService(session).admit_request(spec)
+        finally:
+            sa_event.remove(connection, "before_cursor_execute", before_cursor_execute)
 
 
 def _prepare_authorization_race(factory, ids) -> tuple[uuid.UUID, list[_ReservationContender]]:
@@ -396,6 +437,106 @@ def test_independent_tasks_acquire_authority_without_global_serialization(core_d
         ) == 2
 
 
+def test_exact_duplicate_request_recovers_after_overlapping_insert_contention(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    spec = _prepare_duplicate_admission_race(factory, ids)
+    engine = factory.kw["bind"]
+
+    with independent_connections(engine) as (winner_connection, loser_connection):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            winning_admission = WorkflowAuthorityService(winner).admit_request(spec)
+            assert winning_admission.replayed is False
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            insert_started = Event()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_insert_probe,
+                    loser_connection,
+                    spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    insert_started=insert_started,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert insert_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                recovered = loser_future.result(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+
+            assert recovered.replayed is True
+            assert recovered.request.request_id == spec.request_id
+            assert recovered.outcome is None
+        finally:
+            winner.rollback()
+            winner.close()
+
+    with session_scope(factory) as session:
+        assert session.scalar(
+            select(func.count()).select_from(wf.ServiceRequest).where(
+                wf.ServiceRequest.request_id == spec.request_id
+            )
+        ) == 1
+
+
+def test_payload_mismatch_request_fails_distinctly_after_overlapping_insert_contention(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    spec = _prepare_duplicate_admission_race(factory, ids)
+    conflicting_spec = replace(
+        spec, canonical_payload={"task": "different-duplicate-delivery"}
+    )
+    engine = factory.kw["bind"]
+
+    with independent_connections(engine) as (winner_connection, loser_connection):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            WorkflowAuthorityService(winner).admit_request(spec)
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            insert_started = Event()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_insert_probe,
+                    loser_connection,
+                    conflicting_spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    insert_started=insert_started,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert insert_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                with pytest.raises(
+                    RequestIdentityConflict, match="service request identity conflict"
+                ):
+                    loser_future.result(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+        finally:
+            winner.rollback()
+            winner.close()
+
+
 @pytest.mark.flake_stress
 def test_ten_simultaneous_duplicate_request_admissions_perform_one_logical_execution(
     core_db,
@@ -404,7 +545,8 @@ def test_ten_simultaneous_duplicate_request_admissions_perform_one_logical_execu
     spec = _prepare_duplicate_admission_race(factory, ids)
     results = _run_duplicate_admission_race(factory, spec)
     assert results.count("inserted") == 1
-    assert results.count("replayed") + results.count("contention_lost") == 9
+    assert results.count("replayed") == 9
+    assert results.count("contention_lost") == 0
 
     with session_scope(factory) as session:
         rows = session.scalars(

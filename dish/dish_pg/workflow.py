@@ -678,22 +678,57 @@ class WorkflowAuthorityRepository:
             else:
                 raise MutationAdmissionClosed("PostgreSQL mutation admission is closed")
 
-        row = wf.ServiceRequest(
-            request_id=spec.request_id,
-            generation_id=spec.generation_id,
-            run_id=spec.run_id,
-            owner_id=spec.owner_id,
-            principal_class=spec.principal_class,
-            command_name=spec.command_name,
-            canonical_payload_sha256=payload_sha,
-            canonical_payload=payload,
-            protocol_release=spec.protocol_release,
-            dish_release=spec.dish_release,
-            admitted_at=spec.admitted_at,
-        )
-        self.session.add(row)
+        request_values = {
+            "request_id": spec.request_id,
+            "generation_id": spec.generation_id,
+            "run_id": spec.run_id,
+            "owner_id": spec.owner_id,
+            "principal_class": spec.principal_class,
+            "command_name": spec.command_name,
+            "canonical_payload_sha256": payload_sha,
+            "canonical_payload": payload,
+            "protocol_release": spec.protocol_release,
+            "dish_release": spec.dish_release,
+            "admitted_at": spec.admitted_at,
+        }
+        row = wf.ServiceRequest(**request_values)
         try:
-            self.session.flush()
+            if self.session.get_bind().dialect.name == "postgresql":
+                inserted_request_id = self.session.scalar(
+                    postgresql_insert(wf.ServiceRequest)
+                    .values(**request_values)
+                    .on_conflict_do_nothing(
+                        index_elements=[wf.ServiceRequest.request_id]
+                    )
+                    .returning(wf.ServiceRequest.request_id)
+                )
+                self.session.flush()
+                if inserted_request_id is None:
+                    recovered = self.session.execute(
+                        select(wf.ServiceRequest, wf.ServiceRequestOutcome)
+                        .outerjoin(
+                            wf.ServiceRequestOutcome,
+                            wf.ServiceRequestOutcome.request_id
+                            == wf.ServiceRequest.request_id,
+                        )
+                        .where(wf.ServiceRequest.request_id == spec.request_id)
+                        .execution_options(populate_existing=True)
+                    ).one_or_none()
+                    if recovered is None:
+                        raise ContentionLost(
+                            "concurrent request admission winner was not visible"
+                        )
+                    request, outcome = recovered
+                    if not self._request_identity_matches(
+                        request, spec=spec, payload_sha=payload_sha
+                    ):
+                        raise RequestIdentityConflict(
+                            "service request identity conflict"
+                        )
+                    return RequestAdmission(request, True, outcome)
+            else:
+                self.session.add(row)
+                self.session.flush()
             if reservation is not None:
                 if self.session.bind.dialect.name == "postgresql":
                     self.session.refresh(reservation)
