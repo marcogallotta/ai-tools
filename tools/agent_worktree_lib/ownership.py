@@ -346,6 +346,37 @@ def _coherent_prior_claim(
     return repaired
 
 
+def _closed_same_lineage_block_replacement(
+    *,
+    task_gid: str,
+    branch: str,
+    lineage_id: str,
+    assignment: dict[str, Any],
+    admitted_authority: dict[str, Any],
+    previous: dict[str, Any] | None,
+) -> bool:
+    """Recognize the one head transition that may replace admitted authority."""
+    if previous is None:
+        return False
+    stored = admitted_authority.get("assignment")
+    previous_authority = previous.get("repository_assignment_authority")
+    previous_pr = previous.get("pr")
+    if not isinstance(stored, dict) or previous_authority != admitted_authority or not isinstance(previous_pr, dict):
+        return False
+    stable_keys = ("task_gid", "branch", "base_ref", "base_sha", "pr_number")
+    return (
+        all(stored.get(key) == assignment.get(key) for key in stable_keys)
+        and previous.get("task_gid") == task_gid
+        and previous.get("branch") == branch
+        and previous.get("lineage_id") == lineage_id
+        and previous_pr.get("number") == assignment.get("pr_number")
+        and previous_pr.get("head") == stored.get("pr_head")
+        and isinstance(previous.get("semantic_mutation_closed_at"), str)
+        and bool(str(previous.get("semantic_mutation_closed_at") or "").strip())
+        and previous.get("head_moved_to") == assignment.get("pr_head")
+    )
+
+
 def _reconcile_existing(
     *,
     runner: GitRunner,
@@ -596,14 +627,36 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             launch_identity_bound = True
             launch = bound_identity.get("launch_provenance")
             block_review_id = launch.get("block_review_id") if isinstance(launch, dict) else None
-            if admitted_authority is None and block_review_id is not None:
-                admitted_authority = verified_review_block_authority(
+            replaced_assignment_authority = False
+            if block_review_id is not None:
+                block_authority = verified_review_block_authority(
                     task_gid, assignment, str(block_review_id)
                 )
+                if admitted_authority is None:
+                    admitted_authority = block_authority
+                elif _closed_same_lineage_block_replacement(
+                    task_gid=task_gid,
+                    branch=branch,
+                    lineage_id=lineage_id,
+                    assignment=assignment,
+                    admitted_authority=admitted_authority,
+                    previous=previous,
+                ):
+                    admitted_authority = block_authority
+                    replaced_assignment_authority = True
             identity = require_repository_mutation_identity(
                 agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
             )
             admitted_authority = identity.get("repository_assignment_authority")
+            if replaced_assignment_authority:
+                replacement_state_path = state_path_for_branch(task_gid, branch)
+                if replacement_state_path is None:
+                    fail("MUTATION_ASSIGNMENT_MISMATCH", "Review-BLOCK replacement requires the existing same-lineage worktree state")
+                current_state = read_json_object(replacement_state_path, "task worktree state")
+                if current_state.get("repository_assignment_authority") != existing_state.get("repository_assignment_authority"):
+                    fail("MUTATION_ASSIGNMENT_MISMATCH", "worktree assignment authority changed during Review-BLOCK replacement")
+                current_state["repository_assignment_authority"] = admitted_authority
+                atomic_write_json(replacement_state_path, current_state)
         else:
             identity = require_repository_mutation_identity(
                 agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
@@ -757,6 +810,12 @@ def require_active_claim(
     else:
         repo = discover_repository(runner, Path("."))
     moved_to = record.get("head_moved_to")
+    closed_head_readback: str | None = None
+    if allow_head_moved_readback and isinstance(moved_to, str):
+        closed_at = record.get("semantic_mutation_closed_at")
+        if not isinstance(closed_at, str) or not closed_at.strip():
+            fail("PR_HEAD_MOVED_REDISPATCH_REQUIRED", "moved-head readback requires a closed semantic mutation claim")
+        closed_head_readback = moved_to
     if isinstance(claim_pr, dict):
         try:
             pr_number = int(claim_pr.get("number"))
@@ -794,6 +853,7 @@ def require_active_claim(
         task_gid,
         assignment=current_assignment,
         admitted_authority=assignment_authority if isinstance(assignment_authority, dict) else None,
+        closed_review_block_live_head=closed_head_readback,
     )
     if record.get("released_at") is not None:
         fail("OWNERSHIP_CLAIM_STALE", "ownership claim was already released")

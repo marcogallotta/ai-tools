@@ -471,6 +471,8 @@ def verified_review_block_authority(
     task_gid: str,
     assignment: Mapping[str, Any],
     block_review_id: str,
+    *,
+    live_pr_head: str | None = None,
 ) -> dict[str, Any]:
     task_gid = require_task_gid(task_gid)
     review_id = str(block_review_id)
@@ -480,6 +482,11 @@ def verified_review_block_authority(
     pr_head = assignment.get("pr_head")
     if not isinstance(pr_number, int) or not isinstance(pr_head, str):
         fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "Review-BLOCK continuation requires exact PR/head assignment")
+    expected_live_head = (
+        require_full_sha(live_pr_head, "live Review-BLOCK PR head")
+        if live_pr_head is not None
+        else pr_head
+    )
     pr = live_pull_request_identity(pr_number)
     review = _github_json(
         f"/repos/{EXPECTED_REPOSITORY}/pulls/{pr_number}/reviews/{review_id}", "live formal BLOCK review",
@@ -492,7 +499,7 @@ def verified_review_block_authority(
     if (
         pr.get("state") != "open"
         or pr.get("branch") != assignment.get("branch")
-        or pr.get("head") != pr_head
+        or pr.get("head") != expected_live_head
         or not task_bound
         or str(review.get("id") or "") != review_id
         or str(review.get("commit_id") or "") != pr_head
@@ -513,6 +520,8 @@ def _revalidate_assignment_authority(
     task_gid: str,
     authority: Mapping[str, Any],
     current_assignment: Mapping[str, Any],
+    *,
+    closed_review_block_live_head: str | None = None,
 ) -> dict[str, Any]:
     stored = authority.get("assignment")
     if not isinstance(stored, dict):
@@ -538,8 +547,12 @@ def _revalidate_assignment_authority(
         # assignment projection was introduced; it cannot change its tuple.
         return dict(authority)
     if authority.get("review_block_continuation") is True:
+        review_id = str(authority.get("block_review_id") or "")
         expected = verified_review_block_authority(
-            task_gid, stored, str(authority.get("block_review_id") or "")
+            task_gid,
+            stored,
+            review_id,
+            live_pr_head=closed_review_block_live_head,
         )
         if authority != expected:
             fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "persisted Review-BLOCK authority does not match live formal review")
@@ -563,6 +576,7 @@ def _live_repository_mutation_task(
     *,
     assignment: Mapping[str, Any] | None = None,
     admitted_authority: Mapping[str, Any] | None = None,
+    closed_review_block_live_head: str | None = None,
 ) -> dict[str, Any]:
     """Read the existing Asana lifecycle authority for one exact task.
 
@@ -620,7 +634,12 @@ def _live_repository_mutation_task(
     elif assignment is None:
         fail("MUTATION_ASSIGNMENT_MISMATCH", "current writer assignment is required to revalidate admitted authority")
     else:
-        authority = _revalidate_assignment_authority(task_gid, authority, assignment)
+        authority = _revalidate_assignment_authority(
+            task_gid,
+            authority,
+            assignment,
+            closed_review_block_live_head=closed_review_block_live_head,
+        )
     return {"task": task, "assignment_authority": authority}
 
 
@@ -630,6 +649,7 @@ def require_repository_mutation_identity(
     *,
     assignment: Mapping[str, Any] | None = None,
     admitted_authority: Mapping[str, Any] | None = None,
+    closed_review_block_live_head: str | None = None,
 ) -> dict[str, Any]:
     """Fail closed when local identity does not authorize repository Implementation.
 
@@ -658,7 +678,10 @@ def require_repository_mutation_identity(
             f"active Implementation identity is bound to task {owning}, not requested task {task_gid}",
         )
     live = _live_repository_mutation_task(
-        task_gid, assignment=assignment, admitted_authority=admitted_authority
+        task_gid,
+        assignment=assignment,
+        admitted_authority=admitted_authority,
+        closed_review_block_live_head=closed_review_block_live_head,
     )
     payload["repository_assignment_authority"] = live.get("assignment_authority")
     return payload

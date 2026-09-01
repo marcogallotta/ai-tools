@@ -778,6 +778,147 @@ def test_exact_formal_block_review_authorizes_only_its_bound_pr_head(h: Harness)
     assert authority["assignment"]["pr_head"] == head
 
 
+def _publish_successor_from_admitted_pr(
+    h: Harness, *, task: str, branch: str, agent: str, pr: int
+) -> tuple[str, str]:
+    base = h.current_remote_main()
+    admitted_head = h.remote_branch_commit(branch, "admitted candidate", start=base)
+    h.agent_file(agent, owning_task_gid=task)
+    h.tool(
+        "adopt", "--task", task, "--branch", branch,
+        "--base-ref", "refs/heads/main", "--base", base,
+        "--expected-head", admitted_head, "--agent-id", agent, "--json",
+    )
+    child = f"""
+import pathlib
+import subprocess
+
+worktree = pathlib.Path({str(h.wt(task))!r})
+with (worktree / "tracked.txt").open("a", encoding="utf-8") as handle:
+    handle.write("reviewed correction\\n")
+subprocess.run(
+    ["python3", {str(SCRIPT)!r}, "commit", "--task", {task!r}, "-m", "publish corrected head", "--", "tracked.txt"],
+    cwd={str(h.primary)!r}, check=True,
+)
+subprocess.run(
+    ["python3", {str(SCRIPT)!r}, "publish", "--task", {task!r}, "--json"],
+    cwd={str(h.primary)!r}, check=True,
+)
+"""
+    published = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--pr-number", str(pr), "--pr-head", admitted_head, "--pr-lease-state", "none",
+        "--", "python3", "-c", child,
+        env={"TEST_GITHUB_PRESERVE_PR": "1"}, check=False,
+    )
+    assert published.returncode == 0, (published.stdout, published.stderr)
+    corrected_head = git_out(h.origin, "rev-parse", f"refs/heads/{branch}")
+    _, prior = record(h, task)
+    assert prior["head_moved_to"] == corrected_head
+    assert prior["semantic_mutation_closed_at"]
+    return admitted_head, corrected_head
+
+
+def test_closed_same_lineage_formal_block_replaces_authority_and_allows_published_handoff_readback(
+    h: Harness,
+) -> None:
+    task, branch, agent, pr, review_id = (
+        "3141", "agent/review-block-successor", "impl-3141", 3141, "913141"
+    )
+    admitted_head, blocked_head = _publish_successor_from_admitted_pr(
+        h, task=task, branch=branch, agent=agent, pr=pr
+    )
+    h.set_block_review(
+        task=task, pr=pr, branch=branch, head=blocked_head, review_id=review_id
+    )
+    provenance = _write_launch_provenance(
+        h, agent=agent, task=task, branch=branch, pr=pr, head=blocked_head,
+        block_review_id=review_id,
+    )
+    child = f"""
+import json
+import pathlib
+import subprocess
+
+worktree = pathlib.Path({str(h.wt(task))!r})
+with (worktree / "tracked.txt").open("a", encoding="utf-8") as handle:
+    handle.write("post-BLOCK correction\\n")
+subprocess.run(
+    ["python3", {str(SCRIPT)!r}, "commit", "--task", {task!r}, "-m", "fix formal BLOCK", "--", "tracked.txt"],
+    cwd={str(h.primary)!r}, check=True,
+)
+subprocess.run(
+    ["python3", {str(SCRIPT)!r}, "publish", "--task", {task!r}, "--json"],
+    cwd={str(h.primary)!r}, check=True,
+)
+new_head = subprocess.run(
+    ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+    check=True, text=True, stdout=subprocess.PIPE,
+).stdout.strip()
+reviews = pathlib.Path.home() / "github-reviews.json"
+data = json.loads(reviews.read_text(encoding="utf-8"))
+data[{str(pr)!r}]["pr"]["head"]["sha"] = new_head
+reviews.write_text(json.dumps(data) + "\\n", encoding="utf-8")
+subprocess.run(
+    ["python3", {str(SCRIPT)!r}, "verify-handoff", "--task", {task!r}, "--json"],
+    cwd={str(h.primary)!r}, check=True,
+)
+"""
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--pr-number", str(pr), "--pr-head", blocked_head, "--pr-lease-state", "none",
+        "--launch-provenance", str(provenance), "--require-launch-provenance",
+        "--", "python3", "-c", child,
+        env={"TEST_ASANA_NO_HANDOFF": "1", "TEST_GITHUB_PRESERVE_PR": "1"},
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    _, claim_record = record(h, task)
+    authority = claim_record["repository_assignment_authority"]
+    assert authority["review_block_continuation"] is True
+    assert authority["block_review_id"] == review_id
+    assert authority["assignment"]["pr_head"] == blocked_head
+    assert authority["assignment"]["pr_head"] != admitted_head
+    assert h.state(task)["repository_assignment_authority"] == authority
+
+
+def test_formal_block_cannot_replace_assignment_without_exact_closed_head_lineage(h: Harness) -> None:
+    for index, mutation in enumerate(("semantic-open", "wrong-moved-head"), start=3142):
+        task = str(index)
+        branch = f"agent/review-block-reject-{index}"
+        agent = f"impl-{index}"
+        pr = index
+        review_id = f"91{index}"
+        admitted_head, blocked_head = _publish_successor_from_admitted_pr(
+            h, task=task, branch=branch, agent=agent, pr=pr
+        )
+        claim_path, prior = record(h, task)
+        if mutation == "semantic-open":
+            prior.pop("semantic_mutation_closed_at")
+        else:
+            prior["head_moved_to"] = admitted_head
+        claim_path.write_text(json.dumps(prior) + "\n", encoding="utf-8")
+        h.set_block_review(
+            task=task, pr=pr, branch=branch, head=blocked_head, review_id=review_id
+        )
+        provenance = _write_launch_provenance(
+            h, agent=agent, task=task, branch=branch, pr=pr, head=blocked_head,
+            block_review_id=review_id,
+        )
+        sentinel = h.root / f"must-not-run-{index}"
+        result = h.raw_tool(
+            "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+            "--pr-number", str(pr), "--pr-head", blocked_head, "--pr-lease-state", "none",
+            "--launch-provenance", str(provenance), "--require-launch-provenance",
+            "--", "python3", "-c", f"__import__('pathlib').Path({str(sentinel)!r}).touch()",
+            env={"TEST_ASANA_NO_HANDOFF": "1", "TEST_GITHUB_PRESERVE_PR": "1"},
+            check=False,
+        )
+        assert_error(result, "MUTATION_ASSIGNMENT_MISMATCH")
+        assert not sentinel.exists()
+        assert h.state(task)["repository_assignment_authority"]["assignment"]["pr_head"] == admitted_head
+
+
 def test_review_block_continuation_rejects_missing_or_wrong_formal_review(h: Harness) -> None:
     for index, verdict in enumerate((None, "MERGE"), start=3135):
         task, branch, agent, pr, review_id = str(index), f"agent/bad-block-{index}", f"impl-{index}", index, f"91{index}"
