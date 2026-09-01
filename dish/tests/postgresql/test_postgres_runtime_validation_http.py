@@ -334,6 +334,7 @@ def test_postgresql_agent_search_normalizes_and_paginates_with_strict_progress(
         try:
             cursor = None
             seen: list[str] = []
+            seen_aliases: list[str] = []
             emitted: list[str] = []
             for index in range(3):
                 arguments = {
@@ -355,7 +356,9 @@ def test_postgresql_agent_search_normalizes_and_paginates_with_strict_progress(
                 assert result["data"]["query"] == "IMPORTED"
                 assert result["data"]["page_size"] == 1
                 assert len(result["data"]["results"]) == 1
-                seen.append(result["data"]["results"][0]["dish_id"])
+                row = result["data"]["results"][0]
+                seen.append(row["dish_id"])
+                seen_aliases.append(row["task_gid"])
                 next_cursor = result["data"]["next_cursor"]
                 if next_cursor is not None:
                     assert next_cursor != cursor
@@ -368,6 +371,7 @@ def test_postgresql_agent_search_normalizes_and_paginates_with_strict_progress(
         [str(first_task_id), str(second.task_id), str(third.task_id)]
     )
     assert len(set(seen)) == 3
+    assert seen_aliases == ["123456789", "123456790", "123456791"]
     assert len(set(emitted)) == 2
     assert cursor is None
 
@@ -538,6 +542,7 @@ def test_postgresql_action_canonical_ids_work_without_asana_identity(
         action_public_base_url="https://dish-pg-test.example.invalid/test",
     )
     with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        assert server.action_command_allowed("search") is True
         thread = start_server_thread(server, name="postgres-canonical-action-http")
         base = f"http://127.0.0.1:{server.server_address[1]}"
         try:
@@ -565,13 +570,26 @@ def test_postgresql_action_canonical_ids_work_without_asana_identity(
                     "arguments": {"agent": "gpt"},
                 },
             )
-            start_status, start_result = _post_json(
-                f"{base}/v1/action/start", token="postgres-action-token",
-                body={"client": {"run_id": str(run_id), "request_id": str(_next(ids))}, "arguments": {"dish_id": str(task_id), "agent": "gpt", "kind": "initial"}},
-            )
             create_status, create_result = _post_json(
                 f"{base}/v1/action/create", token="postgres-action-token",
                 body={"client": {"run_id": str(run_id), "request_id": str(_next(ids))}, "arguments": {"agent": "gpt", "title": "Canonical create"}},
+            )
+            created_dish_id = create_result["data"]["dish_id"]
+            search_status, search_result = _post_json(
+                f"{base}/v1/action/search", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id)}, "arguments": {"query": "Canonical create", "agent": "gpt"}},
+            )
+            created_read_status, created_read_result = _post_json(
+                f"{base}/v1/action/read", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id)}, "arguments": {"dish_id": created_dish_id, "agent": "gpt"}},
+            )
+            start_status, start_result = _post_json(
+                f"{base}/v1/action/start", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id), "request_id": str(_next(ids))}, "arguments": {"dish_id": created_dish_id, "agent": "gpt", "kind": "initial"}},
+            )
+            alias_search_status, alias_search_result = _post_json(
+                f"{base}/v1/action/search", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id)}, "arguments": {"query": "Imported", "agent": "gpt"}},
             )
         finally:
             stop_server(server, thread)
@@ -591,9 +609,23 @@ def test_postgresql_action_canonical_ids_work_without_asana_identity(
         "Claim and apply an approved PostgreSQL proposal exactly as stored; "
         "do not reconstruct or edit its candidate."
     )
-    assert start_status == 200 and start_result["ok"] is True
     assert create_status == 200 and create_result["ok"] is True
     assert create_result["data"]["dish_id"] == create_result["data"]["task_id"]
+    assert search_status == 200 and search_result["ok"] is True
+    assert len(search_result["data"]["results"]) == 1
+    created_search_row = search_result["data"]["results"][0]
+    assert created_search_row["dish_id"] == created_dish_id
+    assert created_search_row["title"] == "Canonical create"
+    assert created_search_row["section_id"] == str(context["section_id"])
+    assert "task_gid" not in created_search_row
+    assert created_read_status == 200 and created_read_result["ok"] is True
+    assert created_read_result["data"]["dish_id"] == created_dish_id
+    assert created_read_result["data"]["identity_binding"]["task_gid"] is None
+    assert start_status == 200 and start_result["ok"] is True
+    assert start_result["data"]["operation_id"]
+    assert alias_search_status == 200 and alias_search_result["ok"] is True
+    assert alias_search_result["data"]["results"][0]["dish_id"] == str(task_id)
+    assert alias_search_result["data"]["results"][0]["task_gid"] == "123456789"
 
 
 def test_postgresql_runtime_renew_lease_reuses_command_port(

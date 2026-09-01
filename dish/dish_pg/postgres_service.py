@@ -598,28 +598,17 @@ class PostgresRuntimeService:
                     models.TaskExternalAlias.state == "active",
                 )
             )
-            if task_gid is None:
-                return CommandResult(
-                    False,
-                    SEARCH_COMMAND,
-                    "BACKEND_REJECTED",
-                    409,
-                    {
-                        "message": "active Search result lacks its exact persisted task alias",
-                        "dish_id": str(fact.task_id),
-                    },
-                )
-            results.append(
-                {
-                    "dish_id": str(fact.task_id),
-                    "task_gid": str(task_gid),
-                    "title": fact.title,
-                    "section_id": str(fact.section_id),
-                    "section_label": fact.section_label,
-                    "workflow_role": fact.workflow_role,
-                    "project_label": fact.project_label,
-                }
-            )
+            result = {
+                "dish_id": str(fact.task_id),
+                "title": fact.title,
+                "section_id": str(fact.section_id),
+                "section_label": fact.section_label,
+                "workflow_role": fact.workflow_role,
+                "project_label": fact.project_label,
+            }
+            if task_gid is not None:
+                result["task_gid"] = str(task_gid)
+            results.append(result)
 
         current_context = board.context()
         current_identity = (
