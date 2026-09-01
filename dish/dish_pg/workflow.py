@@ -405,6 +405,27 @@ class WorkflowAuthorityRepository:
             and request.dish_release == spec.dish_release
         )
 
+    def _recover_request_admission(
+        self, *, spec: RequestSpec, payload_sha: str
+    ) -> RequestAdmission | None:
+        recovered = self.session.execute(
+            select(wf.ServiceRequest, wf.ServiceRequestOutcome)
+            .outerjoin(
+                wf.ServiceRequestOutcome,
+                wf.ServiceRequestOutcome.request_id == wf.ServiceRequest.request_id,
+            )
+            .where(wf.ServiceRequest.request_id == spec.request_id)
+            .execution_options(populate_existing=True)
+        ).one_or_none()
+        if recovered is None:
+            return None
+        request, outcome = recovered
+        if not self._request_identity_matches(
+            request, spec=spec, payload_sha=payload_sha
+        ):
+            raise RequestIdentityConflict("service request identity conflict")
+        return RequestAdmission(request, True, outcome)
+
     def _insert_validation_request(
         self, *, spec: RequestSpec, payload: Mapping[str, Any], payload_sha: str
     ) -> bool:
@@ -660,6 +681,15 @@ class WorkflowAuthorityRepository:
                         "PostgreSQL mutation admission is closed pending first-request gate"
                     )
                 if reservation.state != "reserved":
+                    if (
+                        self.session.get_bind().dialect.name == "postgresql"
+                        and reservation.state == "consumed"
+                    ):
+                        recovered = self._recover_request_admission(
+                            spec=spec, payload_sha=payload_sha
+                        )
+                        if recovered is not None:
+                            return recovered
                     raise MutationAdmissionClosed(
                         "PostgreSQL mutation admission is closed pending first-admission verification"
                     )
@@ -704,28 +734,14 @@ class WorkflowAuthorityRepository:
                 )
                 self.session.flush()
                 if inserted_request_id is None:
-                    recovered = self.session.execute(
-                        select(wf.ServiceRequest, wf.ServiceRequestOutcome)
-                        .outerjoin(
-                            wf.ServiceRequestOutcome,
-                            wf.ServiceRequestOutcome.request_id
-                            == wf.ServiceRequest.request_id,
-                        )
-                        .where(wf.ServiceRequest.request_id == spec.request_id)
-                        .execution_options(populate_existing=True)
-                    ).one_or_none()
+                    recovered = self._recover_request_admission(
+                        spec=spec, payload_sha=payload_sha
+                    )
                     if recovered is None:
                         raise ContentionLost(
                             "concurrent request admission winner was not visible"
                         )
-                    request, outcome = recovered
-                    if not self._request_identity_matches(
-                        request, spec=spec, payload_sha=payload_sha
-                    ):
-                        raise RequestIdentityConflict(
-                            "service request identity conflict"
-                        )
-                    return RequestAdmission(request, True, outcome)
+                    return recovered
             else:
                 self.session.add(row)
                 self.session.flush()

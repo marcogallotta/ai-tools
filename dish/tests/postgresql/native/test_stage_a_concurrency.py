@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import event as sa_event, func, select
 from sqlalchemy.orm import Session
 
+from dish_pg import reservation_models as reservations
 from dish_pg import stage3_models as wf
 from dish_pg.database import session_scope
 from dish_pg.workflow import (
@@ -31,6 +32,12 @@ from tests.support.postgresql.concurrency import (
     wait_at_barrier,
 )
 from tests.support.postgresql.core import _bootstrap_registry, _import_one, core_db
+from tests.support.postgresql.native_first_request_reservation_single_gate import (
+    _seed as _seed_first_request,
+)
+from tests.support.postgresql.native_first_request_reservation_single_gate import (
+    _spec as _first_request_spec,
+)
 from tests.support.postgresql.workflow import NOW, _admit, _execution, _next, _register_run
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
@@ -111,6 +118,31 @@ def _admit_with_insert_probe(
         normalized = " ".join(statement.upper().split())
         if "INSERT INTO SERVICE_REQUESTS" in normalized and "ON CONFLICT" in normalized:
             insert_started.set()
+
+    with managed_session(connection) as session:
+        backend_pid["value"] = session.scalar(select(func.pg_backend_pid()))
+        backend_ready.set()
+        sa_event.listen(connection, "before_cursor_execute", before_cursor_execute)
+        try:
+            return WorkflowAuthorityService(session).admit_request(spec)
+        finally:
+            sa_event.remove(connection, "before_cursor_execute", before_cursor_execute)
+
+
+def _admit_with_reservation_lock_probe(
+    connection,
+    spec: RequestSpec,
+    *,
+    backend_pid: dict[str, int],
+    backend_ready: Event,
+    lock_started: Event,
+):
+    def before_cursor_execute(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        normalized = " ".join(statement.upper().split())
+        if "FROM FIRST_REQUEST_RESERVATIONS" in normalized and "FOR UPDATE" in normalized:
+            lock_started.set()
 
     with managed_session(connection) as session:
         backend_pid["value"] = session.scalar(select(func.pg_backend_pid()))
@@ -535,6 +567,127 @@ def test_payload_mismatch_request_fails_distinctly_after_overlapping_insert_cont
         finally:
             winner.rollback()
             winner.close()
+
+
+def test_exact_duplicate_reserved_first_request_recovers_after_reservation_contention(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    generation_id, request_id, run_id, payload = _seed_first_request(factory, ids)
+    spec = _first_request_spec(
+        request_id=request_id,
+        generation_id=generation_id,
+        run_id=run_id,
+        payload=payload,
+    )
+    engine = factory.kw["bind"]
+
+    with independent_connections(engine) as (winner_connection, loser_connection):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            winning_admission = WorkflowAuthorityService(winner).admit_request(spec)
+            assert winning_admission.replayed is False
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            lock_started = Event()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_reservation_lock_probe,
+                    loser_connection,
+                    spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    lock_started=lock_started,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert lock_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                recovered = loser_future.result(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+
+            assert recovered.replayed is True
+            assert recovered.request.request_id == request_id
+            assert recovered.outcome is None
+        finally:
+            winner.rollback()
+            winner.close()
+
+    with session_scope(factory) as session:
+        assert session.scalar(
+            select(func.count()).select_from(wf.ServiceRequest).where(
+                wf.ServiceRequest.request_id == request_id
+            )
+        ) == 1
+        reservation = session.scalar(select(reservations.FirstRequestReservation))
+        assert reservation is not None and reservation.state == "consumed"
+
+
+def test_payload_mismatch_reserved_first_request_conflicts_after_reservation_contention(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    generation_id, request_id, run_id, payload = _seed_first_request(factory, ids)
+    spec = _first_request_spec(
+        request_id=request_id,
+        generation_id=generation_id,
+        run_id=run_id,
+        payload=payload,
+    )
+    conflicting_spec = replace(
+        spec, canonical_payload={"command": "start", "arguments": {"task_id": "different"}}
+    )
+    engine = factory.kw["bind"]
+
+    with independent_connections(engine) as (winner_connection, loser_connection):
+        winner = Session(bind=winner_connection, expire_on_commit=False)
+        try:
+            winner_pid = winner.scalar(select(func.pg_backend_pid()))
+            WorkflowAuthorityService(winner).admit_request(spec)
+
+            loser_pid: dict[str, int] = {}
+            loser_ready = Event()
+            lock_started = Event()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                loser_future = pool.submit(
+                    _admit_with_reservation_lock_probe,
+                    loser_connection,
+                    conflicting_spec,
+                    backend_pid=loser_pid,
+                    backend_ready=loser_ready,
+                    lock_started=lock_started,
+                )
+                assert loser_ready.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                assert lock_started.wait(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+                _wait_for_backend_blocked_by(
+                    winner,
+                    blocked_pid=loser_pid["value"],
+                    blocking_pid=winner_pid,
+                )
+                assert_transaction_blocked(loser_future)
+
+                winner.commit()
+                with pytest.raises(
+                    RequestIdentityConflict, match="service request identity conflict"
+                ):
+                    loser_future.result(timeout=DEFAULT_RACE_TIMEOUT_SECONDS)
+        finally:
+            winner.rollback()
+            winner.close()
+
+    with session_scope(factory) as session:
+        request = session.get(wf.ServiceRequest, request_id)
+        assert request is not None
+        assert request.canonical_payload == payload
+        reservation = session.scalar(select(reservations.FirstRequestReservation))
+        assert reservation is not None and reservation.state == "consumed"
 
 
 @pytest.mark.flake_stress
