@@ -15,6 +15,7 @@ from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_service import admin_cli, cli
 from dish_tool.errors import DishRuleError
+from dish_tool.results import result_envelope
 from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend, TASK
@@ -142,25 +143,23 @@ def test_sections_result_omits_agent_and_admin_tokens(tmp_path):
     ],
 )
 def test_apply_proposal_clients_generate_and_preserve_request_identity(
-    client_type, expected_path
+    monkeypatch, client_type, expected_path
 ):
     payloads = []
-
-    class CapturingClient(client_type):
-        def _result_request(
-            self, path, *, method, payload, ambiguous_after_dispatch=False
-        ):
-            assert path == expected_path
-            assert method == "POST"
-            assert ambiguous_after_dispatch is True
-            payloads.append(payload)
-            return {"ok": True}
-
-    client = CapturingClient(
+    client = client_type(
         "http://dish.invalid",
         token="agent-secret",
         run_id="11111111-1111-4111-8111-111111111111",
     )
+
+    def capture_result(path, *, method, payload, ambiguous_after_dispatch=False):
+        assert path == expected_path
+        assert method == "POST"
+        assert ambiguous_after_dispatch is True
+        payloads.append(payload)
+        return result_envelope(command="apply-proposal")
+
+    monkeypatch.setattr(client._transport, "request_json", capture_result)
     arguments = {
         "proposal_id": "22222222-2222-4222-8222-222222222222",
         "agent": "gpt",

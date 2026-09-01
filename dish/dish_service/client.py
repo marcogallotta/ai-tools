@@ -131,7 +131,7 @@ class DishServiceClient:
                 "client": self._client(request_id=request_id),
             },
             run_id=self.run_id,
-            result_request=self._result_request,
+            result_request=self._transport.request_json,
         )
 
     def record_argument_failure(
@@ -346,7 +346,7 @@ class DishActionClient(DishServiceClient):
                 "client": self._client(request_id=request_id),
             },
             run_id=self.run_id,
-            result_request=self._result_request,
+            result_request=self._transport.request_json,
         )
 
     def renew_lease(

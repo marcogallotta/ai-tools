@@ -8,7 +8,7 @@ from typing import Any, Callable, Mapping
 from dish_tool.errors import DishRuleError
 from dish_tool.results import result_envelope
 
-from ._client_results import validate_canonical_result
+from ._client_results import validate_canonical_result, validate_command_result
 from ._client_transport import AmbiguousResponseError
 from .command_spec import REPLAY_SAFE_COMMANDS
 
@@ -17,7 +17,7 @@ _AMBIGUOUS_RESPONSE_REPLAY_COMMANDS = frozenset(
     {"inspect", "apply-proposal", "safe-reclaim"}
 )
 
-ResultRequest = Callable[..., dict[str, Any]]
+ResultRequest = Callable[..., Any]
 JSONRequest = Callable[..., Any]
 
 
@@ -86,14 +86,22 @@ def command_result_request(
                 command=command, request_id=request_id, run_id=run_id
             )
         raise
-    if not ambiguous_response_requires_replay:
-        return result
     try:
-        return validate_canonical_result(result, expected_command=command)
-    except (ValueError, TypeError):
-        return ambiguous_command_result(
-            command=command, request_id=request_id, run_id=run_id
-        )
+        return validate_command_result(result, expected_command=command)
+    except (ValueError, TypeError) as exc:
+        if ambiguous_response_requires_replay:
+            return ambiguous_command_result(
+                command=command, request_id=request_id, run_id=run_id
+            )
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            (
+                "dish service returned a noncanonical command result; "
+                "verify DISH_SERVICE_URL points to the correct listener"
+            ),
+            rule="service_response_invalid",
+            details={"validation_error": str(exc)},
+        ) from exc
 
 
 def ambiguous_expire_lease_result(
