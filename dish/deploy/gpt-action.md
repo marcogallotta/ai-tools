@@ -73,13 +73,18 @@ workflow procedure.
   because of a transport/client failure (for example `ClientResponseError`, timeout, or connection
   reset), retry that call within the same assistant/tool execution. Create the real elapsed delay
   locally with the runtime's own shell/Python sleep; elapsed time never requires another Marco message
-  or assistant turn, and never ask Marco to retry what you can retry yourself. Preserve the exact
-  logical request unchanged: the same `client.run_id`, the same `client.request_id` when present, the
-  same command, and the same arguments. As soon as any Dish envelope is received, stop transport retry
-  behavior and follow Dish authority. Never blindly retry `BACKEND_UNCERTAIN`, and never rotate request
-  or run IDs merely to escape a failed or pending call. Do not invent a server-side sleep/timing Action
-  to manufacture delay. Truly read-only Actions that omit request IDs follow the same same-execution
-  retry rule and retain the same run ID.
+  or assistant turn, and never ask Marco to retry what you can retry yourself. Transient failure on
+  ChatGPT's side can persist for an extended period (observed: up to an hour) before clearing on its
+  own — that is expected platform flakiness, not evidence of a stuck or broken call, and it has
+  nothing to do with Dish. Keep retrying the exact same Action regardless of elapsed time or attempt
+  count until a Dish envelope is received or a distinct, definitively non-transient error appears (not
+  more occurrences of the same transient exception, which never by itself justifies stopping). Preserve
+  the exact logical request unchanged: the same `client.run_id`, the same `client.request_id` when
+  present, the same command, and the same arguments. As soon as any Dish envelope is received, stop
+  transport retry behavior and follow Dish authority. Never blindly retry `BACKEND_UNCERTAIN`, and never
+  rotate request or run IDs merely to escape a failed or pending call. Do not invent a server-side
+  sleep/timing Action to manufacture delay. Truly read-only Actions that omit request IDs follow the
+  same same-execution retry rule and retain the same run ID.
 - Treat each Dish result as workflow authority. Follow `allowed_actions`, `service_access`,
   `data.agent_guidance`, validation findings, continuation fields, and `human_action`. Never infer a
   transition or invent/reconstruct operation, cycle, lease, hold, proposal, recovery, target, or
