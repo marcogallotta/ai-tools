@@ -74,16 +74,41 @@ class Harness:
         asana.parent.mkdir(parents=True)
         self.asana_sections = self.home / "asana-task-sections.json"
         self.asana_sections.write_text("{}\n", encoding="utf-8")
+        self.asana_projects = self.home / "asana-task-projects.json"
+        self.asana_projects.write_text("{}\n", encoding="utf-8")
+        self.asana_project_sections = self.home / "asana-project-sections.json"
+        self.asana_project_sections.write_text("{}\n", encoding="utf-8")
+        self.asana_log = self.home / "asana-calls.jsonl"
+        self.asana_log.write_text("", encoding="utf-8")
         asana.write_text(
             "#!/usr/bin/env python3\n"
-            "import json, pathlib, sys\n"
-            "task = sys.argv[-1].split('/tasks/', 1)[1].split('?', 1)[0]\n"
-            "sections = json.loads((pathlib.Path.home() / 'asana-task-sections.json').read_text())\n"
+            "import datetime, hashlib, json, os, pathlib, sys\n"
+            "path = sys.argv[-1]\n"
+            "home = pathlib.Path.home()\n"
+            "with (home/'asana-calls.jsonl').open('a') as log: log.write(json.dumps(sys.argv[1:])+'\\n')\n"
+            "v2 = ['Needs Processing','Needs Research','Needs Agentic Review','Needs Human Review','Waiting on Dependency','Ready','Under Development','Needs Post-Merge Rollout','Done']\n"
+            "names = {'1217419962189616':'Dish — Development Workflow v2','1217404747383060':'Dish — PostgreSQL / Dark Launch v2','1217382473444945':'Dish — Coordinator v2'}\n"
+            "if '/projects/' in path and '/sections' in path:\n"
+            "  project = path.split('/projects/',1)[1].split('/',1)[0]\n"
+            "  configured = json.loads((home/'asana-project-sections.json').read_text())\n"
+            "  print(json.dumps([{'gid':f's-{i}','name':name} for i,name in enumerate(configured.get(project,v2))])); raise SystemExit\n"
+            "task = path.split('/tasks/',1)[1].split('/',1)[0].split('?',1)[0]\n"
+            "if '/stories' in path:\n"
+            "  if os.environ.get('TEST_ASANA_NO_HANDOFF') == '1': print('[]'); raise SystemExit\n"
+            "  branch=os.environ.get('TEST_ASANA_BRANCH',os.environ['DISH_HANDOFF_EXPECTED_BRANCH']); base_ref=os.environ.get('TEST_ASANA_BASE_REF',os.environ['DISH_HANDOFF_EXPECTED_BASE_REF']); base=os.environ.get('TEST_ASANA_BASE',os.environ['DISH_HANDOFF_EXPECTED_BASE']); pr=os.environ.get('TEST_ASANA_PR',os.environ.get('DISH_HANDOFF_EXPECTED_PR')); head=os.environ.get('TEST_ASANA_HEAD',os.environ.get('DISH_HANDOFF_EXPECTED_HEAD'))\n"
+            "  source=f'dish-prelaunch:v1 repository=marcogallotta/ai-tools task={task} assignment=implementation host=local branch={branch} base_ref={base_ref} base_sha={base} existing_pr=' + (f'{pr} expected_head={head}' if pr else 'none')\n"
+            "  at='2026-09-01T10:00:00+00:00'; raw=f'{task}\\0Implementation\\0{at}\\0{source}'; hid=hashlib.sha256(raw.encode()).hexdigest()[:16]\n"
+            "  text='\\n'.join([f'<!-- dish-implementation-handoff:v1 handoff={hid} task={task} role=Implementation at={at} -->','AUTHORIZED IMPLEMENTATION HANDOFF',f'Task: {task}','Target role: Implementation',f'Handoff time: {at}',f'Source: {source}',f'Branch: {branch}',f'Base: {base}',f'PR: {pr if pr else \"not yet known\"}',f'Head: {head if head else \"not yet known\"}','— Dish Agent: Development Workflow | repository control plane'])\n"
+            "  if os.environ.get('TEST_ASANA_TAMPER_HANDOFF') == '1': text=text.replace(f'Branch: {branch}', 'Branch: agent/tampered')\n"
+            "  stories=[{'gid':'story-1','created_at':at,'text':text,'resource_subtype':'comment_added'}]\n"
+            "  if os.environ.get('TEST_ASANA_DUPLICATE_HANDOFF') == '1': stories.append({'gid':'story-2','created_at':at,'text':text,'resource_subtype':'comment_added'})\n"
+            "  print(json.dumps(stories)); raise SystemExit\n"
+            "sections = json.loads((home/'asana-task-sections.json').read_text())\n"
+            "projects = json.loads((home/'asana-task-projects.json').read_text())\n"
+            "project = projects.get(task, {'gid':'1217419962189616','name':'Dish — Development Workflow v2'})\n"
             "section = sections.get(task, 'Under Development')\n"
-            "print(json.dumps({'gid': task, 'completed': False, 'memberships': [{\n"
-            "  'project': {'gid': '1217419962189616', 'name': 'Dish — Development Workflow v2'},\n"
-            "  'section': {'gid': 'fixture-section', 'name': section},\n"
-            "}]}))\n",
+            "memberships=[{'project': item, 'section': {'gid': 'fixture-section', 'name': section}} for item in (project if isinstance(project,list) else [project])]\n"
+            "print(json.dumps({'gid': task, 'completed': False, 'memberships': memberships}))\n",
             encoding="utf-8",
         )
         asana.chmod(0o755)
@@ -94,7 +119,7 @@ class Harness:
                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES",
                 "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_EXEC_PATH", "GIT_EXTERNAL_DIFF", "GIT_SHALLOW_FILE",
                 "GIT_IMPLICIT_WORK_TREE",
-            } or key.startswith("GIT_CONFIG_"):
+            } or key.startswith("GIT_CONFIG_") or key.startswith("DISH_AGENT_"):
                 self.env.pop(key, None)
         self.env.update(
             HOME=str(self.home),
@@ -129,6 +154,21 @@ class Harness:
         sections[task] = section
         self.asana_sections.write_text(json.dumps(sections) + "\n", encoding="utf-8")
 
+    def set_task_project(self, task: str, gid: str, name: str) -> None:
+        projects = json.loads(self.asana_projects.read_text(encoding="utf-8"))
+        projects[task] = {"gid": gid, "name": name}
+        self.asana_projects.write_text(json.dumps(projects) + "\n", encoding="utf-8")
+
+    def set_task_projects(self, task: str, projects_value: list[dict[str, str]]) -> None:
+        projects = json.loads(self.asana_projects.read_text(encoding="utf-8"))
+        projects[task] = projects_value
+        self.asana_projects.write_text(json.dumps(projects) + "\n", encoding="utf-8")
+
+    def set_project_sections(self, gid: str, sections: list[str]) -> None:
+        projects = json.loads(self.asana_project_sections.read_text(encoding="utf-8"))
+        projects[gid] = sections
+        self.asana_project_sections.write_text(json.dumps(projects) + "\n", encoding="utf-8")
+
     @staticmethod
     def _option(args: tuple[str, ...] | list[str], name: str) -> str | None:
         try:
@@ -143,6 +183,19 @@ class Harness:
         actual_env = self.env.copy()
         if env:
             actual_env.update(env)
+        if args and args[0] == "claim":
+            values = list(args)
+            branch = self._option(values, "--branch")
+            if branch is not None:
+                actual_env.setdefault("TEST_ASANA_BRANCH", branch)
+            actual_env.setdefault("TEST_ASANA_BASE_REF", self._option(values, "--base-ref") or "refs/heads/main")
+            actual_env.setdefault("TEST_ASANA_BASE", self._option(values, "--base") or self.current_remote_main())
+            pr = self._option(values, "--pr-number")
+            head = self._option(values, "--pr-head")
+            if pr is not None:
+                actual_env.setdefault("TEST_ASANA_PR", pr)
+            if head is not None:
+                actual_env.setdefault("TEST_ASANA_HEAD", head)
         return run(["python3", str(SCRIPT), *args], cwd=self.primary, env=actual_env, check=check)
 
     def tool(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:

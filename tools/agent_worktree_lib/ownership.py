@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import json
 import os
 import socket
 import subprocess
@@ -496,8 +497,6 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         fail("OWNERSHIP_AGENT_REQUIRED", "exclusive local-agent ownership requires --agent-id")
     if args.require_launch_provenance and not args.launch_provenance:
         fail("LAUNCH_PROVENANCE_REQUIRED", "--require-launch-provenance requires --launch-provenance from the actual local host launcher")
-    if not args.launch_provenance:
-        require_repository_mutation_identity(agent_id, task_gid)
     repo = discover_repository(runner, Path(args.repo))
     branch = validate_branch(runner, repo.source_top, args.branch)
     pr = _normalize_pr(args)
@@ -511,6 +510,42 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         argv = argv[1:]
     if not argv:
         fail("CLAIM_COMMAND_REQUIRED", "claim must wrap the dispatched local-agent command after --")
+
+    def child_option(name: str) -> str | None:
+        try:
+            index = argv.index(name)
+        except ValueError:
+            return None
+        return argv[index + 1] if index + 1 < len(argv) else None
+
+    existing_state_path = state_path_for_branch(task_gid, branch)
+    existing_state = (
+        read_json_object(existing_state_path, "task worktree state")
+        if existing_state_path is not None
+        else None
+    )
+    base_ref = str(existing_state.get("base_ref")) if existing_state is not None else (child_option("--base-ref") or "refs/heads/main")
+    base_sha = str(existing_state.get("base_sha")) if existing_state is not None else (child_option("--base") or remote_ref_sha(runner, repo, base_ref))
+    assignment = {
+        "task_gid": task_gid,
+        "branch": branch,
+        "base_ref": base_ref,
+        "base_sha": require_full_sha(str(base_sha), "assignment base SHA"),
+        "pr_number": int(pr["number"]) if pr is not None else None,
+        "pr_head": str(pr["head"]) if pr is not None else None,
+    }
+    admitted_authority = existing_state.get("repository_assignment_authority") if existing_state is not None else None
+    if existing_state is not None and not isinstance(admitted_authority, dict):
+        # Existing exact lineages admitted before this authority projection landed
+        # remain recoverable, but the projection cannot widen their assignment.
+        admitted_authority = {"legacy_admitted": True, "assignment": assignment}
+    if args.launch_provenance and pr is not None and admitted_authority is None:
+        admitted_authority = {"review_block_continuation": True, "assignment": assignment}
+    if not args.launch_provenance:
+        identity = require_repository_mutation_identity(
+            agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
+        )
+        admitted_authority = identity.get("repository_assignment_authority")
 
     token = uuid.uuid4().hex
     resolved_sha, lineage_id, resolved_marker = resolve_lineage_for_branch(
@@ -558,19 +593,33 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 Path(args.launch_provenance), agent_id=agent_id, task_gid=task_gid, branch=branch, repo_path=repo.source_top, pr=pr,
             )
             launch_identity_bound = True
-            require_repository_mutation_identity(agent_id, task_gid)
+            identity = require_repository_mutation_identity(
+                agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
+            )
+            admitted_authority = identity.get("repository_assignment_authority")
         else:
-            require_repository_mutation_identity(agent_id, task_gid)
+            identity = require_repository_mutation_identity(
+                agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
+            )
+            admitted_authority = identity.get("repository_assignment_authority")
         record: dict[str, Any] = {
             "schema_version": CLAIM_SCHEMA_VERSION, "repository": EXPECTED_REPOSITORY, "origin_id": repo.origin_id,
             "task_gid": task_gid, "branch": branch, "lineage_id": lineage_id, "agent_id": agent_id,
             "host": socket.gethostname(), "token": token, "registry_marker": registry_sha,
             "registry_generation": registry_generation, "acquired_at": now_utc(), "released_at": None,
             "takeover": bool(args.takeover), "pr": pr, "launch_provenance_required": bool(args.require_launch_provenance),
+            "repository_assignment_authority": admitted_authority,
         }
         atomic_write_json(path, record)
         env = os.environ.copy()
-        env.update({CLAIM_TOKEN_ENV: token, CLAIM_TASK_ENV: task_gid, CLAIM_BRANCH_ENV: branch, CLAIM_AGENT_ENV: agent_id, LINEAGE_ENV: lineage_id})
+        env.update({
+            CLAIM_TOKEN_ENV: token,
+            CLAIM_TASK_ENV: task_gid,
+            CLAIM_BRANCH_ENV: branch,
+            CLAIM_AGENT_ENV: agent_id,
+            LINEAGE_ENV: lineage_id,
+            "DISH_AGENT_ASSIGNMENT_AUTHORITY": json.dumps(admitted_authority, sort_keys=True),
+        })
         try:
             completed = subprocess.run(argv, cwd=repo.source_top, env=env, check=False, pass_fds=tuple(locks.fds))
         except OSError as exc:
@@ -659,7 +708,6 @@ def require_active_claim(
     agent_id = require_agent_id(agent_id)
     if agent_id is None:
         fail("OWNERSHIP_AGENT_REQUIRED", "local-agent writer operations require --agent-id inside an active ownership claim")
-    require_repository_mutation_identity(agent_id, task_gid)
     token = os.environ.get(CLAIM_TOKEN_ENV)
     lineage_id = os.environ.get(LINEAGE_ENV)
     if not token or not lineage_id or os.environ.get(CLAIM_TASK_ENV) != task_gid or os.environ.get(CLAIM_BRANCH_ENV) != branch:
@@ -671,6 +719,16 @@ def require_active_claim(
         fail("OWNERSHIP_CLAIM_MISMATCH", "claim token/lineage does not match the durable ownership claim")
     if record.get("branch") != branch or record.get("agent_id") != agent_id:
         fail("OWNERSHIP_CLAIM_MISMATCH", "claim task/branch/agent identity does not match the requested writer operation")
+    state_file = state_path_for_branch(task_gid, branch)
+    state = read_json_object(state_file, "task worktree state") if state_file is not None else None
+    assignment_authority = record.get("repository_assignment_authority")
+    if not isinstance(assignment_authority, dict) and isinstance(state, dict):
+        assignment_authority = state.get("repository_assignment_authority")
+    require_repository_mutation_identity(
+        agent_id,
+        task_gid,
+        admitted_authority=assignment_authority if isinstance(assignment_authority, dict) else None,
+    )
     if record.get("released_at") is not None:
         fail("OWNERSHIP_CLAIM_STALE", "ownership claim was already released")
     if record.get("head_moved_to") is not None and not allow_head_moved_readback:
@@ -678,9 +736,8 @@ def require_active_claim(
     status = claim_status(task_gid)
     if status.get("state") != "live":
         fail("OWNERSHIP_CLAIM_STALE", f"ownership claim is {status.get('state')!r}, not live")
-    state_file = state_path_for_branch(task_gid, branch)
     if state_file is not None:
-        state = read_json_object(state_file, "task worktree state")
+        assert state is not None
         if state.get("lineage_id") not in {None, lineage_id}:
             fail("LINEAGE_REGISTRY_CHANGED", "local state lineage differs from claimed lineage")
         repo = resolve_repository_from_state(runner, state) if state.get("lifecycle") == "active" else discover_repository(runner, Path("."))

@@ -50,6 +50,19 @@ record, mismatched task/branch/base/host, or a cache-only/self-asserted marker y
 remote witness and therefore falls back to ChatGPT Review. The record proves routing provenance
 only; it never grants branch/write/Review authority.
 
+For a local first claim, the same durable handoff record is the independent Ready-admission
+witness. Use this exact host-specific source shape for new work:
+
+```text
+dish-prelaunch:v1 repository=marcogallotta/ai-tools task=<gid> assignment=implementation host=local branch=<authorized-branch> base_ref=<base-ref> base_sha=<base-sha> existing_pr=none
+```
+
+For an existing PR, replace the tail with
+`existing_pr=<number> expected_head=<exact-head>`. `agent-worktree` re-reads the live task and
+stories, recomputes the handoff identity, and binds the exact assignment before first claim. The
+local writer cannot mint this witness, and Ready without exactly one current matching witness is
+not repository-mutation authority.
+
 Post-PR fix provenance is separate: the manual handoff binds the live owning task, existing PR,
 branch, blocked head, formal BLOCK review id, selected Implementation host, and expected successor
 readback. No dispatcher, broker record, or automated consumer is required for the ordinary manual

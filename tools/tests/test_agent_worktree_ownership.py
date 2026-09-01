@@ -587,3 +587,117 @@ def test_repository_writer_rechecks_current_task_mode_after_claim(h: Harness) ->
     h.set_task_section(task, "Needs Research")
     result = h.tool("commit", "--task", task, "--agent-id", agent, "--message", "x", "tracked.txt", check=False)
     assert_error(result, "MUTATION_TASK_MODE_BLOCKED")
+
+
+def test_registered_postgresql_ready_claim_requires_and_consumes_exact_local_handoff(h: Harness) -> None:
+    task, branch, agent = "3110", "agent/postgresql-ready", "pg-impl"
+    h.agent_file(agent, owning_task_gid=task)
+    h.set_task_project(task, "1217404747383060", "Dish — PostgreSQL / Dark Launch v2")
+    h.set_task_section(task, "Ready")
+
+    admitted = claim(h, task=task, branch=branch, agent=agent, child=["python3", "-c", "pass"])
+    assert admitted.returncode == 0, admitted.stderr
+    _, payload = record(h, task)
+    authority = payload["repository_assignment_authority"]
+    assert authority["assignment"]["branch"] == branch
+    assert authority["handoff_id"]
+
+
+def test_registered_coordinator_under_development_is_project_agnostic(h: Harness) -> None:
+    task, branch, agent = "3111", "agent/coordinator-v2", "coord-impl"
+    h.agent_file(agent, owning_task_gid=task)
+    h.set_task_project(task, "1217382473444945", "Dish — Coordinator v2")
+    result = claim(h, task=task, branch=branch, agent=agent, child=["python3", "-c", "pass"])
+    assert result.returncode == 0, result.stderr
+
+
+def test_ready_claim_rejects_missing_duplicate_tampered_or_mismatched_handoff(h: Harness) -> None:
+    cases = (
+        ("3112", {"TEST_ASANA_NO_HANDOFF": "1"}),
+        ("3113", {"TEST_ASANA_DUPLICATE_HANDOFF": "1"}),
+        ("3114", {"TEST_ASANA_TAMPER_HANDOFF": "1"}),
+        ("3115", {"TEST_ASANA_BRANCH": "agent/wrong-branch"}),
+    )
+    for task, extra_env in cases:
+        agent, branch = f"impl-{task}", f"agent/ready-{task}"
+        h.agent_file(agent, owning_task_gid=task)
+        h.set_task_section(task, "Ready")
+        result = h.raw_tool(
+            "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+            "--", "python3", "-c", "raise SystemExit('must not run')",
+            env=extra_env,
+            check=False,
+        )
+        assert_error(result, "MUTATION_READY_HANDOFF_INVALID")
+
+
+def test_repository_claim_rejects_zero_multiple_unregistered_and_bad_v2_modes(h: Harness) -> None:
+    cases = []
+    task = "3116"
+    h.set_task_project(task, "9999999999999999", "Dish — Unregistered v2")
+    cases.append((task, "MUTATION_TASK_AUTHORITY_INVALID"))
+    task = "3117"
+    h.set_task_projects(task, [
+        {"gid": "1217419962189616", "name": "Dish — Development Workflow v2"},
+        {"gid": "1217404747383060", "name": "Dish — PostgreSQL / Dark Launch v2"},
+    ])
+    cases.append((task, "MUTATION_TASK_AUTHORITY_INVALID"))
+    task = "3118"
+    h.set_task_project(task, "1217404747383060", "Dish — PostgreSQL / Dark Launch v3")
+    cases.append((task, "MUTATION_TASK_MODE_UNSUPPORTED"))
+    task = "3119"
+    h.set_task_project(task, "1217404747383060", "Dish — PostgreSQL / Dark Launch v2")
+    h.set_project_sections("1217404747383060", ["Ready", "Under Development"])
+    cases.append((task, "MUTATION_TASK_MODE_CONTRADICTORY"))
+
+    for task, expected in cases:
+        agent, branch = f"impl-{task}", f"agent/mode-{task}"
+        h.agent_file(agent, owning_task_gid=task)
+        result = claim(
+            h,
+            task=task,
+            branch=branch,
+            agent=agent,
+            child=["python3", "-c", "raise SystemExit('must not run')"],
+        )
+        assert_error(result, expected)
+
+
+def test_registered_v2_writer_rejects_every_nonimplementation_lifecycle(h: Harness) -> None:
+    blocked = (
+        "Needs Processing", "Needs Research", "Needs Agentic Review", "Needs Human Review",
+        "Waiting on Dependency", "Needs Post-Merge Rollout", "Done",
+    )
+    for index, section in enumerate(blocked, start=3120):
+        task, branch, agent = str(index), f"agent/writer-{index}", f"impl-{index}"
+        h.agent_file(agent, owning_task_gid=task)
+        h.start(task=task, branch=branch, agent=agent)
+        h.set_task_section(task, section)
+        result = h.tool("commit", "--task", task, "--agent-id", agent, "--message", "x", "tracked.txt", check=False)
+        assert_error(result, "MUTATION_TASK_MODE_BLOCKED")
+
+
+def test_registered_v2_admission_is_read_only_and_registry_projection_matches_contract(h: Harness) -> None:
+    task, branch, agent = "3130", "agent/read-only-admission", "impl-3130"
+    h.agent_file(agent, owning_task_gid=task)
+    h.set_task_project(task, "1217404747383060", "Dish — PostgreSQL / Dark Launch v2")
+    h.set_task_section(task, "Ready")
+    result = claim(h, task=task, branch=branch, agent=agent, child=["python3", "-c", "pass"])
+    assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in h.asana_log.read_text(encoding="utf-8").splitlines()]
+    assert calls
+    assert all(call[:2] == ["raw", "GET"] for call in calls)
+
+    repo = Path(__file__).resolve().parents[2]
+    contract = (repo / "dish/docs/agents/asana-v2-project-mode.md").read_text(encoding="utf-8")
+    import sys
+
+    sys.path.insert(0, str(repo / "tools"))
+    try:
+        from agent_worktree_lib.asana_v2 import REGISTERED_V2_PROJECTS, V2_LIFECYCLE_SECTIONS
+    finally:
+        sys.path.pop(0)
+
+    for gid, base_name in REGISTERED_V2_PROJECTS.items():
+        assert f"| `{gid}` | {base_name} |" in contract
+    assert len(V2_LIFECYCLE_SECTIONS) == 9
