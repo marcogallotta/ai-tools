@@ -106,11 +106,14 @@ def test_checked_in_postgresql_action_openapi_matches_command_contract() -> None
     assert checked_in == postgres_action_openapi()
 
 
-def test_postgresql_action_section_identity_is_native_uuid_only() -> None:
+def test_postgresql_action_identity_fields_are_canonical_with_local_gid_aliases() -> None:
     section_schema = postgres_action_argument_schema("section-tasks")
     assert "section_id" in section_schema["properties"]
-    assert "section_gid" not in section_schema["properties"]
-    assert "section_id" in section_schema["required"]
+    assert "section_gid" in section_schema["properties"]
+    assert section_schema["oneOf"] == [
+        {"required": ["section_id"]},
+        {"required": ["section_gid"]},
+    ]
 
     start_schema = postgres_action_argument_schema("start")
     assert start_schema["discriminator"] == {"propertyName": "kind"}

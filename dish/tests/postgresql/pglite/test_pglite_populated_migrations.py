@@ -20,8 +20,6 @@ def test_pglite_upgrades_populated_projection_attempt_predecessor(
     database = pglite_migration_database
     database.initialize(PREDECESSOR_REVISION)
     seed = seed_valid_projection_attempt_predecessor(database)
-    # This is a bounded historical migration fixture.  Later authority
-    # migrations intentionally refuse this synthetic populated database.
     database.upgrade(TARGET_REVISION)
     database.assert_revision(TARGET_REVISION)
     assert_projection_attempt_backfill(database, seed)

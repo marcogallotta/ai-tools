@@ -256,24 +256,20 @@ def _search_argument_schema() -> dict[str, Any]:
 def postgres_action_argument_schema(command: str) -> dict[str, Any]:
     """Return the no-Asana PostgreSQL Action argument schema.
 
-    Canonical Dish/Section UUIDs are the PostgreSQL-native identities. Legacy
-    section GIDs are not accepted at this boundary.
+    Canonical Dish/section UUIDs are the primary external identities.  Exact legacy
+    Asana GIDs remain schema-visible only as optional compatibility alternatives and
+    resolve exclusively through PostgreSQL alias rows.
     """
 
     if command == SEARCH_COMMAND:
         return _search_argument_schema()
     base = action_openapi_argument_schema(command)
     if command == "section-tasks":
-        schema = deepcopy(base)
-        properties = schema["properties"]
-        properties.pop("section_gid", None)
-        properties["section_id"] = deepcopy(POSTGRES_DISH_ID_SCHEMA)
-        schema["required"] = [
-            "section_id" if field == "section_gid" else field
-            for field in schema.get("required", [])
-        ]
-        schema.pop("oneOf", None)
-        return schema
+        return _add_canonical_identity_alias(
+            base,
+            legacy_field="section_gid",
+            canonical_field="section_id",
+        )
     if command == "start":
         variants = base.get("oneOf")
         if not isinstance(variants, list):
@@ -418,24 +414,6 @@ def validate_postgres_action_request(
 
     identity_pair: tuple[str, str] | None = None
     if command == "section-tasks":
-        if "section_gid" in arguments:
-            raise DishRuleError(
-                "INVALID_ARGUMENT",
-                "section_gid is transition-only; use canonical section_id",
-                rule="native_section_id_required",
-                details={"field": "section_id"},
-            )
-        if "section_id" not in arguments:
-            raise DishRuleError(
-                "INVALID_ARGUMENT",
-                "section_id is required",
-                rule="native_section_id_required",
-                details={"field": "section_id"},
-            )
-        require_dish_uuid(arguments["section_id"], field="section_id")
-        adapted_arguments.pop("section_id", None)
-        adapted_arguments["section_gid"] = "1"
-        adapted["arguments"] = adapted_arguments
         identity_pair = ("section_id", "section_gid")
     elif command == "start":
         identity_pair = ("dish_id", "task_gid")

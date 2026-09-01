@@ -4,18 +4,17 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine, text
 
-from tests.support.postgresql.pglite_fixtures import (
-    insert_generation,
-    insert_request,
-    insert_run,
-    upgrade_on,
-)
+from tests.support.postgresql.core import ROOT
+
+from tests.support.postgresql.pglite_fixtures import insert_generation, insert_request, insert_run, upgrade_on
 
 pytestmark = pytest.mark.pglite
 
-
+TARGET_REVISION = "0027_server_default_alignment"
 
 
 def test_populated_0018_predecessor_upgrades_linearly_to_0027(pglite) -> None:
@@ -49,13 +48,11 @@ def test_populated_0018_predecessor_upgrades_linearly_to_0027(pglite) -> None:
                 owner_id="owner-a",
             )
             raw.autocommit = False
-            # This fixture certifies only the named 0019-0027 historical
-            # series; later cutover guards reject its synthetic live rows.
-            upgrade_on(connection, pglite.sqlalchemy_url, "0027_server_default_alignment")
+            upgrade_on(connection, pglite.sqlalchemy_url, TARGET_REVISION)
             connection.commit()
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0027_server_default_alignment"
+            ).scalar_one() == TARGET_REVISION
             assert connection.execute(
                 text(
                     "SELECT owner_id FROM service_requests "
