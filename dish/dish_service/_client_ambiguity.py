@@ -6,9 +6,9 @@ import uuid
 from typing import Any, Callable, Mapping
 
 from dish_tool.errors import DishRuleError
-from dish_tool.results import result_envelope
+from dish_tool.results import RESULT_ENVELOPE_FIELD_SET, result_envelope
 
-from ._client_results import validate_canonical_result, validate_command_result
+from ._client_results import validate_command_result
 from ._client_transport import AmbiguousResponseError
 from .command_spec import REPLAY_SAFE_COMMANDS
 
@@ -56,10 +56,11 @@ def command_result_request(
     payload: Mapping[str, Any],
     run_id: str,
     result_request: ResultRequest,
+    ambiguity_sensitive: bool | None = None,
 ) -> dict[str, Any]:
-    ambiguous_response_requires_replay = (
-        command in _AMBIGUOUS_RESPONSE_REPLAY_COMMANDS and request_id is not None
-    )
+    if ambiguity_sensitive is None:
+        ambiguity_sensitive = command in _AMBIGUOUS_RESPONSE_REPLAY_COMMANDS
+    ambiguous_response_requires_replay = ambiguity_sensitive and request_id is not None
     try:
         result = result_request(
             path,
@@ -93,6 +94,11 @@ def command_result_request(
             return ambiguous_command_result(
                 command=command, request_id=request_id, run_id=run_id
             )
+        details = {"validation_error": str(exc)}
+        if isinstance(result, dict):
+            missing = sorted(RESULT_ENVELOPE_FIELD_SET - set(result))
+            if missing:
+                details["missing_fields"] = missing
         raise DishRuleError(
             "INTERNAL_ERROR",
             (
@@ -100,7 +106,7 @@ def command_result_request(
                 "verify DISH_SERVICE_URL points to the correct listener"
             ),
             rule="service_response_invalid",
-            details={"validation_error": str(exc)},
+            details=details,
         ) from exc
 
 
@@ -140,7 +146,7 @@ def expire_lease_result_request(
             payload=payload,
             ambiguous_after_dispatch=True,
         )
-        return validate_canonical_result(decoded, expected_command="expire-lease")
+        return validate_command_result(decoded, expected_command="expire-lease")
     except AmbiguousResponseError:
         return ambiguous_expire_lease_result(
             request_id=request_id, task_gid=task_gid, run_id=run_id

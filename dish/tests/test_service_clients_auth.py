@@ -135,6 +135,99 @@ def test_sections_result_omits_agent_and_admin_tokens(tmp_path):
     assert "admin-secret" not in json.dumps(result)
 
 
+def _postgres_result(command):
+    return {
+        "ok": True,
+        "command": command,
+        "code": "OK",
+        "http_status": 200,
+        "retryable": False,
+        "data": {},
+    }
+
+
+@pytest.mark.parametrize(
+    ("client_type", "token", "expected_path"),
+    [
+        (DishServiceClient, "agent-secret", "/v1/leases/operation/renew"),
+        (DishActionClient, "action-secret", "/v1/action/renew-lease"),
+    ],
+)
+def test_renew_lease_clients_accept_postgres_command_result(
+    monkeypatch, client_type, token, expected_path
+):
+    client = client_type(
+        "http://dish.invalid", token=token, run_id=str(uuid.uuid4())
+    )
+    response = _postgres_result("renew-lease")
+
+    def request_json(path, *, method, payload, ambiguous_after_dispatch=False):
+        assert path == expected_path
+        assert method == "POST"
+        assert ambiguous_after_dispatch is False
+        return response
+
+    monkeypatch.setattr(client._transport, "request_json", request_json)
+
+    assert client.renew_lease("operation") is response
+
+
+@pytest.mark.parametrize(
+    ("invoke", "expected_command", "expected_path"),
+    [
+        (
+            lambda client: client.execute("archive", dish_id=str(uuid.uuid4())),
+            "archive",
+            "/v1/admin/archive",
+        ),
+        (
+            lambda client: client.recover_lease(
+                str(uuid.uuid4()), reason="expired worker"
+            ),
+            "recover-lease",
+            None,
+        ),
+    ],
+)
+def test_retained_admin_commands_accept_postgres_command_result(
+    monkeypatch, invoke, expected_command, expected_path
+):
+    client = DishAdminServiceClient(
+        "http://dish.invalid", token="admin-secret", run_id=str(uuid.uuid4())
+    )
+    response = _postgres_result(expected_command)
+
+    def request_json(path, *, method, payload, ambiguous_after_dispatch=False):
+        if expected_path is None:
+            assert path.startswith("/v1/admin/leases/")
+            assert path.endswith("/recover")
+        else:
+            assert path == expected_path
+        assert method == "POST"
+        assert ambiguous_after_dispatch is False
+        return response
+
+    monkeypatch.setattr(client._transport, "request_json", request_json)
+
+    assert invoke(client) is response
+
+
+def test_retained_admin_command_rejects_wrong_command_without_ambiguity(monkeypatch):
+    client = DishAdminServiceClient(
+        "http://dish.invalid", token="admin-secret", run_id=str(uuid.uuid4())
+    )
+    monkeypatch.setattr(
+        client._transport,
+        "request_json",
+        lambda *args, **kwargs: _postgres_result("wrong-command"),
+    )
+
+    with pytest.raises(DishRuleError) as caught:
+        client.execute("archive", dish_id=str(uuid.uuid4()))
+
+    assert caught.value.rule == "service_response_invalid"
+
+
 @pytest.mark.parametrize(
     ("client_type", "expected_path"),
     [
