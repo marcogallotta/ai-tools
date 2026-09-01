@@ -829,9 +829,26 @@ class WorkflowAuthorityRepository:
         fence = self.session.get(wf.TaskExecutionFence, execution_id)
         if fence is None:
             raise WorkflowAuthorityError("execution has no task fence")
-        state = self.session.get(models.DishState, (fence.generation_id, fence.task_id))
-        membership = self.session.get(
-            models.TaskMembershipHead, (fence.generation_id, fence.task_id)
+        state_statement = select(models.DishState).where(
+            models.DishState.generation_id == fence.generation_id,
+            models.DishState.task_id == fence.task_id,
+        )
+        membership_statement = select(models.TaskMembershipHead).where(
+            models.TaskMembershipHead.generation_id == fence.generation_id,
+            models.TaskMembershipHead.task_id == fence.task_id,
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            # Match ScalarDishMutation's lock order and hold both task-authority rows
+            # through the caller-owned commit. A competing scalar transition either
+            # commits first and is observed by these fresh reads, or waits until this
+            # command has finished its task mutation.
+            state_statement = state_statement.with_for_update()
+            membership_statement = membership_statement.with_for_update()
+        state = self.session.scalar(
+            state_statement.execution_options(populate_existing=True)
+        )
+        membership = self.session.scalar(
+            membership_statement.execution_options(populate_existing=True)
         )
         if (
             state is None

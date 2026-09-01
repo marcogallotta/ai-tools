@@ -343,6 +343,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 ttl=timedelta(minutes=2),
             )
             if operation is not None and call.command_name in {
+                "start",
+                "supply-evidence",
                 "prepare",
                 "discard",
                 "hold-reject",
@@ -924,6 +926,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError(
                 "INVALID_OPERATION_KIND", "unsupported operation kind", http_status=400
             )
+
+        # Existing operation-backed starts are locked before this handler. New
+        # operation starts have no operation row yet, so the task fence is the
+        # first mutation lock. In both cases the fence is held through commit.
+        self.workflow.repo.assert_task_fence(execution.execution_id)
 
         agent = str(call.arguments.get("agent", "")).strip()
         if not agent:
