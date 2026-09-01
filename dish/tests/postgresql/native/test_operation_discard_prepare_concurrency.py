@@ -633,3 +633,208 @@ def test_rollover_precedes_no_projection_command_and_stale_predecessor_cannot_su
                 wf.ServiceRequestOutcome.request_id == request_id
             )
         ) is None
+
+
+class _TaskFenceGateRepository(WorkflowAuthorityRepository):
+    def __init__(
+        self,
+        *args,
+        before_lock: TransactionGate | None = None,
+        after_lock: TransactionGate | None = None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self._before_lock = before_lock
+        self._after_lock = after_lock
+
+    def capture_task_fence(self, **kwargs):
+        if self._before_lock is not None:
+            self._before_lock.block()
+        return super().capture_task_fence(**kwargs)
+
+    def assert_task_fence(self, execution_id):
+        state = super().assert_task_fence(execution_id)
+        if self._after_lock is not None:
+            self._after_lock.block()
+        return state
+
+
+def _task_fence_port(
+    session,
+    *,
+    before_lock: TransactionGate | None = None,
+    after_lock: TransactionGate | None = None,
+) -> PostgresCommandPort:
+    port = _command_port(session)
+    if before_lock is not None or after_lock is not None:
+        port.workflow.repo = _TaskFenceGateRepository(
+            session,
+            before_lock=before_lock,
+            after_lock=after_lock,
+        )
+    return port
+
+
+def _seed_task_fence_runs(factory, ids, context):
+    start_run, cooked_run = _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=start_run,
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=cooked_run,
+        )
+        ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="native PostgreSQL task-fence concurrency",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+    return start_run, cooked_run
+
+
+def test_native_task_transition_commits_before_final_fence_and_stale_start_rejects(
+    core_db,
+) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    start_run, cooked_run = _seed_task_fence_runs(factory, ids, context)
+    before_lock = TransactionGate(label="stale start waits before final task-fence lock")
+    engine = factory.kw["bind"]
+
+    def stale_start():
+        with managed_session(stale_connection) as session:
+            stale_state = session.get(
+                models.DishState, (context["generation_id"], task_id)
+            )
+            stale_membership = session.get(
+                models.TaskMembershipHead, (context["generation_id"], task_id)
+            )
+            assert stale_state is not None and stale_membership is not None
+            return _task_fence_port(session, before_lock=before_lock).execute(
+                CommandCall(
+                    command_name="start",
+                    arguments={
+                        "task_id": str(task_id),
+                        "kind": "initial",
+                        "agent": "claude",
+                    },
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    run_id=start_run,
+                    request_id=uuid.uuid4(),
+                    now=NOW + timedelta(seconds=1),
+                )
+            )
+
+    with independent_connections(engine) as (stale_connection, winner_connection):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(stale_start)
+            before_lock.wait_until_blocked()
+            assert_transaction_blocked(future)
+
+            with managed_session(winner_connection) as session:
+                winner = _task_fence_port(session).execute(
+                    CommandCall(
+                        command_name="cooked",
+                        arguments={"task_id": str(task_id)},
+                        owner_id="owner-1",
+                        principal_class="agent",
+                        run_id=cooked_run,
+                        request_id=uuid.uuid4(),
+                        now=NOW + timedelta(seconds=2),
+                    )
+                )
+                assert winner.ok is True
+
+            before_lock.release()
+            stale = future.result()
+
+    assert stale.ok is False
+    assert stale.code == "AUTHORITY_MISMATCH"
+    assert "task fence is stale" in stale.data["message"]
+    with session_scope(factory) as session:
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        assert state is not None and state.completed is True
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.WorkflowOperation)
+            .where(wf.WorkflowOperation.task_id == task_id)
+        ) == 0
+
+
+def test_native_start_holds_final_task_fence_until_commit_and_cooked_observes_operation(
+    core_db,
+) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    start_run, cooked_run = _seed_task_fence_runs(factory, ids, context)
+    after_lock = TransactionGate(label="start holds final task-fence lock before mutation")
+    cooked_entered = Event()
+    engine = factory.kw["bind"]
+
+    def locked_start():
+        with managed_session(start_connection) as session:
+            return _task_fence_port(session, after_lock=after_lock).execute(
+                CommandCall(
+                    command_name="start",
+                    arguments={
+                        "task_id": str(task_id),
+                        "kind": "initial",
+                        "agent": "claude",
+                    },
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    run_id=start_run,
+                    request_id=uuid.uuid4(),
+                    now=NOW + timedelta(seconds=1),
+                )
+            )
+
+    def blocked_cooked():
+        with managed_session(cooked_connection) as session:
+            cooked_entered.set()
+            return _task_fence_port(session).execute(
+                CommandCall(
+                    command_name="cooked",
+                    arguments={"task_id": str(task_id)},
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    run_id=cooked_run,
+                    request_id=uuid.uuid4(),
+                    now=NOW + timedelta(seconds=2),
+                )
+            )
+
+    with independent_connections(engine) as (start_connection, cooked_connection):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            start_future = pool.submit(locked_start)
+            after_lock.wait_until_blocked()
+            assert_transaction_blocked(start_future)
+
+            cooked_future = pool.submit(blocked_cooked)
+            assert cooked_entered.wait(timeout=10)
+            assert_transaction_blocked(cooked_future)
+
+            after_lock.release()
+            started = start_future.result()
+            cooked = cooked_future.result()
+
+    assert started.ok is True
+    assert cooked.ok is False
+    assert cooked.code == "TASK_NOT_RESTING"
+    with session_scope(factory) as session:
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        assert state is not None and state.completed is False
+        operations = list(
+            session.scalars(
+                select(wf.WorkflowOperation).where(
+                    wf.WorkflowOperation.task_id == task_id,
+                    wf.WorkflowOperation.lifecycle == "open",
+                )
+            )
+        )
+        assert len(operations) == 1
+        assert operations[0].operation_id == uuid.UUID(started.data["operation_id"])
