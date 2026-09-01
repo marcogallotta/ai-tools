@@ -2087,28 +2087,46 @@ def _verify_restored_state(
     expected_grants = (
         snapshot.object_grants if resolution is None else resolution.effective_grants
     )
-    missing_grants = sorted(set(expected_grants) - current_grants)
-    if missing_grants:
+    expected_grant_set = set(expected_grants)
+    missing_grants = sorted(expected_grant_set - current_grants)
+    unexpected_grants = sorted(current_grants - expected_grant_set)
+    if missing_grants or unexpected_grants:
         raise ProductionResetError(
-            f"grant verification failed; {len(missing_grants)} pre-reset grant(s) are missing"
+            "grant verification failed; "
+            f"{len(missing_grants)} expected grant(s) are missing and "
+            f"{len(unexpected_grants)} unexpected grant(s) remain"
         )
+    # The active reset guard is the sole reset-internal setting permitted here.
+    # _load_database_settings recognizes and omits it when allow_reset_guard=True;
+    # the surrounding reset lifecycle independently verifies its reset-id. Every
+    # other database/role setting remains subject to exact snapshot comparison.
     current_settings = set(
         _load_database_settings(connection, snapshot.database, allow_reset_guard=True)
     )
-    missing_settings = sorted(set(snapshot.settings) - current_settings)
-    if missing_settings:
+    expected_settings = set(snapshot.settings)
+    missing_settings = sorted(expected_settings - current_settings)
+    unexpected_settings = sorted(current_settings - expected_settings)
+    if missing_settings or unexpected_settings:
         raise ProductionResetError(
-            f"setting verification failed; {len(missing_settings)} pre-reset setting(s) are missing"
+            "setting verification failed; "
+            f"{len(missing_settings)} expected setting(s) are missing and "
+            f"{len(unexpected_settings)} unexpected setting(s) remain"
         )
     current_defaults = set(_load_default_privileges(connection))
+    expected_defaults = set(snapshot.default_privileges)
     missing_defaults = sorted(
-        set(snapshot.default_privileges) - current_defaults,
+        expected_defaults - current_defaults,
         key=lambda value: (value.owner, value.schema_name or "", value.object_type),
     )
-    if missing_defaults:
+    unexpected_defaults = sorted(
+        current_defaults - expected_defaults,
+        key=lambda value: (value.owner, value.schema_name or "", value.object_type),
+    )
+    if missing_defaults or unexpected_defaults:
         raise ProductionResetError(
             "default-privilege verification failed; "
-            f"{len(missing_defaults)} pre-reset definition(s) are missing"
+            f"{len(missing_defaults)} expected definition(s) are missing and "
+            f"{len(unexpected_defaults)} unexpected definition(s) remain"
         )
     if resolution is not None and any(
         replacement.target == _OBSERVER_REPLACEMENT_TARGET
