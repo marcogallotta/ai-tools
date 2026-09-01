@@ -24,7 +24,6 @@ from .http_routing import resolve_post_route
 from .leases import ServicePrincipal
 from .legacy_writer_fence import assert_legacy_writer_mutation_allowed
 from .command_spec import (
-    ACTION_COMMANDS,
     IMPLEMENTATION_ACTION_CLIENT_ID,
     REPLAY_SAFE_COMMANDS,
     action_commands_for_client,
@@ -193,14 +192,20 @@ class DishHTTPServer(ThreadingHTTPServer):
         silently appearing on the legacy/Asana Action service.
         """
 
-        if command not in action_commands_for_client(
+        configured_commands = action_commands_for_client(
             self.service.config.action_client_id
-        ):
-            return False
-        if command in ACTION_COMMANDS:
+        )
+        if command in configured_commands:
             return True
+        if self.service.config.action_client_id == IMPLEMENTATION_ACTION_CLIENT_ID:
+            return False
         validator = getattr(self.service, "validate_action_request", None)
-        return callable(validator) and self.supports_route("action", command)
+        route_checker = getattr(self.service, "supports_http_route", None)
+        return (
+            callable(validator)
+            and callable(route_checker)
+            and bool(route_checker("action", command))
+        )
 
     @staticmethod
     def _close_socket(connection: socket.socket) -> None:
