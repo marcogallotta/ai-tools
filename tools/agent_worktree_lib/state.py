@@ -348,6 +348,28 @@ def _github_json(path: str, label: str) -> Any:
         fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", f"{label} read returned malformed JSON")
 
 
+def live_pull_request_identity(pr_number: int) -> dict[str, Any]:
+    pr = _github_json(
+        f"/repos/{EXPECTED_REPOSITORY}/pulls/{pr_number}", "live pull request identity",
+    )
+    if not isinstance(pr, dict):
+        fail("MUTATION_PR_AUTHORITY_INVALID", "live pull request identity is malformed")
+    head = pr.get("head")
+    if not isinstance(head, dict):
+        fail("MUTATION_PR_AUTHORITY_INVALID", "live pull request head identity is malformed")
+    branch = str(head.get("ref") or "")
+    sha = str(head.get("sha") or "")
+    if not branch or require_full_sha(sha, "live pull request head") != sha:
+        fail("MUTATION_PR_AUTHORITY_INVALID", "live pull request lacks exact branch/head identity")
+    return {
+        "number": int(pr_number),
+        "state": str(pr.get("state") or "").lower(),
+        "branch": branch,
+        "head": sha,
+        "body": str(pr.get("body") or ""),
+    }
+
+
 def _parse_time(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -458,24 +480,19 @@ def verified_review_block_authority(
     pr_head = assignment.get("pr_head")
     if not isinstance(pr_number, int) or not isinstance(pr_head, str):
         fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "Review-BLOCK continuation requires exact PR/head assignment")
-    pr = _github_json(
-        f"/repos/{EXPECTED_REPOSITORY}/pulls/{pr_number}", "live Review-BLOCK pull request",
-    )
+    pr = live_pull_request_identity(pr_number)
     review = _github_json(
         f"/repos/{EXPECTED_REPOSITORY}/pulls/{pr_number}/reviews/{review_id}", "live formal BLOCK review",
     )
-    if not isinstance(pr, dict) or not isinstance(review, dict):
+    if not isinstance(review, dict):
         fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "formal Review-BLOCK authority is malformed")
-    head = pr.get("head")
-    head_ref = head.get("ref") if isinstance(head, dict) else None
-    head_sha = head.get("sha") if isinstance(head, dict) else None
     body = str(pr.get("body") or "")
     task_bound = re.search(rf"(?<!\d){re.escape(task_gid)}(?!\d)", body) is not None
     verdict = next((line.strip() for line in str(review.get("body") or "").splitlines() if line.strip()), "")
     if (
-        str(pr.get("state") or "").lower() != "open"
-        or head_ref != assignment.get("branch")
-        or head_sha != pr_head
+        pr.get("state") != "open"
+        or pr.get("branch") != assignment.get("branch")
+        or pr.get("head") != pr_head
         or not task_bound
         or str(review.get("id") or "") != review_id
         or str(review.get("commit_id") or "") != pr_head

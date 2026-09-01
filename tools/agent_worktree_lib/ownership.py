@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import uuid
@@ -31,6 +32,7 @@ from .repository import discover_repository
 from .state import (
     atomic_write_json,
     load_task_state,
+    live_pull_request_identity,
     read_json_object,
     state_path,
     state_path_for_branch,
@@ -747,6 +749,38 @@ def require_active_claim(
     if isinstance(state, dict) and state.get("branch") != branch:
         fail("MUTATION_ASSIGNMENT_MISMATCH", "worktree state branch differs from the active writer assignment")
     claim_pr = record.get("pr")
+    if state_file is not None:
+        assert state is not None
+        if state.get("lineage_id") not in {None, lineage_id}:
+            fail("LINEAGE_REGISTRY_CHANGED", "local state lineage differs from claimed lineage")
+        repo = resolve_repository_from_state(runner, state) if state.get("lifecycle") == "active" else discover_repository(runner, Path("."))
+    else:
+        repo = discover_repository(runner, Path("."))
+    moved_to = record.get("head_moved_to")
+    if isinstance(claim_pr, dict):
+        try:
+            pr_number = int(claim_pr.get("number"))
+        except (TypeError, ValueError):
+            fail("MUTATION_PR_AUTHORITY_INVALID", "persisted claim PR number is invalid")
+        live_pr = live_pull_request_identity(pr_number)
+        expected_live_head = (
+            str(moved_to)
+            if allow_head_moved_readback and isinstance(moved_to, str)
+            else str(claim_pr.get("head") or "")
+        )
+        remote_head = remote_ref_sha(runner, repo, f"refs/heads/{branch}", allow_missing=True)
+        task_bound = re.search(rf"(?<!\d){re.escape(task_gid)}(?!\d)", live_pr["body"]) is not None
+        if (
+            live_pr["state"] != "open"
+            or live_pr["branch"] != branch
+            or live_pr["head"] != expected_live_head
+            or remote_head != expected_live_head
+            or not task_bound
+        ):
+            fail(
+                "PR_HEAD_MOVED_REDISPATCH_REQUIRED",
+                "live task/PR/branch/head no longer matches the exact admitted writer assignment",
+            )
     current_assignment = {
         "task_gid": task_gid,
         "branch": branch,
@@ -768,13 +802,6 @@ def require_active_claim(
     status = claim_status(task_gid)
     if status.get("state") != "live":
         fail("OWNERSHIP_CLAIM_STALE", f"ownership claim is {status.get('state')!r}, not live")
-    if state_file is not None:
-        assert state is not None
-        if state.get("lineage_id") not in {None, lineage_id}:
-            fail("LINEAGE_REGISTRY_CHANGED", "local state lineage differs from claimed lineage")
-        repo = resolve_repository_from_state(runner, state) if state.get("lifecycle") == "active" else discover_repository(runner, Path("."))
-    else:
-        repo = discover_repository(runner, Path("."))
     marker = assert_active_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token)
     if state_file is not None and state.get("published_head") is not None:
         expected_remote = str(state.get("published_head"))

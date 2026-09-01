@@ -496,9 +496,15 @@ def test_head_movement_invalidation_closes_semantic_mutation_but_allows_readback
     task, branch, agent, pr = "3095", "agent/head-move-fence", "head-move-agent", 96
     head = h.remote_branch_commit(branch, "head move candidate", start=h.current_remote_main())
     h.agent_file(agent, owning_task_gid=task)
-    new_head = "f" * 40
+    new_head = h.remote_branch_commit(
+        "agent/head-move-fence-next", "published successor", start=head
+    )
     tools_dir = Path(__file__).resolve().parents[1]
     child = f"""
+import json
+import os
+import pathlib
+import subprocess
 import sys
 sys.path.insert(0, {str(tools_dir)!r})
 from agent_worktree_lib.common import AgentWorktreeError, GitRunner
@@ -508,6 +514,14 @@ task = {task!r}
 branch = {branch!r}
 agent = {agent!r}
 new_head = {new_head!r}
+subprocess.run(
+    ["git", "--git-dir=" + os.environ["TEST_BARE_ORIGIN"], "update-ref", "refs/heads/{branch}", new_head],
+    check=True,
+)
+path = pathlib.Path.home() / "github-reviews.json"
+data = json.loads(path.read_text())
+data[{str(pr)!r}]["pr"]["head"]["sha"] = new_head
+path.write_text(json.dumps(data) + "\\n")
 runner = GitRunner()
 assert invalidate_claim_after_head_movement(task, new_head) is True
 try:
@@ -819,3 +833,33 @@ def test_first_pr_attachment_requires_fresh_exact_pr_head_handoff(h: Harness) ->
         env={"TEST_ASANA_NO_HANDOFF": "1"}, check=False,
     )
     assert_error(result, "MUTATION_READY_HANDOFF_INVALID")
+
+
+def test_live_pr_head_movement_blocks_writer_inside_already_admitted_claim(h: Harness) -> None:
+    task, branch, agent, pr = "3140", "agent/live-head-drift", "impl-3140", 3140
+    base = h.current_remote_main()
+    admitted_head = h.remote_branch_commit(branch, "admitted PR head", start=base)
+    h.agent_file(agent, owning_task_gid=task)
+    h.tool(
+        "adopt", "--task", task, "--branch", branch,
+        "--base-ref", "refs/heads/main", "--base", base,
+        "--expected-head", admitted_head, "--agent-id", agent, "--json",
+    )
+    moved_head = h.remote_branch_commit("agent/live-head-drift-next", "external PR move", start=admitted_head)
+    before = git_out(h.wt(task), "rev-parse", "HEAD")
+    mover = h.root / "move-pr-before-writer.py"
+    mover.write_text(
+        "import json, os, pathlib, subprocess, sys\n"
+        f"subprocess.run(['git', '--git-dir=' + os.environ['TEST_BARE_ORIGIN'], 'update-ref', 'refs/heads/{branch}', '{moved_head}'], check=True)\n"
+        "path=pathlib.Path.home()/'github-reviews.json'; data=json.loads(path.read_text())\n"
+        f"data['{pr}']['pr']['head']['sha']='{moved_head}'; path.write_text(json.dumps(data)+'\\n')\n"
+        f"raise SystemExit(subprocess.run(['python3', '{SCRIPT}', 'commit', '--task', '{task}', '-m', 'must not commit', '--', 'tracked.txt']).returncode)\n",
+        encoding="utf-8",
+    )
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--pr-number", str(pr), "--pr-head", admitted_head, "--pr-lease-state", "none",
+        "--", "python3", str(mover), check=False,
+    )
+    assert_error(result, "PR_HEAD_MOVED_REDISPATCH_REQUIRED")
+    assert git_out(h.wt(task), "rev-parse", "HEAD") == before == admitted_head

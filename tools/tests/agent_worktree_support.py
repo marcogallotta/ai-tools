@@ -235,6 +235,15 @@ class Harness:
                 actual_env.setdefault("TEST_ASANA_PR", pr)
             if head is not None:
                 actual_env.setdefault("TEST_ASANA_HEAD", head)
+            if pr is not None and head is not None and actual_env.get("TEST_GITHUB_PRESERVE_PR") != "1":
+                data = json.loads(self.github_reviews.read_text(encoding="utf-8"))
+                entry = data.setdefault(str(pr), {"reviews": {}})
+                entry["pr"] = {
+                    "state": "open",
+                    "body": f"Implements Asana task {self._option(values, '--task')}.",
+                    "head": {"ref": branch, "sha": head},
+                }
+                self.github_reviews.write_text(json.dumps(data) + "\n", encoding="utf-8")
         return run(["python3", str(SCRIPT), *args], cwd=self.primary, env=actual_env, check=check)
 
     def tool(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
