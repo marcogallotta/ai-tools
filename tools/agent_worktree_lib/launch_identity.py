@@ -122,6 +122,11 @@ def _validate_shape(
     launcher = str(payload.get("launcher") or "").strip()
     if not launcher:
         fail("LAUNCH_PROVENANCE_INVALID", "launch provenance launcher is required")
+    block_review_id = payload.get("block_review_id")
+    if block_review_id is not None:
+        block_review_id = str(block_review_id)
+        if not block_review_id.isdigit():
+            fail("LAUNCH_PROVENANCE_INVALID", "launch provenance block_review_id must be numeric")
 
     issued = _parse_time(payload.get("issued_at"))
     current = dt.datetime.now(dt.timezone.utc)
@@ -131,7 +136,7 @@ def _validate_shape(
     if age > LAUNCH_MAX_AGE_SECONDS:
         fail("LAUNCH_PROVENANCE_STALE", "launch provenance is older than the bounded launch/claim window")
 
-    return {
+    validated = {
         "schema": LAUNCH_SCHEMA,
         "launch_id": launch_id,
         "launcher": launcher,
@@ -147,6 +152,9 @@ def _validate_shape(
         "pr_head": str(pr["head"]),
         "workspace": str(repo_path.resolve()),
     }
+    if block_review_id is not None:
+        validated["block_review_id"] = block_review_id
+    return validated
 
 
 def bind_identity_from_launch_provenance(

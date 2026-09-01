@@ -7,13 +7,17 @@ import os
 import socket
 import subprocess
 import tempfile
+import re
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .common import (
     AGENT_ID_RE, EXPECTED_ORIGIN_ID, EXPECTED_REPOSITORY, SCHEMA_VERSION,
     AgentWorktreeError, fail, now_utc, require_agent_id, require_full_sha, require_task_gid,
 )
+from .asana_v2 import REGISTERED_V2_PROJECTS, classify_registered_v2_project
 
 def state_root() -> Path:
     return Path.home().resolve() / ".local" / "state" / "dish" / "worktrees"
@@ -120,7 +124,7 @@ def new_active_task_state(
     """Build the single durable active-worktree state shape used by start/adopt."""
     stamp = now_utc()
     lineage_id = lineage_id or os.environ.get("DISH_AGENT_LINEAGE_ID")
-    return {
+    state = {
         "schema_version": SCHEMA_VERSION,
         "repository": {"full_name": EXPECTED_REPOSITORY, "origin_id": origin_id},
         "task_gid": task_gid,
@@ -146,6 +150,16 @@ def new_active_task_state(
         "lifecycle": "active",
         "disposition": None,
     }
+    serialized_authority = os.environ.get("DISH_AGENT_ASSIGNMENT_AUTHORITY")
+    if serialized_authority:
+        try:
+            authority = json.loads(serialized_authority)
+        except json.JSONDecodeError:
+            fail("MUTATION_ASSIGNMENT_MISMATCH", "live claim assignment authority is malformed")
+        if not isinstance(authority, dict):
+            fail("MUTATION_ASSIGNMENT_MISMATCH", "live claim assignment authority is not an object")
+        state["repository_assignment_authority"] = authority
+    return state
 
 
 def ensure_state_dir() -> None:
@@ -277,27 +291,279 @@ def validate_agent_state(agent_id: str | None) -> dict[str, Any] | None:
 
 
 
-# Every project a standing Dish role may own repository Implementation work from, per
-# dish/docs/agents/asana-v2-project-mode.md's registry and dish/docs/agents/workflow.md.
-# Each entry's `sections` are that project's own shape-specific names for "execution has
-# actually accepted or begun the work", including continuing an already-published PR (a
-# CI fix or Review-BLOCK fix round stays on the existing PR lineage per
-# dish/docs/agents/implementation.md rather than moving the task back a section).
-REPOSITORY_MUTATION_OWNING_PROJECTS = (
-    {
-        "gid": "1217419962189616",
-        "name": "Dish — Development Workflow v2",
-        "sections": {"Under Development"},
-    },
-    {
-        "gid": "1217381674871544",
-        "name": "Dish — Workflow",
-        "sections": {"In Progress", "Review / Integration"},
-    },
+LEGACY_WORKFLOW_PROJECT = {
+    "gid": "1217381674871544",
+    "name": "Dish — Workflow",
+    "sections": {"In Progress", "Review / Integration"},
+}
+HANDOFF_MARKER = "dish-implementation-handoff:v1"
+STALE_HANDOFF_MARKER = "dish-stale-handoff:v1"
+_HANDOFF_RE = re.compile(
+    rf"<!--\s*{re.escape(HANDOFF_MARKER)}\s+handoff=(?P<id>[0-9a-f]{{16}})\s+"
+    r"task=(?P<task>\d+)\s+role=(?P<role>[A-Za-z-]+)\s+at=(?P<at>[^\s]+)\s*-->"
 )
+_STALE_RE = re.compile(rf"<!--\s*{re.escape(STALE_HANDOFF_MARKER)}\s+handoff=(?P<id>[0-9a-f]{{16}})\s*-->")
 
 
-def _live_repository_mutation_task(task_gid: str) -> dict[str, Any]:
+def _asana_json(path: str, label: str, *, environment: Mapping[str, str] | None = None) -> Any:
+    asana = Path.home().resolve() / ".local" / "bin" / "asana"
+    try:
+        result = subprocess.run(
+            [str(asana), "raw", "GET", path],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=dict(environment) if environment is not None else None,
+        )
+    except OSError as exc:
+        fail("MUTATION_TASK_AUTHORITY_UNAVAILABLE", f"cannot read {label}: {exc}")
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        fail("MUTATION_TASK_AUTHORITY_UNAVAILABLE", f"{label} read failed: {detail or f'exit {result.returncode}'}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        fail("MUTATION_TASK_AUTHORITY_INVALID", f"{label} read returned malformed JSON")
+    if isinstance(payload, dict) and set(payload) == {"data"}:
+        return payload["data"]
+    return payload
+
+
+def _github_json(path: str, label: str) -> Any:
+    gh = shutil.which("gh")
+    if gh is None:
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_UNAVAILABLE", "GitHub CLI is unavailable for formal Review-BLOCK validation")
+    try:
+        result = subprocess.run(
+            [gh, "api", path], capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_UNAVAILABLE", f"cannot read {label}: {exc}")
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_UNAVAILABLE", f"{label} read failed: {detail or f'exit {result.returncode}'}")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", f"{label} read returned malformed JSON")
+
+
+def live_pull_request_identity(pr_number: int) -> dict[str, Any]:
+    pr = _github_json(
+        f"/repos/{EXPECTED_REPOSITORY}/pulls/{pr_number}", "live pull request identity",
+    )
+    if not isinstance(pr, dict):
+        fail("MUTATION_PR_AUTHORITY_INVALID", "live pull request identity is malformed")
+    head = pr.get("head")
+    if not isinstance(head, dict):
+        fail("MUTATION_PR_AUTHORITY_INVALID", "live pull request head identity is malformed")
+    branch = str(head.get("ref") or "")
+    sha = str(head.get("sha") or "")
+    if not branch or require_full_sha(sha, "live pull request head") != sha:
+        fail("MUTATION_PR_AUTHORITY_INVALID", "live pull request lacks exact branch/head identity")
+    return {
+        "number": int(pr_number),
+        "state": str(pr.get("state") or "").lower(),
+        "branch": branch,
+        "head": sha,
+        "body": str(pr.get("body") or ""),
+    }
+
+
+def _parse_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _handoff_source(assignment: Mapping[str, Any]) -> str:
+    source = (
+        "dish-prelaunch:v1 repository=marcogallotta/ai-tools "
+        f"task={assignment['task_gid']} assignment=implementation host=local "
+        f"branch={assignment['branch']} base_ref={assignment['base_ref']} "
+        f"base_sha={assignment['base_sha']} existing_pr="
+    )
+    if assignment.get("pr_number") is None:
+        return source + "none"
+    return source + f"{assignment['pr_number']} expected_head={assignment['pr_head']}"
+
+
+def _handoff_identity(task_gid: str, timestamp: datetime, source: str) -> str:
+    raw = f"{task_gid}\0Implementation\0{timestamp.astimezone(timezone.utc).isoformat()}\0{source}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _verified_ready_handoff(task_gid: str, assignment: Mapping[str, Any]) -> dict[str, Any]:
+    story_environment = os.environ.copy()
+    story_environment.update(
+        {
+            "DISH_HANDOFF_EXPECTED_BRANCH": str(assignment["branch"]),
+            "DISH_HANDOFF_EXPECTED_BASE_REF": str(assignment["base_ref"]),
+            "DISH_HANDOFF_EXPECTED_BASE": str(assignment["base_sha"]),
+            "DISH_HANDOFF_EXPECTED_PR": str(assignment.get("pr_number") or ""),
+            "DISH_HANDOFF_EXPECTED_HEAD": str(assignment.get("pr_head") or ""),
+        }
+    )
+    stories = _asana_json(
+        f"/tasks/{task_gid}/stories?opt_fields=gid,created_at,text,resource_subtype&limit=100",
+        "live task handoff stories",
+        environment=story_environment,
+    )
+    if not isinstance(stories, list):
+        fail("MUTATION_READY_HANDOFF_INVALID", "live task handoff stories are not a list")
+    source = _handoff_source(assignment)
+    expected_lines = {
+        "AUTHORIZED IMPLEMENTATION HANDOFF",
+        f"Task: {task_gid}",
+        "Target role: Implementation",
+        f"Source: {source}",
+        f"Branch: {assignment['branch']}",
+        f"Base: {assignment['base_sha']}",
+        f"PR: {assignment.get('pr_number') if assignment.get('pr_number') is not None else 'not yet known'}",
+        f"Head: {assignment.get('pr_head') if assignment.get('pr_head') is not None else 'not yet known'}",
+        "— Dish Agent: Development Workflow | repository control plane",
+    }
+    matches: list[dict[str, Any]] = []
+    stale_ids = {
+        match.group("id")
+        for story in stories
+        for match in _STALE_RE.finditer(str(story.get("text") or ""))
+    }
+    for story in stories:
+        text = str(story.get("text") or "")
+        markers = list(_HANDOFF_RE.finditer(text))
+        if len(markers) != 1:
+            continue
+        marker = markers[0]
+        if marker.group("task") != task_gid or marker.group("role") != "Implementation":
+            continue
+        handoff_at = _parse_time(marker.group("at"))
+        created_at = _parse_time(story.get("created_at"))
+        if handoff_at is None or created_at is None or abs((created_at - handoff_at).total_seconds()) > 300:
+            continue
+        handoff_id = _handoff_identity(task_gid, handoff_at, source)
+        if marker.group("id") != handoff_id or handoff_id in stale_ids:
+            continue
+        if expected_lines | {f"Handoff time: {handoff_at.isoformat()}"} <= set(text.splitlines()):
+            matches.append({"handoff_id": handoff_id, "source": source, "story_gid": str(story.get("gid") or "")})
+    if len(matches) != 1:
+        fail("MUTATION_READY_HANDOFF_INVALID", "Ready/first-claim admission requires exactly one current matching LOCAL_IMPLEMENTATION handoff")
+    authority = matches[0]
+    authority["digest"] = hashlib.sha256(source.encode()).hexdigest()
+    authority["assignment"] = dict(assignment)
+    return authority
+
+
+def _assignment_matches(
+    stored: Mapping[str, Any], current: Mapping[str, Any]
+) -> bool:
+    keys = ("task_gid", "branch", "base_ref", "base_sha", "pr_number", "pr_head")
+    return all(stored.get(key) == current.get(key) for key in keys)
+
+
+def verified_review_block_authority(
+    task_gid: str,
+    assignment: Mapping[str, Any],
+    block_review_id: str,
+) -> dict[str, Any]:
+    task_gid = require_task_gid(task_gid)
+    review_id = str(block_review_id)
+    if not review_id.isdigit():
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "formal BLOCK review id must be numeric")
+    pr_number = assignment.get("pr_number")
+    pr_head = assignment.get("pr_head")
+    if not isinstance(pr_number, int) or not isinstance(pr_head, str):
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "Review-BLOCK continuation requires exact PR/head assignment")
+    pr = live_pull_request_identity(pr_number)
+    review = _github_json(
+        f"/repos/{EXPECTED_REPOSITORY}/pulls/{pr_number}/reviews/{review_id}", "live formal BLOCK review",
+    )
+    if not isinstance(review, dict):
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "formal Review-BLOCK authority is malformed")
+    body = str(pr.get("body") or "")
+    task_bound = re.search(rf"(?<!\d){re.escape(task_gid)}(?!\d)", body) is not None
+    verdict = next((line.strip() for line in str(review.get("body") or "").splitlines() if line.strip()), "")
+    if (
+        pr.get("state") != "open"
+        or pr.get("branch") != assignment.get("branch")
+        or pr.get("head") != pr_head
+        or not task_bound
+        or str(review.get("id") or "") != review_id
+        or str(review.get("commit_id") or "") != pr_head
+        or verdict != "VERDICT: BLOCK"
+    ):
+        fail(
+            "MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID",
+            "live task/PR/branch/head/formal review does not prove the exact Review-BLOCK continuation",
+        )
+    return {
+        "review_block_continuation": True,
+        "block_review_id": review_id,
+        "assignment": dict(assignment),
+    }
+
+
+def _revalidate_assignment_authority(
+    task_gid: str,
+    authority: Mapping[str, Any],
+    current_assignment: Mapping[str, Any],
+) -> dict[str, Any]:
+    stored = authority.get("assignment")
+    if not isinstance(stored, dict):
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "admitted assignment authority has no exact assignment tuple")
+    if not _assignment_matches(stored, current_assignment):
+        stable_keys = ("task_gid", "branch", "base_ref", "base_sha")
+        is_pr_attachment = (
+            authority.get("handoff_id") is not None
+            and all(stored.get(key) == current_assignment.get(key) for key in stable_keys)
+            and stored.get("pr_number") is None
+            and stored.get("pr_head") is None
+            and current_assignment.get("pr_number") is not None
+            and current_assignment.get("pr_head") is not None
+        )
+        if is_pr_attachment:
+            # Attaching the first PR is a new exact assignment tuple. It is legal
+            # only when orchestration has written a fresh durable handoff for that
+            # PR/head; the old pre-PR witness cannot widen itself.
+            return _verified_ready_handoff(task_gid, current_assignment)
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "live claim assignment differs from the exact admitted handoff assignment")
+    if authority.get("legacy_admitted") is True:
+        # Compatibility is limited to a lineage that already existed before
+        # assignment projection was introduced; it cannot change its tuple.
+        return dict(authority)
+    if authority.get("review_block_continuation") is True:
+        expected = verified_review_block_authority(
+            task_gid, stored, str(authority.get("block_review_id") or "")
+        )
+        if authority != expected:
+            fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "persisted Review-BLOCK authority does not match live formal review")
+        return dict(authority)
+    expected = _verified_ready_handoff(task_gid, stored)
+    for key in ("handoff_id", "digest", "story_gid", "source"):
+        if not isinstance(authority.get(key), str) or authority.get(key) != expected.get(key):
+            fail("MUTATION_READY_HANDOFF_INVALID", "persisted handoff authority does not match the live durable handoff")
+    return dict(authority)
+
+
+def _project_sections(project_gid: str) -> set[str]:
+    payload = _asana_json(f"/projects/{project_gid}/sections?opt_fields=gid,name&limit=100", "live project sections")
+    if not isinstance(payload, list):
+        fail("MUTATION_TASK_AUTHORITY_INVALID", "live project sections are not a list")
+    return {str(item.get("name") or "") for item in payload if isinstance(item, dict)}
+
+
+def _live_repository_mutation_task(
+    task_gid: str,
+    *,
+    assignment: Mapping[str, Any] | None = None,
+    admitted_authority: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Read the existing Asana lifecycle authority for one exact task.
 
     The worktree tool does not interpret notes or create a second workflow state.
@@ -306,36 +572,17 @@ def _live_repository_mutation_task(task_gid: str) -> dict[str, Any]:
     material action-class transitions at which this live witness is refreshed.
     """
     task_gid = require_task_gid(task_gid)
-    asana = Path.home().resolve() / ".local" / "bin" / "asana"
     query = (
         f"/tasks/{task_gid}?opt_fields=gid,completed,"
         "memberships.project.gid,memberships.project.name,"
         "memberships.section.gid,memberships.section.name"
     )
-    try:
-        result = subprocess.run(
-            [str(asana), "raw", "GET", query],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
-        fail("MUTATION_TASK_AUTHORITY_UNAVAILABLE", f"cannot read live task authority: {exc}")
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        fail(
-            "MUTATION_TASK_AUTHORITY_UNAVAILABLE",
-            f"live task authority read failed: {detail or f'exit {result.returncode}'}",
-        )
-    try:
-        task = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        fail("MUTATION_TASK_AUTHORITY_INVALID", "live task authority read returned malformed JSON")
+    task = _asana_json(query, "live task authority")
     if not isinstance(task, dict) or str(task.get("gid") or "") != task_gid:
         fail("MUTATION_TASK_AUTHORITY_INVALID", "live task authority does not match the requested task")
     if bool(task.get("completed")):
         fail("MUTATION_TASK_MODE_BLOCKED", "completed task does not permit repository Implementation")
-    owning_gids = {entry["gid"] for entry in REPOSITORY_MUTATION_OWNING_PROJECTS}
+    owning_gids = set(REGISTERED_V2_PROJECTS) | {LEGACY_WORKFLOW_PROJECT["gid"]}
     matches = []
     for membership in task.get("memberships") or []:
         if not isinstance(membership, dict):
@@ -350,21 +597,40 @@ def _live_repository_mutation_task(task_gid: str) -> dict[str, Any]:
             "task must have exactly one current repository-mutation-owning project membership",
         )
     project, section = matches[0]
-    owning_entry = next(
-        entry for entry in REPOSITORY_MUTATION_OWNING_PROJECTS if entry["gid"] == str(project.get("gid") or "")
-    )
-    if str(project.get("name") or "") != owning_entry["name"]:
-        fail("MUTATION_TASK_AUTHORITY_INVALID", "owning project identity is contradictory")
     section_name = str(section.get("name") or "").strip() if isinstance(section, dict) else ""
-    if section_name not in owning_entry["sections"]:
+    project_gid = str(project.get("gid") or "")
+    if project_gid == LEGACY_WORKFLOW_PROJECT["gid"]:
+        if str(project.get("name") or "") != LEGACY_WORKFLOW_PROJECT["name"]:
+            fail("MUTATION_TASK_AUTHORITY_INVALID", "legacy owning project identity is contradictory")
+        if section_name not in LEGACY_WORKFLOW_PROJECT["sections"]:
+            fail("MUTATION_TASK_MODE_BLOCKED", f"current task mode {section_name or 'unknown'!r} does not permit repository Implementation")
+        return {"task": task, "assignment_authority": admitted_authority}
+
+    classify_registered_v2_project(project, _project_sections(project_gid))
+    if section_name not in {"Ready", "Under Development"}:
         fail(
             "MUTATION_TASK_MODE_BLOCKED",
             f"current task mode {section_name or 'unknown'!r} does not permit repository Implementation",
         )
-    return task
+    authority = dict(admitted_authority) if admitted_authority is not None else None
+    if authority is None:
+        if assignment is None:
+            fail("MUTATION_READY_HANDOFF_REQUIRED", "first repository claim requires an exact LOCAL_IMPLEMENTATION assignment handoff")
+        authority = _verified_ready_handoff(task_gid, assignment)
+    elif assignment is None:
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "current writer assignment is required to revalidate admitted authority")
+    else:
+        authority = _revalidate_assignment_authority(task_gid, authority, assignment)
+    return {"task": task, "assignment_authority": authority}
 
 
-def require_repository_mutation_identity(agent_id: str, task_gid: str) -> dict[str, Any]:
+def require_repository_mutation_identity(
+    agent_id: str,
+    task_gid: str,
+    *,
+    assignment: Mapping[str, Any] | None = None,
+    admitted_authority: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Fail closed when local identity does not authorize repository Implementation.
 
     The identity file is a recovery projection, not authority creation.  This check
@@ -391,7 +657,10 @@ def require_repository_mutation_identity(agent_id: str, task_gid: str) -> dict[s
             "MUTATION_AUTHORITY_TASK_MISMATCH",
             f"active Implementation identity is bound to task {owning}, not requested task {task_gid}",
         )
-    _live_repository_mutation_task(task_gid)
+    live = _live_repository_mutation_task(
+        task_gid, assignment=assignment, admitted_authority=admitted_authority
+    )
+    payload["repository_assignment_authority"] = live.get("assignment_authority")
     return payload
 
 

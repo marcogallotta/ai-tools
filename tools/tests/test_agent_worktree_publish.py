@@ -33,11 +33,9 @@ def test_publish_refuses_main_or_other_branch_identity_tampering(h: Harness) -> 
     state["branch"] = "agent/other-task"
     h.state_path().write_text(json.dumps(state) + "\n")
     result = h.tool("publish", "--task", "1001", "--json", check=False)
-    # A syntactically valid but tampered branch now resolves to its own,
-    # never-before-seen repository-wide lineage before publish's own
-    # worktree-identity check runs; the lineage registry's cross-check
-    # against the state's real (unmoved) lineage_id fails closed first.
-    assert_error(result, "LINEAGE_REGISTRY_CHANGED")
+    # The admitted repository assignment rejects branch tampering before
+    # publish can resolve or mutate another lineage.
+    assert_error(result, "MUTATION_ASSIGNMENT_MISMATCH")
 
 
 def test_verify_handoff_requires_remote_equal_and_reports_four_distinct_heads(h: Harness) -> None:
