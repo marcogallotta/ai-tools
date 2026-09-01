@@ -159,8 +159,8 @@ After every Action-schema refresh, run this minimal TEST contract check before b
 1. Choose a TEST Dish already known to Dish. Call connected `dish_read` with its canonical `dish_id`
    and confirm `data.identity_binding` returns that same Dish UUID plus the exact task GID, without
    discovering the task through section/title matching.
-2. Start a fresh Verification run through the connected TEST Action for that exact returned task GID
-   with a fresh `client.run_id` and `client.request_id`.
+2. Start a fresh Verification run through the connected TEST Action for that exact returned Dish UUID
+   (`dish_id`) with a fresh `client.run_id` and `client.request_id`.
 3. Confirm the result succeeds and `allowed_actions` contains `inspect`.
 4. Confirm the imported `dish_inspect` operation visibly accepts and requires both `client.run_id` and
    `client.request_id`.
