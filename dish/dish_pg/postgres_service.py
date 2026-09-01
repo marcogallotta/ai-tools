@@ -886,21 +886,6 @@ class PostgresRuntimeService:
                     "task_title": view.title,
                 })
                 return result
-            if view.operation_id is not None:
-                result = error_envelope(
-                    command,
-                    DishRuleError(
-                        "TASK_NOT_RESTING",
-                        "Archive requires a resting Dish with no open workflow operation",
-                        rule="archive_task_not_resting",
-                        details={"open_operation_id": str(view.operation_id)},
-                    ),
-                )
-                result["data"].update({
-                    "dish_id": str(view.task_id),
-                    "task_title": view.title,
-                })
-                return result
             result = error_envelope(
                 command,
                 DishRuleError(

@@ -281,6 +281,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         self._pending_scalar_mutations.clear()
         try:
             task, operation = self._resolve_targets(call)
+            task_state = (
+                self._lock_task_authority(generation.generation_id, task.task_id)
+                if task is not None
+                else None
+            )
             if (
                 call.command_name == "start"
                 and call.arguments.get("kind") == "planning"
@@ -289,6 +294,23 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             ):
                 if task is None:
                     raise CommandRuleError("TASK_REQUIRED", "planning start requires a task")
+                assert task_state is not None
+                if task_state.archived_at is not None:
+                    data = {"guidance": {}}
+                    self._store_outcome(
+                        call=call,
+                        execution_id=None,
+                        task_id=task.task_id,
+                        operation_id=None,
+                        ok=False,
+                        code="TASK_ARCHIVED",
+                        http_status=409,
+                        data=data,
+                        audit_event_type="archived_task_mutation_rejected",
+                    )
+                    return CommandResult(
+                        False, call.command_name, "TASK_ARCHIVED", 409, data
+                    )
                 self._validate_planning_intent_basis(call, initial=True)
                 self._validate_planning_agent(
                     generation_id=generation.generation_id, call=call
@@ -1222,6 +1244,25 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "OPEN_OPERATION_REQUIRED", "workflow operation no longer exists"
             )
         return operation
+
+    def _lock_task_authority(
+        self, generation_id: uuid.UUID, task_id: uuid.UUID
+    ) -> models.DishState:
+        statement = select(models.DishState).where(
+            models.DishState.generation_id == generation_id,
+            models.DishState.task_id == task_id,
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update()
+        state = self.session.scalar(
+            statement.execution_options(populate_existing=True)
+        )
+        if state is None:
+            raise CommandRuleError(
+                "TASK_AUTHORITY_MISSING",
+                "command requires current Dish authority",
+            )
+        return state
 
     def _change_intent(self, operation: wf.WorkflowOperation) -> tuple[str, str]:
         creation_execution_id = operation.creation_execution_id
@@ -3225,19 +3266,6 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError("ARCHIVE_AUTHORITY_MISSING", "task archive authority is incomplete")
         if current.completed or current.archived_at is not None:
             raise CommandRuleError("TASK_NOT_ACTIVE", "Archive requires an active Dish")
-        blocking_operation = self.session.scalar(
-            select(wf.WorkflowOperation.operation_id).where(
-                wf.WorkflowOperation.generation_id == generation.generation_id,
-                wf.WorkflowOperation.task_id == task.task_id,
-                wf.WorkflowOperation.lifecycle == "open",
-            ).limit(1)
-        )
-        if blocking_operation is not None:
-            raise CommandRuleError(
-                "TASK_NOT_RESTING",
-                "Archive requires a resting Dish with no open workflow operation",
-                data={"open_operation_id": str(blocking_operation)},
-            )
         self._scalar_mutation(
             generation_id=generation.generation_id,
             task_id=task.task_id,

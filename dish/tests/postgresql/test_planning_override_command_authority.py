@@ -92,6 +92,44 @@ def _assert_no_mutation_authority(session):
     assert [session.scalar(select(func.count()).select_from(model)) for model in models] == [0] * 5
 
 
+def test_archived_task_rejects_planning_challenge_without_durable_challenge(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    agent_run, admin_run = next(ids), next(ids)
+    with session_scope(factory) as session:
+        port = _port(session, ids, context, agent_run, admin_run)
+        archived = port.execute(
+            _call(
+                "archive",
+                admin_run,
+                next(ids),
+                {"task_id": str(task_id), "confirmed": True},
+                principal="admin",
+                owner="marco",
+            )
+        )
+        assert archived.ok, archived
+
+        attempted = port.execute(
+            _call(
+                "start",
+                agent_run,
+                next(ids),
+                {"task_id": str(task_id), "kind": "planning", "agent": "claude"},
+            )
+        )
+
+        assert attempted.ok is False
+        assert attempted.code == "TASK_ARCHIVED"
+        assert (
+            session.scalar(
+                select(func.count()).select_from(wf.PlanningIntentChallenge)
+            )
+            == 0
+        )
+
+
 def test_override_cannot_be_authorization_or_lease_fence(workflow_db):
     factory, ids, context, task_id = workflow_db
     agent_run, admin_run = next(ids), next(ids)

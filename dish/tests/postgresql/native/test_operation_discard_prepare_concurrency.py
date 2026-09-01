@@ -21,7 +21,12 @@ from dish_pg.test_generation_rollover import _rollover_generation_transaction
 from dish_pg.transition import ProjectionService, ShadowService
 from dish_pg.workflow import StaleAuthorityError, WorkflowAuthorityRepository
 from tests.support.canonical import TASK
-from tests.support.postgresql.command import _add_verification_queue
+from tests.support.postgresql.command import (
+    _add_verification_queue,
+    _prepare_for_verification,
+    _start_initial,
+    _start_verification,
+)
 from tests.support.postgresql.concurrency import (
     TransactionGate,
     assert_transaction_blocked,
@@ -43,32 +48,18 @@ def _require_native_postgresql(request: pytest.FixtureRequest) -> None:
 
 
 
-class _DelayedOperationRepository(WorkflowAuthorityRepository):
+class _DelayedTaskAuthorityPort(PostgresCommandPort):
     def __init__(self, *args, gate: TransactionGate, **kwargs):
         super().__init__(*args, **kwargs)
         self._gate = gate
 
-    def _locked_operation(self, *, generation_id, operation_id):
+    def _lock_task_authority(self, generation_id, task_id):
         self._gate.block()
-        return super()._locked_operation(
-            generation_id=generation_id,
-            operation_id=operation_id,
-        )
-
-
-class _DelayedOperationPort(PostgresCommandPort):
-    def __init__(
-        self,
-        *args,
-        gate: TransactionGate,
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.workflow.repo = _DelayedOperationRepository(self.session, gate=gate)
+        return super()._lock_task_authority(generation_id, task_id)
 
 
 def _command_port(session, *, delayed=None) -> PostgresCommandPort:
-    cls = _DelayedOperationPort if delayed is not None else PostgresCommandPort
+    cls = _DelayedTaskAuthorityPort if delayed is not None else PostgresCommandPort
     kwargs = dict(
         cursor_secret=SECRET,
         uuid_factory=uuid.uuid4,
@@ -144,14 +135,150 @@ def _seed_open_operation(factory, ids, context, task_id):
         return author_run, admin_run, uuid.UUID(started.data["operation_id"])
 
 
-def test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_intent(
+def _seed_inspectable_operation(factory, ids, context, task_id):
+    author_run, verifier_run, admin_run = _next(ids), _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="Marco",
+        )
+        ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="native PostgreSQL archive inspect race",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+        port = _command_port(session)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        _prepare_for_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=author_run,
+        )
+        _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
+        )
+        assert operation is not None
+        return (
+            author_run,
+            verifier_run,
+            admin_run,
+            operation.operation_id,
+            operation.operation_revision,
+            list(operation.persisted_actions),
+        )
+
+
+def test_native_archive_commits_before_inspect_authority_and_inspect_is_inert(
+    core_db,
+) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    (
+        _author_run,
+        verifier_run,
+        admin_run,
+        operation_id,
+        before_revision,
+        before_actions,
+    ) = _seed_inspectable_operation(factory, ids, context, task_id)
+    gate = TransactionGate(label="inspect waits before task authority lock")
+    engine = factory.kw["bind"]
+
+    def delayed_inspect():
+        with managed_session(inspect_connection) as session:
+            port = _DelayedTaskAuthorityPort(
+                session,
+                gate=gate,
+                cursor_secret=SECRET,
+                uuid_factory=uuid.uuid4,
+                projection_recorder=ProjectionService(
+                    session, uuid_factory=uuid.uuid4
+                ),
+            )
+            return port.execute(
+                CommandCall(
+                    command_name="inspect",
+                    arguments={
+                        "task_id": str(task_id),
+                        "operation_id": str(operation_id),
+                        "agent": "codex",
+                        "independence_attestation": (
+                            "I independently inspected this exact candidate."
+                        ),
+                    },
+                    owner_id="verifier-owner",
+                    principal_class="verification",
+                    run_id=verifier_run,
+                    request_id=uuid.uuid4(),
+                    now=NOW + timedelta(seconds=2),
+                )
+            )
+
+    with independent_connections(engine) as (inspect_connection, archive_connection):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(delayed_inspect)
+            gate.wait_until_blocked()
+            assert_transaction_blocked(future)
+            try:
+                with managed_session(archive_connection) as session:
+                    archived = _command_port(session).execute(
+                        CommandCall(
+                            command_name="archive",
+                            arguments={"task_id": str(task_id), "confirmed": True},
+                            owner_id="Marco",
+                            principal_class="admin",
+                            run_id=admin_run,
+                            request_id=uuid.uuid4(),
+                            now=NOW + timedelta(seconds=1),
+                        )
+                    )
+                    assert archived.ok is True
+            finally:
+                gate.release()
+            inspected = future.result(timeout=20)
+
+    assert inspected.ok is False
+    assert inspected.code == "TASK_ARCHIVED"
+    with session_scope(factory) as session:
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        assert state is not None and state.archived_at is not None
+        assert operation is not None
+        assert operation.operation_revision == before_revision
+        assert operation.persisted_actions == before_actions
+        assert session.scalar(
+            select(func.count()).select_from(wf.VerificationInspectionOccurrence)
+        ) == 0
+
+
+def test_native_discard_commits_before_prepare_authority_and_leaves_no_actionable_intent(
     core_db,
 ) -> None:
     factory, ids, context, task_id = native_workflow_db(core_db)
     author_run, admin_run, operation_id = _seed_open_operation(
         factory, ids, context, task_id
     )
-    gate = TransactionGate(label="prepare waits before operation lock")
+    gate = TransactionGate(label="prepare waits before task authority lock")
     engine = factory.kw["bind"]
 
     def delayed_prepare():
@@ -220,14 +347,14 @@ def test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_int
         ) == 0
 
 
-def test_native_prepare_commits_before_discard_lock_and_discard_cannot_cancel(
+def test_native_prepare_commits_before_discard_authority_and_discard_cannot_cancel(
     core_db,
 ) -> None:
     factory, ids, context, task_id = native_workflow_db(core_db)
     author_run, admin_run, operation_id = _seed_open_operation(
         factory, ids, context, task_id
     )
-    gate = TransactionGate(label="discard waits before operation lock")
+    gate = TransactionGate(label="discard waits before task authority lock")
     engine = factory.kw["bind"]
 
     def delayed_discard():
