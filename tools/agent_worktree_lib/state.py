@@ -8,6 +8,7 @@ import socket
 import subprocess
 import tempfile
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -328,6 +329,25 @@ def _asana_json(path: str, label: str, *, environment: Mapping[str, str] | None 
     return payload
 
 
+def _github_json(path: str, label: str) -> Any:
+    gh = shutil.which("gh")
+    if gh is None:
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_UNAVAILABLE", "GitHub CLI is unavailable for formal Review-BLOCK validation")
+    try:
+        result = subprocess.run(
+            [gh, "api", path], capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_UNAVAILABLE", f"cannot read {label}: {exc}")
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_UNAVAILABLE", f"{label} read failed: {detail or f'exit {result.returncode}'}")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", f"{label} read returned malformed JSON")
+
+
 def _parse_time(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -418,6 +438,102 @@ def _verified_ready_handoff(task_gid: str, assignment: Mapping[str, Any]) -> dic
     return authority
 
 
+def _assignment_matches(
+    stored: Mapping[str, Any], current: Mapping[str, Any]
+) -> bool:
+    keys = ("task_gid", "branch", "base_ref", "base_sha", "pr_number", "pr_head")
+    return all(stored.get(key) == current.get(key) for key in keys)
+
+
+def verified_review_block_authority(
+    task_gid: str,
+    assignment: Mapping[str, Any],
+    block_review_id: str,
+) -> dict[str, Any]:
+    task_gid = require_task_gid(task_gid)
+    review_id = str(block_review_id)
+    if not review_id.isdigit():
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "formal BLOCK review id must be numeric")
+    pr_number = assignment.get("pr_number")
+    pr_head = assignment.get("pr_head")
+    if not isinstance(pr_number, int) or not isinstance(pr_head, str):
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "Review-BLOCK continuation requires exact PR/head assignment")
+    pr = _github_json(
+        f"/repos/{EXPECTED_REPOSITORY}/pulls/{pr_number}", "live Review-BLOCK pull request",
+    )
+    review = _github_json(
+        f"/repos/{EXPECTED_REPOSITORY}/pulls/{pr_number}/reviews/{review_id}", "live formal BLOCK review",
+    )
+    if not isinstance(pr, dict) or not isinstance(review, dict):
+        fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "formal Review-BLOCK authority is malformed")
+    head = pr.get("head")
+    head_ref = head.get("ref") if isinstance(head, dict) else None
+    head_sha = head.get("sha") if isinstance(head, dict) else None
+    body = str(pr.get("body") or "")
+    task_bound = re.search(rf"(?<!\d){re.escape(task_gid)}(?!\d)", body) is not None
+    verdict = next((line.strip() for line in str(review.get("body") or "").splitlines() if line.strip()), "")
+    if (
+        str(pr.get("state") or "").lower() != "open"
+        or head_ref != assignment.get("branch")
+        or head_sha != pr_head
+        or not task_bound
+        or str(review.get("id") or "") != review_id
+        or str(review.get("commit_id") or "") != pr_head
+        or verdict != "VERDICT: BLOCK"
+    ):
+        fail(
+            "MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID",
+            "live task/PR/branch/head/formal review does not prove the exact Review-BLOCK continuation",
+        )
+    return {
+        "review_block_continuation": True,
+        "block_review_id": review_id,
+        "assignment": dict(assignment),
+    }
+
+
+def _revalidate_assignment_authority(
+    task_gid: str,
+    authority: Mapping[str, Any],
+    current_assignment: Mapping[str, Any],
+) -> dict[str, Any]:
+    stored = authority.get("assignment")
+    if not isinstance(stored, dict):
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "admitted assignment authority has no exact assignment tuple")
+    if not _assignment_matches(stored, current_assignment):
+        stable_keys = ("task_gid", "branch", "base_ref", "base_sha")
+        is_pr_attachment = (
+            authority.get("handoff_id") is not None
+            and all(stored.get(key) == current_assignment.get(key) for key in stable_keys)
+            and stored.get("pr_number") is None
+            and stored.get("pr_head") is None
+            and current_assignment.get("pr_number") is not None
+            and current_assignment.get("pr_head") is not None
+        )
+        if is_pr_attachment:
+            # Attaching the first PR is a new exact assignment tuple. It is legal
+            # only when orchestration has written a fresh durable handoff for that
+            # PR/head; the old pre-PR witness cannot widen itself.
+            return _verified_ready_handoff(task_gid, current_assignment)
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "live claim assignment differs from the exact admitted handoff assignment")
+    if authority.get("legacy_admitted") is True:
+        # Compatibility is limited to a lineage that already existed before
+        # assignment projection was introduced; it cannot change its tuple.
+        return dict(authority)
+    if authority.get("review_block_continuation") is True:
+        expected = verified_review_block_authority(
+            task_gid, stored, str(authority.get("block_review_id") or "")
+        )
+        if authority != expected:
+            fail("MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID", "persisted Review-BLOCK authority does not match live formal review")
+        return dict(authority)
+    expected = _verified_ready_handoff(task_gid, stored)
+    for key in ("handoff_id", "digest", "story_gid", "source"):
+        if not isinstance(authority.get(key), str) or authority.get(key) != expected.get(key):
+            fail("MUTATION_READY_HANDOFF_INVALID", "persisted handoff authority does not match the live durable handoff")
+    return dict(authority)
+
+
 def _project_sections(project_gid: str) -> set[str]:
     payload = _asana_json(f"/projects/{project_gid}/sections?opt_fields=gid,name&limit=100", "live project sections")
     if not isinstance(payload, list):
@@ -484,17 +600,10 @@ def _live_repository_mutation_task(
         if assignment is None:
             fail("MUTATION_READY_HANDOFF_REQUIRED", "first repository claim requires an exact LOCAL_IMPLEMENTATION assignment handoff")
         authority = _verified_ready_handoff(task_gid, assignment)
-    stored_assignment = authority.get("assignment") if isinstance(authority, dict) else None
-    if assignment is not None and isinstance(stored_assignment, dict):
-        stable_keys = ("task_gid", "branch", "base_ref", "base_sha")
-        compatible = all(stored_assignment.get(key) == assignment.get(key) for key in stable_keys)
-        if stored_assignment.get("pr_number") is not None:
-            compatible = compatible and (
-                stored_assignment.get("pr_number") == assignment.get("pr_number")
-                and stored_assignment.get("pr_head") == assignment.get("pr_head")
-            )
-        if not compatible:
-            fail("MUTATION_ASSIGNMENT_MISMATCH", "live claim assignment differs from the exact admitted handoff assignment")
+    elif assignment is None:
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "current writer assignment is required to revalidate admitted authority")
+    else:
+        authority = _revalidate_assignment_authority(task_gid, authority, assignment)
     return {"task": task, "assignment_authority": authority}
 
 

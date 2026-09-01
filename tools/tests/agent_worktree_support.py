@@ -80,6 +80,8 @@ class Harness:
         self.asana_project_sections.write_text("{}\n", encoding="utf-8")
         self.asana_log = self.home / "asana-calls.jsonl"
         self.asana_log.write_text("", encoding="utf-8")
+        self.github_reviews = self.home / "github-reviews.json"
+        self.github_reviews.write_text("{}\n", encoding="utf-8")
         asana.write_text(
             "#!/usr/bin/env python3\n"
             "import datetime, hashlib, json, os, pathlib, sys\n"
@@ -112,6 +114,22 @@ class Harness:
             encoding="utf-8",
         )
         asana.chmod(0o755)
+        gh = self.home / ".local/bin/gh"
+        gh.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, pathlib, sys\n"
+            "home=pathlib.Path.home(); path=sys.argv[-1]; data=json.loads((home/'github-reviews.json').read_text())\n"
+            "parts=path.strip('/').split('/'); pr=parts[4]\n"
+            "entry=data.get(pr)\n"
+            "if entry is None: print('not found', file=sys.stderr); raise SystemExit(1)\n"
+            "if 'reviews' in parts:\n"
+            "  review=entry.get('reviews',{}).get(parts[-1])\n"
+            "  if review is None: print('not found', file=sys.stderr); raise SystemExit(1)\n"
+            "  print(json.dumps(review)); raise SystemExit\n"
+            "print(json.dumps(entry['pr']))\n",
+            encoding="utf-8",
+        )
+        gh.chmod(0o755)
         self.env = os.environ.copy()
         for key in list(self.env):
             if key in {
@@ -123,11 +141,20 @@ class Harness:
                 self.env.pop(key, None)
         self.env.update(
             HOME=str(self.home),
+            PATH=f"{self.home / '.local/bin'}:{self.env.get('PATH', '')}",
             DISH_WORKTREE_ROOT=str(self.worktree_root),
             GIT_SSH_COMMAND=str(self.ssh),
             GIT_SSH_VARIANT="ssh",
             TEST_BARE_ORIGIN=str(self.origin),
         )
+
+    def set_block_review(self, *, task: str, pr: int, branch: str, head: str, review_id: str, verdict: str = "BLOCK") -> None:
+        data = json.loads(self.github_reviews.read_text(encoding="utf-8"))
+        data[str(pr)] = {
+            "pr": {"state": "open", "body": f"Implements Asana task {task}.", "head": {"ref": branch, "sha": head}},
+            "reviews": {str(review_id): {"id": int(review_id), "commit_id": head, "body": f"VERDICT: {verdict}\n\nfixture"}},
+        }
+        self.github_reviews.write_text(json.dumps(data) + "\n", encoding="utf-8")
 
     @staticmethod
     def _identity(repo: Path) -> None:
@@ -186,10 +213,22 @@ class Harness:
         if args and args[0] == "claim":
             values = list(args)
             branch = self._option(values, "--branch")
+            stored: dict[str, object] | None = None
             if branch is not None:
                 actual_env.setdefault("TEST_ASANA_BRANCH", branch)
-            actual_env.setdefault("TEST_ASANA_BASE_REF", self._option(values, "--base-ref") or "refs/heads/main")
-            actual_env.setdefault("TEST_ASANA_BASE", self._option(values, "--base") or self.current_remote_main())
+                for candidate in self.state_paths(self._option(values, "--task") or ""):
+                    candidate_state = json.loads(candidate.read_text(encoding="utf-8"))
+                    if candidate_state.get("branch") == branch:
+                        stored = candidate_state
+                        break
+            actual_env.setdefault(
+                "TEST_ASANA_BASE_REF",
+                self._option(values, "--base-ref") or str(stored.get("base_ref") if stored else "refs/heads/main"),
+            )
+            actual_env.setdefault(
+                "TEST_ASANA_BASE",
+                self._option(values, "--base") or str(stored.get("base_sha") if stored else self.current_remote_main()),
+            )
             pr = self._option(values, "--pr-number")
             head = self._option(values, "--pr-head")
             if pr is not None:

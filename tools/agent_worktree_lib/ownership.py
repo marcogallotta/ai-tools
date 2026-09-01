@@ -38,6 +38,7 @@ from .state import (
     task_state_paths,
     validate_agent_state,
     require_repository_mutation_identity,
+    verified_review_block_authority,
 )
 
 CLAIM_SCHEMA_VERSION = 2
@@ -539,8 +540,6 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         # Existing exact lineages admitted before this authority projection landed
         # remain recoverable, but the projection cannot widen their assignment.
         admitted_authority = {"legacy_admitted": True, "assignment": assignment}
-    if args.launch_provenance and pr is not None and admitted_authority is None:
-        admitted_authority = {"review_block_continuation": True, "assignment": assignment}
     if not args.launch_provenance:
         identity = require_repository_mutation_identity(
             agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
@@ -589,10 +588,16 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             if remote_head != pr["head"]:
                 fail("PR_BRANCH_HEAD_MISMATCH", f"authorized PR head {pr['head']} does not equal remote branch {branch} head {remote_head}")
         if args.launch_provenance:
-            prior_identity, _ = bind_identity_from_launch_provenance(
+            prior_identity, bound_identity = bind_identity_from_launch_provenance(
                 Path(args.launch_provenance), agent_id=agent_id, task_gid=task_gid, branch=branch, repo_path=repo.source_top, pr=pr,
             )
             launch_identity_bound = True
+            launch = bound_identity.get("launch_provenance")
+            block_review_id = launch.get("block_review_id") if isinstance(launch, dict) else None
+            if admitted_authority is None and block_review_id is not None:
+                admitted_authority = verified_review_block_authority(
+                    task_gid, assignment, str(block_review_id)
+                )
             identity = require_repository_mutation_identity(
                 agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
             )
@@ -721,12 +726,39 @@ def require_active_claim(
         fail("OWNERSHIP_CLAIM_MISMATCH", "claim task/branch/agent identity does not match the requested writer operation")
     state_file = state_path_for_branch(task_gid, branch)
     state = read_json_object(state_file, "task worktree state") if state_file is not None else None
-    assignment_authority = record.get("repository_assignment_authority")
-    if not isinstance(assignment_authority, dict) and isinstance(state, dict):
-        assignment_authority = state.get("repository_assignment_authority")
+    claim_authority = record.get("repository_assignment_authority")
+    state_authority = state.get("repository_assignment_authority") if isinstance(state, dict) else None
+    if isinstance(state, dict):
+        if not isinstance(claim_authority, dict):
+            fail("MUTATION_ASSIGNMENT_MISMATCH", "claim and worktree state must both retain durable assignment authority")
+        if not isinstance(state_authority, dict):
+            if claim_authority.get("legacy_admitted") is not True:
+                fail("MUTATION_ASSIGNMENT_MISMATCH", "claim and worktree state must both retain durable assignment authority")
+        elif claim_authority != state_authority:
+            fail("MUTATION_ASSIGNMENT_MISMATCH", "claim and worktree assignment authority projections differ")
+    assignment_authority = claim_authority if isinstance(claim_authority, dict) else state_authority
+    stored_assignment = (
+        assignment_authority.get("assignment")
+        if isinstance(assignment_authority, dict)
+        else None
+    )
+    if not isinstance(state, dict) and not isinstance(stored_assignment, dict):
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "active writer claim has no durable worktree assignment")
+    if isinstance(state, dict) and state.get("branch") != branch:
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "worktree state branch differs from the active writer assignment")
+    claim_pr = record.get("pr")
+    current_assignment = {
+        "task_gid": task_gid,
+        "branch": branch,
+        "base_ref": state.get("base_ref") if isinstance(state, dict) else stored_assignment.get("base_ref"),
+        "base_sha": state.get("base_sha") if isinstance(state, dict) else stored_assignment.get("base_sha"),
+        "pr_number": claim_pr.get("number") if isinstance(claim_pr, dict) else None,
+        "pr_head": claim_pr.get("head") if isinstance(claim_pr, dict) else None,
+    }
     require_repository_mutation_identity(
         agent_id,
         task_gid,
+        assignment=current_assignment,
         admitted_authority=assignment_authority if isinstance(assignment_authority, dict) else None,
     )
     if record.get("released_at") is not None:

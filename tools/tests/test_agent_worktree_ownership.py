@@ -701,3 +701,121 @@ def test_registered_v2_admission_is_read_only_and_registry_projection_matches_co
     for gid, base_name in REGISTERED_V2_PROJECTS.items():
         assert f"| `{gid}` | {base_name} |" in contract
     assert len(V2_LIFECYCLE_SECTIONS) == 9
+
+
+def test_writer_rejects_missing_or_tampered_persisted_handoff_authority(h: Harness) -> None:
+    for index, mutation in enumerate(("missing", "branch"), start=3131):
+        task, branch, agent = str(index), f"agent/authority-{index}", f"impl-{index}"
+        h.agent_file(agent, owning_task_gid=task)
+        h.start(task=task, branch=branch, agent=agent)
+        state = h.state(task)
+        if mutation == "missing":
+            state["repository_assignment_authority"] = {}
+        else:
+            state["repository_assignment_authority"]["assignment"]["branch"] = "agent/tampered"
+        h.state_path(task).write_text(json.dumps(state) + "\n", encoding="utf-8")
+        result = h.tool(
+            "commit", "--task", task, "--agent-id", agent,
+            "--message", "must not commit", "tracked.txt", check=False,
+        )
+        assert_error(result, "MUTATION_ASSIGNMENT_MISMATCH")
+
+
+def test_launch_provenance_with_pr_does_not_bypass_missing_ready_handoff(h: Harness) -> None:
+    task, branch, agent, pr = "3133", "agent/no-block-bypass", "impl-3133", 3133
+    h.agent_file(agent, owning_task_gid=task)
+    h.set_task_section(task, "Ready")
+    head = h.remote_branch_commit(branch, "non-BLOCK provenance candidate", start=h.current_remote_main())
+    provenance = _write_launch_provenance(
+        h, agent=agent, task=task, branch=branch, pr=pr, head=head
+    )
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--pr-number", str(pr), "--pr-head", head, "--pr-lease-state", "none",
+        "--launch-provenance", str(provenance), "--require-launch-provenance",
+        "--", "python3", "-c", "raise SystemExit('must not run')",
+        env={"TEST_ASANA_NO_HANDOFF": "1"},
+        check=False,
+    )
+    assert_error(result, "MUTATION_READY_HANDOFF_INVALID")
+
+
+def test_exact_formal_block_review_authorizes_only_its_bound_pr_head(h: Harness) -> None:
+    task, branch, agent, pr, review_id = "3134", "agent/exact-block", "impl-3134", 3134, "913134"
+    h.set_task_section(task, "Ready")
+    head = h.remote_branch_commit(branch, "blocked candidate", start=h.current_remote_main())
+    h.set_block_review(task=task, pr=pr, branch=branch, head=head, review_id=review_id)
+    provenance = _write_launch_provenance(
+        h, agent=agent, task=task, branch=branch, pr=pr, head=head,
+        block_review_id=review_id,
+    )
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--pr-number", str(pr), "--pr-head", head, "--pr-lease-state", "none",
+        "--launch-provenance", str(provenance), "--require-launch-provenance",
+        "--", "python3", "-c", "pass",
+        env={"TEST_ASANA_NO_HANDOFF": "1"}, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    _, claim_record = record(h, task)
+    authority = claim_record["repository_assignment_authority"]
+    assert authority["review_block_continuation"] is True
+    assert authority["block_review_id"] == review_id
+    assert authority["assignment"]["pr_head"] == head
+
+
+def test_review_block_continuation_rejects_missing_or_wrong_formal_review(h: Harness) -> None:
+    for index, verdict in enumerate((None, "MERGE"), start=3135):
+        task, branch, agent, pr, review_id = str(index), f"agent/bad-block-{index}", f"impl-{index}", index, f"91{index}"
+        h.set_task_section(task, "Ready")
+        head = h.remote_branch_commit(branch, f"candidate {index}", start=h.current_remote_main())
+        if verdict is not None:
+            h.set_block_review(
+                task=task, pr=pr, branch=branch, head=head,
+                review_id=review_id, verdict=verdict,
+            )
+        provenance = _write_launch_provenance(
+            h, agent=agent, task=task, branch=branch, pr=pr, head=head,
+            block_review_id=review_id,
+        )
+        result = h.raw_tool(
+            "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+            "--pr-number", str(pr), "--pr-head", head, "--pr-lease-state", "none",
+            "--launch-provenance", str(provenance), "--require-launch-provenance",
+            "--", "python3", "-c", "raise SystemExit('must not run')",
+            env={"TEST_ASANA_NO_HANDOFF": "1"}, check=False,
+        )
+        expected = (
+            "MUTATION_REVIEW_BLOCK_AUTHORITY_UNAVAILABLE"
+            if verdict is None else "MUTATION_REVIEW_BLOCK_AUTHORITY_INVALID"
+        )
+        assert_error(result, expected)
+
+
+def test_writer_rejects_claim_and_state_assignment_authority_disagreement(h: Harness) -> None:
+    task, branch, agent = "3137", "agent/state-claim-drift", "impl-3137"
+    h.agent_file(agent, owning_task_gid=task)
+    h.start(task=task, branch=branch, agent=agent)
+    state = h.state(task)
+    state["repository_assignment_authority"]["assignment"]["branch"] = "agent/tampered"
+    h.state_path(task).write_text(json.dumps(state) + "\n", encoding="utf-8")
+    result = h.tool(
+        "commit", "--task", task, "--agent-id", agent,
+        "--message", "must not commit", "tracked.txt", check=False,
+    )
+    assert_error(result, "MUTATION_ASSIGNMENT_MISMATCH")
+
+
+def test_first_pr_attachment_requires_fresh_exact_pr_head_handoff(h: Harness) -> None:
+    task, branch, agent, pr = "3138", "agent/pr-attachment", "impl-3138", 3138
+    h.agent_file(agent, owning_task_gid=task)
+    h.start(task=task, branch=branch, agent=agent)
+    h.tool("publish", "--task", task)
+    head = git_out(h.wt(task), "rev-parse", "HEAD")
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--pr-number", str(pr), "--pr-head", head, "--pr-lease-state", "none",
+        "--", "python3", "-c", "raise SystemExit('must not run')",
+        env={"TEST_ASANA_NO_HANDOFF": "1"}, check=False,
+    )
+    assert_error(result, "MUTATION_READY_HANDOFF_INVALID")
