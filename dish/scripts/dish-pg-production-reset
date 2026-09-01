@@ -16,6 +16,7 @@ It never changes capture mode, the kill switch, service enablement, or worker
 state. It must be run only after Marco has explicitly authorized the specific
 production reset.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,9 +24,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import hashlib
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
@@ -33,33 +34,58 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from dish_pg.production_reset import (  # noqa: E402
+from dish_pg.production_reset import (
     ProductionResetError,
     capture_reset_target_identity,
     clear_reset_guard,
     create_recovery_record,
+    derive_access_resolution,
     load_recovery_record,
     maintenance_database_url,
     new_recovery_record,
+    persist_access_resolution,
     read_reset_guard,
     recreate_database,
     redacted_database_url,
     restore_database_access,
     snapshot_database_state,
     transition_recovery_record,
+    validate_access_resolution,
     validate_cli_target,
     validate_recovery_record_target,
     verify_database_access,
 )
 
 
+def _ensure_access_resolution(*, database_url: str, recovery_path: Path, record):
+    if record.access_resolution is None:
+        resolution = derive_access_resolution(
+            database_url, record.snapshot, reset_id=record.reset_id
+        )
+        record = persist_access_resolution(
+            recovery_path,
+            expected_reset_id=record.reset_id,
+            expected_state=record.state,
+            resolution=resolution,
+        )
+        log(
+            "durable ACL resolution recorded: "
+            f"head={resolution.schema_head} restored={len(resolution.effective_grants)} "
+            f"skipped={len(resolution.skipped_grants)} "
+            f"replacements={len(resolution.replacements)} checksum={resolution.checksum}"
+        )
+    else:
+        validate_access_resolution(
+            database_url, record.snapshot, record.access_resolution
+        )
+    return record
+
+
 def log(message: str) -> None:
     print(f"[dish-pg-production-reset] {message}", flush=True)
 
 
-def _reset_target_lock_key(
-    cluster_system_identifier: str, database_name: str
-) -> int:
+def _reset_target_lock_key(cluster_system_identifier: str, database_name: str) -> int:
     digest = hashlib.sha256(
         b"dish-production-reset-target\0"
         + cluster_system_identifier.encode("utf-8")
@@ -78,12 +104,16 @@ def hold_reset_target_lock(
     try:
         with engine.connect() as raw_connection:
             connection = raw_connection.execution_options(isolation_level="AUTOCOMMIT")
-            actor = connection.execute(
-                text(
-                    "SELECT current_user AS role_name, role.rolsuper AS is_superuser "
-                    "FROM pg_roles AS role WHERE role.rolname = current_user"
+            actor = (
+                connection.execute(
+                    text(
+                        "SELECT current_user AS role_name, role.rolsuper AS is_superuser "
+                        "FROM pg_roles AS role WHERE role.rolname = current_user"
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             if not bool(actor["is_superuser"]):
                 raise ProductionResetError(
                     "maintenance connection is not a PostgreSQL superuser for the reset target lock"
@@ -215,8 +245,13 @@ def _finalize_access_restored(
     recovery_path: Path,
     record,
 ) -> None:
+    record = _ensure_access_resolution(
+        database_url=database_url,
+        recovery_path=recovery_path,
+        record=record,
+    )
     log("verifying retained original access before finalizing recovered reset")
-    verify_database_access(database_url, record.snapshot)
+    verify_database_access(database_url, record.snapshot, record.access_resolution)
     guard_reset_id = read_reset_guard(database_url, expected_database_name)
     if guard_reset_id is None:
         log("reset guard is already clear; recovering final record finalization")
@@ -297,10 +332,14 @@ def main(argv: list[str] | None = None) -> int:
                         record=record,
                     )
                     log("reset recovery finalization complete")
-                    log("no capture-mode, kill-switch, service, or worker state was changed")
+                    log(
+                        "no capture-mode, kill-switch, service, or worker state was changed"
+                    )
                     return 0
 
-                log("validating the complete prepare environment before resumed destructive work")
+                log(
+                    "validating the complete prepare environment before resumed destructive work"
+                )
                 _run_prepare(preflight_only=True)
                 if record.state == "snapshot_captured":
                     record = transition_recovery_record(
@@ -322,10 +361,14 @@ def main(argv: list[str] | None = None) -> int:
                     log=log,
                 )
             else:
-                log("validating the complete prepare environment before destructive work")
+                log(
+                    "validating the complete prepare environment before destructive work"
+                )
                 _run_prepare(preflight_only=True)
 
-                log("snapshotting database identity, grants, default privileges, and settings")
+                log(
+                    "snapshotting database identity, grants, default privileges, and settings"
+                )
                 snapshot = snapshot_database_state(database_url, expected_database_name)
                 target_identity = capture_reset_target_identity(database_url, snapshot)
                 record = new_recovery_record(target=target_identity, snapshot=snapshot)
@@ -361,7 +404,9 @@ def main(argv: list[str] | None = None) -> int:
                     log=log,
                 )
 
-            log("running the reviewed production prepare sequence against the fresh database")
+            log(
+                "running the reviewed production prepare sequence against the fresh database"
+            )
             try:
                 _run_prepare(preflight_only=False)
             except ProductionResetError as exc:
@@ -372,10 +417,16 @@ def main(argv: list[str] | None = None) -> int:
                 ) from exc
 
             log("restoring and verifying retained original non-owner access atomically")
+            record = _ensure_access_resolution(
+                database_url=database_url,
+                recovery_path=recovery_path,
+                record=record,
+            )
             restore_database_access(
                 database_url,
                 record.snapshot,
                 reset_id=record.reset_id,
+                resolution=record.access_resolution,
             )
             record = transition_recovery_record(
                 recovery_path,
@@ -391,7 +442,9 @@ def main(argv: list[str] | None = None) -> int:
                 expected_state="access_restored",
                 new_state="completed",
             )
-            log("reset + prepare + re-grant sequence complete; recovery record retained as completed")
+            log(
+                "reset + prepare + re-grant sequence complete; recovery record retained as completed"
+            )
             log("no capture-mode, kill-switch, service, or worker state was changed")
             return 0
     except ProductionResetError as exc:
