@@ -32,6 +32,8 @@ def effect_spec_for(
     placement_changed: bool = True,
 ) -> CommandEffectSpec:
     args = dict(arguments)
+    if command_name == "record-cook-log":
+        return CommandEffectSpec(("append_cook_log",), verify_mutation_effects=True)
     if command_name == "create":
         return CommandEffectSpec(
             ("create_task", "activate_initial_document", "place_research_queue"),

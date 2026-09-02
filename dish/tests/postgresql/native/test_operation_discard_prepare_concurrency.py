@@ -766,6 +766,53 @@ def test_native_task_transition_commits_before_final_fence_and_stale_start_rejec
         ) == 0
 
 
+def test_native_cook_log_binds_only_after_final_task_fence(core_db) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    log_run, cooked_run = _seed_task_fence_runs(factory, ids, context)
+    before_lock = TransactionGate(label="cook log waits before final task-fence lock")
+    engine = factory.kw["bind"]
+
+    def stale_log():
+        with managed_session(log_connection) as session:
+            return _task_fence_port(session, before_lock=before_lock).execute(
+                CommandCall(
+                    command_name="record-cook-log",
+                    arguments={"dish_id": str(task_id), "agent": "codex", "text": "concurrent observation"},
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    run_id=log_run,
+                    request_id=uuid.uuid4(),
+                    now=NOW + timedelta(seconds=1),
+                )
+            )
+
+    with independent_connections(engine) as (log_connection, cooked_connection):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(stale_log)
+            before_lock.wait_until_blocked()
+            assert_transaction_blocked(future)
+            with managed_session(cooked_connection) as session:
+                cooked = _task_fence_port(session).execute(
+                    CommandCall(
+                        command_name="cooked",
+                        arguments={"dish_id": str(task_id), "agent": "codex"},
+                        owner_id="owner-1",
+                        principal_class="agent",
+                        run_id=cooked_run,
+                        request_id=uuid.uuid4(),
+                        now=NOW + timedelta(seconds=2),
+                    )
+                )
+                assert cooked.ok is True
+            before_lock.release()
+            result = future.result()
+
+    assert result.ok is False
+    assert result.code == "AUTHORITY_MISMATCH"
+    with session_scope(factory) as session:
+        assert session.scalar(select(func.count()).select_from(wf.CookLogEntry)) == 0
+
+
 def test_native_start_holds_final_task_fence_until_commit_and_cooked_observes_operation(
     core_db,
 ) -> None:

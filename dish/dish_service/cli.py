@@ -58,6 +58,8 @@ class JsonArgumentParser(argparse.ArgumentParser):
 TOPIC_COMMANDS = ("planning", "research", "verification")
 SEARCH_COMMAND = "search"
 COOKED_COMMAND = "cooked"
+RECORD_COOK_LOG_COMMAND = "record-cook-log"
+COOK_LOGS_COMMAND = "cook-logs"
 SEARCH_PAGE_SIZE_DEFAULT = 50
 
 
@@ -212,6 +214,22 @@ def build_parser() -> JsonArgumentParser:
     )
     search.add_argument("--cursor", default=None, help="opaque next_cursor from a prior search page")
     search.add_argument("--page-size", type=int, default=SEARCH_PAGE_SIZE_DEFAULT)
+
+    record_cook_log = subparsers.add_parser(
+        RECORD_COOK_LOG_COMMAND, help="append an immutable note to a Dish's cook log"
+    )
+    record_cook_log.add_argument("dish_id")
+    record_cook_log.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    record_cook_log.add_argument("--text", required=True)
+    record_cook_log.add_argument("--request-id")
+
+    cook_logs = subparsers.add_parser(
+        COOK_LOGS_COMMAND, help="list a Dish's immutable cook log"
+    )
+    cook_logs.add_argument("dish_id")
+    cook_logs.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    cook_logs.add_argument("--cursor", default=None)
+    cook_logs.add_argument("--page-size", type=int, default=50)
 
     read = subparsers.add_parser(
         READ_COMMAND.name, help="read the exact live task through the tool"
@@ -492,7 +510,7 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
             agent = argv[index + 1]
     task_gid = None
     submission_id = None
-    if command in {"read", "start"} and len(argv) > 1 and not argv[1].startswith("-"):
+    if command in {"read", "start", RECORD_COOK_LOG_COMMAND, COOK_LOGS_COMMAND} and len(argv) > 1 and not argv[1].startswith("-"):
         task_gid = argv[1]
     if (
         command in {"inspect", "safe-reclaim", "prepare", "approve", "reject", "submit"}

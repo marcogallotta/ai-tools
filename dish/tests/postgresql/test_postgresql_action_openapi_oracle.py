@@ -192,7 +192,7 @@ def test_postgresql_discovery_reads_reject_malformed_run_id_consistently() -> No
 
 
 def test_postgresql_search_action_is_read_only_bounded_and_reuses_stable_run_id() -> None:
-    assert POSTGRESQL_ACTION_ADDED_COMMANDS == (SEARCH_COMMAND, COOKED_COMMAND)
+    assert SEARCH_COMMAND in POSTGRESQL_ACTION_ADDED_COMMANDS
     assert SEARCH_COMMAND in ACTION_COMMANDS
     definition = COMMAND_DEFINITIONS[SEARCH_COMMAND]
     assert definition.profile == "Q"

@@ -95,6 +95,70 @@ class PostgresCommandReadMixin:
                     http_status=403,
                 )
             data = self._queue()
+        elif call.command_name == "cook-logs":
+            reference = call.arguments.get("dish_id")
+            if reference is None:
+                raise CommandRuleError("TASK_REQUIRED", "dish_id is required", http_status=400)
+            try:
+                task = self.reads.resolve_task(str(reference))
+            except ReadModelError as exc:
+                raise CommandRuleError("TASK_NOT_FOUND", str(exc), http_status=404) from exc
+            generation_id = self.reads.active_generation().generation_id
+            page_size = int(call.arguments.get("page_size", 50))
+            cursor = call.arguments.get("cursor")
+            after_time = None
+            after_id = None
+            if cursor is not None:
+                try:
+                    payload = self.reads.cursor_codec.decode(str(cursor))
+                    if (
+                        payload.get("kind") != "cook_logs"
+                        or payload.get("generation_id") != str(generation_id)
+                        or payload.get("task_id") != str(task.task_id)
+                    ):
+                        raise ValueError("cursor scope mismatch")
+                    after_time = datetime.fromisoformat(str(payload["recorded_at"]))
+                    after_id = uuid.UUID(str(payload["log_id"]))
+                except (KeyError, TypeError, ValueError, ReadModelError) as exc:
+                    raise CommandRuleError("INVALID_CURSOR", "cook-log cursor is invalid", http_status=400) from exc
+            statement = select(wf.CookLogEntry).where(
+                wf.CookLogEntry.generation_id == generation_id,
+                wf.CookLogEntry.task_id == task.task_id,
+            )
+            if after_time is not None and after_id is not None:
+                statement = statement.where(
+                    (wf.CookLogEntry.recorded_at > after_time)
+                    | (
+                        (wf.CookLogEntry.recorded_at == after_time)
+                        & (wf.CookLogEntry.log_id > after_id)
+                    )
+                )
+            rows = list(self.session.scalars(statement.order_by(wf.CookLogEntry.recorded_at, wf.CookLogEntry.log_id).limit(page_size + 1)))
+            visible = rows[:page_size]
+            next_cursor = None
+            if len(rows) > page_size:
+                last = visible[-1]
+                next_cursor = self.reads.cursor_codec.encode({
+                    "kind": "cook_logs",
+                    "generation_id": str(generation_id),
+                    "task_id": str(task.task_id),
+                    "recorded_at": last.recorded_at.isoformat(),
+                    "log_id": str(last.log_id),
+                })
+            data = {
+                "dish_id": str(task.task_id),
+                "logs": [
+                    {
+                        "log_id": str(row.log_id),
+                        "text": row.text,
+                        "recorded_at": row.recorded_at.isoformat(),
+                        "content_version_id": str(row.content_version_id),
+                        "dish_version": row.dish_version,
+                    }
+                    for row in visible
+                ],
+                "next_cursor": next_cursor,
+            }
         elif call.command_name == "attention":
             if call.principal_class != "admin":
                 raise CommandRuleError(
