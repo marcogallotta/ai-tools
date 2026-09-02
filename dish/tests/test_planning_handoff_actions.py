@@ -11,6 +11,35 @@ from tests.support.planning_intent import confirmed_planning_start
 from tests.support.planning import Backend, PLANNING, release
 
 
+def test_postgresql_native_planning_handoff_gets_dish_id_continuation():
+    dish_id = "11111111-1111-4111-8111-111111111111"
+    prepared = {
+        "ok": True,
+        "command": "prepare",
+        "code": "OK",
+        "http_status": 200,
+        "retryable": False,
+        "data": {
+            "dish_id": dish_id,
+            "handoff": "planning-to-research",
+            "required_start_kind": "initial",
+            "allowed_actions": ["start"],
+        },
+    }
+
+    guided = attach_action_agent_guidance(prepared)
+
+    assert guided["data"]["agent_action"] == {
+        "command": "start",
+        "arguments": {"dish_id": dish_id, "kind": "initial"},
+    }
+    assert guided["data"]["continuation_requirements"] == {
+        "fresh_client_run_id": True,
+        "fresh_client_request_id": True,
+        "omit_arguments": ["prepared_operation_id"],
+    }
+
+
 def test_service_preserves_planning_handoff_start_contract(tmp_path):
     backend = Backend(task_gid="123456789")
     honest = tmp_path / "honest"

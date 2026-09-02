@@ -1729,6 +1729,9 @@ Destination section: Sichuan — 12345
         )
         assert prepared.ok, (prepared.code, prepared.http_status, prepared.data)
         assert prepared.data["handoff"] == "planning-to-research"
+        assert prepared.data["dish_id"] == str(task_id)
+        assert prepared.data["required_start_kind"] == "initial"
+        assert prepared.data["allowed_actions"] == ["start"]
         assert prepared.data["cycle_id"] is None
         assert (prepared.data["placement_projection_event_id"] is not None) is (
             start_away_from_research and external_projection_enabled
