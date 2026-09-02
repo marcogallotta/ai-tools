@@ -15,6 +15,8 @@ from dish_pg.command_port import CommandResult
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.transition import ProjectionService
+from dish_service import cli
+from dish_service.client import DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import DishHTTPServer
 from dish_service.leases import ServicePrincipal
@@ -626,6 +628,64 @@ def test_postgresql_action_canonical_ids_work_without_asana_identity(
     assert alias_search_status == 200 and alias_search_result["ok"] is True
     assert alias_search_result["data"]["results"][0]["dish_id"] == str(task_id)
     assert alias_search_result["data"]["results"][0]["task_gid"] == "123456789"
+
+
+def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
+    workflow_db, tmp_path: Path, capsys
+) -> None:
+    factory, ids, context, imported_task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="cli",
+            agent="gpt",
+        )
+        ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="canonical CLI identity test authority",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+
+    service = runtime_service(factory, tmp_path)
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-canonical-cli-http")
+        client = DishServiceClient(
+            f"http://127.0.0.1:{server.server_address[1]}",
+            token="postgres-agent-token",
+            run_id=str(run_id),
+        )
+
+        def invoke(*arguments: str) -> dict[str, object]:
+            assert cli.main(list(arguments), application=client) == 0
+            return json.loads(capsys.readouterr().out)
+
+        try:
+            created = invoke("create", "--agent", "gpt", "--title", "CLI native identity")
+            dish_id = str(created["data"]["dish_id"])
+            searched = invoke("search", "CLI native identity", "--agent", "gpt")
+            read = invoke("read", dish_id, "--agent", "gpt")
+            started = invoke(
+                "start", dish_id, "--agent", "gpt", "--kind", "initial"
+            )
+            alias_read = invoke("read", "123456789", "--agent", "gpt")
+            alias_started = invoke(
+                "start", "123456789", "--agent", "gpt", "--kind", "initial"
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert created["ok"] is True
+    assert searched["data"]["results"][0]["dish_id"] == dish_id
+    assert read["ok"] is True and read["data"]["dish_id"] == dish_id
+    assert read["data"]["identity_binding"]["task_gid"] is None
+    assert started["ok"] is True and started["data"]["operation_id"]
+    assert alias_read["ok"] is True
+    assert alias_read["data"]["dish_id"] == str(imported_task_id)
+    assert alias_started["ok"] is True and alias_started["data"]["operation_id"]
 
 
 def test_postgresql_runtime_renew_lease_reuses_command_port(
