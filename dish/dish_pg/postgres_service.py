@@ -744,7 +744,12 @@ class PostgresRuntimeService:
             data = dict(payload.pop("data"))
             data["request_replayed"] = payload.pop("request_replayed")
             payload["data"] = data
-            if principal.owner_id != self.config.action_client_id:
+            if principal.owner_id == self.config.action_client_id:
+                # Guidance is attached before JSON encoding, so normalize the
+                # immutable tuple fields to their public JSON array shape now.
+                payload["allowed_actions"] = list(payload["allowed_actions"])
+                payload["errors"] = list(payload["errors"])
+            else:
                 # The native CLI/private client still consumes the established
                 # PostgreSQL service family. The public Action principal receives
                 # the richer canonical workflow envelope.

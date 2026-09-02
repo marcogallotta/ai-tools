@@ -197,6 +197,11 @@ Destination section: Sichuan — 12345
         assert isinstance(command, str)
         assert isinstance(arguments, dict)
         assert command in result["allowed_actions"]
+        guidance = data["agent_guidance"]
+        assert isinstance(guidance, dict)
+        instructions = guidance["instructions"]
+        assert isinstance(instructions, list)
+        assert any(f"Call {command}" in instruction for instruction in instructions)
         return command, dict(arguments)
 
     with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
