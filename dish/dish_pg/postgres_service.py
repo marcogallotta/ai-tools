@@ -39,7 +39,12 @@ from .command_port_common import task_reference_from_dish
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .frontend_board_query import FrontendBoardQuery
 from .openapi import postgres_action_openapi
-from .read_model import InvalidCursor, PostgresReadModel, ReadModelError
+from .read_model import (
+    InvalidCursor,
+    PostgresReadModel,
+    ReadModelError,
+    assert_native_catalog_runtime_current,
+)
 from .workflow import RequestIdentityConflict, WorkflowAuthorityError
 
 
@@ -233,6 +238,17 @@ class PostgresRuntimeService:
                         rule="postgresql_generation_missing",
                         retryable=False,
                     )
+                try:
+                    assert_native_catalog_runtime_current(
+                        session, generation.generation_id
+                    )
+                except ReadModelError as exc:
+                    raise DishRuleError(
+                        "BACKEND_REJECTED",
+                        "PostgreSQL native Section catalog runtime is unhealthy",
+                        rule="postgresql_native_catalog_runtime_unhealthy",
+                        retryable=False,
+                    ) from exc
         except DishRuleError:
             raise
         except SQLAlchemyError as exc:

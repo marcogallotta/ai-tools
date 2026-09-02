@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import copy
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
 
+from dish_pg import models
 from dish_pg import reservation_models as reservations
 from dish_pg import stage3_models as wf
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
+from dish_pg.release import ALEMBIC_HEAD
 from dish_pg.workflow import WorkflowAuthorityService, sha256_json
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
@@ -29,6 +32,170 @@ def _runtime(factory) -> PostgresRuntimeService:
     runtime._session_maker = factory
     runtime._cursor_secret = b"native-validation-replay-secret!"
     return runtime
+
+
+def _health_runtime(factory, context) -> PostgresRuntimeService:
+    runtime = _runtime(factory)
+    runtime.config = SimpleNamespace(
+        bind_host="127.0.0.1",
+        action_bind_host="127.0.0.1",
+    )
+    runtime._expected_database = str(factory.kw["bind"].url.database)
+    runtime._expected_schema_head = ALEMBIC_HEAD
+    runtime._expected_release = "dish-42619b9"
+    runtime._expected_generation_id = context["generation_id"]
+    runtime._profile = "test"
+    return runtime
+
+
+def _install_post_burn_authority(session, ids, context):
+    active = session.get(models.ActiveSectionCatalog, context["generation_id"])
+    assert active is not None
+    activation_id = _next(ids)
+    session.add(
+        models.AuthorityActivation(
+            activation_id=activation_id,
+            generation_id=context["generation_id"],
+            import_run_id=context["import_run_id"],
+            cutover_approval_id="native-runtime-health",
+            legacy_bundle_id="native-runtime-health",
+            registry_version_id=context["registry_version_id"],
+            catalog_version_id=active.catalog_version_id,
+            honest_binding_id=context["binding_id"],
+            rehearsal_id=None,
+            schema_head=ALEMBIC_HEAD,
+            dish_release="dish-42619b9",
+            honest_release="honest-1",
+            protocol_release="protocol-1",
+            openapi_release="openapi-1",
+            routing_release="route-1",
+            projection_epoch=_next(ids),
+            outcome="activated",
+            rollback_burned_at=NOW,
+            recorded_at=NOW,
+        )
+    )
+    session.flush()
+    return active, activation_id
+
+
+def _install_post_burn_catalog_runtime(session, ids, context):
+    active, activation_id = _install_post_burn_authority(session, ids, context)
+    attestation_id = _next(ids)
+    attestation_payload = {
+        "contract": "native-section-runtime-attestation-v1",
+        "generation_id": str(context["generation_id"]),
+        "catalog_version_id": str(active.catalog_version_id),
+        "catalog_activation_id": str(active.catalog_activation_id),
+        "catalog_revision": active.catalog_revision,
+        "authority_activation_id": str(activation_id),
+        "attestation_revision": 1,
+    }
+    attestation = models.NativeCatalogRuntimeAttestation(
+        attestation_id=attestation_id,
+        generation_id=context["generation_id"],
+        catalog_version_id=active.catalog_version_id,
+        catalog_activation_id=active.catalog_activation_id,
+        predecessor_attestation_id=None,
+        authority_activation_id=activation_id,
+        attestation_revision=1,
+        attestation_sha256=sha256_json(attestation_payload),
+        recorded_at=NOW,
+    )
+    session.add(attestation)
+    session.flush()
+    current = models.CurrentNativeCatalogRuntime(
+        generation_id=context["generation_id"],
+        attestation_id=attestation_id,
+        catalog_version_id=active.catalog_version_id,
+        catalog_activation_id=active.catalog_activation_id,
+        attestation_revision=1,
+        updated_at=NOW,
+    )
+    session.add(current)
+    session.flush()
+    return attestation, current
+
+
+def _assert_catalog_runtime_unhealthy(result) -> None:
+    assert result == {
+        "ok": False,
+        "startup_ready": False,
+        "backend": "postgresql",
+        "profile": "test",
+        "pid": result["pid"],
+        "code": "BACKEND_REJECTED",
+        "rule": "postgresql_native_catalog_runtime_unhealthy",
+        "retryable": False,
+    }
+
+
+def test_native_runtime_health_preserves_valid_pre_burn_identity(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head=ALEMBIC_HEAD,
+        )
+
+    health = _health_runtime(factory, context).health()
+
+    assert health["ok"] is True
+    assert health["startup_ready"] is True
+    assert health["identity"]["generation_id"] == str(context["generation_id"])
+
+
+def test_native_runtime_health_rejects_missing_post_burn_catalog_runtime(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head=ALEMBIC_HEAD,
+        )
+        _install_post_burn_authority(session, ids, context)
+
+    _assert_catalog_runtime_unhealthy(_health_runtime(factory, context).health())
+
+
+@pytest.mark.parametrize("corruption", ["stale_revision", "mismatched_attestation"])
+def test_native_runtime_health_rejects_stale_or_mismatched_catalog_lineage(
+    core_db, corruption
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head=ALEMBIC_HEAD,
+        )
+        attestation, current = _install_post_burn_catalog_runtime(
+            session, ids, context
+        )
+        if corruption == "stale_revision":
+            current.attestation_revision = 2
+        else:
+            attestation.attestation_sha256 = "f" * 64
+
+    _assert_catalog_runtime_unhealthy(_health_runtime(factory, context).health())
+
+
+def test_native_runtime_health_accepts_current_post_burn_catalog(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head=ALEMBIC_HEAD,
+        )
+        _install_post_burn_catalog_runtime(session, ids, context)
+
+    assert _health_runtime(factory, context).health()["ok"] is True
 
 
 def _error(field: str = "operation_id") -> DishRuleError:
