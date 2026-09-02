@@ -21,6 +21,7 @@ from dish_tool.commands import DishApplication
 from dish_tool.constants import DB_PATH
 from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
+from dish_tool.identifiers import require_dish_uuid
 from dish_tool.releases import configured_honest_path, resolve_release
 from dish_service.client import DishServiceClient
 from dish_service.command_spec import (
@@ -532,6 +533,26 @@ def _attach_exact_replay_command(
         data["replay_command"] = shlex.join(replay_argv)
 
 
+def _route_service_task_reference(
+    command: str, arguments: dict[str, object], application: object
+) -> None:
+    """Route a canonical Dish UUID without weakening legacy GID handling."""
+
+    if command not in {READ_COMMAND.name, START_COMMAND.name} or not isinstance(
+        application, DishServiceClient
+    ):
+        return
+    reference = arguments.get("task_gid")
+    try:
+        dish_id = require_dish_uuid(reference, field="dish_id")
+    except DishRuleError:
+        # The service remains the authority for legacy task_gid validation and
+        # its exact error contract. Only an exact canonical UUID is rerouted.
+        return
+    arguments.pop("task_gid", None)
+    arguments["dish_id"] = dish_id
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -591,6 +612,7 @@ def main(
         else:
             command = parsed.pop("command")
             parsed.pop("profile", None)
+            _route_service_task_reference(command, parsed, app)
             result = app.execute(command, **parsed)
     except DishRuleError as exc:
         result = error_envelope(
