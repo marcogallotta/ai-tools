@@ -377,7 +377,26 @@ def test_action_guidance_treats_read_identity_binding_as_canonical():
     })
     text = " ".join(guidance["instructions"])
     assert "exact canonical Dish-to-task binding" in text
+    assert "Use the returned task_gid for task-scoped continuation" in text
     assert "do not rediscover the Dish through sections or title matching" in text
+    assert "never use dish_id as submission_id" in text
+
+
+def test_action_guidance_uses_native_dish_id_when_read_has_no_task_alias():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "read",
+        "code": "OK",
+        "allowed_actions": ["start"],
+        "data": {
+            "identity_binding": {
+                "dish_id": "91b697f6-8799-5c4d-b8ee-890b1386a644",
+                "task_gid": None,
+            }
+        },
+    })
+    text = " ".join(guidance["instructions"])
+    assert "No task_gid is bound; use the returned dish_id for task-scoped continuation" in text
     assert "never use dish_id as submission_id" in text
 
 
