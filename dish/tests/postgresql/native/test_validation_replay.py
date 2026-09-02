@@ -15,7 +15,9 @@ from dish_pg import stage3_models as wf
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
+from dish_pg.recovery_control import _clone_native_catalog, _clone_registry
 from dish_pg.release import ALEMBIC_HEAD
+from dish_pg.repositories import AuthorityRepository
 from dish_pg.workflow import WorkflowAuthorityService, sha256_json
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
@@ -132,6 +134,78 @@ def _install_post_burn_catalog_runtime(session, ids, context):
     session.add(current)
     session.flush()
     return attestation, current
+
+
+def _install_destructive_recovery_catalog_runtime(
+    session, ids, context, *, authenticate_catalog: bool = True
+):
+    predecessor_generation_id = context["generation_id"]
+    successor_generation_id = _next(ids)
+    session.add(
+        models.AuthorityGeneration(
+            generation_id=successor_generation_id,
+            predecessor_generation_id=predecessor_generation_id,
+            creation_reason="destructive_restore",
+            external_restore_control_id=f"restore:{successor_generation_id}",
+            schema_head=ALEMBIC_HEAD,
+            dish_release="dish-42619b9",
+            status="pending",
+            created_at=NOW,
+            retired_at=None,
+        )
+    )
+    session.flush()
+    registry_version_id, _registry_activation_id = _clone_registry(
+        session,
+        predecessor_generation_id=predecessor_generation_id,
+        generation_id=successor_generation_id,
+        at=NOW,
+        uuid_factory=lambda: _next(ids),
+    )
+    catalog_version_id, _catalog_activation_id = _clone_native_catalog(
+        session,
+        predecessor_generation_id=predecessor_generation_id,
+        generation_id=successor_generation_id,
+        at=NOW,
+        uuid_factory=lambda: _next(ids),
+    )
+    predecessor_authority = session.scalar(
+        select(models.AuthorityActivation).where(
+            models.AuthorityActivation.generation_id == predecessor_generation_id,
+            models.AuthorityActivation.outcome == "activated",
+        )
+    )
+    activation = models.AuthorityActivation(
+        activation_id=_next(ids),
+        generation_id=successor_generation_id,
+        import_run_id=context["import_run_id"],
+        cutover_approval_id=f"restore:{successor_generation_id}",
+        legacy_bundle_id=f"postgresql-restore:{successor_generation_id}",
+        registry_version_id=registry_version_id,
+        catalog_version_id=(
+            catalog_version_id
+            if authenticate_catalog
+            else predecessor_authority.catalog_version_id
+        ),
+        honest_binding_id=context["binding_id"],
+        rehearsal_id=None,
+        schema_head=ALEMBIC_HEAD,
+        dish_release="dish-42619b9",
+        honest_release="honest-1",
+        protocol_release="protocol-1",
+        openapi_release="openapi-1",
+        routing_release="route-1",
+        projection_epoch=_next(ids),
+        outcome="activated",
+        rollback_burned_at=NOW,
+        recorded_at=NOW,
+    )
+    AuthorityRepository(session).activate_generation(
+        generation_id=successor_generation_id,
+        activation=activation,
+        at=NOW,
+    )
+    return {**context, "generation_id": successor_generation_id}
 
 
 def _advance_post_burn_catalog_runtime(session, ids, context):
@@ -309,6 +383,80 @@ def test_native_runtime_health_accepts_current_post_burn_catalog(core_db) -> Non
         _install_post_burn_catalog_runtime(session, ids, context)
 
     assert _health_runtime(factory, context).health()["ok"] is True
+
+
+def test_native_runtime_health_accepts_burn_at_catalog_revision_greater_than_one(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
+        active = session.get(models.ActiveSectionCatalog, context["generation_id"])
+        activation = session.get(
+            models.SectionCatalogActivation, active.catalog_activation_id
+        )
+        active.catalog_revision = 2
+        activation.catalog_revision = 2
+        attestation, _current = _install_post_burn_catalog_runtime(
+            session, ids, context
+        )
+        assert attestation.attestation_revision == 1
+        assert active.catalog_revision == 2
+
+    assert _health_runtime(factory, context).health()["ok"] is True
+
+
+def test_native_runtime_health_accepts_destructive_recovery_cross_generation_edge(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
+        predecessor_attestation, _current = _install_post_burn_catalog_runtime(
+            session, ids, context
+        )
+        successor_context = _install_destructive_recovery_catalog_runtime(
+            session, ids, context
+        )
+        successor_current = session.get(
+            models.CurrentNativeCatalogRuntime, successor_context["generation_id"]
+        )
+        successor_attestation = session.get(
+            models.NativeCatalogRuntimeAttestation,
+            successor_current.attestation_id,
+        )
+        successor_active = session.get(
+            models.ActiveSectionCatalog, successor_context["generation_id"]
+        )
+        assert successor_attestation.predecessor_attestation_id == (
+            predecessor_attestation.attestation_id
+        )
+        assert successor_attestation.attestation_revision == 2
+        assert successor_active.catalog_revision == 1
+
+    assert _health_runtime(factory, successor_context).health()["ok"] is True
+
+
+def test_native_runtime_health_rejects_unauthenticated_recovery_catalog_edge(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
+        _install_post_burn_catalog_runtime(session, ids, context)
+        successor_context = _install_destructive_recovery_catalog_runtime(
+            session, ids, context, authenticate_catalog=False
+        )
+
+    _assert_catalog_runtime_unhealthy(
+        _health_runtime(factory, successor_context).health()
+    )
 
 
 def test_native_runtime_health_accepts_adjacent_post_burn_catalog_successor(core_db) -> None:

@@ -130,7 +130,6 @@ def assert_native_catalog_runtime_current(
         or attestation is None
         or current.catalog_version_id != active.catalog_version_id
         or current.catalog_activation_id != active.catalog_activation_id
-        or current.attestation_revision != active.catalog_revision
         or current.attestation_revision != attestation.attestation_revision
         or attestation.generation_id != generation_id
         or attestation.catalog_version_id != active.catalog_version_id
@@ -148,17 +147,15 @@ def assert_native_catalog_runtime_current(
         )
         if (
             activation is None
-            or cursor.generation_id != generation_id
-            or activation.generation_id != generation_id
+            or activation.generation_id != cursor.generation_id
             or activation.catalog_version_id != cursor.catalog_version_id
-            or activation.catalog_revision != cursor.attestation_revision
         ):
             raise ReadModelError(
                 "native Section catalog runtime attestation chain is stale or incomplete"
             )
         payload = {
             "contract": "native-section-runtime-attestation-v1",
-            "generation_id": str(generation_id),
+            "generation_id": str(cursor.generation_id),
             "catalog_version_id": str(cursor.catalog_version_id),
             "catalog_activation_id": str(cursor.catalog_activation_id),
             "catalog_revision": activation.catalog_revision,
@@ -172,10 +169,25 @@ def assert_native_catalog_runtime_current(
         if cursor.attestation_sha256 != sha256_json(payload):
             raise ReadModelError("native Section catalog runtime attestation is corrupt")
         if cursor.attestation_revision == 1:
+            root_authority = (
+                None
+                if cursor.authority_activation_id is None
+                else session.get(
+                    models.AuthorityActivation, cursor.authority_activation_id
+                )
+            )
+            root_generation = session.get(
+                models.AuthorityGeneration, cursor.generation_id
+            )
             if (
                 cursor.predecessor_attestation_id is not None
-                or cursor.authority_activation_id != authority.activation_id
-                or cursor.catalog_version_id != authority.catalog_version_id
+                or root_authority is None
+                or root_authority.generation_id != cursor.generation_id
+                or root_authority.outcome != "activated"
+                or root_authority.catalog_version_id != cursor.catalog_version_id
+                or root_generation is None
+                or root_generation.creation_reason != "initial_cutover"
+                or root_generation.predecessor_generation_id is not None
             ):
                 raise ReadModelError(
                     "native Section catalog runtime root does not bind rollback burn"
@@ -194,16 +206,43 @@ def assert_native_catalog_runtime_current(
         )
         if (
             predecessor is None
-            or predecessor.generation_id != generation_id
             or predecessor.attestation_revision != cursor.attestation_revision - 1
         ):
             raise ReadModelError(
                 "native Section catalog runtime attestation chain is gapped"
             )
+        if predecessor.generation_id != cursor.generation_id:
+            successor_generation = session.get(
+                models.AuthorityGeneration, cursor.generation_id
+            )
+            successor_authority = session.scalar(
+                select(models.AuthorityActivation).where(
+                    models.AuthorityActivation.generation_id == cursor.generation_id,
+                    models.AuthorityActivation.outcome == "activated",
+                )
+            )
+            predecessor_current = session.get(
+                models.CurrentNativeCatalogRuntime, predecessor.generation_id
+            )
+            if (
+                successor_generation is None
+                or successor_generation.creation_reason
+                not in {"destructive_restore", "test_fixture_recovery"}
+                or successor_generation.predecessor_generation_id
+                != predecessor.generation_id
+                or successor_authority is None
+                or successor_authority.catalog_version_id
+                != cursor.catalog_version_id
+                or activation.catalog_revision != 1
+                or predecessor_current is None
+                or predecessor_current.attestation_id != predecessor.attestation_id
+            ):
+                raise ReadModelError(
+                    "native Section catalog runtime recovery edge is unauthenticated"
+                )
         children = list(
             session.scalars(
                 select(models.NativeCatalogRuntimeAttestation.attestation_id).where(
-                    models.NativeCatalogRuntimeAttestation.generation_id == generation_id,
                     models.NativeCatalogRuntimeAttestation.predecessor_attestation_id
                     == predecessor.attestation_id,
                 )
