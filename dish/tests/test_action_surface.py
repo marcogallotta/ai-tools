@@ -350,6 +350,42 @@ def test_action_guidance_renders_state_specific_continuations():
     assert any("safely parked" in item for item in guidance["instructions"])
 
 
+def test_action_guidance_uses_postgresql_nested_allowed_actions():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "approve",
+        "code": "OK",
+        "data": {"allowed_actions": ["submit"]},
+    })
+
+    assert "Call submit in this same run." in guidance["instructions"]
+
+
+def test_action_guidance_uses_postgresql_read_legal_actions():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "start",
+        "code": "OK",
+        "data": {"legal_actions": ["inspect"]},
+    })
+
+    assert any(
+        instruction.startswith("Inspect this Verification candidate")
+        for instruction in guidance["instructions"]
+    )
+
+
+def test_action_guidance_does_not_trust_malformed_nested_actions():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "approve",
+        "code": "OK",
+        "data": {"allowed_actions": "submit"},
+    })
+
+    assert "Call submit in this same run." not in guidance["instructions"]
+
+
 def test_action_guidance_fails_closed_on_backend_uncertainty():
     guidance = action_agent_guidance({
         "ok": False,
