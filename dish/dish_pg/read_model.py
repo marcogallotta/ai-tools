@@ -124,13 +124,22 @@ def assert_native_catalog_runtime_current(
         if current is None
         else session.get(models.NativeCatalogRuntimeAttestation, current.attestation_id)
     )
+    active_activation = (
+        None
+        if active is None
+        else session.get(
+            models.SectionCatalogActivation, active.catalog_activation_id
+        )
+    )
     if (
         active is None
         or current is None
         or attestation is None
+        or active_activation is None
         or current.catalog_version_id != active.catalog_version_id
         or current.catalog_activation_id != active.catalog_activation_id
         or current.attestation_revision != attestation.attestation_revision
+        or active.catalog_revision != active_activation.catalog_revision
         or attestation.generation_id != generation_id
         or attestation.catalog_version_id != active.catalog_version_id
         or attestation.catalog_activation_id != active.catalog_activation_id
@@ -239,6 +248,20 @@ def assert_native_catalog_runtime_current(
             ):
                 raise ReadModelError(
                     "native Section catalog runtime recovery edge is unauthenticated"
+                )
+        else:
+            predecessor_activation = session.get(
+                models.SectionCatalogActivation,
+                predecessor.catalog_activation_id,
+            )
+            if (
+                predecessor_activation is None
+                or predecessor_activation.generation_id != cursor.generation_id
+                or activation.catalog_revision
+                != predecessor_activation.catalog_revision + 1
+            ):
+                raise ReadModelError(
+                    "native Section catalog runtime catalog chain is gapped"
                 )
         children = list(
             session.scalars(

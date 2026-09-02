@@ -371,6 +371,19 @@ def test_native_runtime_health_rejects_stale_or_mismatched_catalog_lineage(
     _assert_catalog_runtime_unhealthy(_health_runtime(factory, context).health())
 
 
+def test_native_runtime_health_rejects_stale_active_catalog_revision(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
+        _install_post_burn_catalog_runtime(session, ids, context)
+        active = session.get(models.ActiveSectionCatalog, context["generation_id"])
+        active.catalog_revision += 1
+
+    _assert_catalog_runtime_unhealthy(_health_runtime(factory, context).health())
+
+
 def test_native_runtime_health_accepts_current_post_burn_catalog(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
@@ -469,6 +482,36 @@ def test_native_runtime_health_accepts_adjacent_post_burn_catalog_successor(core
         _advance_post_burn_catalog_runtime(session, ids, context)
 
     assert _health_runtime(factory, context).health()["ok"] is True
+
+
+def test_native_runtime_health_rejects_same_generation_catalog_revision_gap(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
+        _install_post_burn_catalog_runtime(session, ids, context)
+        successor = _advance_post_burn_catalog_runtime(session, ids, context)
+        active = session.get(models.ActiveSectionCatalog, context["generation_id"])
+        activation = session.get(
+            models.SectionCatalogActivation, successor.catalog_activation_id
+        )
+        active.catalog_revision = activation.catalog_revision = 3
+        successor.attestation_sha256 = sha256_json(
+            {
+                "contract": "native-section-runtime-attestation-v1",
+                "generation_id": str(context["generation_id"]),
+                "catalog_version_id": str(successor.catalog_version_id),
+                "catalog_activation_id": str(successor.catalog_activation_id),
+                "catalog_revision": 3,
+                "authority_activation_id": None,
+                "attestation_revision": successor.attestation_revision,
+            }
+        )
+
+    _assert_catalog_runtime_unhealthy(_health_runtime(factory, context).health())
 
 
 def test_native_runtime_health_rejects_gapped_successor_chain(core_db) -> None:
