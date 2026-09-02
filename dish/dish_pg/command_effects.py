@@ -178,6 +178,11 @@ def effect_spec_for(
             ("update_task_document",),
             verify_mutation_effects=True,
         )
+    if command_name == "review-reject":
+        return CommandEffectSpec(
+            ("cancel_semantic_proposal", "open_fresh_verification_cycle"),
+            (),
+        )
     if command_name == "safe-reclaim":
         return CommandEffectSpec(
             ("fence_source_run", "publish_exact_successor"),

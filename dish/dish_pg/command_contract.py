@@ -105,6 +105,7 @@ COMMAND_DEFINITIONS = {
         _current_action(PROPOSALS_COMMAND, "Q", task_required=False, operation_required=False),
         _current_action(APPLY_PROPOSAL_COMMAND, "L", task_required=True, operation_required=True),
         _current_action(SAFE_RECLAIM_COMMAND, "R", task_required=True, operation_required=True),
+        CommandDefinition("queue", "Q", "admin", False, False, False),
         CommandDefinition("attention", "Q", "admin", False, False, False),
         CommandDefinition("holds", "Q", "admin", False, False, False),
         _current_action(
@@ -153,6 +154,7 @@ COMMAND_DEFINITIONS = {
         CommandDefinition("supply-evidence", "R", "admin", True, True, True, workflow_action="supply-evidence"),
         CommandDefinition("record-human-decision", "R", "admin", True, True, True, workflow_action="record-human-decision"),
         CommandDefinition("resolved", "R", "admin", True, True, True, workflow_action="resolved"),
+        CommandDefinition("review-reject", "R", "admin", True, True, True),
         CommandDefinition("authorize-governed-change", "L", "admin", True, True, False),
         CommandDefinition("revise-section-registry", "L", "admin", True, False, False),
         CommandDefinition("recover-lease", "R", "admin", True, True, False),

@@ -42,6 +42,7 @@ from tests.support.postgresql.command import (
     _prepare_for_verification,
     _start_initial,
     _start_verification,
+    _verification_ready,
 )
 from tests.support.postgresql.workflow import (
     NOW,
@@ -1481,6 +1482,19 @@ def test_postgresql_proposals_and_apply_proposal_install_exact_authorized_candid
             _call("proposals", run_id=applying_run, owner="applying-owner")
         ).data["count"] == 0
 
+        queued = port.execute(
+            _call("queue", run_id=admin_run, owner="marco", principal="admin")
+        )
+        assert queued.ok, (queued.code, queued.http_status, queued.data)
+        assert queued.data["source"] == "postgresql_authority"
+        queued_item = queued.data["issue_items"][0]
+        assert queued_item["queue_group"] == "change_review"
+        assert queued_item["needs_you"] is True
+        queued_action = queued_item["signals"][0]["queue_action"]
+        assert queued_action["proposal_id"] == proposal_id
+        assert queued_action["operation_id"] == started.data["operation_id"]
+        assert queued_action["required_authorizations"] == rejected.data["required_authorizations"]
+
         for change in rejected.data["required_authorizations"]:
             grant = port.execute(
                 _call(
@@ -1500,6 +1514,20 @@ def test_postgresql_proposals_and_apply_proposal_install_exact_authorized_candid
                 )
             )
             assert grant.ok, (grant.code, grant.http_status, grant.data)
+
+        authorized_queue = port.execute(
+            _call("queue", run_id=admin_run, owner="marco", principal="admin")
+        )
+        assert authorized_queue.ok
+        assert authorized_queue.data["needs_you_count"] == 0
+        assert authorized_queue.data["issue_items"][0]["queue_group"] == "system"
+        assert authorized_queue.data["issue_items"][0]["signals"] == [
+            {
+                "kind": "authorized_semantic_proposal",
+                "category": "system",
+                "summary": "The approved proposal is ready for mechanical application.",
+            }
+        ]
 
         listed = port.execute(
             _call("proposals", run_id=applying_run, owner="applying-owner")
@@ -1532,6 +1560,165 @@ def test_postgresql_proposals_and_apply_proposal_install_exact_authorized_candid
         assert port.execute(
             _call("proposals", run_id=applying_run, owner="applying-owner")
         ).data["count"] == 0
+
+
+def test_postgresql_queue_rejects_only_the_exact_unapproved_semantic_proposal(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, _author_run, verifier_run, started, prepared, _inspection = _verification_ready(
+            session, ids, context, task_id
+        )
+        reviewed = session.get(
+            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+        )
+        candidate_text = (reviewed.title + "\n" + reviewed.body).replace(
+            "Purpose: Compare texture",
+            "Purpose: Compare texture and aroma",
+        )
+        proposed = port.execute(
+            _call(
+                "reject",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "task_id": str(task_id),
+                    "submission_id": started.data["operation_id"],
+                    "agent": "codex",
+                    "reason": "Marco-governed purpose change needs durable approval",
+                    "route": "large",
+                    "model": "test-verifier",
+                    "file_text": candidate_text,
+                    "governed_change_fields": ["Purpose"],
+                },
+            )
+        )
+        assert proposed.ok
+        admin_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="marco",
+            agent="marco",
+        )
+        request_id = _next(ids)
+        rejected = port.execute(
+            _call(
+                "review-reject",
+                run_id=admin_run,
+                request_id=request_id,
+                owner="marco",
+                principal="admin",
+                arguments={
+                    "proposal_id": proposed.data["proposal_id"],
+                    "reason": "Keep the original purpose",
+                },
+            )
+        )
+        assert rejected.ok, (rejected.code, rejected.http_status, rejected.data)
+        assert rejected.data["proposal_id"] == proposed.data["proposal_id"]
+        assert rejected.data["proposal_state"] == "cancelled"
+        requirement = session.get(
+            wf.HumanReviewRequirement, uuid.UUID(proposed.data["proposal_id"])
+        )
+        operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
+        )
+        assert requirement.state == "cancelled"
+        assert operation.phase == "await_verification"
+        current = session.get(
+            models.ContentVersion,
+            port._current_content_version_id(context["generation_id"], task_id),
+        )
+        parse_canonical_document(
+            title=current.title,
+            body=current.body,
+            expected_status="pending-verification",
+        )
+        assert current.content_version_id == reviewed.content_version_id
+        assert "Purpose: Compare texture and aroma" not in current.body
+        audit = session.scalar(
+            select(wf.GovernedAuditEvent).where(
+                wf.GovernedAuditEvent.event_type == "semantic_proposal_rejected",
+                wf.GovernedAuditEvent.operation_id == operation.operation_id,
+            )
+        )
+        assert audit.payload["proposal_id"] == proposed.data["proposal_id"]
+        assert audit.payload["reason"] == "Keep the original purpose"
+
+        replay = port.execute(
+            _call(
+                "review-reject",
+                run_id=admin_run,
+                request_id=request_id,
+                owner="marco",
+                principal="admin",
+                arguments={
+                    "proposal_id": proposed.data["proposal_id"],
+                    "reason": "Keep the original purpose",
+                },
+            )
+        )
+        assert replay.ok
+        assert replay.data == rejected.data
+        stale = port.execute(
+            _call(
+                "review-reject",
+                run_id=admin_run,
+                request_id=_next(ids),
+                owner="marco",
+                principal="admin",
+                arguments={
+                    "proposal_id": proposed.data["proposal_id"],
+                    "reason": "Try to reject the stale proposal",
+                },
+            )
+        )
+        assert not stale.ok
+        assert stale.code == "SEMANTIC_PROPOSAL_NOT_FOUND"
+
+
+def test_postgresql_queue_hides_expired_lease_as_system_noise(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    author_run = _next(ids)
+    admin_run = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=author_run
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="marco",
+            agent="marco",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        lease = session.get(wf.ServiceLease, uuid.UUID(started.data["lease_id"]))
+        lease.issued_at = NOW - timedelta(minutes=2)
+        lease.expires_at = NOW - timedelta(minutes=1)
+
+        queued = port.execute(
+            _call("queue", run_id=admin_run, owner="marco", principal="admin")
+        )
+
+        assert queued.ok
+        assert queued.data["needs_you_count"] == 0
+        assert queued.data["system_count"] == 1
+        assert queued.data["issue_items"][0]["needs_you"] is False
+        assert queued.data["issue_items"][0]["queue_group"] == "system"
+        assert queued.data["issue_items"][0]["signals"] == [
+            {
+                "kind": "expired_lease",
+                "category": "system",
+                "summary": "The actor lease expired and is system-recoverable.",
+            }
+        ]
 
 
 def test_create_commits_one_authoritative_bundle_and_exact_replay(workflow_db) -> None:

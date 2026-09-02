@@ -89,8 +89,8 @@ publishing an exact linked successor. None of these commands falls through to a 
 Their retained disposition is executable in
 `dish_pg.command_contract.CONNECTED_COMMAND_DISPOSITIONS`.
 
-Retained PostgreSQL admin-principal commands (recovery, discard/abandon, Human Review, evidence,
-migrate, and lease recovery/expiry) are reachable only through the private admin bearer on
+Retained PostgreSQL admin-principal commands (queue, recovery, discard/abandon, Human Review,
+evidence, migrate, and lease recovery/expiry) are reachable only through the private admin bearer on
 `/v1/admin/<command>` and the admin lease routes, and only when the runtime is bound to the PROD
 profile; the agent/action surfaces expose only retained non-admin commands, and retired/non-retained
 historical commands (backup-create, backup-restore) stay unroutable everywhere. A TEST-profile
@@ -119,8 +119,13 @@ not remove or weaken its backend authority checks.
 `queue` is the primary "what Marco needs to do now" surface over durable Dish state. It groups
 Marco-required work by human consequence (Human Review, Evidence, change approval, then recovery),
 hides system/auto-recoverable rows by default, and enters Human Review or Evidence interaction
-directly from the rendered snapshot. Queue numbering is presentation only: any mutation targets the
-selected durable review or Dish identity. `--non-interactive`, `--json`, and non-TTY use remain
+directly from the rendered snapshot. Queue numbering is presentation only: every PostgreSQL
+mutation uses the exact operation, hold, requirement, cycle, proposal, and content identities from
+that rendered snapshot. Human Review and Evidence use their existing PostgreSQL commands; semantic
+approval records each exact required authorization; and semantic rejection uses only the narrow
+private `review-reject` dependency to cancel that exact unapproved proposal and reopen unchanged
+Verification. It does not port the legacy review queue/inspect/approve subsystem.
+`--non-interactive`, `--json`, and non-TTY use remain
 one-shot. An expired lease on an otherwise open/recoverable operation is system/recoverable and does
 not by itself re-enter Marco's queue. `inspect <dish>` remains the exact drill-down for recovery and
 reconciliation cases without a dedicated interaction.
@@ -141,8 +146,8 @@ decide workflow legality; `inspect --verbose <dish>` remains the bounded per-Dis
 
 Human Review items retain durable ranked choices with A as the recommended route plus free-text
 Other. Semantic proposals retain exact governed before/after bundles. The queue may enter these
-interactions directly, but approval/application authority remains in the existing review commands and
-workflow policy.
+interactions directly, but it remains presentation and routing: PostgreSQL workflow commands and
+policy retain mutation authority.
 
 `archive <dish>` is a private-admin lifecycle command shown in root help, never an Action/OpenAPI
 capability. It has no operator-supplied reason: the durable invocation provenance records

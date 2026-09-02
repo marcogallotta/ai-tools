@@ -220,6 +220,16 @@ def test_evidence_hold_resumes_as_distinct_canonical_verification_occurrence(
             owner="Marco",
             agent="claude",
         )
+        queued = port.execute(
+            _call("queue", run_id=admin_run, owner="Marco", principal="admin")
+        )
+        assert queued.ok
+        item = queued.data["issue_items"][0]
+        assert item["queue_group"] == "evidence"
+        action = item["signals"][0]["queue_action"]
+        assert action["hold_id"] == rejected.data["hold_id"]
+        assert action["operation_id"] == operation_id
+        assert action["cycle_id"] == rejected.data["cycle_id"]
         supplied = port.execute(
             _call(
                 "supply-evidence",

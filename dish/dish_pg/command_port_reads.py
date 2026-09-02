@@ -87,6 +87,14 @@ class PostgresCommandReadMixin:
             }
         elif call.command_name == "proposals":
             data = self._proposals()
+        elif call.command_name == "queue":
+            if call.principal_class != "admin":
+                raise CommandRuleError(
+                    "PRINCIPAL_SCOPE_MISMATCH",
+                    "queue is available only on the private admin surface",
+                    http_status=403,
+                )
+            data = self._queue()
         elif call.command_name == "attention":
             if call.principal_class != "admin":
                 raise CommandRuleError(
@@ -631,6 +639,366 @@ class PostgresCommandReadMixin:
             "read_only": True,
         }
 
+    def _queue(self) -> Mapping[str, Any]:
+        """Return Marco's PostgreSQL-native queue from canonical workflow facts."""
+
+        generation = self.reads.active_generation()
+        now = datetime.now().astimezone()
+        operations = list(
+            self.session.scalars(
+                select(wf.WorkflowOperation)
+                .where(
+                    wf.WorkflowOperation.generation_id == generation.generation_id,
+                    wf.WorkflowOperation.lifecycle == "open",
+                )
+                .order_by(
+                    wf.WorkflowOperation.created_at,
+                    wf.WorkflowOperation.operation_id,
+                )
+            )
+        )
+        items: list[dict[str, Any]] = []
+        category_counts = {"system": 0, "needs_marco": 0, "unsafe": 0}
+        group_order = {
+            "human_review": 0,
+            "evidence": 1,
+            "change_review": 2,
+            "recovery": 3,
+            "system": 4,
+        }
+
+        for operation in operations:
+            state = self.session.get(
+                models.DishState,
+                (generation.generation_id, operation.task_id),
+            )
+            version = (
+                self.session.get(models.ContentVersion, state.current_content_version_id)
+                if state is not None
+                else None
+            )
+            task_gid = self.session.scalar(
+                select(models.TaskExternalAlias.external_id).where(
+                    models.TaskExternalAlias.task_id == operation.task_id,
+                    models.TaskExternalAlias.external_system == "asana",
+                    models.TaskExternalAlias.state == "active",
+                )
+            )
+            signals: list[dict[str, Any]] = []
+
+            def signal(
+                *,
+                kind: str,
+                category: str,
+                summary: str,
+                detail: str | None = None,
+                action: Mapping[str, Any] | None = None,
+            ) -> None:
+                row: dict[str, Any] = {
+                    "kind": kind,
+                    "category": category,
+                    "summary": summary,
+                }
+                if detail:
+                    row["detail"] = detail
+                if action is not None:
+                    row["queue_action"] = dict(action)
+                signals.append(row)
+
+            executions = list(
+                self.session.scalars(
+                    select(wf.CommandExecution).where(
+                        wf.CommandExecution.generation_id == generation.generation_id,
+                        wf.CommandExecution.operation_id == operation.operation_id,
+                        wf.CommandExecution.status.in_(("pending", "claimed", "uncertain")),
+                    )
+                )
+            )
+            if any(execution.status == "uncertain" for execution in executions):
+                signal(
+                    kind="uncertain_execution",
+                    category="unsafe",
+                    summary="A command outcome is uncertain and requires reconciliation.",
+                )
+            elif any(
+                execution.status == "pending"
+                or (
+                    execution.status == "claimed"
+                    and execution.claim_expires_at is not None
+                    and execution.claim_expires_at <= now
+                )
+                for execution in executions
+            ):
+                signal(
+                    kind="orphaned_execution",
+                    category="unsafe",
+                    summary="An unfinished command execution has no live claim.",
+                )
+
+            abandonment = self.session.scalar(
+                select(wf.AbandonmentAttempt)
+                .where(
+                    wf.AbandonmentAttempt.source_operation_id == operation.operation_id,
+                    wf.AbandonmentAttempt.state.in_(
+                        ("preparing", "published", "blocked", "reconciling")
+                    ),
+                )
+                .order_by(
+                    wf.AbandonmentAttempt.created_at.desc(),
+                    wf.AbandonmentAttempt.abandonment_id.desc(),
+                )
+                .limit(1)
+            )
+            if abandonment is not None:
+                signal(
+                    kind="blocked_abandonment" if abandonment.state == "blocked" else "abandonment_continuation",
+                    category="unsafe" if abandonment.state == "blocked" else "system",
+                    summary=(
+                        "Abandonment is blocked at an unsupported frontier."
+                        if abandonment.state == "blocked"
+                        else "Abandonment has a deterministic system continuation."
+                    ),
+                    action=(
+                        {
+                            "kind": "inspect",
+                            "dish_id": str(operation.task_id),
+                            "operation_id": str(operation.operation_id),
+                            "abandonment_id": str(abandonment.abandonment_id),
+                        }
+                        if abandonment.state == "blocked"
+                        else None
+                    ),
+                )
+
+            latest_cycle = self.session.scalar(
+                select(wf.VerificationCycle)
+                .where(wf.VerificationCycle.operation_id == operation.operation_id)
+                .order_by(
+                    wf.VerificationCycle.cycle_sequence.desc(),
+                    wf.VerificationCycle.cycle_id.desc(),
+                )
+                .limit(1)
+            )
+            open_hold = self.session.scalar(
+                select(wf.EvidenceHold)
+                .where(
+                    wf.EvidenceHold.operation_id == operation.operation_id,
+                    wf.EvidenceHold.state == "open",
+                )
+                .order_by(wf.EvidenceHold.opened_at.desc())
+                .limit(1)
+            )
+            requirement = self.session.scalar(
+                select(wf.HumanReviewRequirement)
+                .where(
+                    wf.HumanReviewRequirement.operation_id == operation.operation_id,
+                    wf.HumanReviewRequirement.state == "open",
+                )
+                .order_by(
+                    wf.HumanReviewRequirement.opened_at.desc(),
+                    wf.HumanReviewRequirement.requirement_id.desc(),
+                )
+                .limit(1)
+            )
+
+            if operation.phase == "held_evidence" and open_hold is not None:
+                resume_status = (
+                    "pending-research"
+                    if open_hold.cycle_id is None
+                    else "pending-verification"
+                )
+                signal(
+                    kind="evidence_hold",
+                    category="needs_marco",
+                    summary="Dish is waiting for Marco-supplied evidence.",
+                    detail=open_hold.reason,
+                    action={
+                        "kind": "supply_evidence",
+                        "dish_id": str(operation.task_id),
+                        "operation_id": str(operation.operation_id),
+                        "hold_id": str(open_hold.hold_id),
+                        "cycle_id": str(open_hold.cycle_id) if open_hold.cycle_id else None,
+                        "hold_identity": version.content_identity if version is not None else None,
+                        "resume_status": resume_status,
+                    },
+                )
+            elif operation.phase == "held_human" and requirement is not None:
+                if requirement.question.startswith(_SEMANTIC_PROPOSAL_PREFIX):
+                    try:
+                        payload, _candidate, required = self._validate_semantic_proposal_requirement(
+                            requirement
+                        )
+                    except CommandRuleError as exc:
+                        signal(
+                            kind="invalid_semantic_proposal",
+                            category="unsafe",
+                            summary="A semantic proposal failed canonical revalidation.",
+                            detail=str(exc),
+                        )
+                    else:
+                        missing = [
+                            change
+                            for change in required
+                            if not self._available_governed_change_grants(
+                                generation_id=requirement.generation_id,
+                                task_id=requirement.task_id,
+                                operation_id=requirement.operation_id,
+                                required=[change],
+                            )
+                        ]
+                        if not missing:
+                            signal(
+                                kind="authorized_semantic_proposal",
+                                category="system",
+                                summary="The approved proposal is ready for mechanical application.",
+                            )
+                        else:
+                            signal(
+                                kind="proposal_review",
+                                category="needs_marco",
+                                summary="An exact governed change is waiting for Marco's approval.",
+                                detail=str(payload.get("reason") or ""),
+                                action={
+                                    "kind": "semantic_proposal",
+                                    "proposal_id": str(requirement.requirement_id),
+                                    "dish_id": str(operation.task_id),
+                                    "operation_id": str(operation.operation_id),
+                                    "cycle_id": str(requirement.cycle_id),
+                                    "candidate_identity": payload["candidate"]["identity"],
+                                    "required_authorizations": missing,
+                                    "linked_changes": list(payload.get("linked_changes") or ()),
+                                },
+                            )
+                else:
+                    signal(
+                        kind="human_decision",
+                        category="needs_marco",
+                        summary="Dish is waiting for a Marco decision.",
+                        detail=requirement.question,
+                        action={
+                            "kind": "record_human_decision",
+                            "dish_id": str(operation.task_id),
+                            "operation_id": str(operation.operation_id),
+                            "requirement_id": str(requirement.requirement_id),
+                            "cycle_id": str(requirement.cycle_id) if requirement.cycle_id else None,
+                            "hold_identity": version.content_identity if version is not None else None,
+                            "resume_status": (
+                                "pending-research"
+                                if requirement.cycle_id is None
+                                else "pending-verification"
+                            ),
+                        },
+                    )
+            elif (
+                operation.phase == "held_human"
+                and latest_cycle is not None
+                and latest_cycle.outcome == "verification-hold"
+            ):
+                signal(
+                    kind="verification_hold",
+                    category="needs_marco",
+                    summary="Repeated Verification stopped for Marco's decision.",
+                    action={
+                        "kind": "resolve_verification_hold",
+                        "dish_id": str(operation.task_id),
+                        "operation_id": str(operation.operation_id),
+                        "cycle_id": str(latest_cycle.cycle_id),
+                        "hold_identity": version.content_identity if version is not None else None,
+                    },
+                )
+
+            lease = self.session.scalar(
+                select(wf.ServiceLease)
+                .where(
+                    wf.ServiceLease.operation_id == operation.operation_id,
+                    wf.ServiceLease.lease_kind == "actor",
+                    wf.ServiceLease.state == "active",
+                    wf.ServiceLease.import_run_id.is_(None),
+                )
+                .order_by(wf.ServiceLease.issued_at.desc())
+                .limit(1)
+            )
+            if lease is not None:
+                revoked = self.session.scalar(
+                    select(wf.OperationRunRevocation.revocation_id).where(
+                        wf.OperationRunRevocation.generation_id == generation.generation_id,
+                        wf.OperationRunRevocation.operation_id == operation.operation_id,
+                        wf.OperationRunRevocation.owner_id == lease.owner_id,
+                        wf.OperationRunRevocation.run_id == lease.run_id,
+                        wf.OperationRunRevocation.import_run_id.is_(None),
+                    )
+                )
+                if revoked is not None:
+                    signal(
+                        kind="revoked_live_lease",
+                        category="unsafe",
+                        summary="A revoked run is still presented as live ownership.",
+                    )
+                elif lease.expires_at <= now:
+                    signal(
+                        kind="expired_lease",
+                        category="system",
+                        summary="The actor lease expired and is system-recoverable.",
+                    )
+
+            if not signals:
+                continue
+            precedence = {"system": 0, "needs_marco": 1, "unsafe": 2}
+            category = max(
+                (str(row["category"]) for row in signals), key=precedence.get
+            )
+            kinds = {str(row["kind"]) for row in signals}
+            if category == "unsafe":
+                group = "recovery"
+            elif "human_decision" in kinds or "verification_hold" in kinds:
+                group = "human_review"
+            elif "evidence_hold" in kinds:
+                group = "evidence"
+            elif "proposal_review" in kinds:
+                group = "change_review"
+            else:
+                group = "system"
+            item = {
+                "dish_id": str(operation.task_id),
+                "task_id": str(operation.task_id),
+                "task_gid": str(task_gid) if task_gid is not None else None,
+                "task_title": version.title if version is not None else None,
+                "operation_id": str(operation.operation_id),
+                "category": category,
+                "needs_you": category in {"needs_marco", "unsafe"},
+                "queue_group": group,
+                "signals": signals,
+            }
+            category_counts[category] += 1
+            items.append(item)
+
+        items.sort(
+            key=lambda item: (
+                group_order[str(item["queue_group"])],
+                str(item.get("task_title") or item["dish_id"]).casefold(),
+                str(item["operation_id"]),
+            )
+        )
+        needs_you_count = sum(bool(item["needs_you"]) for item in items)
+        system_count = sum(item["queue_group"] == "system" for item in items)
+        active_task_count = len({operation.task_id for operation in operations})
+        return {
+            "checked_count": len(operations),
+            "active_dish_count": active_task_count,
+            "live_inspection_count": 0,
+            "issue_count": len(items),
+            "attention_count": len(items),
+            "needs_you_count": needs_you_count,
+            "system_count": system_count,
+            "healthy_count": max(active_task_count - len(items), 0),
+            "category_counts": category_counts,
+            "issue_items": items,
+            "attention_items": items,
+            "read_only": True,
+            "source": "postgresql_authority",
+            "message": "Queue built exclusively from canonical PostgreSQL workflow state.",
+        }
+
     def _holds(self) -> Mapping[str, Any]:
         generation = self.reads.active_generation()
         operations = self.session.scalars(
@@ -760,7 +1128,7 @@ class PostgresCommandReadMixin:
         )
         operation = None
         task = None
-        if call.command_name == "apply-proposal":
+        if call.command_name in {"apply-proposal", "review-reject"}:
             requirement = self._semantic_proposal_requirement(
                 str(call.arguments.get("proposal_id") or "")
             )

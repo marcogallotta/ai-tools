@@ -378,6 +378,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "hold-reject",
                 "safe-reclaim",
                 "apply-proposal",
+                "review-reject",
             }:
                 operation = self._lock_operation_transition(operation.operation_id)
             if task is not None:
@@ -697,6 +698,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         handlers = {
             "create": self._create,
             "apply-proposal": self._apply_semantic_proposal,
+            "review-reject": self._reject_semantic_proposal,
             "safe-reclaim": self._safe_reclaim,
             "start": self._start,
             "prepare": self._prepare,
@@ -3552,6 +3554,101 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             }
         )
         return result
+
+    def _reject_semantic_proposal(
+        self, call, generation, binding, execution, task, operation
+    ) -> dict[str, Any]:
+        """Cancel one exact unapproved PG proposal and resume unchanged Verification."""
+
+        assert task is not None and operation is not None
+        reason = str(call.arguments.get("reason") or "").strip()
+        if not reason:
+            raise CommandRuleError(
+                "REJECTION_REASON_REQUIRED",
+                "semantic proposal rejection requires a non-blank reason",
+                http_status=400,
+            )
+        requirement = self._semantic_proposal_requirement(
+            str(call.arguments.get("proposal_id") or ""), lock=True
+        )
+        if (
+            requirement.task_id != task.task_id
+            or requirement.operation_id != operation.operation_id
+        ):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_STALE",
+                "proposal no longer belongs to the exact selected workflow occurrence",
+            )
+        _payload, _candidate, required = self._validate_semantic_proposal_requirement(
+            requirement
+        )
+        if self._available_semantic_proposal_grants(requirement, required):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_ALREADY_AUTHORIZED",
+                "an already-authorized proposal cannot be rejected from Marco's queue",
+            )
+
+        self._assert_baseline_content_current(
+            generation.generation_id,
+            task.task_id,
+            requirement.baseline_content_version_id,
+        )
+        source_cycle = self.session.get(wf.VerificationCycle, requirement.cycle_id)
+        if (
+            source_cycle is None
+            or source_cycle.operation_id != operation.operation_id
+            or source_cycle.lifecycle != "rejected"
+        ):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_STALE",
+                "proposal source Verification cycle is no longer the rejected source occurrence",
+            )
+        next_cycle = self.workflow.open_verification_cycle(
+            cycle_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            operation_id=operation.operation_id,
+            reviewed_content_version_id=requirement.baseline_content_version_id,
+            created_at=call.now,
+        )
+        requirement.state = "cancelled"
+        requirement.terminal_at = call.now
+        operation.phase = "await_verification"
+        operation.persisted_actions = ["inspect"]
+        operation.operation_revision += 1
+        self.session.add(
+            wf.GovernedAuditEvent(
+                audit_event_id=self.uuid_factory(),
+                generation_id=generation.generation_id,
+                request_id=execution.request_id,
+                command_execution_id=execution.execution_id,
+                task_id=task.task_id,
+                operation_id=operation.operation_id,
+                event_type="semantic_proposal_rejected",
+                actor=call.owner_id,
+                payload={
+                    "proposal_id": str(requirement.requirement_id),
+                    "source_cycle_id": str(source_cycle.cycle_id),
+                    "new_cycle_id": str(next_cycle.cycle_id),
+                    "baseline_content_version_id": str(
+                        requirement.baseline_content_version_id
+                    ),
+                    "reason": reason,
+                },
+                occurred_at=call.now,
+            )
+        )
+        return {
+            "proposal_id": str(requirement.requirement_id),
+            "proposal_state": requirement.state,
+            "rejection_reason": reason,
+            "dish_id": str(task.task_id),
+            "operation_id": str(operation.operation_id),
+            "new_cycle_id": str(next_cycle.cycle_id),
+            "resumed_content_version_id": str(
+                requirement.baseline_content_version_id
+            ),
+            "projection_event_id": None,
+        }
 
     def _reopen_verification_hold(
         self,
