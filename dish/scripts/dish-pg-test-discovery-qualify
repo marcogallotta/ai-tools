@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""Run the small live PostgreSQL TEST discovery qualification."""
+from dish_pg.test_discovery_qualifier import main
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
