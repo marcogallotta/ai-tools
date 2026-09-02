@@ -5,7 +5,10 @@ import uuid
 import pytest
 from dish_pg import models
 from dish_pg import stage3_models as wf
-from dish_pg.command_contract import validate_postgres_action_request
+from dish_pg.command_contract import (
+    postgres_action_argument_schema,
+    validate_postgres_action_request,
+)
 from dish_pg.database import session_scope
 from dish_service.cli import build_parser
 from sqlalchemy import func, select
@@ -18,6 +21,9 @@ def test_cook_log_action_contract_preserves_text_and_bounds_reads() -> None:
     run_id = str(uuid.uuid4())
     request_id = str(uuid.uuid4())
     dish_id = str(uuid.uuid4())
+    schema = postgres_action_argument_schema("record-cook-log")
+    assert schema["required"] == ["dish_id", "agent", "text"]
+    assert "request_id" not in schema["properties"]
     client, arguments = validate_postgres_action_request(
         "record-cook-log",
         {"client": {"run_id": run_id, "request_id": request_id}, "arguments": {"dish_id": dish_id, "agent": "gpt", "text": "  observed  "}},
@@ -78,6 +84,12 @@ def test_record_cook_log_is_version_bound_replay_safe_and_paginated(workflow_db)
         ))
         assert page1.ok
         assert [row["log_id"] for row in page1.data["logs"]] == [first.data["log_id"]]
+        first_log = page1.data["logs"][0]
+        assert first_log["command_execution_id"]
+        assert first_log["request_id"] == str(request_id)
+        assert first_log["run_id"] == str(run_id)
+        assert first_log["owner_id"] == "owner-1"
+        assert first_log["principal_class"] == "agent"
         assert page1.data["next_cursor"]
         page2 = port.execute(_call(
             "cook-logs", run_id=run_id, principal="reader",

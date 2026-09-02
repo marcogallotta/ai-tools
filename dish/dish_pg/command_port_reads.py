@@ -121,9 +121,21 @@ class PostgresCommandReadMixin:
                     after_id = uuid.UUID(str(payload["log_id"]))
                 except (KeyError, TypeError, ValueError, ReadModelError) as exc:
                     raise CommandRuleError("INVALID_CURSOR", "cook-log cursor is invalid", http_status=400) from exc
-            statement = select(wf.CookLogEntry).where(
-                wf.CookLogEntry.generation_id == generation_id,
-                wf.CookLogEntry.task_id == task.task_id,
+            statement = (
+                select(wf.CookLogEntry, wf.CommandExecution, wf.ServiceRequest)
+                .join(
+                    wf.CommandExecution,
+                    wf.CommandExecution.execution_id
+                    == wf.CookLogEntry.command_execution_id,
+                )
+                .join(
+                    wf.ServiceRequest,
+                    wf.ServiceRequest.request_id == wf.CommandExecution.request_id,
+                )
+                .where(
+                    wf.CookLogEntry.generation_id == generation_id,
+                    wf.CookLogEntry.task_id == task.task_id,
+                )
             )
             if after_time is not None and after_id is not None:
                 statement = statement.where(
@@ -133,11 +145,17 @@ class PostgresCommandReadMixin:
                         & (wf.CookLogEntry.log_id > after_id)
                     )
                 )
-            rows = list(self.session.scalars(statement.order_by(wf.CookLogEntry.recorded_at, wf.CookLogEntry.log_id).limit(page_size + 1)))
+            rows = list(
+                self.session.execute(
+                    statement.order_by(
+                        wf.CookLogEntry.recorded_at, wf.CookLogEntry.log_id
+                    ).limit(page_size + 1)
+                )
+            )
             visible = rows[:page_size]
             next_cursor = None
             if len(rows) > page_size:
-                last = visible[-1]
+                last = visible[-1][0]
                 next_cursor = self.reads.cursor_codec.encode({
                     "kind": "cook_logs",
                     "generation_id": str(generation_id),
@@ -149,13 +167,18 @@ class PostgresCommandReadMixin:
                 "dish_id": str(task.task_id),
                 "logs": [
                     {
-                        "log_id": str(row.log_id),
-                        "text": row.text,
-                        "recorded_at": row.recorded_at.isoformat(),
-                        "content_version_id": str(row.content_version_id),
-                        "dish_version": row.dish_version,
+                        "log_id": str(entry.log_id),
+                        "text": entry.text,
+                        "recorded_at": entry.recorded_at.isoformat(),
+                        "content_version_id": str(entry.content_version_id),
+                        "dish_version": entry.dish_version,
+                        "command_execution_id": str(execution.execution_id),
+                        "request_id": str(request.request_id),
+                        "run_id": str(request.run_id),
+                        "owner_id": request.owner_id,
+                        "principal_class": request.principal_class,
                     }
-                    for row in visible
+                    for entry, execution, request in visible
                 ],
                 "next_cursor": next_cursor,
             }

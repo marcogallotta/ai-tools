@@ -290,8 +290,7 @@ def _cook_log_argument_schema(*, mutation: bool) -> dict[str, Any]:
     required = ["dish_id", "agent"]
     if mutation:
         properties["text"] = {"type": "string", "minLength": 1, "maxLength": COOK_LOG_TEXT_MAX_LENGTH}
-        properties["request_id"] = deepcopy(CLIENT_REQUEST_ID_SCHEMA)
-        required.extend(("text", "request_id"))
+        required.append("text")
     else:
         properties["cursor"] = {"type": "string"}
         properties["page_size"] = {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
