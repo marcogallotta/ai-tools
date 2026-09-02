@@ -197,7 +197,7 @@ def test_test_prepare_requires_the_test_service_environment(
         namespace["require_env"]("test")
 
 
-def test_prepare_requires_and_canonicalizes_explicit_workflow_queue_identities(
+def test_prepare_requires_and_canonicalizes_explicit_workflow_section_identities(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     namespace = runpy.run_path(str(PREPARE))
@@ -215,6 +215,20 @@ def test_prepare_requires_and_canonicalizes_explicit_workflow_queue_identities(
     ):
         namespace["require_env"]("test")
 
+    monkeypatch.setenv("DISH_PG_VERIFICATION_QUEUE_SECTION_GID", "fixture")
+    monkeypatch.delenv("DISH_PG_SOURCING_SECTION_GID")
+    with pytest.raises(
+        namespace["PrepareError"], match="DISH_PG_SOURCING_SECTION_GID"
+    ):
+        namespace["require_env"]("test")
+
+    monkeypatch.setenv("DISH_PG_SOURCING_SECTION_GID", "fixture")
+    monkeypatch.delenv("DISH_PG_REFERENCE_SECTION_GID")
+    with pytest.raises(
+        namespace["PrepareError"], match="DISH_PG_REFERENCE_SECTION_GID"
+    ):
+        namespace["require_env"]("test")
+
     section_id = namespace["resolve_section_id"]("1216891250619908")
     from dish_pg.location_manifest import target_uuid
 
@@ -224,6 +238,10 @@ def test_prepare_requires_and_canonicalizes_explicit_workflow_queue_identities(
     assert '"--research-queue-section-gid", research_queue_section_gid' in source
     assert '"--verification-queue-section-id", verification_queue_section_id' in source
     assert '"--verification-queue-section-gid", verification_queue_section_gid' in source
+    assert '"--sourcing-section-id", sourcing_section_id' in source
+    assert '"--sourcing-section-gid", sourcing_section_gid' in source
+    assert '"--reference-section-id", reference_section_id' in source
+    assert '"--reference-section-gid", reference_section_gid' in source
     with pytest.raises(namespace["PrepareError"], match="canonical positive decimal Asana GID"):
         namespace["resolve_section_id"]("Research Queue")
 

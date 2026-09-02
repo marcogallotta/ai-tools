@@ -861,6 +861,10 @@ def _parser() -> argparse.ArgumentParser:
         help="designate this discovered section as the Verification Queue (workflow_role=verification_queue)",
     )
     parser.add_argument("--verification-queue-section-gid")
+    parser.add_argument("--sourcing-section-id", type=uuid.UUID)
+    parser.add_argument("--sourcing-section-gid")
+    parser.add_argument("--reference-section-id", type=uuid.UUID)
+    parser.add_argument("--reference-section-gid")
     return parser
 
 
@@ -906,6 +910,21 @@ def main(argv: list[str] | None = None) -> int:
                 sections,
                 verification_queue_section_id=args.verification_queue_section_id,
             )
+        for section_id, section_gid, section_name in (
+            (args.sourcing_section_id, args.sourcing_section_gid, "Sourcing"),
+            (args.reference_section_id, args.reference_section_gid, "Reference"),
+        ):
+            if (section_id is None) != (section_gid is None):
+                raise InitialBootstrapError(
+                    f"{section_name} section ID and GID must be supplied together"
+                )
+            if section_id is not None and section_gid is not None:
+                sections = ensure_required_section(
+                    sections,
+                    section_id=section_id,
+                    section_gid=section_gid,
+                    section_name=section_name,
+                )
         spec = InitialBootstrapSpec(
             dish_commit=args.dish_commit,
             schema_head=args.schema_head,
