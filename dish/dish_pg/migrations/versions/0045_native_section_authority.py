@@ -641,7 +641,8 @@ def upgrade() -> None:
     op.execute("UPDATE authority_activations SET catalog_version_id=registry_version_id")
     op.execute("UPDATE release_candidates SET catalog_version_id=registry_version_id")
     op.execute("UPDATE release_candidate_manifests SET catalog_version_id=registry_version_id")
-    _carry_ready_documents_to_native_sections()
+    if not context.is_offline_mode():
+        _carry_ready_documents_to_native_sections()
     if op.get_bind().dialect.name == "postgresql":
         for table in (
             "task_execution_fences",

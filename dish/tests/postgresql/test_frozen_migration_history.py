@@ -148,6 +148,21 @@ def test_independent_archive_offline_postgresql_sql_guards_populated_state() -> 
     assert guard_position < sql.index("ADD COLUMN archive_changed")
 
 
+def test_native_section_authority_offline_postgresql_sql_renders_schema_transition() -> None:
+    buffer = io.StringIO()
+    command.upgrade(
+        _offline_postgresql_config(buffer),
+        "0044_independent_archive:0045_native_section_authority",
+        sql=True,
+    )
+    sql = buffer.getvalue()
+
+    assert "CREATE TABLE sections" in sql
+    assert "CREATE TABLE native_catalog_runtime_attestations" in sql
+    assert "UPDATE dish_states SET catalog_version_id=registry_version_id" in sql
+    assert "0045_native_section_authority" in sql
+
+
 @pytest.mark.database_boundary
 def test_causality_edge_retirement_refuses_unexpected_forensic_evidence(
     tmp_path: Path,
