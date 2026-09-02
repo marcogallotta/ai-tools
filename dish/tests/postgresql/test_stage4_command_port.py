@@ -30,8 +30,10 @@ from dish_pg.planner import (
 from dish_pg.protocol import AuthenticationError, PostgresProtocolService, ScopedBearerAuthenticator
 from dish_pg.read_model import InvalidCursor
 from dish_pg.repositories import DishRepository, ScalarMutationSource
+from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import WorkflowAuthorityService, sha256_json
+from dish_tool.content_versions import content_identity
 from dish_tool.models import material_editor_line
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.canonical import TASK
@@ -1698,6 +1700,12 @@ def test_0045_carries_ready_legacy_destination_and_signoff_forward(
     with session_scope(factory) as session:
         _add_verification_queue(session, ids, context)
         destination_id = _add_destination_section(session, ids, context)
+        destination_alias = session.scalar(
+            select(models.SectionExternalAlias).where(
+                models.SectionExternalAlias.section_id == destination_id
+            )
+        )
+        session.delete(destination_alias)
         _register_run(
             session, generation_id=context["generation_id"], run_id=author_run
         )
@@ -1775,6 +1783,33 @@ def test_0045_carries_ready_legacy_destination_and_signoff_forward(
         prior_signoff_id = prior_signoff.signoff_id
         source_content_id = signed.content_version_id
 
+        pending_parts = parse_canonical_document(
+            file_text=TASK.replace("Sichuan — 12345", "Mediterranean — 77777")
+        )
+        pending_task_id = _next(ids)
+        pending_task = CoreAuthorityService(
+            session, uuid_factory=lambda: _next(ids)
+        ).import_task_document(
+            generation_id=context["generation_id"],
+            import_run_id=context["import_run_id"],
+            contract_binding_id=context["binding_id"],
+            spec=ImportedTaskSpec(
+                task_id=pending_task_id,
+                asana_task_gid="987654321",
+                title=pending_parts.title,
+                body=pending_parts.body,
+                identity_scheme="dish-canonical-content-v1",
+                content_identity=content_identity(
+                    pending_parts.title, pending_parts.body
+                ),
+                project_ids=(context["project_id"],),
+                section_id=context["section_id"],
+                completed=False,
+                observed_at=NOW,
+            ),
+        )
+        pending_source_id = pending_task.content_version_id
+
     migration = importlib.import_module(
         "dish_pg.migrations.versions.0045_native_section_authority"
     )
@@ -1799,6 +1834,39 @@ def test_0045_carries_ready_legacy_destination_and_signoff_forward(
         )
         assert inherited.signoff_kind == "inherited_non_material"
         assert inherited.inherited_from_signoff_id == prior_signoff_id
+        pending_state = session.get(
+            models.DishState,
+            (context["generation_id"], pending_task_id),
+        )
+        assert pending_state.current_content_version_id != pending_source_id
+        pending_transformed = session.get(
+            models.ContentVersion, pending_state.current_content_version_id
+        )
+        pending_document = parse_canonical_document(
+            title=pending_transformed.title, body=pending_transformed.body
+        ).document
+        assert pending_document.state.values["Status"] == "pending-verification"
+        pending_destination = pending_document.planning_brief.values[
+            "Destination section"
+        ]
+        assert pending_destination.startswith("Mediterranean — section:")
+        pending_section_id = uuid.UUID(pending_destination.rsplit(":", 1)[1])
+        assert session.get(models.Section, pending_section_id).logical_name == "Mediterranean"
+        assert session.scalar(
+            select(models.SectionExternalAlias).where(
+                models.SectionExternalAlias.section_id == pending_section_id
+            )
+        ) is None
+        assert session.get(
+            models.SectionCatalogEntry,
+            (context["catalog_version_id"], pending_section_id),
+        ) is not None
+        assert session.scalar(
+            select(wf.VerificationSignoff).where(
+                wf.VerificationSignoff.signed_content_version_id
+                == pending_transformed.content_version_id
+            )
+        ) is None
         submitted = _port(session, ids).execute(
             _call(
                 "submit",

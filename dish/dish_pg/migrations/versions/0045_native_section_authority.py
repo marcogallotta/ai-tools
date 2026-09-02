@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import importlib
 import uuid
 
@@ -184,7 +185,20 @@ def _db_uuid(bind, value: uuid.UUID):
 
 
 def _carry_ready_documents_to_native_sections() -> None:
-    """Create immutable native-destination occurrences and inherited signoffs."""
+    """Create immutable native-destination occurrences from retained documents.
+
+    A current legacy document is itself retained transition evidence for its
+    destination label/GID pair.  The active alias set is not complete enough to
+    be the authority for that historical evidence: an alias may have been
+    retired or never imported even though the canonical document remains
+    current.  Prefer an exact retained alias, then an exact globally-unique
+    legacy Section name, and finally create a deterministic transition Section
+    from the immutable document pair.  No external alias is invented.
+
+    Ready documents carry their exact approved signoff forward.  Pending
+    documents receive only a new immutable content occurrence, so they remain
+    pending and must still complete Verification normally.
+    """
     bind = op.get_bind()
     unsettled = bind.execute(
         sa.text(
@@ -200,10 +214,11 @@ def _carry_ready_documents_to_native_sections() -> None:
     rows = bind.execute(
         sa.text(
             "SELECT s.generation_id,s.task_id,s.current_content_version_id,s.dish_version,"
-            "s.catalog_version_id,v.title,v.body,v.contract_binding_id "
+            "s.catalog_version_id,v.title,v.body,v.contract_binding_id,v.created_at "
             "FROM dish_states s JOIN task_content_versions v "
             "ON v.generation_id=s.generation_id AND v.task_id=s.task_id "
-            "AND v.content_version_id=s.current_content_version_id"
+            "AND v.content_version_id=s.current_content_version_id "
+            "ORDER BY s.generation_id,s.task_id"
         )
     ).mappings()
     for row in rows:
@@ -218,24 +233,119 @@ def _carry_ready_documents_to_native_sections() -> None:
         display_name, external_gid = destination.rsplit(" — ", 1)
         if not external_gid.isdigit():
             continue
-        if parts.document.state.values["Status"] != "ready":
-            raise RuntimeError(
-                "0045_native_section_authority refuses a pending legacy-GID document; "
-                "settle its workflow before migration"
-            )
+        status = parts.document.state.values["Status"]
         aliases = bind.execute(
             sa.text(
                 "SELECT a.section_id FROM section_external_aliases a "
-                "WHERE a.external_system='asana' AND a.external_id=:gid AND a.state='active'"
+                "WHERE a.external_system='asana' AND a.external_id=:gid"
             ),
             {"gid": external_gid},
         ).all()
-        if len(aliases) != 1:
+        if len(aliases) > 1:
             raise RuntimeError(
-                "0045_native_section_authority cannot resolve one native Section for "
+                "0045_native_section_authority found conflicting retained aliases for "
                 f"legacy destination {external_gid}"
             )
-        section_id = _uuid(aliases[0][0])
+        if aliases:
+            section_id = _uuid(aliases[0][0])
+        else:
+            named = bind.execute(
+                sa.text(
+                    "SELECT section_id FROM sections WHERE logical_name=:display_name"
+                ),
+                {"display_name": display_name},
+            ).all()
+            if len(named) > 1:
+                raise RuntimeError(
+                    "0045_native_section_authority found ambiguous retained Section name "
+                    f"{display_name!r} for legacy destination {external_gid}"
+                )
+            if named:
+                section_id = _uuid(named[0][0])
+            else:
+                # This UUID is an auditable transition identity derived only
+                # from the immutable legacy destination pair; it does not
+                # assert or create an external-system alias.
+                section_id = _derived_uuid(
+                    "legacy-destination", f"{external_gid}:{display_name}"
+                )
+                bind.execute(
+                    sa.text(
+                        "INSERT INTO sections(section_id,logical_name,lifecycle,created_at,retired_at) "
+                        "VALUES (:section_id,:display_name,'active',:created_at,NULL)"
+                    ),
+                    {
+                        "section_id": _db_uuid(bind, section_id),
+                        "display_name": display_name,
+                        "created_at": row["created_at"],
+                    },
+                )
+
+        catalog_entry = bind.execute(
+            sa.text(
+                "SELECT 1 FROM section_catalog_entries "
+                "WHERE catalog_version_id=:catalog_version_id AND section_id=:section_id"
+            ),
+            {
+                "catalog_version_id": row["catalog_version_id"],
+                "section_id": _db_uuid(bind, section_id),
+            },
+        ).first()
+        if catalog_entry is None:
+            ordinal = int(
+                bind.execute(
+                    sa.text(
+                        "SELECT COALESCE(MAX(ordinal),-1)+1 FROM section_catalog_entries "
+                        "WHERE catalog_version_id=:catalog_version_id"
+                    ),
+                    {"catalog_version_id": row["catalog_version_id"]},
+                ).scalar_one()
+            )
+            workflow_role = f"transition-{section_id.hex}"
+            bind.execute(
+                sa.text(
+                    "INSERT INTO section_catalog_entries("
+                    "catalog_version_id,section_id,ordinal,display_name,workflow_role) "
+                    "VALUES (:catalog_version_id,:section_id,:ordinal,:display_name,:workflow_role)"
+                ),
+                {
+                    "catalog_version_id": row["catalog_version_id"],
+                    "section_id": _db_uuid(bind, section_id),
+                    "ordinal": ordinal,
+                    "display_name": display_name,
+                    "workflow_role": workflow_role,
+                },
+            )
+            prior_hash = bind.execute(
+                sa.text(
+                    "SELECT catalog_sha256 FROM section_catalog_versions "
+                    "WHERE catalog_version_id=:catalog_version_id"
+                ),
+                {"catalog_version_id": row["catalog_version_id"]},
+            ).scalar_one()
+            transition_hash = hashlib.sha256(
+                (
+                    "dish-native-section-transition-v1:"
+                    f"{prior_hash}:{section_id}:{display_name}:{workflow_role}:{ordinal}"
+                ).encode("utf-8")
+            ).hexdigest()
+            catalog_triggers = _sqlite_suspend_triggers_referencing(
+                "section_catalog_versions"
+            )
+            try:
+                bind.execute(
+                    sa.text(
+                        "UPDATE section_catalog_versions "
+                        "SET catalog_sha256=:transition_hash,transform_sha256=:transition_hash "
+                        "WHERE catalog_version_id=:catalog_version_id"
+                    ),
+                    {
+                        "transition_hash": transition_hash,
+                        "catalog_version_id": row["catalog_version_id"],
+                    },
+                )
+            finally:
+                _sqlite_restore_triggers(catalog_triggers)
         native_destination = f"{display_name} — section:{section_id}"
         planning = dict(parts.document.planning_brief.values)
         planning["Destination section"] = native_destination
@@ -247,8 +357,10 @@ def _carry_ready_documents_to_native_sections() -> None:
         )
         # The only open workflow safe to carry is an already approved occurrence
         # waiting for submit. Other live work must be settled before the migration.
-        lineage = bind.execute(
-            sa.text(
+        lineage = None
+        if status == "ready":
+            lineage = bind.execute(
+                sa.text(
                 "SELECT o.operation_id,o.phase,c.cycle_id,c.cycle_sequence,"
                 "sg.signoff_id,sg.inspection_id,sg.verifier_actor_fact_id,"
                 "sg.command_execution_id,sg.signed_at,i.verifier_run_id,i.attestation,"
@@ -262,14 +374,14 @@ def _carry_ready_documents_to_native_sections() -> None:
                 "AND o.lifecycle='open' AND o.phase='await_submission' "
                 "AND c.lifecycle='approved' AND sg.signed_content_version_id=:content_version_id "
                 "ORDER BY c.cycle_sequence DESC LIMIT 1"
-            ),
-            {
-                "generation_id": row["generation_id"],
-                "task_id": row["task_id"],
-                "content_version_id": row["current_content_version_id"],
-            },
-        ).mappings().first()
-        if lineage is None:
+                ),
+                {
+                    "generation_id": row["generation_id"],
+                    "task_id": row["task_id"],
+                    "content_version_id": row["current_content_version_id"],
+                },
+            ).mappings().first()
+        if status == "ready" and lineage is None:
             raise RuntimeError(
                 "0045_native_section_authority refuses a ready legacy-GID document "
                 "without one approved await-submission lineage"
@@ -305,7 +417,9 @@ def _carry_ready_documents_to_native_sections() -> None:
                 "import_run_id": import_run_id,
                 "yes": True,
                 "no": False,
-                "occurred_at": lineage["signed_at"],
+                "occurred_at": (
+                    lineage["signed_at"] if lineage is not None else row["created_at"]
+                ),
             },
         )
         bind.execute(
@@ -330,9 +444,27 @@ def _carry_ready_documents_to_native_sections() -> None:
                 "predecessor_content_version_id": _db_uuid(bind, source_version_id),
                 "contract_binding_id": row["contract_binding_id"],
                 "created_dish_version": next_dish_version,
-                "created_at": lineage["signed_at"],
+                "created_at": (
+                    lineage["signed_at"] if lineage is not None else row["created_at"]
+                ),
             },
         )
+        if lineage is None:
+            bind.execute(
+                sa.text(
+                    "UPDATE dish_states SET current_content_version_id=:content_version_id,"
+                    "dish_version=:dish_version,updated_at=:at "
+                    "WHERE generation_id=:generation_id AND task_id=:task_id"
+                ),
+                {
+                    "content_version_id": _db_uuid(bind, new_version_id),
+                    "dish_version": next_dish_version,
+                    "at": row["created_at"],
+                    "generation_id": row["generation_id"],
+                    "task_id": row["task_id"],
+                },
+            )
+            continue
         bind.execute(
             sa.text(
                 "INSERT INTO verification_cycles("
