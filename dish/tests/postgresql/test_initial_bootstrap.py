@@ -46,6 +46,7 @@ from dish_pg.repositories import (
 )
 from dish_pg.transition import ShadowService
 from dish_pg.workflow import WorkflowAuthorityService
+from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
 
 NOW = datetime(2026, 8, 3, 20, 0, tzinfo=timezone.utc)
 
@@ -298,18 +299,21 @@ def test_bootstrap_preserves_explicit_required_queue_when_source_section_is_empt
 ) -> None:
     source = _source(tmp_path, _record(uuid.uuid4(), "3012"))
     base_spec = _spec(source)
+    empty_section_id = stable_dish_uuid_for_asana_identity(
+        "section", OTHER_SECTION_GID
+    )
     sections = ensure_required_section(
         base_spec.sections,
-        section_id=OTHER_SECTION_ID,
+        section_id=empty_section_id,
         section_gid=OTHER_SECTION_GID,
         section_name="Verification Queue",
     )
     sections = apply_verification_queue_role(
-        sections, verification_queue_section_id=OTHER_SECTION_ID
+        sections, verification_queue_section_id=empty_section_id
     )
 
     verification = next(
-        section for section in sections if section.section_id == OTHER_SECTION_ID
+        section for section in sections if section.section_id == empty_section_id
     )
     assert verification.section_gid == OTHER_SECTION_GID
     assert verification.section_name == "Verification Queue"
@@ -322,23 +326,35 @@ def test_bootstrap_preserves_explicit_required_queue_when_source_section_is_empt
                 session, replace(base_spec, sections=sections), clock=lambda: NOW
             )
         with session_scope(factory) as session:
-            assert session.get(models.GovernedSection, OTHER_SECTION_ID) is not None
+            assert session.get(models.GovernedSection, empty_section_id) is not None
             entry = session.scalar(
                 select(models.SectionRegistryEntry).where(
                     models.SectionRegistryEntry.registry_version_id
                     == result.registry_version_id,
-                    models.SectionRegistryEntry.section_id == OTHER_SECTION_ID,
+                    models.SectionRegistryEntry.section_id == empty_section_id,
                 )
             )
             assert entry is not None
             assert entry.workflow_role == "verification_queue"
             assert session.scalar(
                 select(func.count()).select_from(models.DishState).where(
-                    models.DishState.section_id == OTHER_SECTION_ID
+                    models.DishState.section_id == empty_section_id
                 )
             ) == 0
     finally:
         engine.dispose()
+
+
+def test_required_empty_section_rejects_mismatched_uuid_and_gid(tmp_path: Path) -> None:
+    sections = _spec(_source(tmp_path, _record(uuid.uuid4(), "3013"))).sections
+
+    with pytest.raises(InitialBootstrapError, match="does not match section_gid"):
+        ensure_required_section(
+            sections,
+            section_id=uuid.uuid4(),
+            section_gid=OTHER_SECTION_GID,
+            section_name="Verification Queue",
+        )
 
 
 def test_source_bundle_requires_explicit_revocation_history_field(tmp_path: Path) -> None:

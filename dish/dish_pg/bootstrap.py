@@ -30,6 +30,7 @@ from dish_tool.constants import (
     SUPPORTED_TASK_SCHEMA_VERSION,
     TASK_SCHEMA_FILENAME,
 )
+from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
 from dish_tool.releases import parse_dish_version
 from dish_tool.schema_validation import validate_task_schema_shape
 
@@ -124,6 +125,11 @@ def ensure_required_section(
     if not section_gid.isdigit() or section_gid.startswith("0"):
         raise InitialBootstrapError(
             "required section GID must be a canonical positive decimal Asana GID"
+        )
+    expected_section_id = stable_dish_uuid_for_asana_identity("section", section_gid)
+    if section_id != expected_section_id:
+        raise InitialBootstrapError(
+            f"required section_id {section_id} does not match section_gid {section_gid}"
         )
     if not section_name.strip():
         raise InitialBootstrapError("required section name must be nonblank")
