@@ -630,72 +630,6 @@ def _read_archive_task(backend: Any, *, task_gid: str) -> dict[str, Any]:
     return raw
 
 
-def _assert_archive_resting(
-    conn: sqlite3.Connection,
-    *,
-    task_gid: str,
-    operation_id: str | None,
-    request_id: str | None,
-) -> None:
-    blockers: dict[str, Any] = {}
-    if operation_id is not None:
-        blockers["open_operation_id"] = operation_id
-    lease = conn.execute(
-        """SELECT lease_id FROM service_leases
-             WHERE task_gid=? AND released_at IS NULL
-             ORDER BY acquired_at DESC LIMIT 1""",
-        (task_gid,),
-    ).fetchone()
-    if lease is not None:
-        blockers["active_lease_id"] = lease["lease_id"]
-    proposal = conn.execute(
-        """SELECT proposal_id FROM semantic_proposals
-             WHERE task_gid=? AND status IN ('pending','approved','claimed')
-             ORDER BY created_at DESC LIMIT 1""",
-        (task_gid,),
-    ).fetchone()
-    if proposal is not None:
-        blockers["semantic_proposal_id"] = proposal["proposal_id"]
-    unresolved_effect = conn.execute(
-        """SELECT operation.operation_id
-             FROM operations AS operation
-             WHERE operation.task_gid=? AND (
-                 EXISTS (SELECT 1 FROM write_attempts AS attempt
-                          WHERE attempt.operation_id=operation.operation_id
-                            AND attempt.outcome IN ('started','uncertain'))
-                 OR EXISTS (SELECT 1 FROM movement_attempts AS attempt
-                             WHERE attempt.operation_id=operation.operation_id
-                               AND attempt.outcome IN ('started','uncertain'))
-             ) ORDER BY operation.created_at DESC LIMIT 1""",
-        (task_gid,),
-    ).fetchone()
-    if unresolved_effect is not None:
-        blockers["unresolved_effect_operation_id"] = unresolved_effect["operation_id"]
-    parameters: list[Any] = [task_gid]
-    request_filter = ""
-    if request_id:
-        request_filter = " AND request_id!=?"
-        parameters.append(request_id)
-    pending_request = conn.execute(
-        """SELECT request_id,command FROM service_requests
-             WHERE task_gid=? AND status IN ('pending','uncertain')
-               AND resolved_at IS NULL"""
-        + request_filter
-        + " ORDER BY created_at DESC LIMIT 1",
-        tuple(parameters),
-    ).fetchone()
-    if pending_request is not None:
-        blockers["service_request_id"] = pending_request["request_id"]
-        blockers["service_request_command"] = pending_request["command"]
-    if blockers:
-        raise DishRuleError(
-            "TASK_NOT_RESTING",
-            "Archive requires a resting Dish with no unresolved workflow authority",
-            rule="archive_task_not_resting",
-            details=blockers,
-        )
-
-
 def _archive_final_state(
     raw: Mapping[str, Any],
     *,
@@ -726,7 +660,7 @@ def _command_archive(
     dish: str,
     confirmed: bool = False,
 ) -> dict[str, Any]:
-    """Archive one resting Dish while preserving its task content and history."""
+    """Archive one active Dish while preserving its task content and history."""
     if self.backend is None:
         raise DishRuleError(
             "INTERNAL_ERROR", "admin archive requires backend access",
@@ -765,10 +699,6 @@ def _command_archive(
             "TASK_NOT_ACTIVE", "Archive requires an incomplete active Dish",
             rule="archive_task_not_active",
         )
-    _assert_archive_resting(
-        self.conn, task_gid=task_gid, operation_id=target.get("operation_id"),
-        request_id=self.invocation_request_id,
-    )
     if not confirmed:
         return result_envelope(
             command="archive", ok=False, code="CONFIRMATION_REQUIRED",
@@ -790,10 +720,6 @@ def _command_archive(
                 "CONFLICT", "Dish identity changed before archive admission",
                 rule="archive_target_drift",
             )
-        _assert_archive_resting(
-            self.conn, task_gid=task_gid, operation_id=target.get("operation_id"),
-            request_id=self.invocation_request_id,
-        )
         before = _read_archive_task(self.backend, task_gid=task_gid)
         if bool(before.get("completed")) or COOKING_PROJECT_GID not in _task_project_gids(before):
             raise DishRuleError(

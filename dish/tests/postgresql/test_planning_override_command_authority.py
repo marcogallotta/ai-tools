@@ -193,3 +193,35 @@ def test_override_does_not_elevate_action_route_scope(workflow_db):
         assert_action_scope_unchanged()
         _consume_override(port, ids, task_id, agent_run)
         assert_action_scope_unchanged()
+
+
+def test_archived_task_cannot_issue_initial_planning_challenge(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    agent_run, admin_run = next(ids), next(ids)
+    with session_scope(factory) as session:
+        port = _port(session, ids, context, agent_run, admin_run)
+        archived = port.execute(
+            _call(
+                "archive",
+                admin_run,
+                next(ids),
+                {"task_id": str(task_id), "confirmed": True},
+                principal="admin",
+                owner="marco",
+            )
+        )
+        blocked = port.execute(
+            _call(
+                "start",
+                agent_run,
+                next(ids),
+                {"task_id": str(task_id), "kind": "planning", "agent": "claude"},
+            )
+        )
+
+        assert archived.ok is True
+        assert blocked.ok is False
+        assert blocked.code == "TASK_ARCHIVED"
+        assert session.scalar(
+            select(func.count()).select_from(wf.PlanningIntentChallenge)
+        ) == 0

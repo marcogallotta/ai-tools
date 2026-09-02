@@ -151,9 +151,13 @@ policy retain mutation authority.
 
 `archive <dish>` is a private-admin lifecycle command shown in root help, never an Action/OpenAPI
 capability. It has no operator-supplied reason: the durable invocation provenance records
-`system_reason=admin_archive`. In the SQLite/Asana authority it requires confirmation, a resting
+`system_reason=admin_archive`. In the SQLite/Asana authority it requires confirmation, an active
 incomplete Dish, and a distinct configured Cooking History project; it then marks the task complete,
 adds Cooking History, removes Cooking last, and confirms preserved identity from an exact reread.
+Archive supersedes open workflow state without deleting or terminalizing it; preserved operations,
+leases, proposals, requests, and unresolved records are historical/inert. PostgreSQL serializes task
+currentness at command admission, and every later mutating command is rejected while archived;
+private admin inspection remains read-only and available. `cooked` remains resting-only.
 In PostgreSQL authority the same private admin command is a narrow additional principal for the
 existing agent-owned `archive` semantic. Agent exposure and semantics remain unchanged, and the
 PostgreSQL path creates no Asana projection. The private admin transport also retains exact-ID

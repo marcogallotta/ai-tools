@@ -766,6 +766,67 @@ def test_native_task_transition_commits_before_final_fence_and_stale_start_rejec
         ) == 0
 
 
+def test_native_archive_commits_before_final_fence_and_stale_start_rejects(
+    core_db,
+) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    start_run, archive_run = _seed_task_fence_runs(factory, ids, context)
+    before_lock = TransactionGate(label="stale start waits before archive task-fence lock")
+    engine = factory.kw["bind"]
+
+    def stale_start():
+        with managed_session(stale_connection) as session:
+            return _task_fence_port(session, before_lock=before_lock).execute(
+                CommandCall(
+                    command_name="start",
+                    arguments={
+                        "task_id": str(task_id),
+                        "kind": "initial",
+                        "agent": "claude",
+                    },
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    run_id=start_run,
+                    request_id=uuid.uuid4(),
+                    now=NOW + timedelta(seconds=1),
+                )
+            )
+
+    with independent_connections(engine) as (stale_connection, archive_connection):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(stale_start)
+            before_lock.wait_until_blocked()
+            assert_transaction_blocked(future)
+
+            with managed_session(archive_connection) as session:
+                archived = _task_fence_port(session).execute(
+                    CommandCall(
+                        command_name="archive",
+                        arguments={"task_id": str(task_id), "confirmed": True},
+                        owner_id="owner-1",
+                        principal_class="admin",
+                        run_id=archive_run,
+                        request_id=uuid.uuid4(),
+                        now=NOW + timedelta(seconds=2),
+                    )
+                )
+                assert archived.ok is True
+
+            before_lock.release()
+            stale = future.result()
+
+    assert stale.ok is False
+    assert stale.code == "TASK_ARCHIVED"
+    with session_scope(factory) as session:
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        assert state is not None and state.archived_at is not None
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.WorkflowOperation)
+            .where(wf.WorkflowOperation.task_id == task_id)
+        ) == 0
+
+
 def test_native_cook_log_binds_post_transition_when_cooked_wins_before_fence_capture(
     core_db,
 ) -> None:
