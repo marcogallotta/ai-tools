@@ -817,6 +817,141 @@ def _interactive_supply_evidence(
     return False
 
 
+def _queue_action(signals: object) -> dict[str, object] | None:
+    if not isinstance(signals, list):
+        return None
+    for signal in signals:
+        if not isinstance(signal, dict):
+            continue
+        action = signal.get("queue_action")
+        if isinstance(action, dict) and str(action.get("kind") or "").strip():
+            return action
+    return None
+
+
+def _interactive_pg_queue_action(
+    app,
+    *,
+    action: dict[str, object],
+    arguments: Sequence[str],
+    input_fn,
+) -> bool:
+    """Execute one exact action returned by the PostgreSQL queue."""
+
+    kind = str(action.get("kind") or "")
+    operation_id = str(action.get("operation_id") or "").strip()
+    if kind == "record_human_decision":
+        decision = _prompt_review(input_fn, "Marco's decision (q to quit): ")
+        if decision.lower() in {"q", "quit", "exit"}:
+            return True
+        if not decision:
+            print("No decision recorded.\n")
+            return False
+        result = app.execute(
+            "record-human-decision",
+            submission_id=operation_id,
+            requirement_id=str(action.get("requirement_id") or ""),
+            detail=decision,
+            rationale=decision,
+            resume_status=str(action.get("resume_status") or "pending-verification"),
+            expected_cycle_id=action.get("cycle_id"),
+            expected_hold_identity=action.get("hold_identity"),
+        )
+    elif kind == "supply_evidence":
+        detail = _prompt_review(input_fn, "Evidence (q to quit): ")
+        if detail.lower() in {"q", "quit", "exit"}:
+            return True
+        if not detail:
+            print("No evidence recorded.\n")
+            return False
+        result = app.execute(
+            "supply-evidence",
+            submission_id=operation_id,
+            hold_id=str(action.get("hold_id") or ""),
+            detail=detail,
+            resume_status=str(action.get("resume_status") or "pending-verification"),
+            expected_cycle_id=action.get("cycle_id"),
+            expected_hold_identity=action.get("hold_identity"),
+        )
+    elif kind == "resolve_verification_hold":
+        choice = _prompt_review(
+            input_fn,
+            "[R] Release hold to fresh Verification  [0] Back  [Q] Quit: ",
+        ).lower()
+        if choice in {"q", "quit", "exit"}:
+            return True
+        if choice != "r":
+            return False
+        result = app.execute(
+            "resolved",
+            submission_id=operation_id,
+            cycle_id=str(action.get("cycle_id") or ""),
+            hold_identity=str(action.get("hold_identity") or ""),
+        )
+    elif kind == "semantic_proposal":
+        linked = action.get("linked_changes")
+        if isinstance(linked, list):
+            print("\nExact proposed changes:")
+            for change in linked:
+                if isinstance(change, dict):
+                    print(
+                        f"- {change.get('path')}: {change.get('before')!r} -> "
+                        f"{change.get('after')!r}"
+                    )
+        choice = _prompt_review(
+            input_fn,
+            "\n[A] Authorize exact shown changes  [R] Reject proposal  [0] Back  [Q] Quit: ",
+        ).lower()
+        if choice in {"q", "quit", "exit"}:
+            return True
+        if choice in {"0", "back", ""}:
+            return False
+        if choice == "r":
+            reason = _prompt_review(input_fn, "Reason for rejection: ")
+            if reason.lower() in {"q", "quit", "exit"}:
+                return True
+            if not reason:
+                print("No rejection recorded.\n")
+                return False
+            result = app.execute(
+                "review-reject",
+                proposal_id=str(action.get("proposal_id") or ""),
+                reason=reason,
+            )
+        elif choice == "a":
+            changes = action.get("required_authorizations")
+            if not isinstance(changes, list) or not changes:
+                print("The proposal no longer has an authorization for Marco to record.\n")
+                return False
+            for change in changes:
+                if not isinstance(change, dict):
+                    continue
+                result = app.execute(
+                    "authorize-governed-change",
+                    submission_id=operation_id,
+                    field_name=str(change.get("field") or ""),
+                    before=change.get("before"),
+                    after=change.get("after"),
+                    reason="Marco authorized this exact queued semantic proposal.",
+                )
+                print()
+                _emit_interactive_admin_result(result, arguments=arguments)
+                if not result.get("ok"):
+                    return False
+            print()
+            return False
+        else:
+            print("Choose A, R, 0, or Q.\n")
+            return False
+    else:
+        return False
+
+    print()
+    _emit_interactive_admin_result(result, arguments=arguments)
+    print()
+    return False
+
+
 def _interactive_issues(
     app,
     *,
@@ -855,6 +990,13 @@ def _interactive_issues(
             continue
         target = str(selected.get("dish_id") or selected.get("task_gid") or "").strip()
         signals = selected.get("signals") if isinstance(selected.get("signals"), list) else []
+        action = _queue_action(signals)
+        if action is not None:
+            if _interactive_pg_queue_action(
+                app, action=action, arguments=arguments, input_fn=input_fn
+            ):
+                return 0
+            continue
         review_id = next(
             (
                 str(signal.get("review_id") or "").strip()

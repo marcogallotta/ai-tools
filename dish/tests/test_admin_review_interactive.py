@@ -429,3 +429,111 @@ def test_interactive_queue_prints_evidence_question_before_prompt(capsys):
     assert output.index("Question: Which preserved vegetable") < len(output)
     assert prompts[-1] == "Answer: "
     assert not any("Evidence / answer" in prompt for prompt in prompts)
+
+
+class ExactQueueActionApp:
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
+    def execute(self, command: str, **arguments):
+        self.calls.append((command, dict(arguments)))
+        return _envelope(command, data={"recorded": True})
+
+
+def test_pg_queue_human_and_evidence_actions_route_exact_durable_ids(capsys):
+    app = ExactQueueActionApp()
+    input_fn, _ = _answers("Use the dry route", "Source confirms preserved beans")
+
+    assert admin_cli._interactive_pg_queue_action(
+        app,
+        action={
+            "kind": "record_human_decision",
+            "operation_id": "operation-1",
+            "requirement_id": "requirement-1",
+            "cycle_id": "cycle-1",
+            "hold_identity": "sha256:held",
+            "resume_status": "pending-verification",
+        },
+        arguments=(),
+        input_fn=input_fn,
+    ) is False
+    assert admin_cli._interactive_pg_queue_action(
+        app,
+        action={
+            "kind": "supply_evidence",
+            "operation_id": "operation-2",
+            "hold_id": "hold-2",
+            "cycle_id": "cycle-2",
+            "hold_identity": "sha256:evidence",
+            "resume_status": "pending-verification",
+        },
+        arguments=(),
+        input_fn=input_fn,
+    ) is False
+
+    assert app.calls == [
+        (
+            "record-human-decision",
+            {
+                "submission_id": "operation-1",
+                "requirement_id": "requirement-1",
+                "detail": "Use the dry route",
+                "rationale": "Use the dry route",
+                "resume_status": "pending-verification",
+                "expected_cycle_id": "cycle-1",
+                "expected_hold_identity": "sha256:held",
+            },
+        ),
+        (
+            "supply-evidence",
+            {
+                "submission_id": "operation-2",
+                "hold_id": "hold-2",
+                "detail": "Source confirms preserved beans",
+                "resume_status": "pending-verification",
+                "expected_cycle_id": "cycle-2",
+                "expected_hold_identity": "sha256:evidence",
+            },
+        ),
+    ]
+
+
+def test_pg_queue_semantic_action_authorizes_or_rejects_exact_proposal(capsys):
+    approval = ExactQueueActionApp()
+    input_fn, _ = _answers("a")
+    action = {
+        "kind": "semantic_proposal",
+        "operation_id": "operation-3",
+        "proposal_id": "proposal-3",
+        "linked_changes": [{"path": "Purpose", "before": "old", "after": "new"}],
+        "required_authorizations": [
+            {"field": "Purpose", "before": "old", "after": "new"},
+            {"field": "State.Baseline", "before": "a", "after": "b"},
+        ],
+    }
+    assert admin_cli._interactive_pg_queue_action(
+        approval, action=action, arguments=(), input_fn=input_fn
+    ) is False
+    assert [name for name, _ in approval.calls] == [
+        "authorize-governed-change",
+        "authorize-governed-change",
+    ]
+    assert all(
+        arguments["submission_id"] == "operation-3"
+        for _, arguments in approval.calls
+    )
+
+    rejection = ExactQueueActionApp()
+    input_fn, _ = _answers("r", "Candidate changed the intended role")
+    assert admin_cli._interactive_pg_queue_action(
+        rejection, action=action, arguments=(), input_fn=input_fn
+    ) is False
+    assert rejection.calls == [
+        (
+            "review-reject",
+            {
+                "proposal_id": "proposal-3",
+                "reason": "Candidate changed the intended role",
+            },
+        )
+    ]

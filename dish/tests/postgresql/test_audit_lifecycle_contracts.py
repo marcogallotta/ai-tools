@@ -135,6 +135,28 @@ def test_human_review_decision_resumes_same_operation_with_legacy_arguments(
             owner="Marco",
             agent="claude",
         )
+        queued = port.execute(
+            _call("queue", run_id=admin_run, owner="Marco", principal="admin")
+        )
+        assert queued.ok
+        item = queued.data["issue_items"][0]
+        assert item["queue_group"] == "human_review"
+        action = item["signals"][0]["queue_action"]
+        held_state = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        held_version = session.get(
+            models.ContentVersion, held_state.current_content_version_id
+        )
+        assert action == {
+            "kind": "record_human_decision",
+            "dish_id": str(task_id),
+            "operation_id": started.data["operation_id"],
+            "requirement_id": rejected.data["requirement_id"],
+            "cycle_id": rejected.data["cycle_id"],
+            "hold_identity": held_version.content_identity,
+            "resume_status": "pending-verification",
+        }
         decided = port.execute(
             _call(
                 "record-human-decision",

@@ -929,6 +929,8 @@ class PostgresRuntimeService:
             command,
             arguments,
             principal=principal,
-            request_id=request_id,
+            request_id=(
+                request_id if COMMAND_DEFINITIONS[command].request_replay else None
+            ),
             principal_class="admin",
         )
