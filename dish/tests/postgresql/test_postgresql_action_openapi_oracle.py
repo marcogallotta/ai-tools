@@ -68,7 +68,9 @@ def _assert_postgresql_action_contract(document: dict[str, object]) -> None:
         "code",
         "http_status",
         "retryable",
+        "allowed_actions",
         "data",
+        "errors",
     ]
     assert envelope["properties"]["command"] == {
         "type": "string",

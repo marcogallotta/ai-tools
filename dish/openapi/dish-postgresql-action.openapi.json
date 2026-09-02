@@ -32,6 +32,29 @@
       "ResultEnvelope": {
         "additionalProperties": false,
         "properties": {
+          "allowed_actions": {
+            "items": {
+              "enum": [
+                "create",
+                "sections",
+                "section-tasks",
+                "search",
+                "read",
+                "proposals",
+                "apply-proposal",
+                "safe-reclaim",
+                "inspect",
+                "start",
+                "prepare",
+                "approve",
+                "reject",
+                "submit",
+                "renew-lease"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
           "code": {
             "type": "string"
           },
@@ -59,6 +82,13 @@
             "additionalProperties": true,
             "type": "object"
           },
+          "errors": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
           "http_status": {
             "type": "integer"
           },
@@ -70,6 +100,28 @@
           },
           "retryable": {
             "type": "boolean"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "submission_id": {
+            "format": "uuid",
+            "maxLength": 36,
+            "minLength": 36,
+            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_gid": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -78,7 +130,9 @@
           "code",
           "http_status",
           "retryable",
-          "data"
+          "allowed_actions",
+          "data",
+          "errors"
         ],
         "type": "object"
       }
@@ -491,6 +545,10 @@
                         ],
                         "type": "string"
                       },
+                      "independence_attestation": {
+                        "description": "Repeat the exact independence attestation returned by the successful Verification start response.",
+                        "type": "string"
+                      },
                       "submission_id": {
                         "format": "uuid",
                         "maxLength": 36,
@@ -501,7 +559,8 @@
                     },
                     "required": [
                       "submission_id",
-                      "agent"
+                      "agent",
+                      "independence_attestation"
                     ],
                     "type": "object"
                   },

@@ -96,16 +96,39 @@ def postgres_action_openapi(*, server_url: str = "https://dish-postgresql.exampl
             "schemas": {
                 "ResultEnvelope": {
                     "type": "object",
-                    "required": ["ok", "command", "code", "http_status", "retryable", "data"],
+                    "required": [
+                        "ok",
+                        "command",
+                        "code",
+                        "http_status",
+                        "retryable",
+                        "allowed_actions",
+                        "data",
+                        "errors",
+                    ],
                     "additionalProperties": False,
                     "properties": {
                         "ok": {"type": "boolean"},
                         "command": {"type": "string", "enum": list(ACTION_COMMANDS)},
                         "code": {"type": "string"},
                         "http_status": {"type": "integer"},
+                        "task_gid": {"type": ["string", "null"]},
+                        "submission_id": {
+                            **deepcopy(POSTGRES_DISH_ID_SCHEMA),
+                            "type": ["string", "null"],
+                        },
+                        "state": {"type": ["string", "null"]},
                         "retryable": {"type": "boolean"},
                         "request_replayed": {"type": "boolean"},
+                        "allowed_actions": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": list(ACTION_COMMANDS)},
+                        },
                         "data": {"type": "object", "additionalProperties": True},
+                        "errors": {
+                            "type": "array",
+                            "items": {"type": "object", "additionalProperties": True},
+                        },
                     },
                 },
                 "CreateResultEnvelope": {

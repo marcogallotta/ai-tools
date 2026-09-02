@@ -53,6 +53,11 @@ class CommandResult:
     data: Mapping[str, Any]
     retryable: bool = False
     request_replayed: bool = False
+    task_gid: str | None = None
+    submission_id: str | None = None
+    state: str | None = None
+    allowed_actions: tuple[str, ...] = ()
+    errors: tuple[Mapping[str, Any], ...] = ()
 
 
 SEMANTIC_PROPOSAL_PREFIX = "dish-pg-semantic-proposal-v1:"

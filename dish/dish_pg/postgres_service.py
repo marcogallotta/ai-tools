@@ -744,6 +744,18 @@ class PostgresRuntimeService:
             data = dict(payload.pop("data"))
             data["request_replayed"] = payload.pop("request_replayed")
             payload["data"] = data
+            if principal.owner_id != self.config.action_client_id:
+                # The native CLI/private client still consumes the established
+                # PostgreSQL service family. The public Action principal receives
+                # the richer canonical workflow envelope.
+                for field in (
+                    "task_gid",
+                    "submission_id",
+                    "state",
+                    "allowed_actions",
+                    "errors",
+                ):
+                    payload.pop(field, None)
             return payload
         except (CommandPortError, WorkflowAuthorityError) as exc:
             raise DishRuleError(
