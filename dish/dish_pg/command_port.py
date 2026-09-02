@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from . import models
 from . import stage3_models as wf
 from . import stage5_models as projection
-from .command_contract import definition_for
+from .command_contract import ACTION_COMMANDS, definition_for
 from .command_effects import effect_spec_for
 from .command_effect_runtime import (
     ProjectionAuthority,
@@ -92,6 +92,9 @@ from .command_port_common import (
     task_reference_from_dish as _task_reference_from_dish,
 )
 from .command_port_reads import PostgresCommandReadMixin
+
+
+_RESULT_ENVELOPE_KEY = "_postgres_result_envelope"
 
 
 class PostgresCommandPort(PostgresCommandReadMixin):
@@ -254,7 +257,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         )
         if admission.outcome is not None:
             outcome = admission.outcome
-            return CommandResult(
+            return self._command_result(
                 outcome.outcome_class == "success",
                 call.command_name,
                 outcome.result_code,
@@ -318,6 +321,12 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "intent_challenge_id": str(challenge.challenge_id),
                     "required_intent_basis": ["user_requested", "agent_override"],
                 }
+                data, envelope = self._continuation_envelope(
+                    call=call,
+                    task=task,
+                    operation=None,
+                    data=data,
+                )
                 self._store_outcome(
                     call=call,
                     execution_id=None,
@@ -326,11 +335,16 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     ok=False,
                     code="CONFIRMATION_REQUIRED",
                     http_status=409,
-                    data=data,
+                    data=self._stored_result_data(data, envelope),
                     audit_event_type="planning_intent_challenge_issued",
                 )
-                return CommandResult(
-                    False, call.command_name, "CONFIRMATION_REQUIRED", 409, data
+                return self._command_result(
+                    False,
+                    call.command_name,
+                    "CONFIRMATION_REQUIRED",
+                    409,
+                    data,
+                    envelope=envelope,
                 )
 
             execution_id = self.uuid_factory()
@@ -485,6 +499,12 @@ class PostgresCommandPort(PostgresCommandReadMixin):
 
         assert execution is not None and execution_id is not None
         data = {"request_id": str(call.request_id), **data}
+        data, envelope = self._continuation_envelope(
+            call=call,
+            task=task,
+            operation=operation,
+            data=data,
+        )
         self._store_outcome(
             call=call,
             execution_id=execution_id,
@@ -493,10 +513,152 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             ok=True,
             code="OK",
             http_status=200,
-            data=data,
+            data=self._stored_result_data(data, envelope),
             audit_event_type=f"{call.command_name}_committed",
         )
-        return CommandResult(True, call.command_name, "OK", 200, data)
+        return self._command_result(
+            True, call.command_name, "OK", 200, data, envelope=envelope
+        )
+
+    @staticmethod
+    def _stored_result_data(
+        data: Mapping[str, Any], envelope: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Persist the public continuation with the immutable replay outcome."""
+
+        return {**dict(data), _RESULT_ENVELOPE_KEY: dict(envelope)}
+
+    @staticmethod
+    def _command_result(
+        ok: bool,
+        command: str,
+        code: str,
+        http_status: int,
+        data: Mapping[str, Any],
+        *,
+        retryable: bool = False,
+        request_replayed: bool = False,
+        envelope: Mapping[str, Any] | None = None,
+    ) -> CommandResult:
+        public_data = dict(data)
+        stored_envelope = public_data.pop(_RESULT_ENVELOPE_KEY, None)
+        contract = dict(envelope or stored_envelope or {})
+        return CommandResult(
+            ok=ok,
+            command=command,
+            code=code,
+            http_status=http_status,
+            data=public_data,
+            retryable=retryable,
+            request_replayed=request_replayed,
+            task_gid=contract.get("task_gid"),
+            submission_id=contract.get("submission_id"),
+            state=contract.get("state"),
+            allowed_actions=tuple(contract.get("allowed_actions") or ()),
+        )
+
+    def _continuation_envelope(
+        self,
+        *,
+        call: CommandCall,
+        task: models.DishTask | None,
+        operation: wf.WorkflowOperation | None,
+        data: Mapping[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Project canonical public continuations from the just-mutated authority."""
+
+        result_data = dict(data)
+        if task is None and result_data.get("dish_id"):
+            try:
+                task = self.reads.resolve_task(str(result_data["dish_id"]))
+            except ReadModelError:
+                task = None
+        if task is not None:
+            result_data.setdefault("dish_id", str(task.task_id))
+
+        result_operation = operation
+        operation_id = result_data.get("operation_id")
+        if operation_id is not None:
+            try:
+                result_operation = self.session.get(
+                    wf.WorkflowOperation, uuid.UUID(str(operation_id))
+                )
+            except ValueError:
+                result_operation = operation
+
+        raw_actions: list[str]
+        supplied_actions = result_data.get("allowed_actions")
+        if isinstance(supplied_actions, list) and all(
+            isinstance(item, str) for item in supplied_actions
+        ):
+            raw_actions = list(supplied_actions)
+        elif call.command_name == "create" or (
+            call.command_name == "start"
+            and call.arguments.get("kind") == "planning"
+            and result_operation is None
+        ):
+            raw_actions = ["start"]
+        elif task is not None:
+            raw_actions = list(self.reads.task_view(task.task_id).legal_actions)
+        else:
+            raw_actions = []
+
+        projected_actions = [
+            "start" if action == "verify" else action for action in raw_actions
+        ]
+        allowed_actions = list(
+            dict.fromkeys(
+                action for action in projected_actions if action in ACTION_COMMANDS
+            )
+        )
+        required_start_kind = result_data.get("required_start_kind")
+        if "start" in allowed_actions and required_start_kind is None:
+            if "verify" in raw_actions:
+                required_start_kind = "verification"
+            elif call.command_name == "create" or (
+                call.command_name == "start"
+                and call.arguments.get("kind") == "planning"
+                and result_operation is None
+            ):
+                required_start_kind = "planning"
+            if required_start_kind is not None:
+                result_data["required_start_kind"] = required_start_kind
+
+        submission_id = (
+            str(result_operation.operation_id) if result_operation is not None else None
+        )
+        if "start" in allowed_actions and required_start_kind and task is not None:
+            arguments: dict[str, Any] = {
+                "dish_id": str(task.task_id),
+                "kind": str(required_start_kind),
+            }
+            if result_data.get("intent_challenge_id"):
+                arguments["intent_challenge_id"] = result_data["intent_challenge_id"]
+            result_data.setdefault(
+                "agent_action",
+                {"command": "start", "arguments": arguments},
+            )
+        elif len(allowed_actions) == 1 and submission_id is not None:
+            next_action = allowed_actions[0]
+            if next_action in {"prepare", "inspect", "submit"}:
+                arguments = {"submission_id": submission_id}
+                if next_action == "inspect" and result_data.get(
+                    "independence_attestation"
+                ):
+                    arguments["independence_attestation"] = result_data[
+                        "independence_attestation"
+                    ]
+                result_data.setdefault(
+                    "agent_action",
+                    {"command": next_action, "arguments": arguments},
+                )
+
+        return result_data, {
+            "task_gid": None,
+            "submission_id": submission_id,
+            "state": result_operation.phase if result_operation is not None else None,
+            "allowed_actions": allowed_actions,
+        }
 
     def _record_rule_failure(
         self,
@@ -1175,6 +1337,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "cycle_id": str(cycle.cycle_id),
                 "lease_id": str(lease.lease_id),
                 "phase": operation.phase,
+                "independence_attestation": attestation,
             }
 
         operation_id = self.uuid_factory()
@@ -2023,10 +2186,19 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         )
         operation.persisted_actions = ["approve", "reject"]
         operation.operation_revision += 1
+        reviewed = self.session.get(
+            models.ContentVersion, cycle.reviewed_content_version_id
+        )
+        if reviewed is None:
+            raise CommandRuleError(
+                "REVIEWED_CONTENT_MISSING", "reviewed content version is missing"
+            )
         return {
             "inspection_id": str(inspection.inspection_id),
             "cycle_id": str(cycle.cycle_id),
             "lease_id": str(lease.lease_id),
+            "reviewed_content_version_id": str(reviewed.content_version_id),
+            "reviewed_identity": reviewed.content_identity,
         }
 
     def _approve(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:

@@ -21,6 +21,11 @@ from dish_service.config import ServiceConfig
 from dish_service.http import DishHTTPServer
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
+from tests.support.canonical import TASK
+from tests.support.postgresql.command import (
+    _add_destination_section,
+    _add_verification_queue,
+)
 from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.runtime_validation import (
     runtime_service,
@@ -104,6 +109,220 @@ def _post_json(
         return exc.code, json.loads(exc.read().decode("utf-8"))
     with response:
         return response.status, json.loads(response.read().decode("utf-8"))
+
+
+def test_postgresql_action_lifecycle_is_driven_by_each_immediate_response(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    planning_run = _next(ids)
+    research_run = _next(ids)
+    verification_run = _next(ids)
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        _add_destination_section(session, ids, context)
+        ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="Action continuation contract test authority",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=planning_run,
+            owner="gpt-action",
+            agent="gpt",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=research_run,
+            owner="gpt-action",
+            agent="claude",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verification_run,
+            owner="gpt-action",
+            agent="codex",
+        )
+
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(service.config, action_token="postgres-action-token")
+    planning = """### Planning brief
+Dish candidate: Test dish
+Purpose: Compare texture
+Role: non-main — small side for comparison
+Priors: None
+Locks: Keep crisp
+Exemptions: None
+Research emphasis: Compare two hydration levels
+Destination section: Sichuan — 12345
+"""
+
+    def call(
+        base: str,
+        command: str,
+        *,
+        run_id,
+        arguments: dict[str, object],
+        request_id=None,
+    ) -> dict[str, object]:
+        status, result = _post_json(
+            f"{base}/v1/action/{command}",
+            token="postgres-action-token",
+            body={
+                "client": {
+                    "run_id": str(run_id),
+                    "request_id": str(request_id or _next(ids)),
+                },
+                "arguments": arguments,
+            },
+        )
+        assert status == 200
+        assert result["command"] == command
+        assert isinstance(result["allowed_actions"], list)
+        assert isinstance(result["errors"], list)
+        return result
+
+    def returned_action(result: dict[str, object]) -> tuple[str, dict[str, object]]:
+        data = result["data"]
+        assert isinstance(data, dict)
+        action = data["agent_action"]
+        assert isinstance(action, dict)
+        command = action["command"]
+        arguments = action["arguments"]
+        assert isinstance(command, str)
+        assert isinstance(arguments, dict)
+        assert command in result["allowed_actions"]
+        guidance = data["agent_guidance"]
+        assert isinstance(guidance, dict)
+        instructions = guidance["instructions"]
+        assert isinstance(instructions, list)
+        assert any(f"Call {command}" in instruction for instruction in instructions)
+        return command, dict(arguments)
+
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="postgres-action-continuation-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            create_request_id = _next(ids)
+            created = call(
+                base,
+                "create",
+                run_id=planning_run,
+                arguments={"agent": "gpt", "title": "Continuation contract"},
+                request_id=create_request_id,
+            )
+            replayed_create = call(
+                base,
+                "create",
+                run_id=planning_run,
+                arguments={"agent": "gpt", "title": "Continuation contract"},
+                request_id=create_request_id,
+            )
+            assert replayed_create["allowed_actions"] == created["allowed_actions"]
+            assert (
+                replayed_create["data"]["agent_action"]
+                == created["data"]["agent_action"]
+            )
+            assert replayed_create["data"]["request_replayed"] is True
+            command, arguments = returned_action(created)
+            assert (command, created["allowed_actions"]) == ("start", ["start"])
+            arguments["agent"] = "gpt"
+            challenged = call(
+                base, command, run_id=planning_run, arguments=arguments
+            )
+            assert challenged["code"] == "CONFIRMATION_REQUIRED"
+
+            command, arguments = returned_action(challenged)
+            arguments.update({"agent": "gpt", "intent_basis": "user_requested"})
+            planning_started = call(
+                base, command, run_id=planning_run, arguments=arguments
+            )
+            assert planning_started["ok"] is True
+            planning_submission = planning_started["submission_id"]
+
+            command, arguments = returned_action(planning_started)
+            assert arguments == {"submission_id": planning_submission}
+            arguments.update(
+                {"agent": "gpt", "model": "test-model", "file_text": planning}
+            )
+            planning_prepared = call(
+                base, command, run_id=planning_run, arguments=arguments
+            )
+
+            command, arguments = returned_action(planning_prepared)
+            assert command == "start"
+            arguments["agent"] = "claude"
+            research_started = call(
+                base, command, run_id=research_run, arguments=arguments
+            )
+
+            command, arguments = returned_action(research_started)
+            assert arguments == {"submission_id": research_started["submission_id"]}
+            arguments.update(
+                {"agent": "claude", "model": "test-model", "file_text": TASK}
+            )
+            research_prepared = call(
+                base, command, run_id=research_run, arguments=arguments
+            )
+
+            command, arguments = returned_action(research_prepared)
+            assert (command, research_prepared["allowed_actions"]) == (
+                "start",
+                ["start"],
+            )
+            attestation = "I independently inspected this exact candidate."
+            arguments.update(
+                {"agent": "codex", "independence_attestation": attestation}
+            )
+            verification_started = call(
+                base, command, run_id=verification_run, arguments=arguments
+            )
+
+            command, arguments = returned_action(verification_started)
+            assert arguments == {
+                "submission_id": verification_started["submission_id"],
+                "independence_attestation": attestation,
+            }
+            arguments["agent"] = "codex"
+            inspected = call(
+                base, command, run_id=verification_run, arguments=arguments
+            )
+            assert inspected["allowed_actions"] == ["approve", "reject"]
+
+            inspected_data = inspected["data"]
+            assert isinstance(inspected_data, dict)
+            approved = call(
+                base,
+                "approve",
+                run_id=verification_run,
+                arguments={
+                    "submission_id": inspected["submission_id"],
+                    "agent": "codex",
+                    "model": "test-model",
+                    "correction": "none",
+                    "reviewed_identity": inspected_data["reviewed_identity"],
+                    "semantic_review_complete": True,
+                    "provenance_complete": True,
+                },
+            )
+
+            command, arguments = returned_action(approved)
+            assert arguments == {"submission_id": approved["submission_id"]}
+            submitted = call(
+                base, command, run_id=verification_run, arguments=arguments
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert submitted["ok"] is True
+    assert submitted["allowed_actions"] == []
+    assert submitted["submission_id"] == approved["submission_id"]
+    assert planning_submission != research_started["submission_id"]
 
 
 def test_http_first_and_replay_envelopes_differ_only_by_replay_metadata(

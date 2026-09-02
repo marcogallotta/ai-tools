@@ -34,6 +34,7 @@ from dish_service.command_spec import (
 )
 from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import CANONICAL_DISH_UUID_SCHEMA, require_dish_uuid
+from dish_tool.models import validate_independence_attestation
 
 Profile = Literal["Q", "E", "L", "R", "P", "X"]
 Principal = Literal["reader", "agent", "verification", "admin", "historical"]
@@ -288,6 +289,17 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
                 else {}
             ),
         }
+    if command == "inspect":
+        result = deepcopy(base)
+        result["required"].append("independence_attestation")
+        result["properties"]["independence_attestation"] = {
+            "type": "string",
+            "description": (
+                "Repeat the exact independence attestation returned by the successful "
+                "Verification start response."
+            ),
+        }
+        return result
     return deepcopy(base)
 
 
@@ -412,6 +424,15 @@ def validate_postgres_action_request(
     adapted = dict(request)
     adapted_arguments = dict(arguments)
 
+    inspect_attestation: str | None = None
+    if command == "inspect":
+        value = arguments.get("independence_attestation")
+        inspect_attestation = validate_independence_attestation(
+            value if isinstance(value, str) else None
+        )
+        adapted_arguments.pop("independence_attestation", None)
+        adapted["arguments"] = adapted_arguments
+
     identity_pair: tuple[str, str] | None = None
     if command == "section-tasks":
         identity_pair = ("section_id", "section_gid")
@@ -440,6 +461,8 @@ def validate_postgres_action_request(
         canonical_field, legacy_field = identity_pair
         validated_arguments.pop(legacy_field, None)
         validated_arguments[canonical_field] = arguments[canonical_field]
+    if inspect_attestation is not None:
+        validated_arguments["independence_attestation"] = inspect_attestation
     return client, validated_arguments
 
 

@@ -48,6 +48,8 @@ class PostgresCommandReadMixin:
             raise CommandRuleError(
                 "REQUEST_ID_NOT_ALLOWED", "read-only commands do not accept request_id", http_status=400
             )
+        task = None
+        operation = None
         if call.command_name == "sections":
             data: Mapping[str, Any] = {"sections": self.reads.sections()}
         elif call.command_name == "section-tasks":
@@ -119,6 +121,8 @@ class PostgresCommandReadMixin:
                     data={"dish_reference": str(reference)},
                 ) from exc
             view = self.reads.task_view(task.task_id)
+            if view.operation_id is not None:
+                operation = self.session.get(wf.WorkflowOperation, view.operation_id)
             task_gid = self.session.scalar(
                 select(models.TaskExternalAlias.external_id).where(
                     models.TaskExternalAlias.task_id == view.task_id,
@@ -142,6 +146,16 @@ class PostgresCommandReadMixin:
             }
         else:
             raise CommandRuleError("NOT_A_QUERY", "command is not a read query")
+        if task is not None:
+            data, envelope = self._continuation_envelope(
+                call=call,
+                task=task,
+                operation=operation,
+                data=data,
+            )
+            return self._command_result(
+                True, call.command_name, "OK", 200, data, envelope=envelope
+            )
         return CommandResult(True, call.command_name, "OK", 200, data)
 
 
