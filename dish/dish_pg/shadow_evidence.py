@@ -63,34 +63,6 @@ _OPERATION_BINDING_ERROR_PREFIX = "no unique target operation binding for captur
 _UNBOUND_CREATE_CASCADE = "unbound_create_operation_binding_cascade"
 
 
-def _legacy_compatible_shadow_response(value: Mapping[str, Any]) -> dict[str, Any]:
-    """Match legacy response semantics only at the dark-launch comparison boundary."""
-    response = dict(value)
-    data = dict(response.get("data") or {}) if isinstance(response.get("data"), Mapping) else {}
-    command = str(response.get("command") or "")
-    code = str(response.get("code") or "")
-    planning_confirmation = command == "start" and (
-        code == "PLANNING_CONFIRMATION_NOT_YET_ISSUED"
-        or (
-            code == "CONFIRMATION_REQUIRED"
-            and (
-                "intent_challenge_id" in data
-                or "required_intent_basis" in data
-            )
-        )
-    )
-    if planning_confirmation:
-        response["code"] = "CONFIRMATION_REQUIRED"
-        response["retryable"] = True
-        data["allowed_actions"] = ["start"]
-        data["required_start_kind"] = "planning"
-    elif command == "create" and response.get("ok") is True:
-        data["allowed_actions"] = ["start"]
-        data["required_start_kind"] = "planning"
-    response["data"] = data
-    return response
-
-
 def _snapshot_rows(snapshot: Mapping[str, Any] | None, table: str) -> list[Mapping[str, Any]]:
     if not isinstance(snapshot, Mapping):
         return []
@@ -225,7 +197,7 @@ class ShadowEvaluation:
     effects: Mapping[str, Any]
 
     def as_payload(self) -> dict[str, Any]:
-        response = _legacy_compatible_shadow_response(self.response)
+        response = dict(self.response)
         payload = dict(response)
         payload.update({
             "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
