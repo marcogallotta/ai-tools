@@ -197,6 +197,27 @@ def test_test_prepare_requires_the_test_service_environment(
         namespace["require_env"]("test")
 
 
+def test_prepare_requires_and_canonicalizes_explicit_research_queue_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = runpy.run_path(str(PREPARE))
+    for name in namespace["REQUIRED_ENV"]:
+        monkeypatch.setenv(name, "fixture")
+    monkeypatch.delenv("DISH_PG_RESEARCH_QUEUE_SECTION_GID")
+
+    with pytest.raises(namespace["PrepareError"], match="DISH_PG_RESEARCH_QUEUE_SECTION_GID"):
+        namespace["require_env"]("test")
+
+    section_id = namespace["resolve_research_queue_section_id"]("1216891250619908")
+    from dish_pg.location_manifest import target_uuid
+
+    assert section_id == str(target_uuid("section", "1216891250619908"))
+    source = PREPARE.read_text(encoding="utf-8")
+    assert '"--research-queue-section-id", research_queue_section_id' in source
+    with pytest.raises(namespace["PrepareError"], match="canonical positive decimal Asana GID"):
+        namespace["resolve_research_queue_section_id"]("Research Queue")
+
+
 def test_postgresql_service_units_stop_restarting_on_deterministic_exit() -> None:
     root = ROOT / "deploy/systemd"
     for name in (

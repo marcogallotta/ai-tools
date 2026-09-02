@@ -22,6 +22,7 @@ DISH_DARK_LAUNCH_WORKER_ENV=/home/marco/.config/dish-service/dark-launch.env
 DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/prod/dark-launch-evidence/location-manifest.json
 DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/prod/dark-launch-evidence/legacy.ndjson
 DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/prod/dark-launch-evidence/bootstrap-receipt.json
+DISH_PG_RESEARCH_QUEUE_SECTION_GID=<exact-production-research-queue-section-gid>
 DISH_PG_DARK_LAUNCH_READINESS_REPORT=/home/marco/.local/state/dish/prod/dark-launch-evidence/readiness.json
 ```
 
@@ -91,6 +92,7 @@ roots. They must be non-TEST, owner-safe, non-aliased paths without symlink trav
      --dish-commit "$DISH_SOURCE_COMMIT" \
      --honest-repo /home/marco/honest-pantry \
      --honest-commit "$HONEST_SOURCE_COMMIT" \
+     --research-queue-section-id <stable-target-UUID-for-the-explicit-research-queue-section-GID> \
      --receipt "$DISH_PG_BOOTSTRAP_RECEIPT"
    ```
 
@@ -521,6 +523,7 @@ DISH_PG_EXPECTED_DATABASE_NAME=dish_stage_a_test \
 DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/test/dark-launch-evidence/location-manifest.json \
 DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/test/dark-launch-evidence/legacy.ndjson \
 DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/test/dark-launch-evidence/bootstrap-receipt.json \
+DISH_PG_RESEARCH_QUEUE_SECTION_GID=<exact-test-research-queue-section-gid> \
 DISH_DARK_LAUNCH_SOURCE_GENERATION=<exact-test-legacy-release> \
 HONEST_SOURCE_COMMIT=<sha> \
 DISH_DARK_LAUNCH_SPOOL_PATH=/home/marco/.local/state/dish/test/dark-launch-spool.sqlite3 \
@@ -553,6 +556,7 @@ DISH_PG_EXPECTED_DATABASE_NAME=dish_stage_a_test \
 DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/test/dark-launch-evidence/location-manifest.json \
 DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/test/dark-launch-evidence/legacy.ndjson \
 DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/test/dark-launch-evidence/bootstrap-receipt.json \
+DISH_PG_RESEARCH_QUEUE_SECTION_GID=<exact-test-research-queue-section-gid> \
 DISH_DARK_LAUNCH_SOURCE_GENERATION=<exact-test-legacy-release> \
 HONEST_SOURCE_COMMIT=<sha> \
 DISH_DARK_LAUNCH_SPOOL_PATH=/home/marco/.local/state/dish/test/dark-launch-spool.sqlite3 \

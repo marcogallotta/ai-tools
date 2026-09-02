@@ -13,6 +13,10 @@ DISH_ID = "22222222-2222-4222-8222-222222222222"
 GENERATION_ID = "33333333-3333-4333-8333-333333333333"
 
 
+def test_default_action_url_targets_the_direct_test_listener_root() -> None:
+    assert journey.DEFAULT_ACTION_URL == "http://127.0.0.1:8766"
+
+
 def _target() -> journey.TestTarget:
     return journey.TestTarget(
         action_url="http://test/action",

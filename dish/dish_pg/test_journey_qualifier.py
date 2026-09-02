@@ -16,7 +16,7 @@ from dish_tool.errors import DishRuleError
 
 
 DEFAULT_ENV_PATH = Path("/home/marco/.config/dish-service/test.env")
-DEFAULT_ACTION_URL = "http://127.0.0.1:8766/test"
+DEFAULT_ACTION_URL = "http://127.0.0.1:8766"
 DEFAULT_HEALTH_URL = "http://127.0.0.1:8765/health"
 RECEIPT_FORMAT = "dish-native-test-journey-v1"
 
