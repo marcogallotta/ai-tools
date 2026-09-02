@@ -79,7 +79,9 @@ for its retained product paths:
 
 The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `search`, `read`,
 `proposals`, `apply-proposal`, `safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`,
-`submit`, and `renew-lease`. `proposals` lists exact PostgreSQL-native semantic proposals whose
+`submit`, `renew-lease`, and `cooked`. `cooked` marks only an active resting Dish complete through
+PostgreSQL authority; it does not terminate an open workflow operation or project an Asana effect.
+`proposals` lists exact PostgreSQL-native semantic proposals whose
 governed changes have durable authorization; `apply-proposal` installs only the exact stored,
 revalidated candidate and opens fresh Verification; and `safe-reclaim` performs different-run
 recovery only from a mechanically clean inactive PostgreSQL frontier by fencing the source and

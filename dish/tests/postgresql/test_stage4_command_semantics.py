@@ -744,8 +744,8 @@ def test_cooked_uses_completion_authority_and_replay_idempotently(workflow_db) -
             definition.task_required,
             definition.operation_required,
             definition.action_exposed,
-        ) == ("agent", True, True, False, False)
-        assert "cooked" not in ACTION_COMMANDS
+        ) == ("agent", True, True, False, True)
+        assert "cooked" in ACTION_COMMANDS
 
         before_page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
             section_reference=context["section_id"]

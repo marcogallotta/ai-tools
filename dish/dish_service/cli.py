@@ -57,6 +57,7 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 TOPIC_COMMANDS = ("planning", "research", "verification")
 SEARCH_COMMAND = "search"
+COOKED_COMMAND = "cooked"
 SEARCH_PAGE_SIZE_DEFAULT = 50
 
 
@@ -217,6 +218,17 @@ def build_parser() -> JsonArgumentParser:
     )
     read.add_argument("task_gid")
     read.add_argument("--agent", required=True, choices=_canonical_enum_choices(READ_COMMAND, "agent"))
+
+    cooked = subparsers.add_parser(
+        COOKED_COMMAND,
+        help="mark one active resting Dish cooked",
+    )
+    cooked.add_argument("dish_id")
+    cooked.add_argument(
+        "--agent", required=True, choices=_canonical_enum_choices(READ_COMMAND, "agent")
+    )
+    cooked.add_argument("--run-id")
+    cooked.add_argument("--request-id")
 
     inspect = subparsers.add_parser(
         INSPECT_COMMAND.name, help="inspect a prior tool operation's recorded state"
