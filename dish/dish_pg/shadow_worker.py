@@ -1441,55 +1441,14 @@ def _target_authority_state(
 
 
 def _target_response_payload(
-    session,
     *,
-    port: PostgresCommandPort,
-    arguments: Mapping[str, Any],
     result: CommandResult,
     source_command_name: str | None = None,
 ) -> dict[str, Any]:
-    """Enrich the raw target response with shared lifecycle/action facts."""
+    """Return the command result the PostgreSQL service exposes to clients."""
     payload = _result_payload(result)
     if source_command_name == "reject" and result.command == "hold-reject":
         payload["command"] = "reject"
-    data = dict(payload.get("data") or {})
-    task = None
-    operation = None
-    operation_id = _as_uuid(
-        data.get("operation_id")
-        or data.get("successor_operation_id")
-        or arguments.get("operation_id")
-        or arguments.get("submission_id")
-        or arguments.get("existing_submission_id")
-    )
-    if operation_id is not None:
-        operation = session.get(wf.WorkflowOperation, operation_id)
-        if operation is not None:
-            task = session.get(models.DishTask, operation.task_id)
-    task_reference = data.get("task_id") or arguments.get("task_id") or arguments.get("task_gid")
-    if task is None and task_reference not in {None, ""}:
-        try:
-            task = port.reads.resolve_task(str(task_reference))
-        except ReadModelError:
-            task = None
-    if task is not None:
-        data.setdefault("task_id", str(task.task_id))
-        try:
-            view = port.reads.task_view(task.task_id)
-        except ReadModelError:
-            view = None
-        if view is not None:
-            data["allowed_actions"] = list(view.legal_actions)
-            if operation is None and view.operation_id is not None:
-                operation = session.get(wf.WorkflowOperation, view.operation_id)
-    if operation is not None:
-        data.setdefault("operation_id", str(operation.operation_id))
-        data["state"] = {
-            "cancelled_by_marco": "cancelled",
-            "abandoned": "cancelled",
-            "failed": "uncertain",
-        }.get(operation.lifecycle, operation.lifecycle)
-    payload["data"] = data
     return payload
 
 
@@ -1584,9 +1543,6 @@ class CommandPortShadowEvaluator:
         )
         return ShadowEvaluation(
             response=_target_response_payload(
-                session,
-                port=port,
-                arguments=translated_arguments,
                 result=result,
                 source_command_name=envelope.command_name,
             ),

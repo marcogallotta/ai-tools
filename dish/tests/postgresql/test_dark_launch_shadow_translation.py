@@ -1329,7 +1329,7 @@ def test_patch_b_missing_or_historical_lineage_fails_closed(workflow_db, field, 
             with pytest.raises(ShadowIdentityMappingError, match=f"no unique target {family}"):
                 _translate_workflow_identifiers(session, envelope, {field: str(source_value)})
 
-def test_real_shadow_evaluator_compares_legacy_start_semantically(workflow_db):
+def test_real_shadow_evaluator_reports_missing_start_continuation_fields(workflow_db):
     from dish_pg.shadow_worker import CommandPortShadowEvaluator
     from tests.support.postgresql.core import HASH_A
 
@@ -1425,5 +1425,10 @@ def test_real_shadow_evaluator_compares_legacy_start_semantically(workflow_db):
             comparator_release="test",
             compared_at=NOW,
         )
-        assert comparison.parity_class == "semantic"
-        assert comparison.differences == []
+        assert comparison.parity_class == "mismatch"
+        assert [item["axis"] for item in comparison.differences] == ["response"]
+        response_difference = comparison.differences[0]
+        assert response_difference["source"]["allowed_actions"] == ["prepare"]
+        assert response_difference["target"]["allowed_actions"] == []
+        assert response_difference["target"]["task"] is None
+        assert response_difference["target"]["state"] is None

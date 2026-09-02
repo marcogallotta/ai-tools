@@ -95,6 +95,36 @@ def test_versioned_comparator_reconciles_transport_and_generated_id_schemas():
     assert differences == []
 
 
+def test_versioned_comparator_detects_omitted_target_continuation_fields():
+    source = {
+        "ok": True,
+        "command": "start",
+        "code": "OK",
+        "task_gid": "120000000000001",
+        "submission_id": str(uuid.uuid4()),
+        "state": "open",
+        "retryable": False,
+        "allowed_actions": ["prepare"],
+    }
+    target = _payload(post_phase="prepare_required")
+    target["response"]["data"] = {}
+
+    parity, differences = compare_evidence(
+        source_outcome=source,
+        source_pre_state=_source_snapshot(phase=None),
+        source_post_state=_source_snapshot(phase="prepare_required"),
+        target_payload=target,
+    )
+
+    assert parity == "mismatch"
+    response_difference = next(
+        item for item in differences if item["axis"] == "response"
+    )
+    assert response_difference["source"]["allowed_actions"] == ["prepare"]
+    assert response_difference["target"]["allowed_actions"] == []
+    assert response_difference["target"]["operation"] is None
+
+
 def test_versioned_comparator_detects_wrong_post_state_even_when_response_matches():
     source = {
         "ok": True,
@@ -483,7 +513,7 @@ def test_exact_old_hash_does_not_hide_genuine_changed_content() -> None:
         ),
     ],
 )
-def test_planning_confirmation_shadow_response_matches_legacy_shape(code, data) -> None:
+def test_planning_confirmation_shadow_response_is_not_rewritten(code, data) -> None:
     payload = ShadowEvaluation(
         response={
             "ok": False,
@@ -498,23 +528,21 @@ def test_planning_confirmation_shadow_response_matches_legacy_shape(code, data) 
         effects={},
     ).as_payload()
 
-    assert payload["code"] == "CONFIRMATION_REQUIRED"
-    assert payload["retryable"] is True
-    assert payload["data"]["allowed_actions"] == ["start"]
-    assert payload["data"]["required_start_kind"] == "planning"
-    assert canonical_response(payload["response"])["facts"] == {
-        "required_start_kind": "planning"
-    }
+    assert payload["code"] == code
+    assert payload["retryable"] is False
+    assert "allowed_actions" not in payload["data"]
+    assert "required_start_kind" not in payload["data"]
+    assert "facts" not in canonical_response(payload["response"])
 
 
-def test_create_shadow_response_adds_legacy_planning_shape_without_protocol_redesign() -> None:
+def test_create_shadow_response_is_not_given_a_synthetic_continuation() -> None:
     payload = ShadowEvaluation(
         response={
             "ok": True,
             "command": "create",
             "code": "OK",
             "http_status": 200,
-            "data": {"task_id": str(uuid.uuid4()), "allowed_actions": []},
+            "data": {"task_id": str(uuid.uuid4())},
             "retryable": False,
         },
         pre_state={},
@@ -524,11 +552,11 @@ def test_create_shadow_response_adds_legacy_planning_shape_without_protocol_rede
 
     assert payload["code"] == "OK"
     assert payload["retryable"] is False
-    assert payload["data"]["allowed_actions"] == ["start"]
-    assert payload["data"]["required_start_kind"] == "planning"
+    assert "allowed_actions" not in payload["data"]
+    assert "required_start_kind" not in payload["data"]
     canonical = canonical_response(payload["response"])
-    assert canonical["allowed_actions"] == ["start"]
-    assert canonical["facts"] == {"required_start_kind": "planning"}
+    assert canonical["allowed_actions"] == []
+    assert "facts" not in canonical
 
 
 def _add_shadow_envelope(
