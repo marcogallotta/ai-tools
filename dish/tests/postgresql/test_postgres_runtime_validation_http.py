@@ -667,9 +667,15 @@ def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
             created = invoke("create", "--agent", "gpt", "--title", "CLI native identity")
             dish_id = str(created["data"]["dish_id"])
             searched = invoke("search", "CLI native identity", "--agent", "gpt")
+            sections = invoke("sections", "--agent", "gpt")
+            section_id = str(sections["data"]["sections"][0]["section_id"])
+            section_tasks = invoke("section-tasks", section_id, "--agent", "gpt")
             read = invoke("read", dish_id, "--agent", "gpt")
             started = invoke(
                 "start", dish_id, "--agent", "gpt", "--kind", "initial"
+            )
+            alias_section_tasks = invoke(
+                "section-tasks", "1217084805070731", "--agent", "gpt"
             )
             alias_read = invoke("read", "123456789", "--agent", "gpt")
             alias_started = invoke(
@@ -680,9 +686,12 @@ def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
 
     assert created["ok"] is True
     assert searched["data"]["results"][0]["dish_id"] == dish_id
+    assert section_id == str(context["section_id"])
+    assert section_tasks["data"]["tasks"][0]["dish_id"] == str(imported_task_id)
     assert read["ok"] is True and read["data"]["dish_id"] == dish_id
     assert read["data"]["identity_binding"]["task_gid"] is None
     assert started["ok"] is True and started["data"]["operation_id"]
+    assert alias_section_tasks["data"]["tasks"][0]["dish_id"] == str(imported_task_id)
     assert alias_read["ok"] is True
     assert alias_read["data"]["dish_id"] == str(imported_task_id)
     assert alias_started["ok"] is True and alias_started["data"]["operation_id"]
