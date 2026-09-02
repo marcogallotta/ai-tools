@@ -33,7 +33,11 @@ def _environment() -> dict[str, str]:
 def _sections() -> dict[str, Any]:
     return {
         "ok": True,
-        "data": {"sections": [{"section_id": SECTION_ID, "name": "Research"}]},
+        "data": {
+            "sections": [
+                {"section_id": SECTION_ID, "section_gid": "1234567890", "name": "Research"}
+            ]
+        },
     }
 
 
@@ -162,6 +166,39 @@ def test_qualify_uses_cli_and_forces_section_task_pagination() -> None:
         "search",
     ]
     assert cli_calls[2][1][-2:] == ["--cursor", "cli-page-2"]
+    assert cli_calls[1][1][0] == "1234567890"
+
+
+def test_qualify_fails_when_search_omits_the_discovered_dish() -> None:
+    class EmptySearchClient(FakeClient):
+        def execute(self, command: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            result = super().execute(command, arguments)
+            if command == "search":
+                return {"ok": True, "data": {"results": []}}
+            return result
+
+    with pytest.raises(qualifier.QualificationError, match="did not return the discovered title"):
+        qualifier.qualify(
+            environment=_environment(),
+            client_factory=EmptySearchClient,
+            cli_command=lambda *, command, **_: (
+                _sections()
+                if command == "sections"
+                else {
+                    "ok": True,
+                    "data": {
+                        "tasks": [
+                            {"dish_id": TASK_A, "section_id": SECTION_ID},
+                            {"dish_id": TASK_B, "section_id": SECTION_ID},
+                        ],
+                        "next_cursor": None,
+                    },
+                }
+                if command == "section-tasks"
+                else {"ok": True, "data": {"results": []}}
+            ),
+            database_reader=_snapshot,
+        )
 
 
 def test_qualify_fails_when_service_ids_differ_from_postgresql() -> None:

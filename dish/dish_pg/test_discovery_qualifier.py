@@ -166,12 +166,17 @@ def _data(result: Mapping[str, Any], command: str) -> Mapping[str, Any]:
     return data
 
 
-def _section_ids(data: Mapping[str, Any]) -> frozenset[str]:
+def _sections_by_id(data: Mapping[str, Any]) -> dict[str, str | None]:
     sections = data.get("sections")
     if not isinstance(sections, Sequence) or isinstance(sections, (str, bytes)):
         raise QualificationError("sections returned malformed data")
     try:
-        return frozenset(str(item["section_id"]) for item in sections)
+        return {
+            str(item["section_id"]): (
+                str(item["section_gid"]) if item.get("section_gid") is not None else None
+            )
+            for item in sections
+        }
     except (KeyError, TypeError) as exc:
         raise QualificationError("sections omitted canonical section identity") from exc
 
@@ -212,13 +217,14 @@ def qualify(
         run_id=run_id,
     )
     cli_data = _data(cli_result, "CLI sections")
-    client_section_ids = _section_ids(client_sections)
-    if _section_ids(cli_data) != client_section_ids:
+    client_section_aliases = _sections_by_id(client_sections)
+    client_section_ids = frozenset(client_section_aliases)
+    if frozenset(_sections_by_id(cli_data)) != client_section_ids:
         raise QualificationError("client and CLI sections canonical IDs differ")
 
     discovered_tasks: dict[str, str] = {}
     cli_tasks: dict[str, str] = {}
-    first_title: str | None = None
+    first_search_target: tuple[str, str] | None = None
     page_count = 0
     for section_id in sorted(client_section_ids):
         cursor: str | None = None
@@ -246,7 +252,7 @@ def qualify(
                 if observed_section != section_id or dish_id in discovered_tasks:
                     raise QualificationError("section-tasks returned inconsistent canonical IDs")
                 discovered_tasks[dish_id] = observed_section
-                first_title = first_title or title
+                first_search_target = first_search_target or (dish_id, title)
             next_cursor = page.get("next_cursor")
             if next_cursor is None:
                 break
@@ -258,7 +264,12 @@ def qualify(
         cli_cursor: str | None = None
         cli_seen_cursors: set[str] = set()
         while True:
-            cli_arguments = [section_id, "--agent", "codex"]
+            section_gid = client_section_aliases[section_id]
+            if section_gid is None or not section_gid.isdigit():
+                raise QualificationError(
+                    "sections omitted the numeric compatibility ID required by the CLI"
+                )
+            cli_arguments = [section_gid, "--agent", "codex"]
             if cli_cursor is not None:
                 cli_arguments.extend(("--cursor", cli_cursor))
             cli_page = _data(
@@ -296,7 +307,7 @@ def qualify(
     if cli_tasks != discovered_tasks:
         raise QualificationError("client and CLI section-tasks canonical IDs differ")
 
-    query = first_title[:64] if first_title else "dish"
+    query = first_search_target[1][:64] if first_search_target else "dish"
     search_data = _data(
         client.execute("search", {"agent": "codex", "query": query}), "search"
     )
@@ -308,6 +319,12 @@ def qualify(
         for item in results
         if isinstance(item, Mapping)
     }
+    if (
+        first_search_target is not None
+        and search_tasks.get(first_search_target[0])
+        != discovered_tasks[first_search_target[0]]
+    ):
+        raise QualificationError("search did not return the discovered title's canonical Dish")
     cli_search = _data(
         cli_command(
             command="search",
@@ -330,6 +347,12 @@ def qualify(
     }
     if cli_search_tasks != search_tasks:
         raise QualificationError("client and CLI search canonical IDs differ")
+    if (
+        first_search_target is not None
+        and cli_search_tasks.get(first_search_target[0])
+        != discovered_tasks[first_search_target[0]]
+    ):
+        raise QualificationError("CLI search did not return the discovered title's canonical Dish")
 
     snapshot = database_reader(database_url)
     if snapshot.database != expected_database or snapshot.generation_id != str(identity["generation_id"]):
@@ -353,7 +376,9 @@ def qualify(
             "sections": len(client_section_ids),
             "tasks": len(discovered_tasks),
             "section_task_pages": page_count,
-            "search_query_source": "first_discovered_title" if first_title else "empty-corpus fallback",
+            "search_query_source": (
+                "first_discovered_title" if first_search_target else "empty-corpus fallback"
+            ),
             "search_results": len(search_tasks),
             "cli_sections_match": True,
             "cli_section_tasks_match": True,
