@@ -18,6 +18,23 @@ def _text(value: object) -> str | None:
     return cleaned or None
 
 
+def _result_actions(result: Mapping[str, Any], data: Mapping[str, Any]) -> list[str]:
+    """Read legal actions from one known result-envelope location."""
+
+    for container, field in (
+        (result, "allowed_actions"),
+        (data, "allowed_actions"),
+        (data, "legal_actions"),
+    ):
+        if field not in container:
+            continue
+        value = container[field]
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            return []
+        return value
+    return []
+
+
 def _human_action_instruction(action: Mapping[str, Any]) -> str:
     shell = _text(action.get("shell_command"))
     suffix = (
@@ -49,9 +66,9 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
 
     command = str(result.get("command") or "")
     code = str(result.get("code") or "")
-    actions = [str(item) for item in (result.get("allowed_actions") or [])]
     data_value = result.get("data")
     data = data_value if isinstance(data_value, Mapping) else {}
+    actions = _result_actions(result, data)
     errors_value = result.get("errors")
     errors = errors_value if isinstance(errors_value, list) else []
     first_error = errors[0] if errors and isinstance(errors[0], Mapping) else {}
@@ -249,7 +266,7 @@ def attach_action_agent_guidance(result: dict[str, Any]) -> dict[str, Any]:
         and result.get("command") == "prepare"
         and data.get("handoff") == "planning-to-research"
         and data.get("required_start_kind") == "initial"
-        and "start" in (result.get("allowed_actions") or [])
+        and "start" in _result_actions(result, data)
     ):
         task_gid = _text(result.get("task_gid"))
         if task_gid is not None:
