@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 
+from dish_service import admin_cli
 from dish_service.application import DishService
 from dish_service.client import DishAdminServiceClient
 from dish_service.config import ServiceConfig
@@ -27,6 +28,58 @@ from tests.support.abandonment_admin import _released_actor_lease
 from tests.support.service_foundation import _release_loader
 
 _TASK_URL = f"https://app.asana.com/0/999888777666555/{_NUMERIC_TASK_GID}"
+
+
+class _RecordingAdminServiceClient(DishAdminServiceClient):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def execute(self, command, arguments=None, **keyword_arguments):
+        prepared = dict(arguments or keyword_arguments)
+        self.calls.append((command, prepared))
+        return {
+            "ok": True,
+            "command": command,
+            "code": "OK",
+            "task_gid": prepared.get("task_gid"),
+            "submission_id": None,
+            "state": None,
+            "retryable": False,
+            "allowed_actions": [],
+            "data": {},
+            "errors": [],
+        }
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected_arguments"),
+    [
+        (
+            "12345678-1234-5678-9234-567812345678",
+            {
+                "dish_id": "12345678-1234-5678-9234-567812345678",
+                "reason": "cook again",
+            },
+        ),
+        (
+            _NUMERIC_TASK_GID,
+            {"task_gid": _NUMERIC_TASK_GID, "reason": "cook again"},
+        ),
+    ],
+)
+def test_admin_cli_reopen_planning_routes_canonical_and_legacy_identity(
+    reference, expected_arguments, capsys
+):
+    client = _RecordingAdminServiceClient()
+
+    status = admin_cli.main(
+        ["reopen-planning", reference, "--reason", "cook again"],
+        application=client,
+    )
+
+    assert status == 0
+    assert client.calls == [("reopen-planning", expected_arguments)]
+    assert capsys.readouterr().err == ""
 
 
 
