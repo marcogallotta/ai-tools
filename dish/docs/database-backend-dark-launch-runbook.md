@@ -23,6 +23,7 @@ DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/prod/dark-launch-evidenc
 DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/prod/dark-launch-evidence/legacy.ndjson
 DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/prod/dark-launch-evidence/bootstrap-receipt.json
 DISH_PG_RESEARCH_QUEUE_SECTION_GID=<exact-production-research-queue-section-gid>
+DISH_PG_VERIFICATION_QUEUE_SECTION_GID=<exact-production-verification-queue-section-gid>
 DISH_PG_DARK_LAUNCH_READINESS_REPORT=/home/marco/.local/state/dish/prod/dark-launch-evidence/readiness.json
 ```
 
@@ -524,6 +525,7 @@ DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/test/dark-launch-evidenc
 DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/test/dark-launch-evidence/legacy.ndjson \
 DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/test/dark-launch-evidence/bootstrap-receipt.json \
 DISH_PG_RESEARCH_QUEUE_SECTION_GID=<exact-test-research-queue-section-gid> \
+DISH_PG_VERIFICATION_QUEUE_SECTION_GID=<exact-test-verification-queue-section-gid> \
 DISH_DARK_LAUNCH_SOURCE_GENERATION=<exact-test-legacy-release> \
 HONEST_SOURCE_COMMIT=<sha> \
 DISH_DARK_LAUNCH_SPOOL_PATH=/home/marco/.local/state/dish/test/dark-launch-spool.sqlite3 \
@@ -557,6 +559,7 @@ DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/test/dark-launch-evidenc
 DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/test/dark-launch-evidence/legacy.ndjson \
 DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/test/dark-launch-evidence/bootstrap-receipt.json \
 DISH_PG_RESEARCH_QUEUE_SECTION_GID=<exact-test-research-queue-section-gid> \
+DISH_PG_VERIFICATION_QUEUE_SECTION_GID=<exact-test-verification-queue-section-gid> \
 DISH_DARK_LAUNCH_SOURCE_GENERATION=<exact-test-legacy-release> \
 HONEST_SOURCE_COMMIT=<sha> \
 DISH_DARK_LAUNCH_SPOOL_PATH=/home/marco/.local/state/dish/test/dark-launch-spool.sqlite3 \

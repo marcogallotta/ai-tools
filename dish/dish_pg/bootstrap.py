@@ -30,6 +30,7 @@ from dish_tool.constants import (
     SUPPORTED_TASK_SCHEMA_VERSION,
     TASK_SCHEMA_FILENAME,
 )
+from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
 from dish_tool.releases import parse_dish_version
 from dish_tool.schema_validation import validate_task_schema_shape
 
@@ -110,6 +111,47 @@ def section_specs_from_bundle(source_bundle: SourceBundle) -> tuple[SectionSpec,
         for section_id, section_gid in sorted(
             source_bundle.sections.items(), key=lambda item: item[1]
         )
+    )
+
+
+def ensure_required_section(
+    sections: tuple[SectionSpec, ...],
+    *,
+    section_id: uuid.UUID,
+    section_gid: str,
+    section_name: str,
+) -> tuple[SectionSpec, ...]:
+    """Preserve an explicitly configured workflow section even when it is empty."""
+    if not section_gid.isdigit() or section_gid.startswith("0"):
+        raise InitialBootstrapError(
+            "required section GID must be a canonical positive decimal Asana GID"
+        )
+    expected_section_id = stable_dish_uuid_for_asana_identity("section", section_gid)
+    if section_id != expected_section_id:
+        raise InitialBootstrapError(
+            f"required section_id {section_id} does not match section_gid {section_gid}"
+        )
+    if not section_name.strip():
+        raise InitialBootstrapError("required section name must be nonblank")
+    for section in sections:
+        if section.section_id == section_id:
+            if section.section_gid != section_gid:
+                raise InitialBootstrapError(
+                    f"required section {section_id} maps to both section_gid "
+                    f"{section.section_gid} and {section_gid}"
+                )
+            return sections
+        if section.section_gid == section_gid:
+            raise InitialBootstrapError(
+                f"required section_gid {section_gid} maps to multiple section IDs"
+            )
+    return sections + (
+        SectionSpec(
+            section_id=section_id,
+            section_gid=section_gid,
+            section_name=section_name.strip(),
+            workflow_role=f"imported-section-{section_gid}",
+        ),
     )
 
 
@@ -811,12 +853,14 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="designate this discovered section as the Research Queue (workflow_role=research_queue)",
     )
+    parser.add_argument("--research-queue-section-gid")
     parser.add_argument(
         "--verification-queue-section-id",
         type=uuid.UUID,
         default=None,
         help="designate this discovered section as the Verification Queue (workflow_role=verification_queue)",
     )
+    parser.add_argument("--verification-queue-section-gid")
     return parser
 
 
@@ -836,6 +880,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         sections = section_specs_from_bundle(source_bundle)
         if args.research_queue_section_id is not None:
+            if args.research_queue_section_gid is not None:
+                sections = ensure_required_section(
+                    sections,
+                    section_id=args.research_queue_section_id,
+                    section_gid=args.research_queue_section_gid,
+                    section_name="Research Queue",
+                )
             sections = apply_research_queue_role(
                 sections, research_queue_section_id=args.research_queue_section_id
             )
@@ -843,6 +894,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.verification_queue_section_id == args.research_queue_section_id:
                 raise InitialBootstrapError(
                     "Research Queue and Verification Queue must be different sections"
+                )
+            if args.verification_queue_section_gid is not None:
+                sections = ensure_required_section(
+                    sections,
+                    section_id=args.verification_queue_section_id,
+                    section_gid=args.verification_queue_section_gid,
+                    section_name="Verification Queue",
                 )
             sections = apply_verification_queue_role(
                 sections,
