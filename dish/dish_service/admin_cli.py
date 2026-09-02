@@ -617,6 +617,24 @@ def _normalize_expire_target(target: str) -> tuple[str | None, str | None]:
     return require_dish_uuid(clean, field="lease_id"), None
 
 
+def _route_service_reopen_planning_reference(
+    command: str, arguments: dict[str, object], application: object
+) -> None:
+    """Route a canonical Dish UUID while preserving legacy GID handling."""
+
+    if command != "reopen-planning" or not isinstance(
+        application, DishAdminServiceClient
+    ):
+        return
+    reference = arguments.get("task_gid")
+    try:
+        dish_id = require_dish_uuid(reference, field="dish_id")
+    except DishRuleError:
+        return
+    arguments.pop("task_gid", None)
+    arguments["dish_id"] = dish_id
+
+
 def _run_expire_lease(
     arguments: Sequence[str], *, application: object | None
 ) -> int:
@@ -1131,6 +1149,7 @@ def main(
             parsed.pop("json", None)
             verbose_requested = bool(parsed.pop("verbose", False))
             non_interactive = bool(parsed.pop("non_interactive", False))
+            _route_service_reopen_planning_reference(command, parsed, app)
             if command == "inspect":
                 parsed["verbose"] = verbose_requested
             interactive_terminal = (
