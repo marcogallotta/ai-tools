@@ -269,10 +269,12 @@ def attach_action_agent_guidance(result: dict[str, Any]) -> dict[str, Any]:
         and "start" in _result_actions(result, data)
     ):
         task_gid = _text(result.get("task_gid"))
-        if task_gid is not None:
+        dish_id = _text(data.get("dish_id"))
+        if task_gid is not None or dish_id is not None:
+            target = {"task_gid": task_gid} if task_gid is not None else {"dish_id": dish_id}
             data["agent_action"] = {
                 "command": "start",
-                "arguments": {"task_gid": task_gid, "kind": "initial"},
+                "arguments": {**target, "kind": "initial"},
             }
             data["continuation_requirements"] = {
                 "fresh_client_run_id": True,

@@ -1654,12 +1654,15 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     call.now,
                 )
             return {
+                "dish_id": str(task.task_id),
                 "content_version_id": str(version_id),
                 "cycle_id": None,
                 "projection_event_id": projection_id,
                 "placement_projection_event_id": placement_projection_id,
                 "_placement_changed": placement_changed,
                 "handoff": "planning-to-research",
+                "required_start_kind": "initial",
+                "allowed_actions": ["start"],
             }
 
         change_preparation = None
