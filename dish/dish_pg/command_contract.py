@@ -40,6 +40,7 @@ Profile = Literal["Q", "E", "L", "R", "P", "X"]
 Principal = Literal["reader", "agent", "verification", "admin", "historical"]
 
 SEARCH_COMMAND = "search"
+COOKED_COMMAND = "cooked"
 SEARCH_QUERY_MAX_LENGTH = 160
 SEARCH_PAGE_SIZE_DEFAULT = 50
 SEARCH_PAGE_SIZE_MAX = 100
@@ -134,7 +135,16 @@ COMMAND_DEFINITIONS = {
         CommandDefinition("discard", "R", "admin", True, True, True),
         CommandDefinition("abandon-operation", "R", "admin", True, True, True),
         CommandDefinition("reconcile-abandonment", "R", "admin", True, True, True),
-        CommandDefinition("cooked", "L", "agent", True, True, False),
+        CommandDefinition(
+            COOKED_COMMAND,
+            "L",
+            "agent",
+            True,
+            True,
+            False,
+            action_exposed=True,
+            description="Mark one active resting Dish cooked through PostgreSQL authority.",
+        ),
         CommandDefinition(
             "archive", "L", "agent", True, True, False, admin_exposed=True
         ),
@@ -169,12 +179,12 @@ RETIRED_COMMANDS = tuple(
     name for name, definition in COMMAND_DEFINITIONS.items() if not definition.retained
 )
 
-# Every previously connected command remains retained. Search is the one intentional
-# PostgreSQL-native addition for pre-cutover active-title discovery.
+# Every previously connected command remains retained. Search and Cooked are
+# intentional PostgreSQL-native additions for no-Asana operation.
 CONNECTED_COMMAND_DISPOSITIONS: dict[str, str] = {
     command: "retained" for command in ACTION_COMMANDS
 }
-POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (SEARCH_COMMAND,)
+POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (SEARCH_COMMAND, COOKED_COMMAND)
 POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = ()
 # Connected on the legacy SQLite/Asana Action surface but not yet ported to the
 # PostgreSQL command-execution stack: no PG workflow/transaction handler exists
@@ -193,6 +203,7 @@ if tuple(ACTION_COMMANDS) != (
     *tuple(_PARITY_EXPECTED_CONNECTED_COMMANDS[:3]),
     SEARCH_COMMAND,
     *tuple(_PARITY_EXPECTED_CONNECTED_COMMANDS[3:]),
+    COOKED_COMMAND,
 ):
     raise ValueError("PostgreSQL connected-command inventory drifted")
 
@@ -264,6 +275,16 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
 
     if command == SEARCH_COMMAND:
         return _search_argument_schema()
+    if command == COOKED_COMMAND:
+        return {
+            "type": "object",
+            "required": ["dish_id", "agent"],
+            "additionalProperties": False,
+            "properties": {
+                "dish_id": deepcopy(POSTGRES_DISH_ID_SCHEMA),
+                "agent": {"type": "string", "enum": list(_SEARCH_AGENT_VALUES)},
+            },
+        }
     base = action_openapi_argument_schema(command)
     if command == "section-tasks":
         return _add_canonical_identity_alias(
@@ -396,6 +417,42 @@ def _validate_search_action_request(
     return client, normalize_postgres_search_arguments(raw_arguments)
 
 
+def _validate_cooked_action_request(
+    request: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw_arguments = request.get("arguments") if isinstance(request, Mapping) else None
+    adapted = dict(request) if isinstance(request, Mapping) else request
+    if isinstance(adapted, dict):
+        # Reuse the shared mutation envelope validator without adding Cooked to
+        # the legacy SQLite/Asana Action inventory.
+        adapted["arguments"] = {"agent": "gpt", "title": "Cooked validation"}
+    client, _ = validate_legacy_action_request(CREATE_COMMAND.name, adapted)
+    if not isinstance(raw_arguments, Mapping):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "arguments must be an object",
+            rule="argument_object_required",
+        )
+    unknown = sorted(set(raw_arguments) - {"dish_id", "agent"})
+    if unknown:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "cooked arguments contain unsupported fields",
+            rule="argument_field_forbidden",
+            details={"fields": unknown},
+        )
+    dish_id = require_dish_uuid(raw_arguments.get("dish_id"), field="dish_id")
+    agent = raw_arguments.get("agent")
+    if not isinstance(agent, str) or agent not in _SEARCH_AGENT_VALUES:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "agent must name a supported agent family",
+            rule="argument_value_invalid",
+            details={"field": "agent", "allowed": list(_SEARCH_AGENT_VALUES)},
+        )
+    return client, {"dish_id": dish_id, "agent": agent}
+
+
 def validate_postgres_action_request(
     command: str, request: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -415,6 +472,8 @@ def validate_postgres_action_request(
         )
     if command == SEARCH_COMMAND:
         return _validate_search_action_request(request)
+    if command == COOKED_COMMAND:
+        return _validate_cooked_action_request(request)
     if not isinstance(request, Mapping):
         return validate_legacy_action_request(command, request)
     raw_arguments = request.get("arguments")

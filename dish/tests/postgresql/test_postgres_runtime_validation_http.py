@@ -679,6 +679,7 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
     assert service.supports_http_route("action", "proposals") is True
     assert service.supports_http_route("action", "apply-proposal") is True
     assert service.supports_http_route("action", "safe-reclaim") is True
+    assert service.supports_http_route("action", "cooked") is True
 
     with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
         thread = start_server_thread(server, name="postgres-action-http")
@@ -716,6 +717,7 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
     assert "/v1/action/proposals" in openapi["paths"]
     assert "/v1/action/apply-proposal" in openapi["paths"]
     assert "/v1/action/safe-reclaim" in openapi["paths"]
+    assert "/v1/action/cooked" in openapi["paths"]
 
 
 def test_postgresql_admin_routes_stay_hidden_outside_prod_profile(
@@ -849,6 +851,71 @@ def test_postgresql_action_canonical_ids_work_without_asana_identity(
     assert alias_search_result["data"]["results"][0]["task_gid"] == "123456789"
 
 
+def test_postgresql_action_cooked_replays_and_leaves_exact_read_available(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id, request_id = _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="gpt-action",
+            agent="gpt",
+        )
+
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(service.config, action_token="postgres-action-token")
+    body = {
+        "client": {"run_id": str(run_id), "request_id": str(request_id)},
+        "arguments": {"dish_id": str(task_id), "agent": "gpt"},
+    }
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="postgres-cooked-action-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            first_status, first = _post_json(
+                f"{base}/v1/action/cooked",
+                token="postgres-action-token",
+                body=body,
+            )
+            replay_status, replay = _post_json(
+                f"{base}/v1/action/cooked",
+                token="postgres-action-token",
+                body=body,
+            )
+            read_status, read = _post_json(
+                f"{base}/v1/action/read",
+                token="postgres-action-token",
+                body={
+                    "client": {"run_id": str(run_id)},
+                    "arguments": {"dish_id": str(task_id), "agent": "gpt"},
+                },
+            )
+            search_status, search = _post_json(
+                f"{base}/v1/action/search",
+                token="postgres-action-token",
+                body={
+                    "client": {"run_id": str(run_id)},
+                    "arguments": {"query": "Imported", "agent": "gpt"},
+                },
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert first_status == replay_status == read_status == search_status == 200
+    assert first["ok"] is True
+    assert first["data"]["dish_id"] == str(task_id)
+    assert first["data"]["completion_state"] == "cooked"
+    assert first["data"]["request_id"] == str(request_id)
+    assert replay["ok"] is True
+    assert replay["data"]["request_replayed"] is True
+    assert read["data"]["dish_id"] == str(task_id)
+    assert read["data"]["completion_state"] == "cooked"
+    assert search["data"]["results"] == []
+
+
 def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
     workflow_db, tmp_path: Path, capsys
 ) -> None:
@@ -885,6 +952,13 @@ def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
         try:
             created = invoke("create", "--agent", "gpt", "--title", "CLI native identity")
             dish_id = str(created["data"]["dish_id"])
+            cooked_created = invoke(
+                "create", "--agent", "gpt", "--title", "CLI cooked identity"
+            )
+            cooked_id = str(cooked_created["data"]["dish_id"])
+            cooked = invoke("cooked", cooked_id, "--agent", "gpt")
+            cooked_read = invoke("read", cooked_id, "--agent", "gpt")
+            cooked_search = invoke("search", "CLI cooked identity", "--agent", "gpt")
             searched = invoke("search", "CLI native identity", "--agent", "gpt")
             sections = invoke("sections", "--agent", "gpt")
             section_id = str(sections["data"]["sections"][0]["section_id"])
@@ -904,6 +978,12 @@ def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
             stop_server(server, thread)
 
     assert created["ok"] is True
+    assert cooked["ok"] is True
+    assert cooked["data"]["dish_id"] == cooked_id
+    assert cooked["data"]["completion_state"] == "cooked"
+    assert cooked["data"]["request_id"]
+    assert cooked_read["data"]["completion_state"] == "cooked"
+    assert cooked_search["data"]["results"] == []
     assert searched["data"]["results"][0]["dish_id"] == dish_id
     assert section_id == str(context["section_id"])
     assert section_tasks["data"]["tasks"][0]["dish_id"] == str(imported_task_id)

@@ -178,7 +178,7 @@ includes the command, canonical arguments, authenticated owner identity, and run
 
 | Surface | Replay-bound mutations |
 |---|---|
-| Agent Action/private CLI | `create`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `apply-proposal`, `safe-reclaim` |
+| Agent Action/private CLI | `create`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `apply-proposal`, `safe-reclaim`; PostgreSQL also exposes `cooked` |
 | Marco admin workflow | `attention`, `inspect`, `holds`, `review-queue`, `review-inspect`, `review-approve`, `review-reject`, `migrate`, `reopen`, `recover`, `repair-destination`, `supply-evidence`, `record-human-decision`, `authorize-governed-change`, `discard`, `abandon-operation`, `reconcile-abandonment` |
 | Lease lifecycle | private agent lease renewal; Action `renew-lease`; Marco-admin `recover-lease` and `expire-lease` |
 | Backup lifecycle | `backup-create`, `backup-restore` |

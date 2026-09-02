@@ -16,13 +16,14 @@ from .command_spec import REPLAY_SAFE_COMMANDS
 _AMBIGUOUS_RESPONSE_REPLAY_COMMANDS = frozenset(
     {"inspect", "apply-proposal", "safe-reclaim"}
 )
+_POSTGRESQL_CLIENT_MUTATIONS = frozenset({"cooked"})
 
 ResultRequest = Callable[..., Any]
 JSONRequest = Callable[..., Any]
 
 
 def request_id_for_command(command: str, request_id: str | None) -> str | None:
-    if request_id is None and command in REPLAY_SAFE_COMMANDS:
+    if request_id is None and command in REPLAY_SAFE_COMMANDS | _POSTGRESQL_CLIENT_MUTATIONS:
         return str(uuid.uuid4())
     return request_id
 

@@ -10,6 +10,7 @@ from dish_pg.command_contract import (
     COMMAND_DEFINITIONS,
     CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED,
     CONNECTED_COMMAND_DISPOSITIONS,
+    COOKED_COMMAND,
     POSTGRES_CLIENT_REQUEST_ID_SCHEMA,
     POSTGRES_CLIENT_RUN_ID_SCHEMA,
     POSTGRES_DISH_ID_SCHEMA,
@@ -191,7 +192,7 @@ def test_postgresql_discovery_reads_reject_malformed_run_id_consistently() -> No
 
 
 def test_postgresql_search_action_is_read_only_bounded_and_reuses_stable_run_id() -> None:
-    assert POSTGRESQL_ACTION_ADDED_COMMANDS == (SEARCH_COMMAND,)
+    assert POSTGRESQL_ACTION_ADDED_COMMANDS == (SEARCH_COMMAND, COOKED_COMMAND)
     assert SEARCH_COMMAND in ACTION_COMMANDS
     definition = COMMAND_DEFINITIONS[SEARCH_COMMAND]
     assert definition.profile == "Q"
@@ -223,6 +224,34 @@ def test_postgresql_search_action_is_read_only_bounded_and_reuses_stable_run_id(
     assert client == {"run_id": DISCOVERY_RUN_ID}
     assert arguments == {"query": "Potato", "agent": "gpt", "page_size": 2}
     assert "request_id" not in client
+
+
+def test_postgresql_cooked_action_is_replay_bound_and_canonical_only() -> None:
+    assert COOKED_COMMAND in ACTION_COMMANDS
+    assert COOKED_COMMAND not in ACTION_COMMAND_DEFINITIONS
+    definition = COMMAND_DEFINITIONS[COOKED_COMMAND]
+    assert definition.request_replay is True
+    assert definition.action_exposed is True
+    assert definition.task_required is True
+    assert definition.operation_required is False
+
+    schema = postgres_action_argument_schema(COOKED_COMMAND)
+    assert schema["required"] == ["dish_id", "agent"]
+    assert schema["additionalProperties"] is False
+    assert "task_gid" not in schema["properties"]
+
+    client, arguments = validate_postgres_action_request(
+        COOKED_COMMAND,
+        {
+            "client": {
+                "run_id": DISCOVERY_RUN_ID,
+                "request_id": "33333333-3333-4333-8333-333333333333",
+            },
+            "arguments": {"dish_id": DISCOVERY_SECTION_ID, "agent": "gpt"},
+        },
+    )
+    assert client["request_id"] == "33333333-3333-4333-8333-333333333333"
+    assert arguments == {"dish_id": DISCOVERY_SECTION_ID, "agent": "gpt"}
 
 
 def test_postgresql_search_action_rejects_bad_pagination_and_unknown_fields() -> None:

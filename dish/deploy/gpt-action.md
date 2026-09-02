@@ -128,6 +128,10 @@ workflow procedure.
   is itself what Marco must decide. Do not omit facts that are actually required to make the decision.
 - A deterministic tool pass is not the semantic stage work. Complete the semantic work required by
   the routed Dish protocol, while letting Dish's current response determine the legal continuation.
+- When Marco says an active resting Dish has been cooked, call `cooked` with its exact canonical
+  `dish_id`, the current stable `client.run_id`, and one fresh `client.request_id`. Never use Cooked
+  to terminate or bypass an open Planning, Research, or Verification operation; report Dish's state
+  rejection instead.
 
 State-specific procedures such as pagination, handoffs, proposal application, batch continuation,
 submission, holds, and lease/recovery handling belong in the Action schema or the Dish response, not
@@ -149,7 +153,8 @@ Before any task mutation:
 8. Review the GPT configuration and confirm no CLI, admin, or Asana secret is present.
 9. Inspect every imported operation and visibly confirm `client.run_id` is constrained as a
    non-nil canonical lowercase UUID; for `create`, `start`, `inspect`, `prepare`, `approve`, `reject`, `submit`,
-   and `renew-lease`, also confirm `client.request_id` is required and has the same UUID constraints.
+   `renew-lease`, and `cooked`, also confirm `client.request_id` is required and has the same UUID
+   constraints. Confirm `cooked.arguments.dish_id` is a canonical non-nil lowercase UUID.
 10. Confirm imported `dish_read` accepts exactly one identity: either canonical `dish_id` or exact
     `task_gid`. A Marco-supplied Dish UUID must be representable directly; section/task browsing is
     not an acceptable substitute.
