@@ -959,6 +959,15 @@ def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
             cooked = invoke("cooked", cooked_id, "--agent", "gpt")
             cooked_read = invoke("read", cooked_id, "--agent", "gpt")
             cooked_search = invoke("search", "CLI cooked identity", "--agent", "gpt")
+            cook_log = invoke(
+                "record-cook-log",
+                dish_id,
+                "--agent",
+                "gpt",
+                "--text",
+                "CLI generated request identity",
+            )
+            cook_logs = invoke("cook-logs", dish_id, "--agent", "gpt")
             searched = invoke("search", "CLI native identity", "--agent", "gpt")
             sections = invoke("sections", "--agent", "gpt")
             section_id = str(sections["data"]["sections"][0]["section_id"])
@@ -984,6 +993,11 @@ def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
     assert cooked["data"]["request_id"]
     assert cooked_read["data"]["completion_state"] == "cooked"
     assert cooked_search["data"]["results"] == []
+    assert cook_log["ok"] is True
+    assert cook_log["data"]["request_id"]
+    assert cook_logs["data"]["logs"][0]["request_id"] == cook_log["data"]["request_id"]
+    assert cook_logs["data"]["logs"][0]["run_id"] == str(run_id)
+    assert cook_logs["data"]["logs"][0]["owner_id"] == "cli"
     assert searched["data"]["results"][0]["dish_id"] == dish_id
     assert section_id == str(context["section_id"])
     assert section_tasks["data"]["tasks"][0]["dish_id"] == str(imported_task_id)

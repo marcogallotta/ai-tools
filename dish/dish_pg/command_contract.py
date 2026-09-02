@@ -41,6 +41,9 @@ Principal = Literal["reader", "agent", "verification", "admin", "historical"]
 
 SEARCH_COMMAND = "search"
 COOKED_COMMAND = "cooked"
+RECORD_COOK_LOG_COMMAND = "record-cook-log"
+COOK_LOGS_COMMAND = "cook-logs"
+COOK_LOG_TEXT_MAX_LENGTH = 8000
 SEARCH_QUERY_MAX_LENGTH = 160
 SEARCH_PAGE_SIZE_DEFAULT = 50
 SEARCH_PAGE_SIZE_MAX = 100
@@ -100,6 +103,16 @@ COMMAND_DEFINITIONS = {
             False,
             action_exposed=True,
             description="Search current active Dish titles through canonical PostgreSQL authority.",
+        ),
+        CommandDefinition(
+            COOK_LOGS_COMMAND, "Q", "reader", False, True, False,
+            action_exposed=True,
+            description="List immutable cook logs for one Dish.",
+        ),
+        CommandDefinition(
+            RECORD_COOK_LOG_COMMAND, "L", "agent", True, True, False,
+            action_exposed=True,
+            description="Append an immutable cook log to one Dish.",
         ),
         _current_action(READ_COMMAND, "Q", task_required=True, operation_required=False),
         _current_action(PROPOSALS_COMMAND, "Q", task_required=False, operation_required=False),
@@ -186,7 +199,12 @@ RETIRED_COMMANDS = tuple(
 CONNECTED_COMMAND_DISPOSITIONS: dict[str, str] = {
     command: "retained" for command in ACTION_COMMANDS
 }
-POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (SEARCH_COMMAND, COOKED_COMMAND)
+POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (
+    SEARCH_COMMAND,
+    COOKED_COMMAND,
+    COOK_LOGS_COMMAND,
+    RECORD_COOK_LOG_COMMAND,
+)
 POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = ()
 # Connected on the legacy SQLite/Asana Action surface but not yet ported to the
 # PostgreSQL command-execution stack: no PG workflow/transaction handler exists
@@ -201,11 +219,8 @@ _PARITY_EXPECTED_CONNECTED_COMMANDS = tuple(
     for command in CONNECTED_ACTION_COMMANDS
     if command not in CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED
 )
-if tuple(ACTION_COMMANDS) != (
-    *tuple(_PARITY_EXPECTED_CONNECTED_COMMANDS[:3]),
-    SEARCH_COMMAND,
-    *tuple(_PARITY_EXPECTED_CONNECTED_COMMANDS[3:]),
-    COOKED_COMMAND,
+if set(ACTION_COMMANDS) != set(_PARITY_EXPECTED_CONNECTED_COMMANDS) | set(
+    POSTGRESQL_ACTION_ADDED_COMMANDS
 ):
     raise ValueError("PostgreSQL connected-command inventory drifted")
 
@@ -267,6 +282,21 @@ def _search_argument_schema() -> dict[str, Any]:
     }
 
 
+def _cook_log_argument_schema(*, mutation: bool) -> dict[str, Any]:
+    properties: dict[str, Any] = {
+        "dish_id": dict(CANONICAL_DISH_UUID_SCHEMA),
+        "agent": {"type": "string", "enum": list(_SEARCH_AGENT_VALUES)},
+    }
+    required = ["dish_id", "agent"]
+    if mutation:
+        properties["text"] = {"type": "string", "minLength": 1, "maxLength": COOK_LOG_TEXT_MAX_LENGTH}
+        required.append("text")
+    else:
+        properties["cursor"] = {"type": "string"}
+        properties["page_size"] = {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+    return {"type": "object", "required": required, "additionalProperties": False, "properties": properties}
+
+
 def postgres_action_argument_schema(command: str) -> dict[str, Any]:
     """Return the no-Asana PostgreSQL Action argument schema.
 
@@ -287,6 +317,10 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
                 "agent": {"type": "string", "enum": list(_SEARCH_AGENT_VALUES)},
             },
         }
+    if command == RECORD_COOK_LOG_COMMAND:
+        return _cook_log_argument_schema(mutation=True)
+    if command == COOK_LOGS_COMMAND:
+        return _cook_log_argument_schema(mutation=False)
     base = action_openapi_argument_schema(command)
     if command == "section-tasks":
         return _add_canonical_identity_alias(
@@ -455,6 +489,45 @@ def _validate_cooked_action_request(
     return client, {"dish_id": dish_id, "agent": agent}
 
 
+def _normalize_cook_log_arguments(arguments: Mapping[str, Any], *, mutation: bool) -> dict[str, Any]:
+    if not isinstance(arguments, Mapping):
+        raise DishRuleError("INVALID_ARGUMENT", "arguments must be an object", rule="argument_object_required")
+    allowed = {"dish_id", "agent", "text", "cursor", "page_size"}
+    unknown = sorted(set(arguments) - allowed)
+    if unknown:
+        raise DishRuleError("INVALID_ARGUMENT", "cook log arguments contain unsupported fields", rule="argument_field_forbidden", details={"fields": unknown})
+    dish_id = require_dish_uuid(arguments.get("dish_id"), field="dish_id")
+    agent = arguments.get("agent")
+    if not isinstance(agent, str) or agent not in _SEARCH_AGENT_VALUES:
+        raise DishRuleError("INVALID_ARGUMENT", "agent must name a supported agent family", rule="argument_value_invalid", details={"field": "agent"})
+    if mutation:
+        text = arguments.get("text")
+        if not isinstance(text, str):
+            raise DishRuleError("INVALID_ARGUMENT", "text must be a string", rule="argument_type_invalid", details={"field": "text"})
+        if not text.strip():
+            raise DishRuleError("INVALID_ARGUMENT", "text is required", rule="cook_log_text_required", details={"field": "text"})
+        if len(text) > COOK_LOG_TEXT_MAX_LENGTH:
+            raise DishRuleError("INVALID_ARGUMENT", "text is too long", rule="cook_log_text_too_long", details={"field": "text", "maximum": COOK_LOG_TEXT_MAX_LENGTH})
+        return {"dish_id": dish_id, "agent": agent, "text": text}
+    cursor = arguments.get("cursor")
+    if cursor is not None and (not isinstance(cursor, str) or not cursor):
+        raise DishRuleError("INVALID_ARGUMENT", "cursor must be a non-empty string", rule="argument_type_invalid", details={"field": "cursor"})
+    page_size = arguments.get("page_size", 50)
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 100:
+        raise DishRuleError("INVALID_ARGUMENT", "page_size must be an integer from 1 to 100", rule="argument_range_invalid", details={"field": "page_size"})
+    return {"dish_id": dish_id, "agent": agent, "page_size": page_size, **({"cursor": cursor} if cursor is not None else {})}
+
+
+def _validate_cook_log_action_request(command: str, request: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw_arguments = request.get("arguments") if isinstance(request, Mapping) else None
+    adapted = dict(request) if isinstance(request, Mapping) else request
+    mutation = command == RECORD_COOK_LOG_COMMAND
+    if isinstance(adapted, dict):
+        adapted["arguments"] = ({"agent": "gpt", "title": "cook log"} if mutation else {"agent": "gpt"})
+    client, _ = validate_legacy_action_request(CREATE_COMMAND.name if mutation else SECTIONS_COMMAND.name, adapted)
+    return client, _normalize_cook_log_arguments(raw_arguments, mutation=mutation)
+
+
 def validate_postgres_action_request(
     command: str, request: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -476,6 +549,8 @@ def validate_postgres_action_request(
         return _validate_search_action_request(request)
     if command == COOKED_COMMAND:
         return _validate_cooked_action_request(request)
+    if command in {RECORD_COOK_LOG_COMMAND, COOK_LOGS_COMMAND}:
+        return _validate_cook_log_action_request(command, request)
     if not isinstance(request, Mapping):
         return validate_legacy_action_request(command, request)
     raw_arguments = request.get("arguments")

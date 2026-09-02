@@ -215,6 +215,12 @@ def assert_committed_command_effects(
         )
     ) is not None:
         observed.add("open_human_review")
+    if session.scalar(
+        select(wf.CookLogEntry.log_id).where(
+            wf.CookLogEntry.command_execution_id == execution_id
+        )
+    ) is not None:
+        observed.add("append_cook_log")
 
     if operation is None:
         expected_mutations = set(expected.mutation_kinds)

@@ -697,6 +697,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
     ) -> dict[str, Any]:
         handlers = {
             "create": self._create,
+            "record-cook-log": self._record_cook_log,
             "apply-proposal": self._apply_semantic_proposal,
             "review-reject": self._reject_semantic_proposal,
             "safe-reclaim": self._safe_reclaim,
@@ -731,6 +732,36 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         if handler is None:
             raise CommandRuleError("COMMAND_NOT_PORTED", "retained command has no PostgreSQL handler")
         return handler(call, generation, binding, execution, task, operation)
+
+    def _record_cook_log(
+        self, call, generation, _binding, execution, task, _operation
+    ) -> dict[str, Any]:
+        if task is None:
+            raise CommandRuleError("TASK_REQUIRED", "dish_id is required", http_status=400)
+        state = self.workflow.repo.assert_task_fence(execution.execution_id)
+        text = call.arguments.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > 8000:
+            raise CommandRuleError("INVALID_ARGUMENT", "cook log text must contain 1 to 8000 characters", http_status=400)
+        entry = wf.CookLogEntry(
+            log_id=self.uuid_factory(),
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            content_version_id=state.current_content_version_id,
+            dish_version=state.dish_version,
+            command_execution_id=execution.execution_id,
+            text=text,
+            recorded_at=call.now,
+        )
+        self.session.add(entry)
+        self.session.flush()
+        return {
+            "dish_id": str(task.task_id),
+            "log_id": str(entry.log_id),
+            "text": entry.text,
+            "recorded_at": entry.recorded_at.isoformat(),
+            "content_version_id": str(entry.content_version_id),
+            "dish_version": entry.dish_version,
+        }
 
     def _revise_section_registry(
         self, call, generation, binding, execution, _task, _operation

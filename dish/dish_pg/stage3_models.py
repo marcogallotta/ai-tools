@@ -1220,6 +1220,68 @@ class GovernedAuditEvent(Base):
     )
 
 
+class CookLogEntry(Base):
+    """Immutable execution evidence attached to one exact Dish version."""
+
+    __tablename__ = "cook_log_entries"
+
+    log_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), nullable=False
+    )
+    content_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    dish_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    command_execution_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "content_version_id"],
+            [
+                "task_content_versions.generation_id",
+                "task_content_versions.task_id",
+                "task_content_versions.content_version_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_cook_log_exact_content",
+        ),
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "dish_version"],
+            [
+                "dish_mutation_receipts.generation_id",
+                "dish_mutation_receipts.task_id",
+                "dish_mutation_receipts.dish_version",
+            ],
+            ondelete="RESTRICT",
+            name="fk_cook_log_exact_dish_version",
+        ),
+        ForeignKeyConstraint(
+            ["command_execution_id", "generation_id", "task_id"],
+            [
+                "command_executions.execution_id",
+                "command_executions.generation_id",
+                "command_executions.task_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_cook_log_exact_execution",
+        ),
+        CheckConstraint("dish_version > 0", name="positive_dish_version"),
+        CheckConstraint("length(trim(text)) > 0", name="text_nonblank"),
+        CheckConstraint("length(text) <= 8000", name="text_length"),
+        Index(
+            "ix_cook_log_task_time",
+            "generation_id",
+            "task_id",
+            "recorded_at",
+            "log_id",
+        ),
+    )
+
+
 class InvocationAuditObligation(Base):
     __tablename__ = "invocation_audit_obligations"
 
@@ -1301,6 +1363,7 @@ STAGE3_IMMUTABLE_TABLE_NAMES = (
     "human_review_decisions",
     "operation_succession_edges",
     "governed_audit_events",
+    "cook_log_entries",
     "invocation_audit_repairs",
 )
 
@@ -1333,6 +1396,7 @@ STAGE3_TABLE_NAMES = (
     "abandonment_attempts",
     "operation_succession_edges",
     "governed_audit_events",
+    "cook_log_entries",
     "invocation_audit_obligations",
     "invocation_audit_repairs",
 )

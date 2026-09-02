@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0044_independent_archive"
+ALEMBIC_HEAD = "0045_cook_log_entries"
 
 
 class ReleaseCandidateService(

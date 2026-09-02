@@ -89,6 +89,10 @@ workflow procedure.
   `data.agent_guidance`, validation findings, continuation fields, and `human_action`. Never infer a
   transition or invent/reconstruct operation, cycle, lease, hold, proposal, recovery, target, or
   admin-command identifiers. Asana section placement is discovery only, never workflow authority.
+- Use `record-cook-log(dish_id, text)` to append what happened while cooking; preserve the same
+  request ID for an exact transport replay. Use paginated `cook-logs(dish_id)` to retrieve the
+  immutable history. Logging is independent of whether the Dish is open, cooked, or archived and
+  does not modify its canonical recipe or workflow state.
 - A canonical `dish <uuid>` from Marco is authoritative identity, not an operation/submission ID.
   Resolve it first with `read(dish_id=<uuid>)`, verify the returned `data.identity_binding`, and use
   only the exact task/operation identifiers Dish subsequently returns. Never pass a Dish UUID as
