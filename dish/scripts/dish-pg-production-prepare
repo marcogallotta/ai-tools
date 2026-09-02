@@ -33,6 +33,8 @@ Required environment variables (see the runbook for definitions):
   DISH_PG_BOOTSTRAP_RECEIPT     output path for the bootstrap receipt
   DISH_PG_RESEARCH_QUEUE_SECTION_GID explicit Asana Research Queue section GID
   DISH_PG_VERIFICATION_QUEUE_SECTION_GID explicit Asana Verification Queue section GID
+  DISH_PG_SOURCING_SECTION_GID      explicit Asana Sourcing section GID
+  DISH_PG_REFERENCE_SECTION_GID     explicit Asana Reference section GID
   DISH_DARK_LAUNCH_SOURCE_GENERATION
   DISH_SOURCE_COMMIT            dish repo commit (defaults to current HEAD)
   HONEST_SOURCE_COMMIT          honest-pantry repo commit
@@ -85,6 +87,8 @@ REQUIRED_ENV = (
     "DISH_PG_BOOTSTRAP_RECEIPT",
     "DISH_PG_RESEARCH_QUEUE_SECTION_GID",
     "DISH_PG_VERIFICATION_QUEUE_SECTION_GID",
+    "DISH_PG_SOURCING_SECTION_GID",
+    "DISH_PG_REFERENCE_SECTION_GID",
     "DISH_DARK_LAUNCH_SOURCE_GENERATION",
     "HONEST_SOURCE_COMMIT",
     "DISH_DARK_LAUNCH_SPOOL_PATH",
@@ -285,6 +289,19 @@ def main(argv: list[str] | None = None) -> int:
         verification_queue_section_id = resolve_section_id(
             verification_queue_section_gid
         )
+        sourcing_section_gid = env["DISH_PG_SOURCING_SECTION_GID"]
+        sourcing_section_id = resolve_section_id(sourcing_section_gid)
+        reference_section_gid = env["DISH_PG_REFERENCE_SECTION_GID"]
+        reference_section_id = resolve_section_id(reference_section_gid)
+        if len(
+            {
+                research_queue_section_id,
+                verification_queue_section_id,
+                sourcing_section_id,
+                reference_section_id,
+            }
+        ) != 4:
+            raise PrepareError("configured workflow sections must be distinct")
         if args.preflight_only:
             log("Prepare preflight complete; no PostgreSQL mutation was performed.")
             return 0
@@ -344,6 +361,10 @@ def main(argv: list[str] | None = None) -> int:
                 "--research-queue-section-gid", research_queue_section_gid,
                 "--verification-queue-section-id", verification_queue_section_id,
                 "--verification-queue-section-gid", verification_queue_section_gid,
+                "--sourcing-section-id", sourcing_section_id,
+                "--sourcing-section-gid", sourcing_section_gid,
+                "--reference-section-id", reference_section_id,
+                "--reference-section-gid", reference_section_gid,
                 "--receipt", env["DISH_PG_BOOTSTRAP_RECEIPT"],
             ],
         )
