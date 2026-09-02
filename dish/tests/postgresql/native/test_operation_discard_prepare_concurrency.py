@@ -766,7 +766,9 @@ def test_native_task_transition_commits_before_final_fence_and_stale_start_rejec
         ) == 0
 
 
-def test_native_cook_log_binds_only_after_final_task_fence(core_db) -> None:
+def test_native_cook_log_binds_post_transition_when_cooked_wins_before_fence_capture(
+    core_db,
+) -> None:
     factory, ids, context, task_id = native_workflow_db(core_db)
     log_run, cooked_run = _seed_task_fence_runs(factory, ids, context)
     before_lock = TransactionGate(label="cook log waits before final task-fence lock")
@@ -807,10 +809,18 @@ def test_native_cook_log_binds_only_after_final_task_fence(core_db) -> None:
             before_lock.release()
             result = future.result()
 
-    assert result.ok is False
-    assert result.code == "AUTHORITY_MISMATCH"
+    assert result.ok is True
     with session_scope(factory) as session:
-        assert session.scalar(select(func.count()).select_from(wf.CookLogEntry)) == 0
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        entry = session.scalar(select(wf.CookLogEntry))
+        assert state is not None and state.completed is True
+        assert entry is not None
+        assert entry.dish_version == state.dish_version
+        assert entry.content_version_id == state.current_content_version_id
+        assert result.data["dish_version"] == state.dish_version
+        assert result.data["content_version_id"] == str(
+            state.current_content_version_id
+        )
 
 
 def test_native_start_holds_final_task_fence_until_commit_and_cooked_observes_operation(
