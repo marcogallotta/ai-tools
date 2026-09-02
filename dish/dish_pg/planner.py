@@ -18,7 +18,8 @@ class PlanningError(ValueError):
 @dataclass(frozen=True)
 class AuthorityFence:
     dish_version: int
-    membership_revision: int
+    placement_version: int
+    catalog_version_id: str
     operation_revision: int | None = None
     operation_phase: str | None = None
 

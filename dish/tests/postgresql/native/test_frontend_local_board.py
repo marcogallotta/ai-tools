@@ -93,7 +93,7 @@ def test_search_refuses_success_when_registry_identity_rolls_between_read_and_re
             self._context_reads += 1
             if self._context_reads == 1:
                 return current
-            return replace(current, registry_revision=current.registry_revision + 1)
+            return replace(current, catalog_revision=current.catalog_revision + 1)
 
     monkeypatch.setattr(
         postgres_service_module,
@@ -115,6 +115,7 @@ def test_search_refuses_success_when_registry_identity_rolls_between_read_and_re
     assert "results" not in result["data"]
     assert "next_cursor" not in result["data"]
     assert result["data"]["captured_generation_id"] == str(context["generation_id"])
-    assert result["data"]["captured_registry_version_id"] == str(
-        context["registry_version_id"]
+    assert result["data"]["captured_catalog_version_id"] == str(
+        context["catalog_version_id"]
     )
+    assert result["data"]["captured_catalog_revision"] == 1

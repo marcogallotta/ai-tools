@@ -74,7 +74,7 @@
     "live Asana governed projects/sections/tasks"
   ],
   "governing_source_sha256": {
-    "dish_pg/release.py": "6c5c052ebef3d2d7fde10ec3832b335de5d7aa15705f77c65eed49d5e3e8e17d",
+    "dish_pg/release.py": "313fecee5bbfbca1ee7cc977bd7286ff285632c24529ae82bdddcbcc9167584c",
     "dish_service/admin_cli.py": "3401aaf5ced340ea02384f8895d56eb13962873c6cc9d85bb1fa42883a58a7a7",
     "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
@@ -101,7 +101,7 @@
     "The evidence characterizes immutable source commit 7dff85921f005c62929c46d347a7ab29ae463480; this evidence-only commit follows it and does not alter characterized runtime source."
   ],
   "production_change_epoch": "2026-08-05",
-  "schema_head": "0044_independent_archive",
+  "schema_head": "0045_native_section_authority",
   "source_commit": "7dff85921f005c62929c46d347a7ab29ae463480",
   "source_commit_time": "2026-08-05T11:09:00+00:00",
   "source_only_commands": [

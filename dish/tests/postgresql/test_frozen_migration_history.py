@@ -148,6 +148,21 @@ def test_independent_archive_offline_postgresql_sql_guards_populated_state() -> 
     assert guard_position < sql.index("ADD COLUMN archive_changed")
 
 
+def test_native_section_authority_offline_postgresql_sql_renders_schema_transition() -> None:
+    buffer = io.StringIO()
+    command.upgrade(
+        _offline_postgresql_config(buffer),
+        "0044_independent_archive:0045_native_section_authority",
+        sql=True,
+    )
+    sql = buffer.getvalue()
+
+    assert "CREATE TABLE sections" in sql
+    assert "CREATE TABLE native_catalog_runtime_attestations" in sql
+    assert "UPDATE dish_states SET catalog_version_id=registry_version_id" in sql
+    assert "0045_native_section_authority" in sql
+
+
 @pytest.mark.database_boundary
 def test_causality_edge_retirement_refuses_unexpected_forensic_evidence(
     tmp_path: Path,
@@ -279,7 +294,7 @@ def test_independent_archive_upgrade_refuses_coupled_0043_rows(tmp_path: Path) -
 def test_independent_archive_downgrade_refuses_populated_0044_rows(tmp_path: Path) -> None:
     path = tmp_path / "independent-archive.sqlite3"
     config = _config(path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0044_independent_archive")
     _insert_archived_state(path, completed=False)
 
     with pytest.raises(RuntimeError, match="downgrade refuses 1 populated archived row"):
@@ -288,7 +303,7 @@ def test_independent_archive_downgrade_refuses_populated_0044_rows(tmp_path: Pat
     engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
     try:
         with engine.connect() as connection:
-            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0044_independent_archive"
             assert "archive_changed" in {
                 column["name"] for column in inspect(connection).get_columns("dish_mutation_receipts")
             }

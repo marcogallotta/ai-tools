@@ -9,7 +9,6 @@ from dish_service.frontend_admin import FrontendAdminConfig, FrontendAdminServic
 
 NOW = datetime(2026, 8, 10, 18, 0, tzinfo=timezone.utc)
 SECTION_ID = UUID("10000000-0000-0000-0000-000000000001")
-PROJECT_ID = UUID("20000000-0000-0000-0000-000000000001")
 TASK_ID = UUID("30000000-0000-0000-0000-000000000001")
 REQUEST_ID = UUID("40000000-0000-0000-0000-000000000001")
 EVENT_ID = UUID("50000000-0000-0000-0000-000000000001")
@@ -48,7 +47,7 @@ def card(**overrides):
 def test_admin_present_is_dish_first_and_human_review_counts_as_needs_you() -> None:
     question = "Choose whether to accept the material texture risk for service."
     facts = FrontendAdminFacts(
-        sections=(SectionFact(SECTION_ID, 1, "Verification Queue", "verification_queue", PROJECT_ID, "Cooking", "active", "active"),),
+        sections=(SectionFact(SECTION_ID, 1, "Verification Queue", "verification_queue", "active"),),
         cards=(card(operation_kind="initial", operation_phase="held_human"),),
         events=(AdminAuditFact(EVENT_ID, REQUEST_ID, None, TASK_ID, None, "workflow_action_rejected", "agent", NOW),),
         human_reviews=(AdminHumanReviewFact(REQUIREMENT_ID, TASK_ID, OPERATION_ID, None, "human_review", question, NOW),),
@@ -82,7 +81,7 @@ def test_admin_present_is_dish_first_and_human_review_counts_as_needs_you() -> N
 
 def test_admin_system_activity_does_not_increase_needs_you() -> None:
     facts = FrontendAdminFacts(
-        sections=(SectionFact(SECTION_ID, 1, "Operations", "operations", PROJECT_ID, "Cooking", "active", "active"),),
+        sections=(SectionFact(SECTION_ID, 1, "Operations", "operations", "active"),),
         cards=(card(verification_attention=False, hold_active=True),),
         events=(),
         evaluation_time=NOW,
@@ -102,8 +101,8 @@ def test_admin_queue_roles_are_visible_without_inflating_needs_you() -> None:
     verification_id = UUID("30000000-0000-0000-0000-000000000002")
     facts = FrontendAdminFacts(
         sections=(
-            SectionFact(SECTION_ID, 1, "Research Queue", "research_queue", PROJECT_ID, "Cooking", "active", "active"),
-            SectionFact(UUID("10000000-0000-0000-0000-000000000002"), 2, "Verification Queue", "verification_queue", PROJECT_ID, "Cooking", "active", "active"),
+            SectionFact(SECTION_ID, 1, "Research Queue", "research_queue", "active"),
+            SectionFact(UUID("10000000-0000-0000-0000-000000000002"), 2, "Verification Queue", "verification_queue", "active"),
         ),
         cards=(
             card(task_id=research_id, section_id=SECTION_ID, verification_attention=False),
@@ -143,7 +142,7 @@ def test_admin_queue_roles_are_visible_without_inflating_needs_you() -> None:
 
 def test_open_operation_takes_precedence_over_queue_fallback_as_system_activity() -> None:
     facts = FrontendAdminFacts(
-        sections=(SectionFact(SECTION_ID, 1, "Research Queue", "research_queue", PROJECT_ID, "Cooking", "active", "active"),),
+        sections=(SectionFact(SECTION_ID, 1, "Research Queue", "research_queue", "active"),),
         cards=(card(verification_attention=False, operation_kind="initial", operation_phase="prepare_required"),),
         events=(),
         evaluation_time=NOW,

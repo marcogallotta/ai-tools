@@ -98,7 +98,7 @@ def test_detail_uses_canonical_workflow_role_name_for_import_placeholder(core_db
     assert payload["section_label"] == "Research Queue"
 
 
-def test_detail_keeps_placement_from_prior_registry_revision(core_db) -> None:
+def test_transition_registry_revision_does_not_rebind_native_detail_placement(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
         context = _bootstrap_registry(
@@ -126,7 +126,9 @@ def test_detail_keeps_placement_from_prior_registry_revision(core_db) -> None:
             (context["generation_id"], imported.task_id),
         )
         assert state is not None
-        assert state.registry_version_id == revised_registry
+        assert state.registry_version_id == context["registry_version_id"]
+        assert state.catalog_version_id == context["catalog_version_id"]
+        assert revised_registry != state.registry_version_id
 
     with session_scope(factory) as session:
         payload = _service(session).present(

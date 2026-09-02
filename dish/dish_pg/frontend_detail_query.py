@@ -55,7 +55,6 @@ class DetailFacts:
     existence_state: str
     section_label: str
     section_workflow_role: str
-    project_label: str
     operation_kind: str | None
     operation_phase: str | None
     isolated: bool
@@ -95,7 +94,7 @@ class FrontendDetailQuery:
         row = self.session.execute(
             self._detail_statement(
                 generation_id=context.generation_id,
-                registry_version_id=context.registry_version_id,
+                catalog_version_id=context.catalog_version_id,
                 evaluation_time=context.evaluation_time,
                 task_id=task_id,
                 projection_delay=projection_delay,
@@ -112,7 +111,6 @@ class FrontendDetailQuery:
             existence_state=row["existence_state"],
             section_label=row["section_label"],
             section_workflow_role=row["section_workflow_role"],
-            project_label=row["project_label"],
             operation_kind=row["operation_kind"],
             operation_phase=row["operation_phase"],
             isolated=bool(row["isolated"]),
@@ -140,7 +138,7 @@ class FrontendDetailQuery:
         self,
         *,
         generation_id: UUID,
-        registry_version_id: UUID,
+        catalog_version_id: UUID,
         evaluation_time: datetime,
         task_id: UUID,
         projection_delay: timedelta,
@@ -159,22 +157,21 @@ class FrontendDetailQuery:
                 case(
                     (
                         and_(
-                            models.SectionRegistryEntry.display_name.like("Imported section %"),
-                            models.SectionRegistryEntry.workflow_role == "research_queue",
+                            models.SectionCatalogEntry.display_name.like("Imported section %"),
+                            models.SectionCatalogEntry.workflow_role == "research_queue",
                         ),
                         literal("Research Queue"),
                     ),
                     (
                         and_(
-                            models.SectionRegistryEntry.display_name.like("Imported section %"),
-                            models.SectionRegistryEntry.workflow_role == "verification_queue",
+                            models.SectionCatalogEntry.display_name.like("Imported section %"),
+                            models.SectionCatalogEntry.workflow_role == "verification_queue",
                         ),
                         literal("Verification Queue"),
                     ),
-                    else_=models.SectionRegistryEntry.display_name,
+                    else_=models.SectionCatalogEntry.display_name,
                 ).label("section_label"),
-                models.SectionRegistryEntry.workflow_role.label("section_workflow_role"),
-                models.GovernedProject.logical_name.label("project_label"),
+                models.SectionCatalogEntry.workflow_role.label("section_workflow_role"),
                 workflow.WorkflowOperation.operation_id,
                 workflow.WorkflowOperation.kind.label("operation_kind"),
                 workflow.WorkflowOperation.phase.label("operation_phase"),
@@ -199,26 +196,17 @@ class FrontendDetailQuery:
                 ),
             )
             .join(
-                models.SectionRegistryEntry,
+                models.SectionCatalogEntry,
                 and_(
-                    models.SectionRegistryEntry.registry_version_id == registry_version_id,
-                    models.SectionRegistryEntry.section_id
+                    models.SectionCatalogEntry.catalog_version_id == catalog_version_id,
+                    models.SectionCatalogEntry.section_id
                     == models.DishState.section_id,
+                    models.DishState.catalog_version_id == catalog_version_id,
                 ),
             )
             .join(
-                models.GovernedSection,
-                models.GovernedSection.section_id == models.DishState.section_id,
-            )
-            .join(models.GovernedProject, models.GovernedProject.project_id == models.GovernedSection.project_id)
-            .join(
-                models.CurrentTaskProjectMembership,
-                and_(
-                    models.CurrentTaskProjectMembership.generation_id == generation_id,
-                    models.CurrentTaskProjectMembership.task_id == models.DishTask.task_id,
-                    models.CurrentTaskProjectMembership.project_id == models.GovernedSection.project_id,
-                    models.CurrentTaskProjectMembership.is_member.is_(True),
-                ),
+                models.Section,
+                models.Section.section_id == models.DishState.section_id,
             )
             .outerjoin(
                 workflow.WorkflowOperation,
@@ -232,8 +220,7 @@ class FrontendDetailQuery:
                 models.DishTask.task_id == task_id,
                 models.DishTask.existence_state.in_(("ordinary", "isolated")),
                 models.DishState.completed.is_(False),
-                models.GovernedSection.lifecycle == "active",
-                models.GovernedProject.lifecycle == "active",
+                models.Section.lifecycle == "active",
             )
         )
 

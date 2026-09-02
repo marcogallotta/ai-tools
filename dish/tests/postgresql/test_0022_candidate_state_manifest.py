@@ -271,7 +271,7 @@ def _approve_candidate(session, ids, context, task_id, *, supplemental: bool = F
     )
     assert manifest is not None and binding is not None
     assert binding.canonical_fingerprint == manifest.canonical_fingerprint
-    assert manifest.manifest_version == 4
+    assert manifest.manifest_version == 5
     assert manifest.approval_reconciliation_run_id is not None
     assert manifest.readiness_inventory_sha256 is None
     assert manifest.readiness_completion_sha256 is None
@@ -526,7 +526,7 @@ def test_0022_supplemental_terminal_history_changes_candidate_manifest(workflow_
             built_at=NOW + timedelta(minutes=4),
         )
 
-        assert primary_builder == "candidate-authority-v4"
+        assert primary_builder == "candidate-authority-v5"
         assert with_supplemental.builder_contract_version == (
             SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT
         )
@@ -540,7 +540,7 @@ def test_0022_revalidation_catches_supplemental_terminal_history_change(workflow
         service, candidate_id, manifest = _approve_candidate(
             session, ids, context, task_id
         )
-        assert manifest.builder_contract_version == "candidate-authority-v4"
+        assert manifest.builder_contract_version == "candidate-authority-v5"
 
         _add_supplemental_history(session, ids, context, task_id)
         revalidation = _revalidate(

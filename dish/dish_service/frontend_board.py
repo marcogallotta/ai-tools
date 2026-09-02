@@ -81,7 +81,7 @@ class FrontendBoardService:
 
     def bootstrap(self) -> dict[str, Any]:
         registry = self.query.bootstrap_registry()
-        prepared = self._prepare_sections(registry)
+        sections_config = self._prepare_sections(registry)
         facts = self.query.bootstrap_cards(
             registry=registry,
             page_size=self.config.first_page_size,
@@ -90,7 +90,7 @@ class FrontendBoardService:
         sections: list[dict[str, Any]] = []
         snapshot_sections: list[dict[str, Any]] = []
         notices: list[dict[str, str]] = []
-        for section, project_label in prepared:
+        for section in sections_config:
             cards = facts.cards_by_section[section.section_id]
             continuity_id = self._continuity_id(facts.context, section.section_id)
             card_dtos = [self._card_dto(card) for card in cards]
@@ -114,8 +114,6 @@ class FrontendBoardService:
                 "cards": card_dtos,
                 "next_cursor": next_cursor,
             }
-            if project_label is not None:
-                section_dto["project_label"] = project_label
             sections.append(section_dto)
             snapshot_section: dict[str, Any] = {
                 "section_id": section_dto["section_id"],
@@ -124,8 +122,6 @@ class FrontendBoardService:
                 "cards": card_dtos,
                 "has_more": next_cursor is not None,
             }
-            if project_label is not None:
-                snapshot_section["project_label"] = project_label
             snapshot_sections.append(snapshot_section)
         snapshot_id = opaque_digest(
             secret=self.token_secret,
@@ -236,41 +232,28 @@ class FrontendBoardService:
 
     def _prepare_sections(
         self, facts: BoardRegistryFacts
-    ) -> tuple[tuple[SectionFact, str | None], ...]:
+    ) -> tuple[SectionFact, ...]:
         if len(facts.sections) > self.config.max_sections:
-            raise BoardCapacityExceeded("active registry exceeds configured section capacity")
-        normalized_counts: dict[str, int] = {}
-        normalized_paths: set[tuple[str, str]] = set()
+            raise BoardCapacityExceeded("active catalog exceeds configured section capacity")
+        normalized_labels: set[str] = set()
         for section in facts.sections:
-            if section.section_lifecycle != "active" or section.project_lifecycle != "active":
-                raise BoardConfigurationInvalid("active registry references a retired section or project")
+            if section.section_lifecycle != "active":
+                raise BoardConfigurationInvalid("active catalog references a retired section")
             if not 1 <= len(section.section_label) <= MAX_LABEL_LENGTH:
                 raise BoardConfigurationInvalid("section label exceeds frontend contract bounds")
-            if not 1 <= len(section.project_label) <= MAX_LABEL_LENGTH:
-                raise BoardConfigurationInvalid("project label exceeds frontend contract bounds")
             normalized_section = normalize_label(section.section_label)
-            normalized_project = normalize_label(section.project_label)
-            if not normalized_section or not normalized_project:
-                raise BoardConfigurationInvalid("normalized section/project labels must be nonblank")
-            normalized_counts[normalized_section] = normalized_counts.get(normalized_section, 0) + 1
-            path = (normalized_project, normalized_section)
-            if path in normalized_paths:
-                raise BoardConfigurationInvalid("normalized project/section paths must be unique")
-            normalized_paths.add(path)
+            if not normalized_section:
+                raise BoardConfigurationInvalid("normalized section label must be nonblank")
+            if normalized_section in normalized_labels:
+                raise BoardConfigurationInvalid("normalized section labels must be unique")
+            normalized_labels.add(normalized_section)
         routes: set[str] = set()
-        prepared: list[tuple[SectionFact, str | None]] = []
         for section in facts.sections:
             route = self._section_route(section.section_id)
             if route in routes:
                 raise BoardConfigurationInvalid("section route identity collision")
             routes.add(route)
-            project_label = (
-                section.project_label
-                if normalized_counts[normalize_label(section.section_label)] > 1
-                else None
-            )
-            prepared.append((section, project_label))
-        return tuple(prepared)
+        return facts.sections
 
     def _card_dto(self, card: CardFact) -> dict[str, Any]:
         title = card.title.strip()
@@ -288,18 +271,14 @@ class FrontendBoardService:
     def _search_dto(self, result: SearchFact) -> dict[str, str]:
         title = result.title.strip()
         section_label = result.section_label.strip()
-        project_label = result.project_label.strip()
         if not 1 <= len(title) <= MAX_TITLE_LENGTH:
             raise BoardConfigurationInvalid("task title exceeds frontend contract bounds")
         if not 1 <= len(section_label) <= MAX_LABEL_LENGTH:
             raise BoardConfigurationInvalid("section label exceeds frontend contract bounds")
-        if not 1 <= len(project_label) <= MAX_LABEL_LENGTH:
-            raise BoardConfigurationInvalid("project label exceeds frontend contract bounds")
         return {
             "task_id": self._task_route(result.task_id),
             "title": title,
             "section_label": section_label,
-            "project_label": project_label,
         }
 
     @staticmethod
@@ -399,8 +378,8 @@ class FrontendBoardService:
     def _context_payload(context: BoardContext) -> dict[str, Any]:
         return {
             "generation_id": str(context.generation_id),
-            "registry_version_id": str(context.registry_version_id),
-            "registry_revision": context.registry_revision,
+            "catalog_version_id": str(context.catalog_version_id),
+            "catalog_revision": context.catalog_revision,
         }
 
     def _task_route(self, task_id: UUID) -> str:

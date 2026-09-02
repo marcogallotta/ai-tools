@@ -53,6 +53,13 @@ def test_stage2_schema_stops_before_command_authority() -> None:
         "honest_contract_bindings",
         "governed_projects",
         "governed_sections",
+        "sections",
+        "section_catalog_versions",
+        "section_catalog_entries",
+        "section_catalog_activations",
+        "active_section_catalogs",
+        "native_catalog_runtime_attestations",
+        "current_native_catalog_runtimes",
         "section_registry_versions",
         "section_registry_entries",
         "section_registry_activations",
@@ -107,7 +114,7 @@ def test_stage2_alembic_upgrade_reaches_head_from_empty_database(tmp_path: Path)
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
 
-    command.upgrade(config, "0042_scalar_dish_state")
+    command.upgrade(config, "head")
 
     engine = create_engine(database_url, future=True)
     try:
@@ -134,7 +141,7 @@ def test_stage2_alembic_upgrade_reaches_head_from_empty_database(tmp_path: Path)
                     )
                 )
             }
-        assert revision == "0042_scalar_dish_state"
+        assert revision == "0045_native_section_authority"
         assert {
             "dish_states_validate_insert",
             "dish_states_validate_update",
@@ -235,7 +242,8 @@ def test_scalar_noop_writes_no_receipt(core_db) -> None:
             generation_id=context["generation_id"],
             task_id=imported.task_id,
             expected_dish_version=state.dish_version,
-            expected_membership_revision=head.membership_revision,
+            expected_placement_version=state.placement_version,
+            expected_catalog_version_id=state.catalog_version_id,
             source=ScalarMutationSource(
                 route="import",
                 import_run_id=context["import_run_id"],
@@ -624,7 +632,8 @@ def test_command_content_binding_cannot_drift_after_insert(core_db) -> None:
                 generation_id=context["generation_id"],
                 task_id=imported.task_id,
                 expected_dish_version=state.dish_version,
-                expected_membership_revision=head.membership_revision,
+                expected_placement_version=state.placement_version,
+                expected_catalog_version_id=state.catalog_version_id,
                 source=ScalarMutationSource(
                     route="command_execution",
                     command_execution_id=execution_id,
@@ -677,7 +686,8 @@ def test_multi_domain_scalar_mutation_writes_one_receipt_and_one_version(core_db
             generation_id=context["generation_id"],
             task_id=imported.task_id,
             expected_dish_version=state.dish_version,
-            expected_membership_revision=head.membership_revision,
+            expected_placement_version=state.placement_version,
+            expected_catalog_version_id=state.catalog_version_id,
             source=ScalarMutationSource(
                 route="import",
                 import_run_id=context["import_run_id"],
@@ -694,7 +704,7 @@ def test_multi_domain_scalar_mutation_writes_one_receipt_and_one_version(core_db
         )
         mutation.place(
             section_id=state.section_id,
-            registry_version_id=state.registry_version_id,
+            catalog_version_id=state.catalog_version_id,
         )
         mutation.set_completion(completed=True, reason="imported")
         outcome = mutation.finalize()

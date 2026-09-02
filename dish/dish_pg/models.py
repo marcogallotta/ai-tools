@@ -1,8 +1,8 @@
-"""Stage A core PostgreSQL authority mappings.
+"""Core PostgreSQL authority mappings.
 
 Stage 2 deliberately stops before requests, command executions, workflow operations,
 leases, holds, Verification, audit, and projection outbox authority. The models here
-own only generation/provenance, governed registry, stable task identity, immutable
+own only generation/provenance, native catalog, stable task identity, immutable
 complete documents, logical location, and completion.
 """
 from __future__ import annotations
@@ -173,6 +173,9 @@ class AuthorityActivation(Base):
     registry_version_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT", name="fk_authact_registry")
     )
+    catalog_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT", name="fk_authact_catalog")
+    )
     honest_binding_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT", name="fk_authact_honest")
     )
@@ -198,6 +201,10 @@ class AuthorityActivation(Base):
             "(registry_version_id IS NULL AND honest_binding_id IS NULL) OR "
             "(registry_version_id IS NOT NULL AND honest_binding_id IS NOT NULL)",
             name="release_contract_identity_pair",
+        ),
+        CheckConstraint(
+            "catalog_version_id IS NULL OR honest_binding_id IS NOT NULL",
+            name="native_catalog_requires_contract",
         ),
         CheckConstraint("outcome IN ('activated','aborted')", name="outcome_allowed"),
         CheckConstraint(
@@ -360,6 +367,215 @@ class GovernedSection(Base):
         ),
         UniqueConstraint("project_id", "logical_name", name="uq_section_project_name"),
     )
+
+
+class Section(Base):
+    """Permanent native Section identity.
+
+    ``GovernedSection`` remains the imported Asana topology witness.  Native
+    command/read authority resolves this table only and therefore cannot acquire
+    Project membership semantics accidentally.
+    """
+
+    __tablename__ = "sections"
+
+    section_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    logical_name: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
+    lifecycle: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("lifecycle IN ('active','retired')", name="lifecycle_allowed"),
+        CheckConstraint(
+            "(lifecycle = 'active' AND retired_at IS NULL) OR "
+            "(lifecycle = 'retired' AND retired_at IS NOT NULL)",
+            name="retirement_consistent",
+        ),
+    )
+
+
+class SectionCatalogVersion(Base):
+    __tablename__ = "section_catalog_versions"
+
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    contract_binding_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_registry_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT")
+    )
+    transform_sha256: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("version_number > 0", name="positive_version"),
+        CheckConstraint("length(catalog_sha256) = 64", name="catalog_hash_length"),
+        CheckConstraint(
+            "(source_registry_version_id IS NULL AND transform_sha256 IS NULL) OR "
+            "(source_registry_version_id IS NOT NULL AND length(transform_sha256) = 64)",
+            name="transition_transform_exact",
+        ),
+        UniqueConstraint("generation_id", "version_number", name="uq_catalog_generation_version"),
+    )
+
+
+class SectionCatalogEntry(Base):
+    __tablename__ = "section_catalog_entries"
+
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_versions.catalog_version_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    section_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("sections.section_id", ondelete="RESTRICT"), primary_key=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    workflow_role: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("ordinal >= 0", name="nonnegative_ordinal"),
+        UniqueConstraint("catalog_version_id", "ordinal", name="uq_catalog_entry_ordinal"),
+        UniqueConstraint(
+            "catalog_version_id", "workflow_role", name="uq_catalog_entry_workflow_role"
+        ),
+    )
+
+
+class SectionCatalogActivation(Base):
+    __tablename__ = "section_catalog_activations"
+
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    activation_route: Mapped[str] = mapped_column(String(24), nullable=False)
+    import_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT")
+    )
+    command_execution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    catalog_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "activation_route IN ('transition','command_execution','recovery')",
+            name="route_allowed",
+        ),
+        CheckConstraint(
+            "(activation_route = 'transition' AND import_run_id IS NOT NULL "
+            "AND command_execution_id IS NULL) OR "
+            "(activation_route = 'command_execution' AND import_run_id IS NULL "
+            "AND command_execution_id IS NOT NULL) OR "
+            "(activation_route = 'recovery' AND import_run_id IS NULL "
+            "AND command_execution_id IS NULL)",
+            name="exact_provenance_route",
+        ),
+        CheckConstraint("catalog_revision > 0", name="positive_revision"),
+        UniqueConstraint(
+            "generation_id", "catalog_revision", name="uq_catalog_activation_revision"
+        ),
+        UniqueConstraint(
+            "generation_id", "catalog_version_id", name="uq_catalog_activation_version"
+        ),
+    )
+
+
+class ActiveSectionCatalog(Base):
+    __tablename__ = "active_section_catalogs"
+
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_activations.catalog_activation_id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    catalog_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (CheckConstraint("catalog_revision > 0", name="positive_revision"),)
+
+
+class NativeCatalogRuntimeAttestation(Base):
+    __tablename__ = "native_catalog_runtime_attestations"
+
+    attestation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("section_catalog_activations.catalog_activation_id", ondelete="RESTRICT"), nullable=False
+    )
+    predecessor_attestation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("native_catalog_runtime_attestations.attestation_id", ondelete="RESTRICT")
+    )
+    authority_activation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("authority_activations.activation_id", ondelete="RESTRICT")
+    )
+    attestation_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    attestation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("attestation_revision > 0", name="positive_revision"),
+        CheckConstraint("length(attestation_sha256) = 64", name="attestation_hash_length"),
+        CheckConstraint(
+            "(attestation_revision = 1 AND predecessor_attestation_id IS NULL "
+            "AND authority_activation_id IS NOT NULL) OR "
+            "(attestation_revision > 1 AND predecessor_attestation_id IS NOT NULL "
+            "AND authority_activation_id IS NULL)",
+            name="root_or_successor_exact",
+        ),
+        UniqueConstraint("generation_id", "attestation_revision", name="uq_native_attestation_revision"),
+        UniqueConstraint("generation_id", "catalog_activation_id", name="uq_native_attestation_activation"),
+    )
+
+
+class CurrentNativeCatalogRuntime(Base):
+    __tablename__ = "current_native_catalog_runtimes"
+
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), primary_key=True
+    )
+    attestation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("native_catalog_runtime_attestations.attestation_id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("section_catalog_activations.catalog_activation_id", ondelete="RESTRICT"), nullable=False
+    )
+    attestation_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (CheckConstraint("attestation_revision > 0", name="positive_revision"),)
 
 
 class SectionRegistryVersion(Base):
@@ -736,8 +952,11 @@ class DishState(Base):
     section_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("governed_sections.section_id", ondelete="RESTRICT")
     )
-    registry_version_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT"), nullable=False
+    registry_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT")
+    )
+    catalog_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT")
     )
     completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     completion_reason: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -788,6 +1007,7 @@ class DishState(Base):
         Index("ix_dish_states_section", "generation_id", "section_id", "task_id"),
         Index("ix_dish_states_board", "generation_id", "completed", "section_id", "task_id"),
         Index("ix_dish_states_registry", "generation_id", "registry_version_id", "task_id"),
+        Index("ix_dish_states_catalog", "generation_id", "catalog_version_id", "task_id"),
         Index("ix_dish_states_archive", "generation_id", "archived_at", "task_id"),
     )
 
@@ -891,6 +1111,10 @@ IMMUTABLE_TABLE_NAMES = (
     "section_registry_versions",
     "section_registry_entries",
     "section_registry_activations",
+    "section_catalog_versions",
+    "section_catalog_entries",
+    "section_catalog_activations",
+    "native_catalog_runtime_attestations",
     "task_content_versions",
     "dish_mutation_receipts",
     "task_project_membership_events",
@@ -1071,8 +1295,11 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "r.placement_changed <> (r.dish_version=NEW.placement_version) OR "
             "r.completion_changed <> (r.dish_version=NEW.completion_version) OR "
             "r.archive_changed)) OR "
-            "NOT EXISTS (SELECT 1 FROM section_registry_entries e WHERE e.registry_version_id=NEW.registry_version_id "
-            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)) OR "
+            "((NEW.registry_version_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM section_registry_entries e "
+            "WHERE e.registry_version_id=NEW.registry_version_id "
+            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id))) OR "
+            "(NEW.registry_version_id IS NULL AND NOT EXISTS (SELECT 1 FROM authority_activations a "
+            "WHERE a.generation_id=NEW.generation_id AND a.outcome='activated'))) OR "
             "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
             "AND r.task_id=NEW.task_id AND r.dish_version=NEW.completion_version "
             "AND ((r.source_route='import' AND NEW.completion_reason='imported') OR "
@@ -1111,7 +1338,7 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "AND r.archive_changed = (NEW.archived_at IS NOT OLD.archived_at) "
             "AND (r.archive_changed=0 OR r.source_route='command_execution')) OR "
             "((NEW.placement_version = OLD.placement_version) AND "
-            "(NEW.section_id IS NOT OLD.section_id OR NEW.registry_version_id <> OLD.registry_version_id)) OR "
+            "(NEW.section_id IS NOT OLD.section_id OR NEW.registry_version_id IS NOT OLD.registry_version_id)) OR "
             "((NEW.placement_version <> OLD.placement_version) AND NEW.placement_version <> NEW.dish_version) OR "
             "((NEW.completion_version = OLD.completion_version) AND "
             "(NEW.completed <> OLD.completed OR NEW.completion_reason <> OLD.completion_reason)) OR "
@@ -1122,8 +1349,11 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "AND cv.content_version_id=NEW.current_content_version_id "
             "AND ((NEW.current_content_version_id=OLD.current_content_version_id) OR cv.created_dish_version=NEW.dish_version) "
             "AND " + source_match + ") OR "
-            "NOT EXISTS (SELECT 1 FROM section_registry_entries e WHERE e.registry_version_id=NEW.registry_version_id "
-            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)) OR "
+            "((NEW.registry_version_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM section_registry_entries e "
+            "WHERE e.registry_version_id=NEW.registry_version_id "
+            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id))) OR "
+            "(NEW.registry_version_id IS NULL AND NOT EXISTS (SELECT 1 FROM authority_activations a "
+            "WHERE a.generation_id=NEW.generation_id AND a.outcome='activated'))) OR "
             "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
             "AND r.task_id=NEW.task_id AND r.dish_version=NEW.completion_version "
             "AND ((r.source_route='import' AND NEW.completion_reason='imported') OR "
@@ -1139,7 +1369,7 @@ _install_sqlite_scalar_authority_triggers()
 
 @event.listens_for(Session, "before_commit")
 def _validate_sqlite_active_registry_bindings(session: Session) -> None:
-    """Emulate the deferred PostgreSQL registry-final-state guard on SQLite."""
+    """Emulate the deferred native catalog final-state guard on SQLite."""
     bind = session.get_bind()
     if bind.dialect.name != "sqlite":
         return
@@ -1148,26 +1378,26 @@ def _validate_sqlite_active_registry_bindings(session: Session) -> None:
         row[0]
         for row in connection.exec_driver_sql(
             "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name IN ('dish_states','active_section_registries','section_registry_entries')"
+            "AND name IN ('dish_states','active_section_catalogs','section_catalog_entries')"
         )
     }
-    if tables != {"dish_states", "active_section_registries", "section_registry_entries"}:
+    if tables != {"dish_states", "active_section_catalogs", "section_catalog_entries"}:
         return
     session.flush()
     mismatch = connection.exec_driver_sql(
         "SELECT 1 FROM dish_states s "
-        "LEFT JOIN active_section_registries a ON a.generation_id=s.generation_id "
-        "WHERE a.generation_id IS NULL OR a.registry_version_id<>s.registry_version_id "
+        "LEFT JOIN active_section_catalogs a ON a.generation_id=s.generation_id "
+        "WHERE a.generation_id IS NULL OR a.catalog_version_id<>s.catalog_version_id "
         "OR (s.section_id IS NOT NULL AND NOT EXISTS ("
-        "SELECT 1 FROM section_registry_entries e "
-        "WHERE e.registry_version_id=s.registry_version_id AND e.section_id=s.section_id)) "
+        "SELECT 1 FROM section_catalog_entries e "
+        "WHERE e.catalog_version_id=s.catalog_version_id AND e.section_id=s.section_id)) "
         "LIMIT 1"
     ).first()
     if mismatch is not None:
         raise IntegrityError(
-            "DishState registry binding is not transaction-final",
+            "DishState native catalog binding is not transaction-final",
             params=None,
-            orig=RuntimeError("DishState registry binding is not transaction-final"),
+            orig=RuntimeError("DishState native catalog binding is not transaction-final"),
         )
 
 CORE_TABLE_NAMES = tuple(Base.metadata.tables)

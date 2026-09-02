@@ -51,11 +51,31 @@ class PostgresCommandReadMixin:
         if call.command_name == "sections":
             data: Mapping[str, Any] = {"sections": self.reads.sections()}
         elif call.command_name == "section-tasks":
-            reference = call.arguments.get("section_id") or call.arguments.get("section_gid")
+            reference = call.arguments.get("section_id")
+            legacy_reference = call.arguments.get("section_gid")
+            if reference is None and legacy_reference is not None:
+                reference = self.session.scalar(
+                    select(models.SectionExternalAlias.section_id).where(
+                        models.SectionExternalAlias.external_system == "asana",
+                        models.SectionExternalAlias.external_id == str(legacy_reference),
+                        models.SectionExternalAlias.state == "active",
+                    )
+                )
             if reference is None:
-                raise CommandRuleError("SECTION_REQUIRED", "section reference is required", http_status=400)
+                if legacy_reference is None:
+                    raise CommandRuleError(
+                        "SECTION_REQUIRED",
+                        "section reference is required",
+                        http_status=400,
+                    )
+                raise CommandRuleError(
+                    "SECTION_NOT_FOUND",
+                    "unknown governed section",
+                    http_status=404,
+                    data={"section_reference": str(legacy_reference)},
+                )
             try:
-                self.reads.resolve_section(str(reference))
+                self.reads.resolve_section(reference)
             except ReadModelError as exc:
                 raise CommandRuleError(
                     "SECTION_NOT_FOUND",
@@ -64,7 +84,7 @@ class PostgresCommandReadMixin:
                     data={"section_reference": str(reference)},
                 ) from exc
             page = self.reads.section_tasks(
-                section_reference=str(reference),
+                section_reference=reference,
                 cursor=call.arguments.get("cursor"),
                 page_size=int(call.arguments.get("page_size", 50)),
             )
@@ -80,8 +100,8 @@ class PostgresCommandReadMixin:
                     for item in page.items
                 ],
                 "next_cursor": page.next_cursor,
-                "registry_version_id": str(page.registry_version_id),
-                "registry_revision": page.registry_revision,
+                "catalog_version_id": str(page.catalog_version_id),
+                "catalog_revision": page.catalog_revision,
             }
         elif call.command_name == "proposals":
             data = self._proposals()
@@ -717,6 +737,42 @@ class PostgresCommandReadMixin:
         return {"holds": rows, "count": len(rows)}
 
     def _binding_for(self, generation: models.AuthorityGeneration) -> models.HonestContractBinding:
+        post_burn = self.session.scalar(
+            select(models.AuthorityActivation).where(
+                models.AuthorityActivation.generation_id == generation.generation_id,
+                models.AuthorityActivation.outcome == "activated",
+            )
+        )
+        if post_burn is not None:
+            active = self.session.get(
+                models.ActiveSectionCatalog, generation.generation_id
+            )
+            catalog = (
+                None
+                if active is None
+                else self.session.get(
+                    models.SectionCatalogVersion, active.catalog_version_id
+                )
+            )
+            binding = (
+                None
+                if catalog is None
+                else self.session.get(
+                    models.HonestContractBinding, catalog.contract_binding_id
+                )
+            )
+            if (
+                catalog is None
+                or catalog.generation_id != generation.generation_id
+                or binding is None
+                or binding.binding_kind != "release"
+                or binding.dish_release != generation.dish_release
+            ):
+                raise CommandRuleError(
+                    "CONTRACT_BINDING_MISSING",
+                    "active native catalog does not resolve its exact Honest release binding",
+                )
+            return binding
         try:
             contract = RegistryRepository(self.session).active_release_contract(
                 generation.generation_id
@@ -945,8 +1001,8 @@ class PostgresCommandReadMixin:
             if creation_fence is not None:
                 hold_reject_baseline_matches = bool(
                     view.dish_version == creation_fence.expected_dish_version
-                    and view.membership_revision
-                    == creation_fence.expected_membership_revision
+                    and view.placement_revision
+                    == creation_fence.expected_placement_version
                 )
             hold_reject_candidate_activation_exists = self.session.scalar(
                 select(models.DishMutationReceipt.dish_version)
@@ -1010,7 +1066,12 @@ class PostgresCommandReadMixin:
             task_id=str(task.task_id),
             fence=AuthorityFence(
                 dish_version=view.dish_version,
-                membership_revision=view.membership_revision,
+                placement_version=view.placement_revision,
+                catalog_version_id=str(
+                    self.session.get(
+                        models.DishState, (generation_id, task.task_id)
+                    ).catalog_version_id
+                ),
                 operation_revision=operation.operation_revision if operation else None,
                 operation_phase=operation.phase if operation else None,
             ),

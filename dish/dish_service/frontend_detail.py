@@ -104,7 +104,6 @@ class FrontendDetailService:
         payload: dict[str, object] = {
             "task_id": task_route_id,
             "title": facts.title,
-            "project_label": facts.project_label,
             "section_label": facts.section_label,
             # Destination authority remains unresolved. Do not derive it from body text.
             "destination_label": None,

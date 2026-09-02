@@ -18,6 +18,7 @@ from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from . import models
 from . import stage3_models as wf
 from .document_authority import CanonicalDocumentError, parse_canonical_document
+from .release_evidence import sha256_json
 
 
 class ReadModelError(ValueError):
@@ -41,8 +42,8 @@ class TaskListItem:
 class TaskListPage:
     items: tuple[TaskListItem, ...]
     next_cursor: str | None
-    registry_version_id: uuid.UUID
-    registry_revision: int
+    catalog_version_id: uuid.UUID
+    catalog_revision: int
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,6 @@ class TaskCurrentView:
     content_version_id: uuid.UUID
     dish_version: int
     task_revision: int
-    membership_revision: int
     placement_revision: int
     completion_revision: int
     section_id: uuid.UUID
@@ -105,6 +105,179 @@ def _status_from_document(title: str, body: str) -> str | None:
     return parts.document.state.values["Status"]
 
 
+def assert_native_catalog_runtime_current(
+    session: Session, generation_id: uuid.UUID
+) -> None:
+    """Fail closed on a stale, gapped, or forked post-burn native catalog."""
+    authority = session.scalar(
+        select(models.AuthorityActivation).where(
+            models.AuthorityActivation.generation_id == generation_id,
+            models.AuthorityActivation.outcome == "activated",
+        )
+    )
+    if authority is None:
+        return
+    active = session.get(models.ActiveSectionCatalog, generation_id)
+    current = session.get(models.CurrentNativeCatalogRuntime, generation_id)
+    attestation = (
+        None
+        if current is None
+        else session.get(models.NativeCatalogRuntimeAttestation, current.attestation_id)
+    )
+    active_activation = (
+        None
+        if active is None
+        else session.get(
+            models.SectionCatalogActivation, active.catalog_activation_id
+        )
+    )
+    if (
+        active is None
+        or current is None
+        or attestation is None
+        or active_activation is None
+        or current.catalog_version_id != active.catalog_version_id
+        or current.catalog_activation_id != active.catalog_activation_id
+        or current.attestation_revision != attestation.attestation_revision
+        or active.catalog_revision != active_activation.catalog_revision
+        or attestation.generation_id != generation_id
+        or attestation.catalog_version_id != active.catalog_version_id
+        or attestation.catalog_activation_id != active.catalog_activation_id
+    ):
+        raise ReadModelError("native Section catalog runtime authority is stale or incomplete")
+    seen: set[uuid.UUID] = set()
+    cursor = attestation
+    while True:
+        if cursor.attestation_id in seen:
+            raise ReadModelError("native Section catalog runtime attestation chain is cyclic")
+        seen.add(cursor.attestation_id)
+        activation = session.get(
+            models.SectionCatalogActivation, cursor.catalog_activation_id
+        )
+        if (
+            activation is None
+            or activation.generation_id != cursor.generation_id
+            or activation.catalog_version_id != cursor.catalog_version_id
+        ):
+            raise ReadModelError(
+                "native Section catalog runtime attestation chain is stale or incomplete"
+            )
+        payload = {
+            "contract": "native-section-runtime-attestation-v1",
+            "generation_id": str(cursor.generation_id),
+            "catalog_version_id": str(cursor.catalog_version_id),
+            "catalog_activation_id": str(cursor.catalog_activation_id),
+            "catalog_revision": activation.catalog_revision,
+            "authority_activation_id": (
+                None
+                if cursor.authority_activation_id is None
+                else str(cursor.authority_activation_id)
+            ),
+            "attestation_revision": cursor.attestation_revision,
+        }
+        if cursor.attestation_sha256 != sha256_json(payload):
+            raise ReadModelError("native Section catalog runtime attestation is corrupt")
+        if cursor.attestation_revision == 1:
+            root_authority = (
+                None
+                if cursor.authority_activation_id is None
+                else session.get(
+                    models.AuthorityActivation, cursor.authority_activation_id
+                )
+            )
+            root_generation = session.get(
+                models.AuthorityGeneration, cursor.generation_id
+            )
+            if (
+                cursor.predecessor_attestation_id is not None
+                or root_authority is None
+                or root_authority.generation_id != cursor.generation_id
+                or root_authority.outcome != "activated"
+                or root_authority.catalog_version_id != cursor.catalog_version_id
+                or root_generation is None
+                or root_generation.creation_reason != "initial_cutover"
+                or root_generation.predecessor_generation_id is not None
+            ):
+                raise ReadModelError(
+                    "native Section catalog runtime root does not bind rollback burn"
+                )
+            break
+        if (
+            cursor.authority_activation_id is not None
+            or cursor.predecessor_attestation_id is None
+        ):
+            raise ReadModelError(
+                "native Section catalog runtime successor provenance is invalid"
+            )
+        predecessor = session.get(
+            models.NativeCatalogRuntimeAttestation,
+            cursor.predecessor_attestation_id,
+        )
+        if (
+            predecessor is None
+            or predecessor.attestation_revision != cursor.attestation_revision - 1
+        ):
+            raise ReadModelError(
+                "native Section catalog runtime attestation chain is gapped"
+            )
+        if predecessor.generation_id != cursor.generation_id:
+            successor_generation = session.get(
+                models.AuthorityGeneration, cursor.generation_id
+            )
+            successor_authority = session.scalar(
+                select(models.AuthorityActivation).where(
+                    models.AuthorityActivation.generation_id == cursor.generation_id,
+                    models.AuthorityActivation.outcome == "activated",
+                )
+            )
+            predecessor_current = session.get(
+                models.CurrentNativeCatalogRuntime, predecessor.generation_id
+            )
+            if (
+                successor_generation is None
+                or successor_generation.creation_reason
+                not in {"destructive_restore", "test_fixture_recovery"}
+                or successor_generation.predecessor_generation_id
+                != predecessor.generation_id
+                or successor_authority is None
+                or successor_authority.catalog_version_id
+                != cursor.catalog_version_id
+                or activation.catalog_revision != 1
+                or predecessor_current is None
+                or predecessor_current.attestation_id != predecessor.attestation_id
+            ):
+                raise ReadModelError(
+                    "native Section catalog runtime recovery edge is unauthenticated"
+                )
+        else:
+            predecessor_activation = session.get(
+                models.SectionCatalogActivation,
+                predecessor.catalog_activation_id,
+            )
+            if (
+                predecessor_activation is None
+                or predecessor_activation.generation_id != cursor.generation_id
+                or activation.catalog_revision
+                != predecessor_activation.catalog_revision + 1
+            ):
+                raise ReadModelError(
+                    "native Section catalog runtime catalog chain is gapped"
+                )
+        children = list(
+            session.scalars(
+                select(models.NativeCatalogRuntimeAttestation.attestation_id).where(
+                    models.NativeCatalogRuntimeAttestation.predecessor_attestation_id
+                    == predecessor.attestation_id,
+                )
+            )
+        )
+        if children != [cursor.attestation_id]:
+            raise ReadModelError(
+                "native Section catalog runtime attestation chain is forked"
+            )
+        cursor = predecessor
+
+
 class PostgresReadModel:
     """Consistent reads over one caller-owned SQLAlchemy session."""
 
@@ -118,75 +291,56 @@ class PostgresReadModel:
         )
         if row is None:
             raise ReadModelError("no active authority generation")
+        self._assert_native_runtime_current(row.generation_id)
         return row
 
-    def _active_registry(self, generation_id: uuid.UUID) -> models.ActiveSectionRegistry:
-        row = self.session.get(models.ActiveSectionRegistry, generation_id)
+    def _assert_native_runtime_current(self, generation_id: uuid.UUID) -> None:
+        assert_native_catalog_runtime_current(self.session, generation_id)
+
+    def _active_catalog(self, generation_id: uuid.UUID) -> models.ActiveSectionCatalog:
+        row = self.session.get(models.ActiveSectionCatalog, generation_id)
         if row is None:
-            raise ReadModelError("active generation has no section registry")
+            raise ReadModelError("active generation has no native Section catalog")
         return row
 
     def sections(self) -> tuple[dict[str, Any], ...]:
         generation = self.active_generation()
-        active = self._active_registry(generation.generation_id)
+        active = self._active_catalog(generation.generation_id)
         rows = self.session.execute(
             select(
-                models.SectionRegistryEntry,
-                models.GovernedSection,
-                models.SectionExternalAlias.external_id,
+                models.SectionCatalogEntry,
+                models.Section,
             )
             .join(
-                models.GovernedSection,
-                models.GovernedSection.section_id == models.SectionRegistryEntry.section_id,
+                models.Section,
+                models.Section.section_id == models.SectionCatalogEntry.section_id,
             )
-            .outerjoin(
-                models.SectionExternalAlias,
-                and_(
-                    models.SectionExternalAlias.section_id == models.GovernedSection.section_id,
-                    models.SectionExternalAlias.external_system == "asana",
-                    models.SectionExternalAlias.state == "active",
-                ),
-            )
-            .where(models.SectionRegistryEntry.registry_version_id == active.registry_version_id)
-            .order_by(models.SectionRegistryEntry.ordinal)
+            .where(models.SectionCatalogEntry.catalog_version_id == active.catalog_version_id)
+            .order_by(models.SectionCatalogEntry.ordinal)
         ).all()
         return tuple(
             {
                 "section_id": str(entry.section_id),
-                "section_gid": external_id,
                 "name": entry.display_name,
                 "workflow_role": entry.workflow_role,
                 "ordinal": entry.ordinal,
-                "registry_version_id": str(active.registry_version_id),
-                "registry_revision": active.registry_revision,
+                "catalog_version_id": str(active.catalog_version_id),
+                "catalog_revision": active.catalog_revision,
             }
-            for entry, _section, external_id in rows
+            for entry, _section in rows
         )
 
-    def resolve_section(self, reference: str | uuid.UUID) -> models.GovernedSection:
+    def resolve_section(self, reference: str | uuid.UUID) -> models.Section:
         if isinstance(reference, uuid.UUID):
-            row = self.session.get(models.GovernedSection, reference)
+            row = self.session.get(models.Section, reference)
         else:
             try:
                 parsed = uuid.UUID(reference)
             except ValueError:
                 parsed = None
-            row = self.session.get(models.GovernedSection, parsed) if parsed else None
-            if row is None:
-                row = self.session.scalar(
-                    select(models.GovernedSection)
-                    .join(
-                        models.SectionExternalAlias,
-                        models.SectionExternalAlias.section_id == models.GovernedSection.section_id,
-                    )
-                    .where(
-                        models.SectionExternalAlias.external_system == "asana",
-                        models.SectionExternalAlias.external_id == reference,
-                        models.SectionExternalAlias.state == "active",
-                    )
-                )
+            row = self.session.get(models.Section, parsed) if parsed else None
         if row is None:
-            raise ReadModelError("unknown governed section")
+            raise ReadModelError("unknown native Section UUID")
         return row
 
     def resolve_task(self, reference: str | uuid.UUID) -> models.DishTask:
@@ -225,16 +379,16 @@ class PostgresReadModel:
         if not 1 <= page_size <= 100:
             raise ReadModelError("page_size must be between 1 and 100")
         generation = self.active_generation()
-        active = self._active_registry(generation.generation_id)
+        active = self._active_catalog(generation.generation_id)
         section = self.resolve_section(section_reference)
         registered = self.session.scalar(
-            select(models.SectionRegistryEntry).where(
-                models.SectionRegistryEntry.registry_version_id == active.registry_version_id,
-                models.SectionRegistryEntry.section_id == section.section_id,
+            select(models.SectionCatalogEntry).where(
+                models.SectionCatalogEntry.catalog_version_id == active.catalog_version_id,
+                models.SectionCatalogEntry.section_id == section.section_id,
             )
         )
         if registered is None:
-            raise ReadModelError("section is not in the active registry")
+            raise ReadModelError("section is not in the active catalog")
 
         after_title: str | None = None
         after_task: uuid.UUID | None = None
@@ -242,8 +396,8 @@ class PostgresReadModel:
             payload = self.cursor_codec.decode(cursor)
             expected = {
                 "generation_id": str(generation.generation_id),
-                "registry_version_id": str(active.registry_version_id),
-                "registry_revision": active.registry_revision,
+                "catalog_version_id": str(active.catalog_version_id),
+                "catalog_revision": active.catalog_revision,
                 "section_id": str(section.section_id),
                 "page_size": page_size,
             }
@@ -285,7 +439,7 @@ class PostgresReadModel:
             )
             .where(
                 models.DishState.section_id == section.section_id,
-                models.DishState.registry_version_id == active.registry_version_id,
+                models.DishState.catalog_version_id == active.catalog_version_id,
                 models.DishState.completed.is_(False),
                 models.DishState.archived_at.is_(None),
                 models.DishTask.existence_state != "retired",
@@ -318,8 +472,8 @@ class PostgresReadModel:
             next_cursor = self.cursor_codec.encode(
                 {
                     "generation_id": str(generation.generation_id),
-                    "registry_version_id": str(active.registry_version_id),
-                    "registry_revision": active.registry_revision,
+                    "catalog_version_id": str(active.catalog_version_id),
+                    "catalog_revision": active.catalog_revision,
                     "section_id": str(section.section_id),
                     "page_size": page_size,
                     "after_title": last[1].lower(),
@@ -329,8 +483,8 @@ class PostgresReadModel:
         return TaskListPage(
             items=items,
             next_cursor=next_cursor,
-            registry_version_id=active.registry_version_id,
-            registry_revision=active.registry_revision,
+            catalog_version_id=active.catalog_version_id,
+            catalog_revision=active.catalog_revision,
         )
 
     def _workflow_snapshot(
@@ -345,29 +499,17 @@ class PostgresReadModel:
         placement = self.session.get(models.DishState, (generation_id, task_id))
         live_section_gid = None
         if placement is not None:
-            live_section_gid = self.session.scalar(
-                select(models.SectionExternalAlias.external_id).where(
-                    models.SectionExternalAlias.section_id == placement.section_id,
-                    models.SectionExternalAlias.external_system == "asana",
-                    models.SectionExternalAlias.state == "active",
-                )
-            )
-        active = self._active_registry(generation_id)
+            live_section_gid = str(placement.section_id)
+        active = self._active_catalog(generation_id)
         verification_section = self.session.scalar(
-            select(models.SectionRegistryEntry.section_id).where(
-                models.SectionRegistryEntry.registry_version_id == active.registry_version_id,
-                models.SectionRegistryEntry.workflow_role == "verification_queue",
+            select(models.SectionCatalogEntry.section_id).where(
+                models.SectionCatalogEntry.catalog_version_id == active.catalog_version_id,
+                models.SectionCatalogEntry.workflow_role == "verification_queue",
             )
         )
         verification_gid = None
         if verification_section is not None:
-            verification_gid = self.session.scalar(
-                select(models.SectionExternalAlias.external_id).where(
-                    models.SectionExternalAlias.section_id == verification_section,
-                    models.SectionExternalAlias.external_system == "asana",
-                    models.SectionExternalAlias.state == "active",
-                )
-            )
+            verification_gid = str(verification_section)
         cycle = self.session.scalar(
             select(wf.VerificationCycle)
             .where(wf.VerificationCycle.operation_id == operation.operation_id)
@@ -482,11 +624,8 @@ class PostgresReadModel:
         generation = self.active_generation()
         task = self.resolve_task(task_reference)
         state = self.session.get(models.DishState, (generation.generation_id, task.task_id))
-        membership = self.session.get(
-            models.TaskMembershipHead, (generation.generation_id, task.task_id)
-        )
-        if state is None or membership is None:
-            raise ReadModelError("task has incomplete scalar/membership authority")
+        if state is None or state.catalog_version_id is None:
+            raise ReadModelError("task has incomplete scalar/catalog authority")
         version = self.session.get(models.ContentVersion, state.current_content_version_id)
         if version is None:
             raise ReadModelError("task authority bundle is incomplete")
@@ -527,7 +666,6 @@ class PostgresReadModel:
             content_version_id=version.content_version_id,
             dish_version=state.dish_version,
             task_revision=version.created_dish_version,
-            membership_revision=membership.membership_revision,
             placement_revision=state.placement_version,
             completion_revision=state.completion_version,
             section_id=state.section_id,

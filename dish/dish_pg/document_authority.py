@@ -7,6 +7,7 @@ the parsed document rather than from ad-hoc text scanning or caller hints.
 from __future__ import annotations
 
 import dataclasses
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping
@@ -424,7 +425,7 @@ def resumed_document(
     )
 
 
-def destination_gid(document: CanonicalTaskDocument) -> str:
+def destination_section_id(document: CanonicalTaskDocument) -> uuid.UUID:
     value = document.planning_brief.values["Destination section"]
     match = DESTINATION_RE.fullmatch(value)
     if match is None:
@@ -433,13 +434,29 @@ def destination_gid(document: CanonicalTaskDocument) -> str:
             errors=[
                 {
                     "rule": "planning.destination",
-                    "message": "Destination section must be name — gid",
+                    "message": "PostgreSQL-native destination must be name — section:<uuid>",
                     "field": "Destination section",
                     "current": value,
                 }
             ],
         )
-    return match.group("gid")
+    raw = match.group("section_id")
+    if raw is None:
+        raise CanonicalDocumentError(
+            "signed PostgreSQL document uses a legacy Asana destination",
+            errors=[
+                {
+                    "rule": "planning.destination.native_identity_required",
+                    "message": "Destination section must use section:<uuid>",
+                    "field": "Destination section",
+                    "current": value,
+                }
+            ],
+        )
+    parsed = uuid.UUID(raw)
+    if str(parsed) != raw:
+        raise CanonicalDocumentError("native Section UUID must use canonical lowercase text")
+    return parsed
 
 
 def _validated_parts(

@@ -45,7 +45,10 @@ def test_planning_finding_payload_is_actionable():
     brief = parse_planning_brief("""Dish candidate: X\nPurpose: X\nRole: main\nPriors: None\nLocks: None\nExemptions: None\nResearch emphasis: X\nDestination section: Reference (123)\n""")
     finding = validate_planning_brief(brief).findings[0]
     payload = finding_payload(finding)
-    assert payload["message"] == "Destination section must be name — gid or a canonical defect marker"
+    assert payload["message"] == (
+        "Destination section must be name — gid, name — section:<uuid>, "
+        "or a canonical defect marker"
+    )
     assert payload["location"] == "Destination section"
     assert payload["current"] == "Reference (123)"
 

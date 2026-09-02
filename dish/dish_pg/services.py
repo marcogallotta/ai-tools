@@ -166,6 +166,19 @@ class CoreAuthorityService:
         active_registry, section = self.registry.require_registered_section(
             generation_id=generation_id, section_id=spec.section_id
         )
+        active_catalog = self.session.get(models.ActiveSectionCatalog, generation_id)
+        native_entry = (
+            None
+            if active_catalog is None
+            else self.session.get(
+                models.SectionCatalogEntry,
+                (active_catalog.catalog_version_id, spec.section_id),
+            )
+        )
+        if active_catalog is None or native_entry is None:
+            raise CoreAuthorityError(
+                "import placement requires the exact active native Section catalog"
+            )
         if not spec.project_ids:
             raise CoreAuthorityError("imported task requires at least one governed project")
         if len(set(spec.project_ids)) != len(spec.project_ids):
@@ -232,6 +245,7 @@ class CoreAuthorityService:
             current_content_version_id=content_version_id,
             section_id=spec.section_id,
             registry_version_id=active_registry.registry_version_id,
+            catalog_version_id=active_catalog.catalog_version_id,
             completed=spec.completed,
             completion_reason="imported",
             dish_version=1,

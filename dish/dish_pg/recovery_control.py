@@ -370,6 +370,122 @@ def _clone_registry(
     return version_id, activation_id
 
 
+def _clone_native_catalog(
+    session: Session,
+    *,
+    predecessor_generation_id: uuid.UUID,
+    generation_id: uuid.UUID,
+    at: datetime,
+    uuid_factory: Callable[[], uuid.UUID],
+) -> tuple[uuid.UUID, uuid.UUID]:
+    current = session.get(models.ActiveSectionCatalog, predecessor_generation_id)
+    runtime = session.get(models.CurrentNativeCatalogRuntime, predecessor_generation_id)
+    if current is None or runtime is None:
+        raise RestoreControlError(
+            "restored predecessor has no current native Section catalog runtime"
+        )
+    source = session.get(models.SectionCatalogVersion, current.catalog_version_id)
+    predecessor_attestation = session.get(
+        models.NativeCatalogRuntimeAttestation, runtime.attestation_id
+    )
+    if source is None or predecessor_attestation is None:
+        raise RestoreControlError("restored predecessor native catalog lineage is incomplete")
+    entries = session.scalars(
+        select(models.SectionCatalogEntry)
+        .where(models.SectionCatalogEntry.catalog_version_id == source.catalog_version_id)
+        .order_by(models.SectionCatalogEntry.ordinal)
+    ).all()
+    if not entries:
+        raise RestoreControlError("restored predecessor native catalog is empty")
+    version_id = uuid_factory()
+    activation_id = uuid_factory()
+    session.add(
+        models.SectionCatalogVersion(
+            catalog_version_id=version_id,
+            generation_id=generation_id,
+            version_number=1,
+            contract_binding_id=source.contract_binding_id,
+            catalog_sha256=source.catalog_sha256,
+            source_registry_version_id=None,
+            transform_sha256=None,
+            created_at=at,
+        )
+    )
+    session.flush()
+    session.add_all(
+        models.SectionCatalogEntry(
+            catalog_version_id=version_id,
+            section_id=entry.section_id,
+            ordinal=entry.ordinal,
+            display_name=entry.display_name,
+            workflow_role=entry.workflow_role,
+        )
+        for entry in entries
+    )
+    session.flush()
+    session.add(
+        models.SectionCatalogActivation(
+            catalog_activation_id=activation_id,
+            generation_id=generation_id,
+            catalog_version_id=version_id,
+            activation_route="recovery",
+            import_run_id=None,
+            command_execution_id=None,
+            catalog_revision=1,
+            activated_at=at,
+        )
+    )
+    session.flush()
+    session.add(
+        models.ActiveSectionCatalog(
+            generation_id=generation_id,
+            catalog_version_id=version_id,
+            catalog_activation_id=activation_id,
+            catalog_revision=1,
+            updated_at=at,
+        )
+    )
+    attestation_id = uuid_factory()
+    revision = predecessor_attestation.attestation_revision + 1
+    digest = sha256_json(
+        {
+            "contract": "native-section-runtime-attestation-v1",
+            "generation_id": str(generation_id),
+            "catalog_version_id": str(version_id),
+            "catalog_activation_id": str(activation_id),
+            "catalog_revision": 1,
+            "authority_activation_id": None,
+            "attestation_revision": revision,
+        }
+    )
+    session.add(
+        models.NativeCatalogRuntimeAttestation(
+            attestation_id=attestation_id,
+            generation_id=generation_id,
+            catalog_version_id=version_id,
+            catalog_activation_id=activation_id,
+            predecessor_attestation_id=predecessor_attestation.attestation_id,
+            authority_activation_id=None,
+            attestation_revision=revision,
+            attestation_sha256=digest,
+            recorded_at=at,
+        )
+    )
+    session.flush()
+    session.add(
+        models.CurrentNativeCatalogRuntime(
+            generation_id=generation_id,
+            attestation_id=attestation_id,
+            catalog_version_id=version_id,
+            catalog_activation_id=activation_id,
+            attestation_revision=revision,
+            updated_at=at,
+        )
+    )
+    session.flush()
+    return version_id, activation_id
+
+
 def _authorized_release_candidate(
     session: Session,
     *,
@@ -759,6 +875,9 @@ def _predecessor_task_snapshot(session: Session, generation_id: uuid.UUID) -> li
                 "placement": {
                     "section_id": None if state.section_id is None else str(state.section_id),
                     "source_registry_version_id": str(state.registry_version_id),
+                    "source_catalog_version_id": (
+                        None if state.catalog_version_id is None else str(state.catalog_version_id)
+                    ),
                 },
                 "completion": {
                     "completed": bool(state.completed),
@@ -890,6 +1009,7 @@ def _clone_rehydrated_task_authority(
     control: RestoreControl,
     import_run_id: uuid.UUID,
     registry_version_id: uuid.UUID,
+    catalog_version_id: uuid.UUID,
     snapshots: list[dict[str, Any]],
     at: datetime,
 ) -> None:
@@ -943,6 +1063,7 @@ def _clone_rehydrated_task_authority(
                     else uuid.UUID(snapshot["placement"]["section_id"])
                 ),
                 registry_version_id=registry_version_id,
+                catalog_version_id=catalog_version_id,
                 completed=snapshot["completion"]["completed"],
                 completion_reason="imported",
                 dish_version=snapshot["dish_version"],
@@ -1086,11 +1207,15 @@ def rehydrate_restored_generation(
         )
     )
     session.flush()
+    active_catalog = session.get(models.ActiveSectionCatalog, successor.generation_id)
+    if active_catalog is None:
+        raise RestoreControlError("successor native Section catalog is missing")
     _clone_rehydrated_task_authority(
         session,
         control=control,
         import_run_id=import_run_id,
         registry_version_id=registry.registry_version_id,
+        catalog_version_id=active_catalog.catalog_version_id,
         snapshots=snapshots,
         at=at,
     )
@@ -1600,12 +1725,29 @@ def promote_restored_generation(
     prior_version = session.get(models.SectionRegistryVersion, prior_registry.registry_version_id)
     if prior_version is None:
         raise RestoreControlError("recovered registry version is missing")
+    registry_version_id, registry_activation_id = _clone_registry(
+        session,
+        predecessor_generation_id=active.generation_id,
+        generation_id=control.generation_id,
+        at=at,
+        uuid_factory=uuid_factory,
+    )
+    catalog_version_id, _catalog_activation_id = _clone_native_catalog(
+        session,
+        predecessor_generation_id=active.generation_id,
+        generation_id=control.generation_id,
+        at=at,
+        uuid_factory=uuid_factory,
+    )
     activation = models.AuthorityActivation(
         activation_id=uuid_factory(),
         generation_id=control.generation_id,
         import_run_id=prior_version.import_run_id,
         cutover_approval_id=control.external_control_id,
         legacy_bundle_id=f"postgresql-restore:{control.external_control_id}",
+        registry_version_id=registry_version_id,
+        catalog_version_id=catalog_version_id,
+        honest_binding_id=prior_version.contract_binding_id,
         schema_head=control.schema_head,
         dish_release=control.dish_release,
         honest_release=control.honest_release,
@@ -1631,13 +1773,6 @@ def promote_restored_generation(
         epoch.retired_at = at
     session.flush()
 
-    registry_version_id, registry_activation_id = _clone_registry(
-        session,
-        predecessor_generation_id=active.generation_id,
-        generation_id=control.generation_id,
-        at=at,
-        uuid_factory=uuid_factory,
-    )
     ProjectionService(session, uuid_factory=lambda: projection_epoch_id).activate_epoch(
         generation_id=control.generation_id,
         activation_reason=f"destructive restore under {control.external_control_id}",

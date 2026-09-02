@@ -477,7 +477,8 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             generation_id=context["generation_id"],
             task_id=task_id,
             expected_dish_version=predecessor_state.dish_version,
-            expected_membership_revision=predecessor_membership_head.membership_revision,
+            expected_placement_version=predecessor_state.placement_version,
+            expected_catalog_version_id=predecessor_state.catalog_version_id,
             source=ScalarMutationSource(
                 route="import",
                 import_run_id=context["import_run_id"],
@@ -500,7 +501,8 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             generation_id=context["generation_id"],
             task_id=task_id,
             expected_dish_version=predecessor_state.dish_version,
-            expected_membership_revision=predecessor_membership_head.membership_revision,
+            expected_placement_version=predecessor_state.placement_version,
+            expected_catalog_version_id=predecessor_state.catalog_version_id,
             source=ScalarMutationSource(
                 route="import",
                 import_run_id=context["import_run_id"],
@@ -509,7 +511,7 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
         )
         mutation.place(
             section_id=predecessor_state.section_id,
-            registry_version_id=predecessor_state.registry_version_id,
+            catalog_version_id=predecessor_state.catalog_version_id,
         )
         assert mutation.finalize().dish_version == 3
         pending_effect_id = ProjectionService(
@@ -549,7 +551,7 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
             clock=lambda: WORKFLOW_NOW + timedelta(minutes=8),
             uuid_factory=lambda: _next(ids),
         )
-        with pytest.raises(ReadModelError, match="incomplete scalar/membership authority"):
+        with pytest.raises(ReadModelError, match="incomplete scalar/catalog authority"):
             PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
         predecessor_state_after_promotion = session.get(
             models.DishState, (context["generation_id"], task_id)

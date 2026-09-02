@@ -49,6 +49,9 @@ class ReleaseCandidate(Base):
     registry_version_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT", name="fk_relcand_registry")
     )
+    catalog_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT")
+    )
     honest_binding_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT", name="fk_relcand_honest")
     )
@@ -82,11 +85,12 @@ class ReleaseCandidate(Base):
         CheckConstraint(
             "(identity_contract_version IS NULL AND source_manifest_sha256 IS NULL "
             "AND rehearsal_environment_identity IS NULL AND registry_version_id IS NULL "
-            "AND honest_binding_id IS NULL) OR "
+            "AND catalog_version_id IS NULL AND honest_binding_id IS NULL) OR "
             "(identity_contract_version = 'release-identity-v1' "
             "AND source_manifest_sha256 IS NOT NULL AND length(source_manifest_sha256) = 64 "
             "AND rehearsal_environment_identity IS NOT NULL "
-            "AND registry_version_id IS NOT NULL AND honest_binding_id IS NOT NULL)",
+            "AND registry_version_id IS NOT NULL AND catalog_version_id IS NOT NULL "
+            "AND honest_binding_id IS NOT NULL)",
             name="identity_contract_complete",
         ),
         CheckConstraint(

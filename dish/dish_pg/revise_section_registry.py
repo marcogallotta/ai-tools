@@ -836,25 +836,8 @@ def _revise_test_section_registry_membership_transaction(
             for section, target in final
         ),
     )
-    dishes = DishRepository(session, uuid_factory=uuid_factory)
-    for state in current_states:
-        membership = membership_heads[state.task_id]
-        mutation = dishes.begin_scalar_mutation(
-            generation_id=generation.generation_id,
-            task_id=state.task_id,
-            expected_dish_version=state.dish_version,
-            expected_membership_revision=membership.membership_revision,
-            source=ScalarMutationSource(
-                route="import",
-                import_run_id=import_run_id,
-                occurred_at=now,
-            ),
-        )
-        mutation.place(
-            section_id=state.section_id,
-            registry_version_id=new_version_id,
-        )
-        mutation.finalize()
+    # Registry revision is transition evidence only; native Dish placement is
+    # intentionally not rebound to this Asana mapping occurrence.
     registry.activate_registry(
         activation=models.SectionRegistryActivation(
             registry_activation_id=activation_id,

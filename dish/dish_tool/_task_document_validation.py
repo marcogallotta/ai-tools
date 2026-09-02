@@ -84,7 +84,7 @@ def validate_planning_brief(brief: PlanningBrief) -> DocumentValidation:
         findings.append(DocumentFinding(
             "planning.destination",
             FindingKind.AGENT_CORRECTABLE,
-            "Destination section must be name — gid or a canonical defect marker",
+            "Destination section must be name — gid, name — section:<uuid>, or a canonical defect marker",
             "Destination section",
             current=destination,
         ))

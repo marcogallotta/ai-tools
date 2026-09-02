@@ -20,9 +20,7 @@ from dish_pg.release_history import (
 from dish_pg.repositories import (
     AuthorityRepository,
     ContractBindingRepository,
-    DishRepository,
     RegistryRepository,
-    ScalarMutationSource,
 )
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from tests.support.postgresql.certification import postgresql_dsn
@@ -256,6 +254,61 @@ def _bootstrap_registry(
             updated_at=NOW,
         ),
     )
+    session.add(
+        models.Section(
+            section_id=section_id,
+            logical_name="Research Queue",
+            lifecycle="active",
+            created_at=NOW,
+            retired_at=None,
+        )
+    )
+    session.add(
+        models.SectionCatalogVersion(
+            catalog_version_id=registry_version_id,
+            generation_id=generation_id,
+            version_number=1,
+            contract_binding_id=binding_id,
+            catalog_sha256=HASH_C,
+            source_registry_version_id=registry_version_id,
+            transform_sha256=HASH_C,
+            created_at=NOW,
+        )
+    )
+    session.flush()
+    session.add(
+        models.SectionCatalogEntry(
+            catalog_version_id=registry_version_id,
+            section_id=section_id,
+            ordinal=0,
+            display_name=section_display_name,
+            workflow_role=section_workflow_role,
+        )
+    )
+    session.flush()
+    session.add(
+        models.SectionCatalogActivation(
+            catalog_activation_id=registry_activation_id,
+            generation_id=generation_id,
+            catalog_version_id=registry_version_id,
+            activation_route="transition",
+            import_run_id=import_run_id,
+            command_execution_id=None,
+            catalog_revision=1,
+            activated_at=NOW,
+        )
+    )
+    session.flush()
+    session.add(
+        models.ActiveSectionCatalog(
+            generation_id=generation_id,
+            catalog_version_id=registry_version_id,
+            catalog_activation_id=registry_activation_id,
+            catalog_revision=1,
+            updated_at=NOW,
+        )
+    )
+    session.flush()
     return {
         "import_run_id": import_run_id,
         "generation_id": generation_id,
@@ -263,6 +316,7 @@ def _bootstrap_registry(
         "project_id": project_id,
         "section_id": section_id,
         "registry_version_id": registry_version_id,
+        "catalog_version_id": registry_version_id,
     }
 
 
@@ -277,7 +331,7 @@ def _activate_cloned_registry_revision(
     workflow_role_section_id: uuid.UUID | None = None,
     workflow_role: str | None = None,
 ) -> models.SectionRegistryVersion:
-    """Clone and activate a registry after receipt-backed Dish rebinding."""
+    """Clone retained transition registry evidence without rebinding native placement."""
     assert (workflow_role_section_id is None) == (workflow_role is None)
     current = session.get(models.ActiveSectionRegistry, generation_id)
     assert current is not None
@@ -324,33 +378,6 @@ def _activate_cloned_registry_revision(
             for entry in entries
         ],
     )
-    dishes = DishRepository(session, uuid_factory=lambda: _next(ids))
-    states = session.scalars(
-        select(models.DishState)
-        .where(models.DishState.generation_id == generation_id)
-        .order_by(models.DishState.task_id)
-    ).all()
-    for state in states:
-        membership = session.get(
-            models.TaskMembershipHead, (generation_id, state.task_id)
-        )
-        assert membership is not None
-        mutation = dishes.begin_scalar_mutation(
-            generation_id=generation_id,
-            task_id=state.task_id,
-            expected_dish_version=state.dish_version,
-            expected_membership_revision=membership.membership_revision,
-            source=ScalarMutationSource(
-                route="import",
-                import_run_id=source_version.import_run_id,
-                occurred_at=activated_at,
-            ),
-        )
-        mutation.place(
-            section_id=state.section_id,
-            registry_version_id=registry_version_id,
-        )
-        mutation.finalize()
     activation_id = _next(ids)
     activation_revision = current.registry_revision + 1
     registry.activate_registry(

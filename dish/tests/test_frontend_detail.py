@@ -46,7 +46,6 @@ def facts(**overrides) -> DetailFacts:
         existence_state="isolated",
         section_label="Research Queue",
         section_workflow_role="research_queue",
-        project_label="Cooking",
         operation_kind="initial",
         operation_phase="prepare_required",
         isolated=True,

@@ -862,15 +862,16 @@ class WorkflowAuthorityRepository:
         self, *, execution_id: uuid.UUID, generation_id: uuid.UUID, task_id: uuid.UUID, at: datetime
     ) -> wf.TaskExecutionFence:
         state = self.session.get(models.DishState, (generation_id, task_id))
-        membership = self.session.get(models.TaskMembershipHead, (generation_id, task_id))
-        if state is None or membership is None:
-            raise WorkflowAuthorityError("task has incomplete scalar/membership authority")
+        if state is None or state.catalog_version_id is None:
+            raise WorkflowAuthorityError("task has incomplete scalar/catalog authority")
         row = wf.TaskExecutionFence(
             execution_id=execution_id,
             generation_id=generation_id,
             task_id=task_id,
             expected_dish_version=state.dish_version,
-            expected_membership_revision=membership.membership_revision,
+            expected_membership_revision=0,
+            expected_placement_version=state.placement_version,
+            catalog_version_id=state.catalog_version_id,
             captured_at=at,
         )
         self.session.add(row)
@@ -885,28 +886,20 @@ class WorkflowAuthorityRepository:
             models.DishState.generation_id == fence.generation_id,
             models.DishState.task_id == fence.task_id,
         )
-        membership_statement = select(models.TaskMembershipHead).where(
-            models.TaskMembershipHead.generation_id == fence.generation_id,
-            models.TaskMembershipHead.task_id == fence.task_id,
-        )
         if self.session.get_bind().dialect.name == "postgresql":
-            # Match ScalarDishMutation's lock order and hold both task-authority rows
-            # through the caller-owned commit. A competing scalar transition either
-            # commits first and is observed by these fresh reads, or waits until this
-            # command has finished its task mutation.
+            # Match ScalarDishMutation's task-state lock and hold native placement
+            # authority through the caller-owned commit. A competing scalar transition
+            # either commits first and is observed by this fresh read, or waits until
+            # this command has finished its task mutation.
             state_statement = state_statement.with_for_update()
-            membership_statement = membership_statement.with_for_update()
         state = self.session.scalar(
             state_statement.execution_options(populate_existing=True)
         )
-        membership = self.session.scalar(
-            membership_statement.execution_options(populate_existing=True)
-        )
         if (
             state is None
-            or membership is None
             or state.dish_version != fence.expected_dish_version
-            or membership.membership_revision != fence.expected_membership_revision
+            or state.placement_version != fence.expected_placement_version
+            or state.catalog_version_id != fence.catalog_version_id
         ):
             raise StaleAuthorityError("task fence is stale")
         return state
@@ -1415,6 +1408,7 @@ class WorkflowAuthorityService:
             attestation=attestation,
             section_id=placement.section_id,
             registry_version_id=placement.registry_version_id,
+            catalog_version_id=placement.catalog_version_id,
             placement_version=placement.placement_version,
             request_id=execution.request_id,
             command_execution_id=execution_id,
