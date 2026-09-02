@@ -33,6 +33,7 @@ from dish_pg.services import (
     ImportedVerificationCycleSpec,
     ImportedWorkflowOperationSpec,
 )
+from tests.support.postgresql.core import _activate_cloned_registry_revision
 from tests.support.postgresql.release import HASH_A, _prepare_candidate, _record_final_closure
 from tests.support.postgresql.workflow import NOW, _next, workflow_db
 
@@ -376,25 +377,13 @@ def test_0022_approval_binds_manifest_and_registry_change_revalidates_stale(
             session, ids, context, task_id
         )
 
-        current = session.get(models.ActiveSectionRegistry, context["generation_id"])
-        assert current is not None
-        replacement_id = _next(ids)
-        session.add(
-            models.SectionRegistryVersion(
-                registry_version_id=replacement_id,
-                generation_id=context["generation_id"],
-                version_number=2,
-                import_run_id=context["import_run_id"],
-                contract_binding_id=context["binding_id"],
-                registry_sha256=HASH_A,
-                created_at=NOW + timedelta(minutes=3),
-            )
+        _activate_cloned_registry_revision(
+            session,
+            ids,
+            generation_id=context["generation_id"],
+            registry_sha256=HASH_A,
+            activated_at=NOW + timedelta(minutes=3),
         )
-        session.flush()
-        current.registry_version_id = replacement_id
-        current.registry_revision += 1
-        current.updated_at = NOW + timedelta(minutes=3)
-        session.flush()
 
         revalidation = _revalidate(
             session, ids, service, candidate_id, minute=4

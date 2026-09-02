@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -39,6 +40,22 @@ def test_adopt_existing_remote_branch_enters_normal_lifecycle(h: Harness) -> Non
 def test_concurrent_adopt_race_never_deletes_unrelated_branch(h: Harness) -> None:
     base = h.current_remote_main()
     head = h.remote_branch_commit("agent/adopt-race", "handoff", start=base)
+    h.github_reviews.write_text(
+        json.dumps(
+            {
+                "42": {
+                    "pr": {
+                        "state": "open",
+                        "body": "Implements Asana tasks 3001 and 3002.",
+                        "head": {"ref": "agent/adopt-race", "sha": head},
+                    },
+                    "reviews": {},
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     def args(task: str, agent: str) -> list[str]:
         h.agent_file(agent, owning_task_gid=task)

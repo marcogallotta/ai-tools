@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import json
 import os
+import re
 import socket
 import subprocess
 import uuid
@@ -30,6 +32,7 @@ from .repository import discover_repository
 from .state import (
     atomic_write_json,
     load_task_state,
+    live_pull_request_identity,
     read_json_object,
     state_path,
     state_path_for_branch,
@@ -37,6 +40,7 @@ from .state import (
     task_state_paths,
     validate_agent_state,
     require_repository_mutation_identity,
+    verified_review_block_authority,
 )
 
 CLAIM_SCHEMA_VERSION = 2
@@ -342,6 +346,37 @@ def _coherent_prior_claim(
     return repaired
 
 
+def _closed_same_lineage_block_replacement(
+    *,
+    task_gid: str,
+    branch: str,
+    lineage_id: str,
+    assignment: dict[str, Any],
+    admitted_authority: dict[str, Any],
+    previous: dict[str, Any] | None,
+) -> bool:
+    """Recognize the one head transition that may replace admitted authority."""
+    if previous is None:
+        return False
+    stored = admitted_authority.get("assignment")
+    previous_authority = previous.get("repository_assignment_authority")
+    previous_pr = previous.get("pr")
+    if not isinstance(stored, dict) or previous_authority != admitted_authority or not isinstance(previous_pr, dict):
+        return False
+    stable_keys = ("task_gid", "branch", "base_ref", "base_sha", "pr_number")
+    return (
+        all(stored.get(key) == assignment.get(key) for key in stable_keys)
+        and previous.get("task_gid") == task_gid
+        and previous.get("branch") == branch
+        and previous.get("lineage_id") == lineage_id
+        and previous_pr.get("number") == assignment.get("pr_number")
+        and previous_pr.get("head") == stored.get("pr_head")
+        and isinstance(previous.get("semantic_mutation_closed_at"), str)
+        and bool(str(previous.get("semantic_mutation_closed_at") or "").strip())
+        and previous.get("head_moved_to") == assignment.get("pr_head")
+    )
+
+
 def _reconcile_existing(
     *,
     runner: GitRunner,
@@ -496,8 +531,6 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         fail("OWNERSHIP_AGENT_REQUIRED", "exclusive local-agent ownership requires --agent-id")
     if args.require_launch_provenance and not args.launch_provenance:
         fail("LAUNCH_PROVENANCE_REQUIRED", "--require-launch-provenance requires --launch-provenance from the actual local host launcher")
-    if not args.launch_provenance:
-        require_repository_mutation_identity(agent_id, task_gid)
     repo = discover_repository(runner, Path(args.repo))
     branch = validate_branch(runner, repo.source_top, args.branch)
     pr = _normalize_pr(args)
@@ -511,6 +544,40 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         argv = argv[1:]
     if not argv:
         fail("CLAIM_COMMAND_REQUIRED", "claim must wrap the dispatched local-agent command after --")
+
+    def child_option(name: str) -> str | None:
+        try:
+            index = argv.index(name)
+        except ValueError:
+            return None
+        return argv[index + 1] if index + 1 < len(argv) else None
+
+    existing_state_path = state_path_for_branch(task_gid, branch)
+    existing_state = (
+        read_json_object(existing_state_path, "task worktree state")
+        if existing_state_path is not None
+        else None
+    )
+    base_ref = str(existing_state.get("base_ref")) if existing_state is not None else (child_option("--base-ref") or "refs/heads/main")
+    base_sha = str(existing_state.get("base_sha")) if existing_state is not None else (child_option("--base") or remote_ref_sha(runner, repo, base_ref))
+    assignment = {
+        "task_gid": task_gid,
+        "branch": branch,
+        "base_ref": base_ref,
+        "base_sha": require_full_sha(str(base_sha), "assignment base SHA"),
+        "pr_number": int(pr["number"]) if pr is not None else None,
+        "pr_head": str(pr["head"]) if pr is not None else None,
+    }
+    admitted_authority = existing_state.get("repository_assignment_authority") if existing_state is not None else None
+    if existing_state is not None and not isinstance(admitted_authority, dict):
+        # Existing exact lineages admitted before this authority projection landed
+        # remain recoverable, but the projection cannot widen their assignment.
+        admitted_authority = {"legacy_admitted": True, "assignment": assignment}
+    if not args.launch_provenance:
+        identity = require_repository_mutation_identity(
+            agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
+        )
+        admitted_authority = identity.get("repository_assignment_authority")
 
     token = uuid.uuid4().hex
     resolved_sha, lineage_id, resolved_marker = resolve_lineage_for_branch(
@@ -554,23 +621,65 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             if remote_head != pr["head"]:
                 fail("PR_BRANCH_HEAD_MISMATCH", f"authorized PR head {pr['head']} does not equal remote branch {branch} head {remote_head}")
         if args.launch_provenance:
-            prior_identity, _ = bind_identity_from_launch_provenance(
+            prior_identity, bound_identity = bind_identity_from_launch_provenance(
                 Path(args.launch_provenance), agent_id=agent_id, task_gid=task_gid, branch=branch, repo_path=repo.source_top, pr=pr,
             )
             launch_identity_bound = True
-            require_repository_mutation_identity(agent_id, task_gid)
+            launch = bound_identity.get("launch_provenance")
+            block_review_id = launch.get("block_review_id") if isinstance(launch, dict) else None
+            replaced_assignment_authority = False
+            if block_review_id is not None:
+                block_authority = verified_review_block_authority(
+                    task_gid, assignment, str(block_review_id)
+                )
+                if admitted_authority is None:
+                    admitted_authority = block_authority
+                elif _closed_same_lineage_block_replacement(
+                    task_gid=task_gid,
+                    branch=branch,
+                    lineage_id=lineage_id,
+                    assignment=assignment,
+                    admitted_authority=admitted_authority,
+                    previous=previous,
+                ):
+                    admitted_authority = block_authority
+                    replaced_assignment_authority = True
+            identity = require_repository_mutation_identity(
+                agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
+            )
+            admitted_authority = identity.get("repository_assignment_authority")
+            if replaced_assignment_authority:
+                replacement_state_path = state_path_for_branch(task_gid, branch)
+                if replacement_state_path is None:
+                    fail("MUTATION_ASSIGNMENT_MISMATCH", "Review-BLOCK replacement requires the existing same-lineage worktree state")
+                current_state = read_json_object(replacement_state_path, "task worktree state")
+                if current_state.get("repository_assignment_authority") != existing_state.get("repository_assignment_authority"):
+                    fail("MUTATION_ASSIGNMENT_MISMATCH", "worktree assignment authority changed during Review-BLOCK replacement")
+                current_state["repository_assignment_authority"] = admitted_authority
+                atomic_write_json(replacement_state_path, current_state)
         else:
-            require_repository_mutation_identity(agent_id, task_gid)
+            identity = require_repository_mutation_identity(
+                agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
+            )
+            admitted_authority = identity.get("repository_assignment_authority")
         record: dict[str, Any] = {
             "schema_version": CLAIM_SCHEMA_VERSION, "repository": EXPECTED_REPOSITORY, "origin_id": repo.origin_id,
             "task_gid": task_gid, "branch": branch, "lineage_id": lineage_id, "agent_id": agent_id,
             "host": socket.gethostname(), "token": token, "registry_marker": registry_sha,
             "registry_generation": registry_generation, "acquired_at": now_utc(), "released_at": None,
             "takeover": bool(args.takeover), "pr": pr, "launch_provenance_required": bool(args.require_launch_provenance),
+            "repository_assignment_authority": admitted_authority,
         }
         atomic_write_json(path, record)
         env = os.environ.copy()
-        env.update({CLAIM_TOKEN_ENV: token, CLAIM_TASK_ENV: task_gid, CLAIM_BRANCH_ENV: branch, CLAIM_AGENT_ENV: agent_id, LINEAGE_ENV: lineage_id})
+        env.update({
+            CLAIM_TOKEN_ENV: token,
+            CLAIM_TASK_ENV: task_gid,
+            CLAIM_BRANCH_ENV: branch,
+            CLAIM_AGENT_ENV: agent_id,
+            LINEAGE_ENV: lineage_id,
+            "DISH_AGENT_ASSIGNMENT_AUTHORITY": json.dumps(admitted_authority, sort_keys=True),
+        })
         try:
             completed = subprocess.run(argv, cwd=repo.source_top, env=env, check=False, pass_fds=tuple(locks.fds))
         except OSError as exc:
@@ -659,7 +768,6 @@ def require_active_claim(
     agent_id = require_agent_id(agent_id)
     if agent_id is None:
         fail("OWNERSHIP_AGENT_REQUIRED", "local-agent writer operations require --agent-id inside an active ownership claim")
-    require_repository_mutation_identity(agent_id, task_gid)
     token = os.environ.get(CLAIM_TOKEN_ENV)
     lineage_id = os.environ.get(LINEAGE_ENV)
     if not token or not lineage_id or os.environ.get(CLAIM_TASK_ENV) != task_gid or os.environ.get(CLAIM_BRANCH_ENV) != branch:
@@ -671,6 +779,82 @@ def require_active_claim(
         fail("OWNERSHIP_CLAIM_MISMATCH", "claim token/lineage does not match the durable ownership claim")
     if record.get("branch") != branch or record.get("agent_id") != agent_id:
         fail("OWNERSHIP_CLAIM_MISMATCH", "claim task/branch/agent identity does not match the requested writer operation")
+    state_file = state_path_for_branch(task_gid, branch)
+    state = read_json_object(state_file, "task worktree state") if state_file is not None else None
+    claim_authority = record.get("repository_assignment_authority")
+    state_authority = state.get("repository_assignment_authority") if isinstance(state, dict) else None
+    if isinstance(state, dict):
+        if not isinstance(claim_authority, dict):
+            fail("MUTATION_ASSIGNMENT_MISMATCH", "claim and worktree state must both retain durable assignment authority")
+        if not isinstance(state_authority, dict):
+            if claim_authority.get("legacy_admitted") is not True:
+                fail("MUTATION_ASSIGNMENT_MISMATCH", "claim and worktree state must both retain durable assignment authority")
+        elif claim_authority != state_authority:
+            fail("MUTATION_ASSIGNMENT_MISMATCH", "claim and worktree assignment authority projections differ")
+    assignment_authority = claim_authority if isinstance(claim_authority, dict) else state_authority
+    stored_assignment = (
+        assignment_authority.get("assignment")
+        if isinstance(assignment_authority, dict)
+        else None
+    )
+    if not isinstance(state, dict) and not isinstance(stored_assignment, dict):
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "active writer claim has no durable worktree assignment")
+    if isinstance(state, dict) and state.get("branch") != branch:
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "worktree state branch differs from the active writer assignment")
+    claim_pr = record.get("pr")
+    if state_file is not None:
+        assert state is not None
+        if state.get("lineage_id") not in {None, lineage_id}:
+            fail("LINEAGE_REGISTRY_CHANGED", "local state lineage differs from claimed lineage")
+        repo = resolve_repository_from_state(runner, state) if state.get("lifecycle") == "active" else discover_repository(runner, Path("."))
+    else:
+        repo = discover_repository(runner, Path("."))
+    moved_to = record.get("head_moved_to")
+    closed_head_readback: str | None = None
+    if allow_head_moved_readback and isinstance(moved_to, str):
+        closed_at = record.get("semantic_mutation_closed_at")
+        if not isinstance(closed_at, str) or not closed_at.strip():
+            fail("PR_HEAD_MOVED_REDISPATCH_REQUIRED", "moved-head readback requires a closed semantic mutation claim")
+        closed_head_readback = moved_to
+    if isinstance(claim_pr, dict):
+        try:
+            pr_number = int(claim_pr.get("number"))
+        except (TypeError, ValueError):
+            fail("MUTATION_PR_AUTHORITY_INVALID", "persisted claim PR number is invalid")
+        live_pr = live_pull_request_identity(pr_number)
+        expected_live_head = (
+            str(moved_to)
+            if allow_head_moved_readback and isinstance(moved_to, str)
+            else str(claim_pr.get("head") or "")
+        )
+        remote_head = remote_ref_sha(runner, repo, f"refs/heads/{branch}", allow_missing=True)
+        task_bound = re.search(rf"(?<!\d){re.escape(task_gid)}(?!\d)", live_pr["body"]) is not None
+        if (
+            live_pr["state"] != "open"
+            or live_pr["branch"] != branch
+            or live_pr["head"] != expected_live_head
+            or remote_head != expected_live_head
+            or not task_bound
+        ):
+            fail(
+                "PR_HEAD_MOVED_REDISPATCH_REQUIRED",
+                "live task/PR/branch/head no longer matches the exact admitted writer assignment",
+            )
+    current_assignment = {
+        "task_gid": task_gid,
+        "branch": branch,
+        "base_ref": state.get("base_ref") if isinstance(state, dict) else stored_assignment.get("base_ref"),
+        "base_sha": state.get("base_sha") if isinstance(state, dict) else stored_assignment.get("base_sha"),
+        "pr_number": claim_pr.get("number") if isinstance(claim_pr, dict) else None,
+        "pr_head": claim_pr.get("head") if isinstance(claim_pr, dict) else None,
+    }
+    require_repository_mutation_identity(
+        agent_id,
+        task_gid,
+        assignment=current_assignment,
+        admitted_authority=assignment_authority if isinstance(assignment_authority, dict) else None,
+        closed_review_block_live_head=closed_head_readback,
+    )
     if record.get("released_at") is not None:
         fail("OWNERSHIP_CLAIM_STALE", "ownership claim was already released")
     if record.get("head_moved_to") is not None and not allow_head_moved_readback:
@@ -678,14 +862,6 @@ def require_active_claim(
     status = claim_status(task_gid)
     if status.get("state") != "live":
         fail("OWNERSHIP_CLAIM_STALE", f"ownership claim is {status.get('state')!r}, not live")
-    state_file = state_path_for_branch(task_gid, branch)
-    if state_file is not None:
-        state = read_json_object(state_file, "task worktree state")
-        if state.get("lineage_id") not in {None, lineage_id}:
-            fail("LINEAGE_REGISTRY_CHANGED", "local state lineage differs from claimed lineage")
-        repo = resolve_repository_from_state(runner, state) if state.get("lifecycle") == "active" else discover_repository(runner, Path("."))
-    else:
-        repo = discover_repository(runner, Path("."))
     marker = assert_active_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token)
     if state_file is not None and state.get("published_head") is not None:
         expected_remote = str(state.get("published_head"))

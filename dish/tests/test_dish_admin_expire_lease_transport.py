@@ -224,6 +224,51 @@ def test_real_http_client_accepts_canonical_expiry_response(tmp_path):
     assert result["data"]["outcome"] == "released"
 
 
+def _postgres_expiry_result(command="expire-lease"):
+    return {
+        "ok": True,
+        "command": command,
+        "code": "OK",
+        "http_status": 200,
+        "retryable": False,
+        "data": {"outcome": "released"},
+    }
+
+
+def test_expire_client_accepts_postgres_command_result(monkeypatch):
+    client = DishAdminServiceClient(
+        "http://dish.invalid", token="admin-secret", run_id=ADMIN_RUN
+    )
+    response = _postgres_expiry_result()
+    monkeypatch.setattr(
+        client._transport,
+        "request_json_ignoring_status",
+        lambda *args, **kwargs: response,
+    )
+
+    assert client.expire_lease(
+        task_gid=TASK_GID, reason="owner dead", request_id=EXPIRY_REQUEST
+    ) is response
+
+
+def test_expire_client_maps_wrong_postgres_command_to_uncertain(monkeypatch):
+    client = DishAdminServiceClient(
+        "http://dish.invalid", token="admin-secret", run_id=ADMIN_RUN
+    )
+    monkeypatch.setattr(
+        client._transport,
+        "request_json_ignoring_status",
+        lambda *args, **kwargs: _postgres_expiry_result("wrong-command"),
+    )
+
+    result = client.expire_lease(
+        task_gid=TASK_GID, reason="owner dead", request_id=EXPIRY_REQUEST
+    )
+
+    assert result["code"] == "BACKEND_UNCERTAIN"
+    assert result["command"] == "expire-lease"
+
+
 @pytest.mark.smoke
 def test_committed_lost_response_exact_retry_does_not_release_replacement(
     tmp_path, monkeypatch

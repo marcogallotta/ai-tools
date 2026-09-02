@@ -26,6 +26,14 @@ Concurrency is chosen from concrete landing relationships:
 - Branch names managed by that lifecycle are single-use after terminal cleanup.
 - Takeover requires explicit handoff and compare-and-set against current claim identity; silence or age is not owner death.
 - Advisory PR leases improve visibility but never grant ownership.
+- A verified exact-head Review BLOCK may replace prior assignment authority only
+  inside the same task, branch, authoring-base, PR, and lineage after publication
+  has durably closed the prior semantic writer claim.
+- Local first claim consumes one current exact Implementation handoff from the owning task; Ready,
+  a local identity file, or a claim file cannot independently authorize repository mutation.
+- Worktree admission accepts exactly one owning membership from the registered V2 project
+  authority, validates that project's live V2 name and complete lifecycle signature, and refreshes
+  that authority at every material writer boundary.
 - Unrelated movement of the target branch does not silently replace an established authoring base.
 - Stack propagation preserves later completed work when an earlier accepted correction must be down-merged.
 

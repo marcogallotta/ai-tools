@@ -180,6 +180,27 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("postgresql/test_production_reset.py", "_active_sessions"): (
         "Active-session discovery boundary for deterministic production-reset recreate ordering tests."
     ),
+    ("postgresql/test_production_reset.py", "_load_object_grants"): (
+        "Catalog object-grant boundary used to prove restored access rejects unexpected grants."
+    ),
+    ("postgresql/test_production_reset.py", "_load_database_settings"): (
+        "Catalog database-setting boundary used to prove restored access rejects unexpected settings."
+    ),
+    ("postgresql/test_production_reset.py", "_load_default_privileges"): (
+        "Catalog default-privilege boundary used to prove restored access rejects unexpected defaults."
+    ),
+    ("postgresql/native/test_production_reset.py", "_OBSERVER_ROLE"): (
+        "Isolated native PostgreSQL observer-role fixture binding for retired-relation ACL proofs."
+    ),
+    (
+        "postgresql/native/test_production_reset.py",
+        "_OBSERVER_REPLACEMENT_TARGET",
+    ): (
+        "Isolated native PostgreSQL replacement-grant fixture binding for retired-relation ACL proofs."
+    ),
+    ("postgresql/native/test_production_reset.py", "_grant_statement"): (
+        "Transactional ACL restoration fault boundary used to prove partial grant rollback."
+    ),
     ("postgresql/test_test_generation_rollover.py", "_prepare_candidate"): (
         "First-admission candidate fixture boundary used to construct a same-shape non-incident "
         "candidate for rollover signature refusal."

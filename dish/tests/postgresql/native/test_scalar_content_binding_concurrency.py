@@ -56,7 +56,7 @@ def test_command_content_insert_serializes_with_concurrent_binding_update(
 ) -> None:
     factory, ids = request.getfixturevalue(core_db.__name__)
     with session_scope(factory) as session:
-        context = _bootstrap_registry(session, ids)
+        context = _bootstrap_registry(session, ids, generation_status="active")
         imported = _import_one(session, ids, context)
         state = session.get(
             models.DishState, (context["generation_id"], imported.task_id)

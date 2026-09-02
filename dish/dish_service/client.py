@@ -131,7 +131,7 @@ class DishServiceClient:
                 "client": self._client(request_id=request_id),
             },
             run_id=self.run_id,
-            result_request=self._result_request,
+            result_request=self._transport.request_json,
         )
 
     def record_argument_failure(
@@ -168,10 +168,13 @@ class DishServiceClient:
         self, operation_id: str, *, request_id: str | None = None
     ) -> dict[str, Any]:
         request_id = request_id_for_command("renew-lease", request_id)
-        return self._result_request(
-            f"/v1/leases/{operation_id}/renew",
-            method="POST",
+        return command_result_request(
+            command="renew-lease",
+            path=f"/v1/leases/{operation_id}/renew",
+            request_id=request_id,
             payload={"client": self._client(request_id=request_id)},
+            run_id=self.run_id,
+            result_request=self._transport.request_json,
         )
 
 
@@ -217,13 +220,17 @@ class DishAdminServiceClient(DishServiceClient):
         prepared = dict(arguments or keyword_arguments)
         if request_id is None:
             request_id = str(uuid.uuid4())
-        return self._result_request(
-            f"/v1/admin/{command}",
-            method="POST",
+        return command_result_request(
+            command=command,
+            path=f"/v1/admin/{command}",
+            request_id=request_id,
             payload={
                 "arguments": self._transport_arguments(prepared),
                 "client": self._client(request_id=request_id),
             },
+            run_id=self.run_id,
+            result_request=self._transport.request_json,
+            ambiguity_sensitive=False,
         )
 
     def recover_lease(
@@ -236,13 +243,17 @@ class DishAdminServiceClient(DishServiceClient):
         operation_id = require_dish_uuid(operation_id, field="operation_id")
         if request_id is None:
             request_id = str(uuid.uuid4())
-        return self._result_request(
-            f"/v1/admin/leases/{operation_id}/recover",
-            method="POST",
+        return command_result_request(
+            command="recover-lease",
+            path=f"/v1/admin/leases/{operation_id}/recover",
+            request_id=request_id,
             payload={
                 "reason": reason,
                 "client": self._client(request_id=request_id),
             },
+            run_id=self.run_id,
+            result_request=self._transport.request_json,
+            ambiguity_sensitive=False,
         )
 
     def expire_lease(
@@ -346,18 +357,21 @@ class DishActionClient(DishServiceClient):
                 "client": self._client(request_id=request_id),
             },
             run_id=self.run_id,
-            result_request=self._result_request,
+            result_request=self._transport.request_json,
         )
 
     def renew_lease(
         self, operation_id: str, *, request_id: str | None = None
     ) -> dict[str, Any]:
         request_id = request_id_for_command("renew-lease", request_id)
-        return self._result_request(
-            "/v1/action/renew-lease",
-            method="POST",
+        return command_result_request(
+            command="renew-lease",
+            path="/v1/action/renew-lease",
+            request_id=request_id,
             payload={
                 "arguments": {"operation_id": operation_id},
                 "client": self._client(request_id=request_id),
             },
+            run_id=self.run_id,
+            result_request=self._transport.request_json,
         )

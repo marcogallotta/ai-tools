@@ -33,6 +33,10 @@ fresh every time (see below). Nothing here is a cached or repository-driven auth
 | `1217404747383060` | Dish — PostgreSQL / Dark Launch |
 | `1217382473444945` | Dish — Coordinator |
 
+`tools/agent_worktree_lib/asana_v2.py` is the executable projection consumed by local repository
+mutation admission. Focused tests require its GID/base-name mapping and nine-section signature to
+remain aligned with this maintained registry; it is not a cached live-mode authority.
+
 ### Reference only: other real Dish project shapes (not registered, not migrated)
 
 These are recorded so a future migration of any of them is a registry addition, not a redesign.

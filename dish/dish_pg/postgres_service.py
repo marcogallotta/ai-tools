@@ -591,15 +591,23 @@ class PostgresRuntimeService:
         has_more = facts.truncated or len(facts.results) > offset + page_size
         results: list[dict[str, Any]] = []
         for fact in visible:
-            results.append(
-                {
-                    "dish_id": str(fact.task_id),
-                    "title": fact.title,
-                    "section_id": str(fact.section_id),
-                    "section_label": fact.section_label,
-                    "workflow_role": fact.workflow_role,
-                }
+            task_gid = session.scalar(
+                select(models.TaskExternalAlias.external_id).where(
+                    models.TaskExternalAlias.task_id == fact.task_id,
+                    models.TaskExternalAlias.external_system == "asana",
+                    models.TaskExternalAlias.state == "active",
+                )
             )
+            result = {
+                "dish_id": str(fact.task_id),
+                "title": fact.title,
+                "section_id": str(fact.section_id),
+                "section_label": fact.section_label,
+                "workflow_role": fact.workflow_role,
+            }
+            if task_gid is not None:
+                result["task_gid"] = str(task_gid)
+            results.append(result)
 
         current_context = board.context()
         current_identity = (

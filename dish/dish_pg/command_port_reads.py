@@ -52,10 +52,30 @@ class PostgresCommandReadMixin:
             data: Mapping[str, Any] = {"sections": self.reads.sections()}
         elif call.command_name == "section-tasks":
             reference = call.arguments.get("section_id")
+            legacy_reference = call.arguments.get("section_gid")
+            if reference is None and legacy_reference is not None:
+                reference = self.session.scalar(
+                    select(models.SectionExternalAlias.section_id).where(
+                        models.SectionExternalAlias.external_system == "asana",
+                        models.SectionExternalAlias.external_id == str(legacy_reference),
+                        models.SectionExternalAlias.state == "active",
+                    )
+                )
             if reference is None:
-                raise CommandRuleError("SECTION_REQUIRED", "section reference is required", http_status=400)
+                if legacy_reference is None:
+                    raise CommandRuleError(
+                        "SECTION_REQUIRED",
+                        "section reference is required",
+                        http_status=400,
+                    )
+                raise CommandRuleError(
+                    "SECTION_NOT_FOUND",
+                    "unknown governed section",
+                    http_status=404,
+                    data={"section_reference": str(legacy_reference)},
+                )
             try:
-                self.reads.resolve_section(str(reference))
+                self.reads.resolve_section(reference)
             except ReadModelError as exc:
                 raise CommandRuleError(
                     "SECTION_NOT_FOUND",
@@ -64,7 +84,7 @@ class PostgresCommandReadMixin:
                     data={"section_reference": str(reference)},
                 ) from exc
             page = self.reads.section_tasks(
-                section_reference=str(reference),
+                section_reference=reference,
                 cursor=call.arguments.get("cursor"),
                 page_size=int(call.arguments.get("page_size", 50)),
             )

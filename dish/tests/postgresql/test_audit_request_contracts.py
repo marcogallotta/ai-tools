@@ -4,7 +4,7 @@ import json
 import uuid
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
@@ -245,6 +245,97 @@ def test_planning_confirmation_is_bound_to_registered_agent_and_exact_target(wor
             )
         )
         assert actor.agent == "claude"
+
+
+def test_completed_task_rejects_planning_before_challenge_and_after_confirmation(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        planning_run = _next(ids)
+        cooked_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=planning_run,
+            agent="claude",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=cooked_run,
+        )
+        port = _port(session, ids)
+        initial = port.execute(
+            _call(
+                "start",
+                run_id=planning_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "planning",
+                    "agent": "claude",
+                },
+            )
+        )
+        assert initial.code == "CONFIRMATION_REQUIRED"
+
+        cooked = port.execute(
+            _call(
+                "cooked",
+                run_id=cooked_run,
+                request_id=_next(ids),
+                arguments={"task_id": str(task_id)},
+            )
+        )
+        assert cooked.ok is True
+
+        confirmed = port.execute(
+            _call(
+                "start",
+                run_id=planning_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "planning",
+                    "agent": "claude",
+                    "intent_challenge_id": initial.data["intent_challenge_id"],
+                    "intent_basis": "user_requested",
+                },
+            )
+        )
+        fresh_initial = port.execute(
+            _call(
+                "start",
+                run_id=planning_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "planning",
+                    "agent": "claude",
+                },
+            )
+        )
+
+        for rejected in (confirmed, fresh_initial):
+            assert rejected.ok is False
+            assert rejected.code == "WRONG_STATE"
+            assert rejected.data["rule"] == "planning_completed_task_reopen_required"
+            assert rejected.data["required_admin_action"] == "reopen-planning"
+        state = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        assert state is not None and state.completed is True
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.WorkflowOperation)
+            .where(wf.WorkflowOperation.task_id == task_id)
+        ) == 0
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.PlanningIntentChallenge)
+            .where(wf.PlanningIntentChallenge.task_id == task_id)
+        ) == 1
 
 
 def test_malformed_operation_target_failure_is_immutable(workflow_db) -> None:

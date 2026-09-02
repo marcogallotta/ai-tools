@@ -4,11 +4,13 @@ import uuid
 
 import pytest
 
+from dish_service._client_results import validate_command_result
 from dish_service.client import DishActionClient, DishServiceClient
 from dish_service.http import build_server
 from dish_service import cli
 from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
+from dish_tool.results import result_envelope
 from tests.support.lost_response import (
     ReplaceFirstResponseHTTPConnection,
     build_inspect_ready_runtime,
@@ -386,3 +388,255 @@ def test_apply_proposal_cli_exposes_exact_replay_for_untrustworthy_response(
     assert replayed["data"]["request_id"] == request_id
     assert backend.writes == writes_after_first
     assert _proposal_state(service, proposal_id) == state_after_first == ("applied", 2)
+
+
+def _postgres_result(command: str = "sections", **overrides):
+    result = {
+        "ok": True,
+        "command": command,
+        "code": "OK",
+        "http_status": 200,
+        "retryable": False,
+        "data": {},
+    }
+    result.update(overrides)
+    return result
+
+
+def _legacy_result(command: str = "create", **overrides):
+    result = result_envelope(command=command)
+    result.update(overrides)
+    return result
+
+
+def test_validate_command_result_accepts_strict_legacy_family():
+    result = _legacy_result("create", data={"created": True})
+
+    assert validate_command_result(result, expected_command="create") is result
+
+
+@pytest.mark.parametrize(
+    ("command", "data"),
+    [
+        ("sections", {"sections": []}),
+        ("read", {"task": {"gid": "123"}}),
+    ],
+)
+def test_validate_command_result_accepts_postgres_required_six(command, data):
+    result = _postgres_result(command, data=data)
+
+    assert validate_command_result(result, expected_command=command) is result
+
+
+def test_validate_command_result_accepts_postgres_optional_request_replayed():
+    result = _postgres_result("inspect", request_replayed=True)
+
+    assert validate_command_result(result, expected_command="inspect") is result
+
+
+@pytest.mark.parametrize("failure_code", ["", "POSTGRES_ONLY_FAILURE"])
+def test_validate_command_result_accepts_postgres_failure_strings(failure_code):
+    result = _postgres_result(
+        "read", ok=False, code=failure_code, http_status=409, retryable=True
+    )
+
+    assert validate_command_result(result, expected_command="read") is result
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_command"),
+    [
+        pytest.param(
+            _postgres_result("sections", request_replayed="yes"),
+            "sections",
+            id="postgres-replay-ill-typed",
+        ),
+        pytest.param(
+            {
+                key: value
+                for key, value in _postgres_result("sections").items()
+                if key != "retryable"
+            },
+            "sections",
+            id="postgres-missing-field",
+        ),
+        pytest.param(
+            _postgres_result("wrong-command"),
+            "sections",
+            id="postgres-wrong-command",
+        ),
+        pytest.param(
+            _legacy_result("wrong-command"),
+            "create",
+            id="legacy-wrong-command",
+        ),
+        pytest.param(
+            _legacy_result("create", code="NOT_A_LEGACY_CODE"),
+            "create",
+            id="legacy-unknown-code",
+        ),
+        pytest.param(
+            _postgres_result("read", code=7, ok=False),
+            "read",
+            id="postgres-non-string-code",
+        ),
+        pytest.param(
+            _postgres_result("read", ok=True, code="POSTGRES_FAILURE"),
+            "read",
+            id="postgres-ok-code-inconsistent",
+        ),
+        pytest.param(
+            _postgres_result("read", data=[]),
+            "read",
+            id="postgres-data-not-object",
+        ),
+        pytest.param(
+            _postgres_result("read", http_status=True),
+            "read",
+            id="postgres-http-status-boolean",
+        ),
+        pytest.param(
+            _postgres_result("read", http_status=99),
+            "read",
+            id="postgres-http-status-too-low",
+        ),
+        pytest.param(
+            _postgres_result("read", http_status=600),
+            "read",
+            id="postgres-http-status-too-high",
+        ),
+        pytest.param(
+            _postgres_result("read", http_status=200.0),
+            "read",
+            id="postgres-http-status-non-integer",
+        ),
+        pytest.param(
+            {**_postgres_result("read"), "errors": []},
+            "read",
+            id="hybrid-postgres-plus-legacy-field",
+        ),
+        pytest.param(
+            {**_legacy_result("create"), "http_status": 200},
+            "create",
+            id="hybrid-legacy-plus-postgres-field",
+        ),
+        pytest.param(
+            {**_postgres_result("read"), "unknown": None},
+            "read",
+            id="postgres-extra-field",
+        ),
+        pytest.param(
+            {"ok": True, "command": "read", "code": "OK"},
+            "read",
+            id="partial-unknown-family",
+        ),
+    ],
+)
+def test_validate_command_result_rejects_invalid_family(result, expected_command):
+    with pytest.raises((ValueError, TypeError)):
+        validate_command_result(result, expected_command=expected_command)
+
+
+@pytest.mark.parametrize(
+    ("client_type", "token", "expected_path"),
+    [
+        (DishServiceClient, "agent-secret", "/v1/commands/sections"),
+        (DishActionClient, "action-secret", "/v1/action/sections"),
+    ],
+)
+def test_clients_accept_valid_postgres_sections_result(
+    monkeypatch, client_type, token, expected_path
+):
+    client = client_type(
+        "http://dish.invalid",
+        token=token,
+        run_id="11111111-1111-4111-8111-111111111111",
+    )
+    response = _postgres_result("sections", data={"sections": []})
+
+    def request_json(path, *, method, payload, ambiguous_after_dispatch=False):
+        assert path == expected_path
+        assert method == "POST"
+        assert ambiguous_after_dispatch is False
+        assert payload["arguments"] == {"agent": "gpt"}
+        return response
+
+    monkeypatch.setattr(client._transport, "request_json", request_json)
+
+    assert client.execute("sections", {"agent": "gpt"}) is response
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param(_legacy_result("wrong-command"), id="legacy-wrong-command"),
+        pytest.param(_postgres_result("wrong-command"), id="postgres-wrong-command"),
+        pytest.param(
+            {**_postgres_result("sections"), "extra": True}, id="postgres-extra"
+        ),
+    ],
+)
+def test_ordinary_command_rejects_untrusted_decoded_response(monkeypatch, response):
+    client = DishServiceClient(
+        "http://dish.invalid",
+        token="agent-secret",
+        run_id="11111111-1111-4111-8111-111111111111",
+    )
+    monkeypatch.setattr(
+        client._transport, "request_json", lambda *args, **kwargs: response
+    )
+
+    with pytest.raises(DishRuleError) as caught:
+        client.execute("sections", {"agent": "gpt"})
+
+    assert caught.value.code == "INTERNAL_ERROR"
+    assert caught.value.rule == "service_response_invalid"
+
+
+@pytest.mark.parametrize("command", ["inspect", "apply-proposal", "safe-reclaim"])
+def test_ambiguity_sensitive_commands_accept_valid_postgres_result(
+    monkeypatch, command
+):
+    client = DishServiceClient(
+        "http://dish.invalid",
+        token="agent-secret",
+        run_id="11111111-1111-4111-8111-111111111111",
+    )
+    response = _postgres_result(command)
+    captured = {}
+
+    def request_json(path, *, method, payload, ambiguous_after_dispatch=False):
+        captured["request_id"] = payload["client"]["request_id"]
+        assert ambiguous_after_dispatch is True
+        return response
+
+    monkeypatch.setattr(client._transport, "request_json", request_json)
+
+    assert client.execute(command, {}) is response
+    assert str(uuid.UUID(captured["request_id"])) == captured["request_id"]
+
+
+@pytest.mark.parametrize("command", ["inspect", "apply-proposal", "safe-reclaim"])
+def test_ambiguity_sensitive_commands_preserve_backend_uncertain(monkeypatch, command):
+    run_id = "11111111-1111-4111-8111-111111111111"
+    client = DishServiceClient(
+        "http://dish.invalid", token="agent-secret", run_id=run_id
+    )
+    response = _postgres_result("wrong-command")
+    captured = {}
+
+    def request_json(path, *, method, payload, ambiguous_after_dispatch=False):
+        captured["request_id"] = payload["client"]["request_id"]
+        assert ambiguous_after_dispatch is True
+        return response
+
+    monkeypatch.setattr(client._transport, "request_json", request_json)
+
+    result = client.execute(command, {})
+
+    assert result["code"] == "BACKEND_UNCERTAIN"
+    assert result["command"] == command
+    assert result["retryable"] is False
+    assert result["data"]["request_id"] == captured["request_id"]
+    assert result["data"]["run_id"] == run_id
+    assert result["errors"] == [{"rule": "service_response_ambiguous"}]

@@ -283,6 +283,20 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             ):
                 if task is None:
                     raise CommandRuleError("TASK_REQUIRED", "planning start requires a task")
+                state = self.session.scalar(
+                    select(models.DishState)
+                    .where(
+                        models.DishState.generation_id == generation.generation_id,
+                        models.DishState.task_id == task.task_id,
+                    )
+                    .execution_options(populate_existing=True)
+                )
+                if state is None:
+                    raise CommandRuleError(
+                        "COMPLETION_AUTHORITY_MISSING",
+                        "task completion authority is incomplete",
+                    )
+                self._assert_planning_task_reopened(state)
                 self._validate_planning_intent_basis(call, initial=True)
                 self._validate_planning_agent(
                     generation_id=generation.generation_id, call=call
@@ -337,6 +351,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 ttl=timedelta(minutes=2),
             )
             if operation is not None and call.command_name in {
+                "start",
+                "supply-evidence",
                 "prepare",
                 "discard",
                 "hold-reject",
@@ -884,6 +900,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "INVALID_OPERATION_KIND", "unsupported operation kind", http_status=400
             )
 
+        # Existing operation-backed starts are locked before this handler. New
+        # operation starts have no operation row yet, so the task fence is the
+        # first mutation lock. In both cases the fence is held through commit.
+        state = self.workflow.repo.assert_task_fence(execution.execution_id)
+        if kind == "planning":
+            self._assert_planning_task_reopened(state)
+
         agent = str(call.arguments.get("agent", "")).strip()
         if not agent:
             raise CommandRuleError(
@@ -1157,6 +1180,24 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "lease_id": str(lease.lease_id),
             "phase": operation.phase,
         }
+
+    @staticmethod
+    def _assert_planning_task_reopened(state: models.DishState) -> None:
+        if not state.completed:
+            return
+        raise CommandRuleError(
+            "WRONG_STATE",
+            "completed tasks require Marco to reopen them before Planning",
+            data={
+                "rule": "planning_completed_task_reopen_required",
+                "required_admin_action": "reopen-planning",
+                "resolver": "Marco/admin reopen-planning",
+                "legal_next_step": (
+                    "Marco/admin runs reopen-planning with a reason; after it succeeds, "
+                    "retry start with kind=planning using a fresh client.request_id"
+                ),
+            },
+        )
 
     def _lock_operation_transition(
         self, operation_id: uuid.UUID

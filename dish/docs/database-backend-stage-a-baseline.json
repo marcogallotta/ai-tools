@@ -86,14 +86,14 @@
     "dish_tool/database_migrations.py": "31bdbf9966f399ce7a21966e35ff9183f75958911456d9a80a68c1e54a8af6b9",
     "dish_tool/database_schema.py": "5b576d60885f4891227d04c87d4cb98d0ac7831adb600355543dfabfda973708",
     "dish_tool/database_schema_migrations.py": "c3ca81d3bebdd68564069b061220d7b8a9af42b274cd632aaaff5f0bf7449982",
-    "dish_tool/database_schema_validation.py": "2c04862bf1f3bcd35aa7b14aa2cad3edbe5e7312f4e3d0afd42007cb17af3f4b",
+    "dish_tool/database_schema_validation.py": "1e234fe7b2b0c3e70dae1da41de6d2c553ce128695bd7f5d6c166a1d009c96b2",
     "dish_tool/workflow_policy.py": "213219dfc857a65b9720043426f9ddb6c7ea68706086322648051da3f7775fe9",
     "docs/runtime-contract.md": "8d2880929ae8acac1a871d458c4bc2eb610250318e90f50db15e8aa531a3beb9",
     "openapi/dish-action.openapi.json": "86e25682a9035a76190cc90cafcbc0c8b23ed5a7b9d87c3e7d5cb01ac69e9296",
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "PR #269 adds the reviewed private-admin archive command classification and runtime result guidance",
+  "last_rebaseline_reason": "Rebaseline reviewed 0044 independent archive schema head, visible archive admin help, and atomic runtime schema validation",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",

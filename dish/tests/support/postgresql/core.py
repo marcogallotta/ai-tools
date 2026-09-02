@@ -20,9 +20,7 @@ from dish_pg.release_history import (
 from dish_pg.repositories import (
     AuthorityRepository,
     ContractBindingRepository,
-    DishRepository,
     RegistryRepository,
-    ScalarMutationSource,
 )
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from tests.support.postgresql.certification import postgresql_dsn
@@ -322,6 +320,88 @@ def _bootstrap_registry(
     }
 
 
+def _activate_cloned_registry_revision(
+    session: Session,
+    ids: Iterator[uuid.UUID],
+    *,
+    generation_id: uuid.UUID,
+    registry_sha256: str,
+    activated_at: datetime,
+    contract_binding_id: uuid.UUID | None = None,
+    workflow_role_section_id: uuid.UUID | None = None,
+    workflow_role: str | None = None,
+) -> models.SectionRegistryVersion:
+    """Clone retained transition registry evidence without rebinding native placement."""
+    assert (workflow_role_section_id is None) == (workflow_role is None)
+    current = session.get(models.ActiveSectionRegistry, generation_id)
+    assert current is not None
+    source_version = session.get(
+        models.SectionRegistryVersion, current.registry_version_id
+    )
+    assert source_version is not None
+    entries = session.scalars(
+        select(models.SectionRegistryEntry)
+        .where(
+            models.SectionRegistryEntry.registry_version_id
+            == source_version.registry_version_id
+        )
+        .order_by(models.SectionRegistryEntry.ordinal)
+    ).all()
+
+    registry_version_id = _next(ids)
+    registry = RegistryRepository(session)
+    registry_revision = models.SectionRegistryVersion(
+        registry_version_id=registry_version_id,
+        generation_id=generation_id,
+        version_number=source_version.version_number + 1,
+        import_run_id=source_version.import_run_id,
+        contract_binding_id=(
+            contract_binding_id
+            if contract_binding_id is not None
+            else source_version.contract_binding_id
+        ),
+        registry_sha256=registry_sha256,
+        created_at=activated_at,
+    )
+    registry.add_registry_version(
+        registry_revision,
+        [
+            models.SectionRegistryEntry(
+                registry_version_id=registry_version_id,
+                section_id=entry.section_id,
+                ordinal=entry.ordinal,
+                display_name=entry.display_name,
+                workflow_role=workflow_role
+                if entry.section_id == workflow_role_section_id
+                else entry.workflow_role,
+            )
+            for entry in entries
+        ],
+    )
+    activation_id = _next(ids)
+    activation_revision = current.registry_revision + 1
+    registry.activate_registry(
+        activation=models.SectionRegistryActivation(
+            registry_activation_id=activation_id,
+            generation_id=generation_id,
+            registry_version_id=registry_version_id,
+            activation_route="import",
+            import_run_id=source_version.import_run_id,
+            command_execution_id=None,
+            registry_revision=activation_revision,
+            activated_at=activated_at,
+        ),
+        current=models.ActiveSectionRegistry(
+            generation_id=generation_id,
+            registry_version_id=registry_version_id,
+            registry_activation_id=activation_id,
+            registry_revision=activation_revision,
+            updated_at=activated_at,
+        ),
+    )
+    return registry_revision
+
+
 def _activate_role_only_registry_revision(
     session: Session,
     ids: Iterator[uuid.UUID],
@@ -329,63 +409,17 @@ def _activate_role_only_registry_revision(
     *,
     workflow_role: str,
 ) -> uuid.UUID:
-    """Revise retained transition metadata without rebinding native placement."""
-    current = session.get(models.ActiveSectionRegistry, context["generation_id"])
-    source = session.get(
-        models.SectionRegistryEntry,
-        (context["registry_version_id"], context["section_id"]),
+    revision = _activate_cloned_registry_revision(
+        session,
+        ids,
+        generation_id=context["generation_id"],
+        registry_sha256=HASH_D,
+        activated_at=NOW,
+        contract_binding_id=context["binding_id"],
+        workflow_role_section_id=context["section_id"],
+        workflow_role=workflow_role,
     )
-    source_version = session.get(
-        models.SectionRegistryVersion, context["registry_version_id"]
-    )
-    assert current is not None
-    assert source is not None
-    assert source_version is not None
-
-    registry_version_id = _next(ids)
-    registry = RegistryRepository(session)
-    registry.add_registry_version(
-        models.SectionRegistryVersion(
-            registry_version_id=registry_version_id,
-            generation_id=context["generation_id"],
-            version_number=source_version.version_number + 1,
-            import_run_id=context["import_run_id"],
-            contract_binding_id=context["binding_id"],
-            registry_sha256=HASH_D,
-            created_at=NOW,
-        ),
-        [
-            models.SectionRegistryEntry(
-                registry_version_id=registry_version_id,
-                section_id=source.section_id,
-                ordinal=source.ordinal,
-                display_name=source.display_name,
-                workflow_role=workflow_role,
-            )
-        ],
-    )
-    activation_id = _next(ids)
-    revision = current.registry_revision + 1
-    registry.activate_registry(
-        activation=models.SectionRegistryActivation(
-            registry_activation_id=activation_id,
-            generation_id=context["generation_id"],
-            registry_version_id=registry_version_id,
-            activation_route="import",
-            import_run_id=context["import_run_id"],
-            command_execution_id=None,
-            registry_revision=revision,
-            activated_at=NOW,
-        ),
-        current=models.ActiveSectionRegistry(
-            generation_id=context["generation_id"],
-            registry_version_id=registry_version_id,
-            registry_activation_id=activation_id,
-            registry_revision=revision,
-            updated_at=NOW,
-        ),
-    )
-    return registry_version_id
+    return revision.registry_version_id
 
 
 def _import_one(
