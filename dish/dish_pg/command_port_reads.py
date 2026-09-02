@@ -1016,6 +1016,7 @@ class PostgresCommandReadMixin:
             ),
             workflow=workflow_snapshot,
             task_exists=True,
+            archived=view.completion_state == "archived",
             current_content_version_id=str(view.content_version_id),
             current_section_id=str(view.section_id),
             completed=view.completed,
