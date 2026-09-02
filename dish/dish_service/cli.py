@@ -533,24 +533,30 @@ def _attach_exact_replay_command(
         data["replay_command"] = shlex.join(replay_argv)
 
 
-def _route_service_task_reference(
+def _route_service_canonical_reference(
     command: str, arguments: dict[str, object], application: object
 ) -> None:
-    """Route a canonical Dish UUID without weakening legacy GID handling."""
+    """Route a canonical UUID without weakening legacy GID handling."""
 
-    if command not in {READ_COMMAND.name, START_COMMAND.name} or not isinstance(
-        application, DishServiceClient
-    ):
+    if not isinstance(application, DishServiceClient):
         return
-    reference = arguments.get("task_gid")
+    fields = {
+        READ_COMMAND.name: ("task_gid", "dish_id"),
+        START_COMMAND.name: ("task_gid", "dish_id"),
+        SECTION_TASKS_COMMAND.name: ("section_gid", "section_id"),
+    }.get(command)
+    if fields is None:
+        return
+    legacy_field, canonical_field = fields
+    reference = arguments.get(legacy_field)
     try:
-        dish_id = require_dish_uuid(reference, field="dish_id")
+        canonical_id = require_dish_uuid(reference, field=canonical_field)
     except DishRuleError:
-        # The service remains the authority for legacy task_gid validation and
+        # The service remains the authority for legacy GID validation and
         # its exact error contract. Only an exact canonical UUID is rerouted.
         return
-    arguments.pop("task_gid", None)
-    arguments["dish_id"] = dish_id
+    arguments.pop(legacy_field, None)
+    arguments[canonical_field] = canonical_id
 
 
 def main(
@@ -612,7 +618,7 @@ def main(
         else:
             command = parsed.pop("command")
             parsed.pop("profile", None)
-            _route_service_task_reference(command, parsed, app)
+            _route_service_canonical_reference(command, parsed, app)
             result = app.execute(command, **parsed)
     except DishRuleError as exc:
         result = error_envelope(
