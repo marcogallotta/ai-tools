@@ -12,6 +12,7 @@ from alembic import context, op
 from dish_pg.document_authority import parse_canonical_document, render_parts
 from dish_tool._task_document_types import PlanningBrief
 from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
+from dish_tool.lifecycle import pending_verification
 
 revision = "0045_native_section_authority"
 down_revision = "0044_independent_archive"
@@ -214,7 +215,8 @@ def _carry_ready_documents_to_native_sections() -> None:
     rows = bind.execute(
         sa.text(
             "SELECT s.generation_id,s.task_id,s.current_content_version_id,s.dish_version,"
-            "s.catalog_version_id,v.title,v.body,v.contract_binding_id,v.created_at "
+            "s.catalog_version_id,v.title,v.body,v.contract_binding_id,v.created_at,"
+            "v.creator_route "
             "FROM dish_states s JOIN task_content_versions v "
             "ON v.generation_id=s.generation_id AND v.task_id=s.task_id "
             "AND v.content_version_id=s.current_content_version_id "
@@ -382,10 +384,28 @@ def _carry_ready_documents_to_native_sections() -> None:
                 },
             ).mappings().first()
         if status == "ready" and lineage is None:
-            raise RuntimeError(
-                "0045_native_section_authority refuses a ready legacy-GID document "
-                "without one approved await-submission lineage"
+            if row["creator_route"] != "import":
+                raise RuntimeError(
+                    "0045_native_section_authority refuses a command-created ready "
+                    "legacy-GID document without one approved await-submission lineage"
+                )
+            # Imported/bootstrap ready documents can legitimately predate the
+            # operation/signoff model.  Preserve the immutable source occurrence,
+            # but do not manufacture approval: the native successor is unsigned
+            # and must complete Verification before it can ever be submitted.
+            transformed = render_parts(
+                dataclasses.replace(
+                    parts.document,
+                    planning_brief=PlanningBrief(planning),
+                    state=pending_verification(
+                        parts.document.state.values,
+                        protocol_release=parts.document.state.values[
+                            "Verification protocol release"
+                        ],
+                    ),
+                )
             )
+            status = "pending-verification"
         import_run_id = bind.execute(
             sa.text(
                 "SELECT r.import_run_id FROM section_catalog_versions c "

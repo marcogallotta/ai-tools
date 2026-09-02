@@ -14,7 +14,7 @@ from dish_pg import reservation_models as reservations
 from dish_pg import stage3_models as wf
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
-from dish_pg.document_authority import parse_canonical_document
+from dish_pg.document_authority import parse_canonical_document, ready_document
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.recovery_control import _clone_native_catalog, _clone_registry
 from dish_pg.release import ALEMBIC_HEAD
@@ -708,6 +708,36 @@ def test_native_0044_to_0045_carries_ready_legacy_signoff_to_submit(core_db) -> 
         )
         pending_source_id = pending_task.content_version_id
 
+        bootstrap_source = ready_document(
+            pending_parts.document,
+            agent="codex",
+            model="test-model",
+            at=NOW,
+        )
+        bootstrap_task_id = _next(ids)
+        bootstrap_task = CoreAuthorityService(
+            session, uuid_factory=lambda: _next(ids)
+        ).import_task_document(
+            generation_id=context["generation_id"],
+            import_run_id=context["import_run_id"],
+            contract_binding_id=context["binding_id"],
+            spec=ImportedTaskSpec(
+                task_id=bootstrap_task_id,
+                asana_task_gid="1217328963226164",
+                title=bootstrap_source.title,
+                body=bootstrap_source.body,
+                identity_scheme="dish-canonical-content-v1",
+                content_identity=content_identity(
+                    bootstrap_source.title, bootstrap_source.body
+                ),
+                project_ids=(context["project_id"],),
+                section_id=context["section_id"],
+                completed=False,
+                observed_at=NOW,
+            ),
+        )
+        bootstrap_source_id = bootstrap_task.content_version_id
+
     dsn = factory.kw["bind"].url.render_as_string(hide_password=False)
     factory.kw["bind"].dispose()
     alembic_command.downgrade(
@@ -765,6 +795,43 @@ def test_native_0044_to_0045_carries_ready_legacy_signoff_to_submit(core_db) -> 
                 == pending_transformed.content_version_id
             )
         ) is None
+        bootstrap_state = session.get(
+            models.DishState,
+            (context["generation_id"], bootstrap_task_id),
+        )
+        assert bootstrap_state.current_content_version_id != bootstrap_source_id
+        bootstrap_transformed = session.get(
+            models.ContentVersion, bootstrap_state.current_content_version_id
+        )
+        bootstrap_document = parse_canonical_document(
+            title=bootstrap_transformed.title, body=bootstrap_transformed.body
+        ).document
+        assert bootstrap_document.state.values["Status"] == "pending-verification"
+        assert bootstrap_document.state.values["Verified by"] == "None"
+        assert session.scalar(
+            select(wf.VerificationSignoff).where(
+                wf.VerificationSignoff.signed_content_version_id
+                == bootstrap_transformed.content_version_id
+            )
+        ) is None
+        bootstrap_read = _port(session, ids).execute(
+            _call(
+                "read",
+                run_id=_next(ids),
+                arguments={"dish_id": str(bootstrap_task_id)},
+            )
+        )
+        assert bootstrap_read.ok
+        assert bootstrap_read.data["legal_actions"] == ()
+        bootstrap_submit = _port(session, ids).execute(
+            _call(
+                "submit",
+                run_id=author_run,
+                request_id=_next(ids),
+                arguments={"task_id": str(bootstrap_task_id)},
+            )
+        )
+        assert bootstrap_submit.ok is False
         submitted = _port(session, ids).execute(
             _call(
                 "submit",
