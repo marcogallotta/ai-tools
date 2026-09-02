@@ -32,6 +32,7 @@ Required environment variables (see the runbook for definitions):
   DISH_PG_LEGACY_NDJSON         output path for the legacy export
   DISH_PG_BOOTSTRAP_RECEIPT     output path for the bootstrap receipt
   DISH_PG_RESEARCH_QUEUE_SECTION_GID explicit Asana Research Queue section GID
+  DISH_PG_VERIFICATION_QUEUE_SECTION_GID explicit Asana Verification Queue section GID
   DISH_DARK_LAUNCH_SOURCE_GENERATION
   DISH_SOURCE_COMMIT            dish repo commit (defaults to current HEAD)
   HONEST_SOURCE_COMMIT          honest-pantry repo commit
@@ -83,6 +84,7 @@ REQUIRED_ENV = (
     "DISH_PG_LEGACY_NDJSON",
     "DISH_PG_BOOTSTRAP_RECEIPT",
     "DISH_PG_RESEARCH_QUEUE_SECTION_GID",
+    "DISH_PG_VERIFICATION_QUEUE_SECTION_GID",
     "DISH_DARK_LAUNCH_SOURCE_GENERATION",
     "HONEST_SOURCE_COMMIT",
     "DISH_DARK_LAUNCH_SPOOL_PATH",
@@ -173,8 +175,8 @@ def resolve_project_identity(service_env_path: str) -> tuple[str, str]:
     return project_gid, str(target_uuid("project", project_gid))
 
 
-def resolve_research_queue_section_id(section_gid: str) -> str:
-    """Resolve the explicitly designated Research Queue's stable target identity."""
+def resolve_section_id(section_gid: str) -> str:
+    """Resolve an explicitly designated section's stable target identity."""
     from dish_pg.location_manifest import target_uuid
 
     try:
@@ -273,8 +275,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         environment, env, source_commit, honest_repo, project_gid, project_id = preflight()
-        research_queue_section_id = resolve_research_queue_section_id(
-            env["DISH_PG_RESEARCH_QUEUE_SECTION_GID"]
+        research_queue_section_gid = env["DISH_PG_RESEARCH_QUEUE_SECTION_GID"]
+        research_queue_section_id = resolve_section_id(
+            research_queue_section_gid
+        )
+        verification_queue_section_gid = env[
+            "DISH_PG_VERIFICATION_QUEUE_SECTION_GID"
+        ]
+        verification_queue_section_id = resolve_section_id(
+            verification_queue_section_gid
         )
         if args.preflight_only:
             log("Prepare preflight complete; no PostgreSQL mutation was performed.")
@@ -332,6 +341,9 @@ def main(argv: list[str] | None = None) -> int:
                 "--project-id", project_id,
                 "--project-gid", project_gid,
                 "--research-queue-section-id", research_queue_section_id,
+                "--research-queue-section-gid", research_queue_section_gid,
+                "--verification-queue-section-id", verification_queue_section_id,
+                "--verification-queue-section-gid", verification_queue_section_gid,
                 "--receipt", env["DISH_PG_BOOTSTRAP_RECEIPT"],
             ],
         )
