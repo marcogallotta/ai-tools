@@ -737,6 +737,42 @@ class PostgresCommandReadMixin:
         return {"holds": rows, "count": len(rows)}
 
     def _binding_for(self, generation: models.AuthorityGeneration) -> models.HonestContractBinding:
+        post_burn = self.session.scalar(
+            select(models.AuthorityActivation).where(
+                models.AuthorityActivation.generation_id == generation.generation_id,
+                models.AuthorityActivation.outcome == "activated",
+            )
+        )
+        if post_burn is not None:
+            active = self.session.get(
+                models.ActiveSectionCatalog, generation.generation_id
+            )
+            catalog = (
+                None
+                if active is None
+                else self.session.get(
+                    models.SectionCatalogVersion, active.catalog_version_id
+                )
+            )
+            binding = (
+                None
+                if catalog is None
+                else self.session.get(
+                    models.HonestContractBinding, catalog.contract_binding_id
+                )
+            )
+            if (
+                catalog is None
+                or catalog.generation_id != generation.generation_id
+                or binding is None
+                or binding.binding_kind != "release"
+                or binding.dish_release != generation.dish_release
+            ):
+                raise CommandRuleError(
+                    "CONTRACT_BINDING_MISSING",
+                    "active native catalog does not resolve its exact Honest release binding",
+                )
+            return binding
         try:
             contract = RegistryRepository(self.session).active_release_contract(
                 generation.generation_id

@@ -6,6 +6,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from alembic import command as alembic_command
 from sqlalchemy import func, select
 
 from dish_pg import models
@@ -19,10 +20,26 @@ from dish_pg.workflow import WorkflowAuthorityService, sha256_json
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
 from tests.support.postgresql.concurrency import run_concurrent_workers, wait_at_barrier
-from tests.support.postgresql.core import NOW, _bootstrap_registry, _next, core_db
+from tests.support.canonical import TASK
+from tests.support.postgresql.core import (
+    NOW,
+    _alembic_config,
+    _bootstrap_registry,
+    _next,
+    core_db,
+)
 from tests.support.postgresql.projection_attempts import native_workflow_db
 from tests.support.postgresql.release import HASH_A, _prepare_candidate
 from tests.support.postgresql.workflow import _register_run
+from tests.support.postgresql.command import (
+    _add_destination_section,
+    _add_verification_queue,
+    _call,
+    _inspect,
+    _port,
+    _start_initial,
+    _start_verification,
+)
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
 
@@ -117,6 +134,102 @@ def _install_post_burn_catalog_runtime(session, ids, context):
     return attestation, current
 
 
+def _advance_post_burn_catalog_runtime(session, ids, context):
+    predecessor = session.get(
+        models.CurrentNativeCatalogRuntime, context["generation_id"]
+    )
+    assert predecessor is not None
+    previous_attestation = session.get(
+        models.NativeCatalogRuntimeAttestation, predecessor.attestation_id
+    )
+    previous_catalog = session.get(
+        models.SectionCatalogVersion, predecessor.catalog_version_id
+    )
+    entries = list(
+        session.scalars(
+            select(models.SectionCatalogEntry).where(
+                models.SectionCatalogEntry.catalog_version_id
+                == predecessor.catalog_version_id
+            )
+        )
+    )
+    catalog_version_id = _next(ids)
+    catalog_activation_id = _next(ids)
+    attestation_id = _next(ids)
+    revision = predecessor.attestation_revision + 1
+    session.add(
+        models.SectionCatalogVersion(
+            catalog_version_id=catalog_version_id,
+            generation_id=context["generation_id"],
+            version_number=previous_catalog.version_number + 1,
+            contract_binding_id=previous_catalog.contract_binding_id,
+            catalog_sha256="d" * 64,
+            source_registry_version_id=None,
+            transform_sha256=None,
+            created_at=NOW,
+        )
+    )
+    session.flush()
+    session.add_all(
+        [
+            models.SectionCatalogEntry(
+                catalog_version_id=catalog_version_id,
+                section_id=entry.section_id,
+                ordinal=entry.ordinal,
+                display_name=entry.display_name,
+                workflow_role=entry.workflow_role,
+            )
+            for entry in entries
+        ]
+    )
+    session.add(
+        models.SectionCatalogActivation(
+            catalog_activation_id=catalog_activation_id,
+            generation_id=context["generation_id"],
+            catalog_version_id=catalog_version_id,
+            activation_route="recovery",
+            import_run_id=None,
+            command_execution_id=None,
+            catalog_revision=revision,
+            activated_at=NOW,
+        )
+    )
+    session.flush()
+    payload = {
+        "contract": "native-section-runtime-attestation-v1",
+        "generation_id": str(context["generation_id"]),
+        "catalog_version_id": str(catalog_version_id),
+        "catalog_activation_id": str(catalog_activation_id),
+        "catalog_revision": revision,
+        "authority_activation_id": None,
+        "attestation_revision": revision,
+    }
+    session.add(
+        models.NativeCatalogRuntimeAttestation(
+            attestation_id=attestation_id,
+            generation_id=context["generation_id"],
+            catalog_version_id=catalog_version_id,
+            catalog_activation_id=catalog_activation_id,
+            predecessor_attestation_id=previous_attestation.attestation_id,
+            authority_activation_id=None,
+            attestation_revision=revision,
+            attestation_sha256=sha256_json(payload),
+            recorded_at=NOW,
+        )
+    )
+    session.flush()
+    active = session.get(models.ActiveSectionCatalog, context["generation_id"])
+    active.catalog_version_id = catalog_version_id
+    active.catalog_activation_id = catalog_activation_id
+    active.catalog_revision = revision
+    predecessor.attestation_id = attestation_id
+    predecessor.catalog_version_id = catalog_version_id
+    predecessor.catalog_activation_id = catalog_activation_id
+    predecessor.attestation_revision = revision
+    session.flush()
+    return session.get(models.NativeCatalogRuntimeAttestation, attestation_id)
+
+
 def _assert_catalog_runtime_unhealthy(result) -> None:
     assert result == {
         "ok": False,
@@ -196,6 +309,215 @@ def test_native_runtime_health_accepts_current_post_burn_catalog(core_db) -> Non
         _install_post_burn_catalog_runtime(session, ids, context)
 
     assert _health_runtime(factory, context).health()["ok"] is True
+
+
+def test_native_runtime_health_accepts_adjacent_post_burn_catalog_successor(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
+        _install_post_burn_catalog_runtime(session, ids, context)
+        _advance_post_burn_catalog_runtime(session, ids, context)
+
+    assert _health_runtime(factory, context).health()["ok"] is True
+
+
+def test_native_runtime_health_rejects_gapped_successor_chain(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
+        _install_post_burn_catalog_runtime(session, ids, context)
+        successor = _advance_post_burn_catalog_runtime(session, ids, context)
+        successor.attestation_revision = 3
+        active = session.get(models.ActiveSectionCatalog, context["generation_id"])
+        current = session.get(models.CurrentNativeCatalogRuntime, context["generation_id"])
+        activation = session.get(
+            models.SectionCatalogActivation, successor.catalog_activation_id
+        )
+        active.catalog_revision = current.attestation_revision = 3
+        activation.catalog_revision = 3
+        successor.attestation_sha256 = sha256_json(
+            {
+                "contract": "native-section-runtime-attestation-v1",
+                "generation_id": str(context["generation_id"]),
+                "catalog_version_id": str(successor.catalog_version_id),
+                "catalog_activation_id": str(successor.catalog_activation_id),
+                "catalog_revision": 3,
+                "authority_activation_id": None,
+                "attestation_revision": 3,
+            }
+        )
+
+    _assert_catalog_runtime_unhealthy(_health_runtime(factory, context).health())
+
+
+def test_native_runtime_health_rejects_forked_successor_chain(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
+        root, _current = _install_post_burn_catalog_runtime(session, ids, context)
+        successor = _advance_post_burn_catalog_runtime(session, ids, context)
+        fork = _advance_post_burn_catalog_runtime(session, ids, context)
+        fork.predecessor_attestation_id = root.attestation_id
+        active = session.get(models.ActiveSectionCatalog, context["generation_id"])
+        current = session.get(models.CurrentNativeCatalogRuntime, context["generation_id"])
+        active.catalog_version_id = successor.catalog_version_id
+        active.catalog_activation_id = successor.catalog_activation_id
+        active.catalog_revision = successor.attestation_revision
+        current.attestation_id = successor.attestation_id
+        current.catalog_version_id = successor.catalog_version_id
+        current.catalog_activation_id = successor.catalog_activation_id
+        current.attestation_revision = successor.attestation_revision
+
+    _assert_catalog_runtime_unhealthy(_health_runtime(factory, context).health())
+
+
+def test_native_post_burn_create_does_not_require_legacy_registry(core_db) -> None:
+    factory, ids, context, _task_id = native_workflow_db(core_db)
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _install_post_burn_catalog_runtime(session, ids, context)
+        session.delete(
+            session.get(models.ActiveSectionRegistry, context["generation_id"])
+        )
+        session.flush()
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        result = _port(session, ids).execute(
+            _call(
+                "create",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"title": "Native post-burn dish"},
+            )
+        )
+        assert result.ok, (result.code, result.data)
+        state = session.get(
+            models.DishState,
+            (context["generation_id"], uuid.UUID(result.data["dish_id"])),
+        )
+        assert state.registry_version_id is None
+
+
+def test_native_0044_to_0045_carries_ready_legacy_signoff_to_submit(core_db) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    author_run, verifier_run = _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        destination_id = _add_destination_section(session, ids, context)
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=author_run
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        prepared = port.execute(
+            _call(
+                "prepare",
+                run_id=author_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": TASK,
+                    "agent": "claude",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert prepared.ok, (prepared.code, prepared.data)
+        _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        _inspect(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        reviewed = session.get(
+            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+        )
+        approved = port.execute(
+            _call(
+                "approve",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "agent": "codex",
+                    "model": "test-verifier",
+                    "correction": "none",
+                    "reviewed_identity": reviewed.content_identity,
+                    "semantic_review_complete": True,
+                    "provenance_complete": True,
+                },
+            )
+        )
+        prior_signoff = session.scalar(
+            select(wf.VerificationSignoff).where(
+                wf.VerificationSignoff.signed_content_version_id
+                == uuid.UUID(approved.data["signed_content_version_id"])
+            )
+        )
+        prior_signoff_id = prior_signoff.signoff_id
+        source_content_id = prior_signoff.signed_content_version_id
+
+    dsn = factory.kw["bind"].url.render_as_string(hide_password=False)
+    factory.kw["bind"].dispose()
+    alembic_command.downgrade(
+        _alembic_config(dsn), "0044_independent_archive"
+    )
+    alembic_command.upgrade(
+        _alembic_config(dsn), "0045_native_section_authority"
+    )
+
+    with session_scope(factory) as session:
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        assert state.current_content_version_id != source_content_id
+        transformed = session.get(
+            models.ContentVersion, state.current_content_version_id
+        )
+        assert f"Destination section: Sichuan — section:{destination_id}" in transformed.body
+        inherited = session.scalar(
+            select(wf.VerificationSignoff).where(
+                wf.VerificationSignoff.signed_content_version_id
+                == transformed.content_version_id
+            )
+        )
+        assert inherited.signoff_kind == "inherited_non_material"
+        assert inherited.inherited_from_signoff_id == prior_signoff_id
+        submitted = _port(session, ids).execute(
+            _call(
+                "submit",
+                run_id=author_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                },
+            )
+        )
+        assert submitted.ok, (submitted.code, submitted.data)
+        assert submitted.data["destination_section_id"] == str(destination_id)
 
 
 def _error(field: str = "operation_id") -> DishRuleError:

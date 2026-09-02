@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import importlib
 import uuid
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import func, select
 
 from dish_pg import models
@@ -28,7 +31,7 @@ from dish_pg.protocol import AuthenticationError, PostgresProtocolService, Scope
 from dish_pg.read_model import InvalidCursor
 from dish_pg.repositories import DishRepository, ScalarMutationSource
 from dish_pg.transition import ProjectionService
-from dish_pg.workflow import WorkflowAuthorityService
+from dish_pg.workflow import WorkflowAuthorityService, sha256_json
 from dish_tool.models import material_editor_line
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.canonical import TASK
@@ -53,6 +56,70 @@ from tests.support.postgresql.workflow import (
 
 SECRET = b"stage-4-cursor-secret-32-bytes!!"
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _install_post_burn_runtime(session, ids, context) -> None:
+    active = session.get(models.ActiveSectionCatalog, context["generation_id"])
+    activation_id = _next(ids)
+    attestation_id = _next(ids)
+    session.add(
+        models.AuthorityActivation(
+            activation_id=activation_id,
+            generation_id=context["generation_id"],
+            import_run_id=context["import_run_id"],
+            cutover_approval_id="post-burn-command-test",
+            legacy_bundle_id="post-burn-command-test",
+            registry_version_id=context["registry_version_id"],
+            catalog_version_id=active.catalog_version_id,
+            honest_binding_id=context["binding_id"],
+            rehearsal_id=None,
+            schema_head="0045_native_section_authority",
+            dish_release="dish-42619b9",
+            honest_release="honest-1",
+            protocol_release="protocol-1",
+            openapi_release="openapi-1",
+            routing_release="route-1",
+            projection_epoch=_next(ids),
+            outcome="activated",
+            rollback_burned_at=NOW,
+            recorded_at=NOW,
+        )
+    )
+    session.flush()
+    payload = {
+        "contract": "native-section-runtime-attestation-v1",
+        "generation_id": str(context["generation_id"]),
+        "catalog_version_id": str(active.catalog_version_id),
+        "catalog_activation_id": str(active.catalog_activation_id),
+        "catalog_revision": active.catalog_revision,
+        "authority_activation_id": str(activation_id),
+        "attestation_revision": 1,
+    }
+    session.add(
+        models.NativeCatalogRuntimeAttestation(
+            attestation_id=attestation_id,
+            generation_id=context["generation_id"],
+            catalog_version_id=active.catalog_version_id,
+            catalog_activation_id=active.catalog_activation_id,
+            predecessor_attestation_id=None,
+            authority_activation_id=activation_id,
+            attestation_revision=1,
+            attestation_sha256=sha256_json(payload),
+            recorded_at=NOW,
+        )
+    )
+    session.flush()
+    session.add(
+        models.CurrentNativeCatalogRuntime(
+            generation_id=context["generation_id"],
+            attestation_id=attestation_id,
+            catalog_version_id=active.catalog_version_id,
+            catalog_activation_id=active.catalog_activation_id,
+            attestation_revision=1,
+            updated_at=NOW,
+        )
+    )
+    session.flush()
 
 
 def _create_open_operation(session, ids, context, task_id, *, kind: str):
@@ -1563,6 +1630,188 @@ def test_create_commits_one_authoritative_bundle_and_exact_replay(workflow_db) -
                 wf.ServiceRequestOutcome.request_id == request_id
             )
         ) == 1
+
+
+def test_post_burn_create_needs_only_native_catalog_authority(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _install_post_burn_runtime(session, ids, context)
+        session.delete(
+            session.get(models.ActiveSectionRegistry, context["generation_id"])
+        )
+        session.flush()
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        result = _port(session, ids).execute(
+            _call(
+                "create",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"title": "Native post-burn dish"},
+            )
+        )
+        assert result.ok, (result.code, result.data)
+        state = session.get(
+            models.DishState,
+            (context["generation_id"], uuid.UUID(result.data["dish_id"])),
+        )
+        assert state.registry_version_id is None
+        assert state.catalog_version_id == session.get(
+            models.ActiveSectionCatalog, context["generation_id"]
+        ).catalog_version_id
+
+
+def test_post_burn_legacy_registry_revision_is_forbidden(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _install_post_burn_runtime(session, ids, context)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="marco",
+        )
+        result = _port(session, ids).execute(
+            _call(
+                "revise-section-registry",
+                run_id=run_id,
+                request_id=_next(ids),
+                owner="marco",
+                principal="admin",
+                arguments={
+                    "research_queue_section_id": str(context["section_id"]),
+                    "verification_queue_section_id": str(_next(ids)),
+                },
+            )
+        )
+        assert result.ok is False
+        assert result.code == "REGISTRY_FORENSIC_ONLY"
+
+
+@pytest.mark.database_boundary
+def test_0045_carries_ready_legacy_destination_and_signoff_forward(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    author_run, verifier_run = _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        destination_id = _add_destination_section(session, ids, context)
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=author_run
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        prepared = port.execute(
+            _call(
+                "prepare",
+                run_id=author_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": TASK,
+                    "agent": "claude",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert prepared.ok, (prepared.code, prepared.data)
+        _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        _inspect(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        reviewed = session.get(
+            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+        )
+        approved = port.execute(
+            _call(
+                "approve",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "agent": "codex",
+                    "model": "test-verifier",
+                    "correction": "none",
+                    "reviewed_identity": reviewed.content_identity,
+                    "semantic_review_complete": True,
+                    "provenance_complete": True,
+                },
+            )
+        )
+        assert approved.ok
+        prior_signoff = session.scalar(
+            select(wf.VerificationSignoff).where(
+                wf.VerificationSignoff.signed_content_version_id
+                == uuid.UUID(approved.data["signed_content_version_id"])
+            )
+        )
+        signed = session.get(
+            models.ContentVersion, prior_signoff.signed_content_version_id
+        )
+        assert "Destination section: Sichuan — 12345" in signed.body
+        prior_signoff_id = prior_signoff.signoff_id
+        source_content_id = signed.content_version_id
+
+    migration = importlib.import_module(
+        "dish_pg.migrations.versions.0045_native_section_authority"
+    )
+    with (
+        factory.kw["bind"].begin() as connection,
+        Operations.context(MigrationContext.configure(connection)),
+    ):
+        migration._carry_ready_documents_to_native_sections()
+
+    with session_scope(factory) as session:
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        assert state.current_content_version_id != source_content_id
+        transformed = session.get(
+            models.ContentVersion, state.current_content_version_id
+        )
+        assert f"Destination section: Sichuan — section:{destination_id}" in transformed.body
+        inherited = session.scalar(
+            select(wf.VerificationSignoff).where(
+                wf.VerificationSignoff.signed_content_version_id
+                == transformed.content_version_id
+            )
+        )
+        assert inherited.signoff_kind == "inherited_non_material"
+        assert inherited.inherited_from_signoff_id == prior_signoff_id
+        submitted = _port(session, ids).execute(
+            _call(
+                "submit",
+                run_id=author_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                },
+            )
+        )
+        assert submitted.ok, (submitted.code, submitted.data)
+        assert submitted.data["destination_section_id"] == str(destination_id)
 
 
 def test_planning_challenge_then_fresh_start_opens_exact_operation(workflow_db) -> None:

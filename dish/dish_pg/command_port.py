@@ -565,6 +565,18 @@ class PostgresCommandPort(PostgresCommandReadMixin):
     def _revise_section_registry(
         self, call, generation, binding, execution, _task, _operation
     ) -> dict[str, Any]:
+        if self.session.scalar(
+            select(models.AuthorityActivation.activation_id).where(
+                models.AuthorityActivation.generation_id == generation.generation_id,
+                models.AuthorityActivation.outcome == "activated",
+            )
+        ) is not None:
+            raise CommandRuleError(
+                "REGISTRY_FORENSIC_ONLY",
+                "the legacy Section registry is forensic evidence after rollback burn",
+                http_status=409,
+            )
+
         def required_section_id(name: str) -> uuid.UUID:
             raw = call.arguments.get(name)
             if raw in {None, ""}:
@@ -851,10 +863,16 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         ) if active else None
         if active is None or entry is None:
             raise CommandRuleError("RESEARCH_QUEUE_MISSING", "active catalog has no Research Queue")
-        transition_registry = self.session.get(
+        post_burn = self.session.scalar(
+            select(models.AuthorityActivation.activation_id).where(
+                models.AuthorityActivation.generation_id == generation.generation_id,
+                models.AuthorityActivation.outcome == "activated",
+            )
+        ) is not None
+        transition_registry = None if post_burn else self.session.get(
             models.ActiveSectionRegistry, generation.generation_id
         )
-        if transition_registry is None:
+        if not post_burn and transition_registry is None:
             raise CommandRuleError(
                 "TRANSITION_EVIDENCE_MISSING",
                 "active generation has no retained transition registry witness",
@@ -866,7 +884,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         task = models.DishTask(task_id=task_id, existence_state="ordinary", creation_route="create", import_run_id=None, command_execution_id=execution.execution_id, created_at=call.now, retired_at=None)
         receipt = models.DishMutationReceipt(generation_id=generation.generation_id, task_id=task_id, dish_version=1, source_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, content_changed=True, placement_changed=True, completion_changed=True, occurred_at=call.now)
         version = models.ContentVersion(content_version_id=version_id, generation_id=generation.generation_id, task_id=task_id, representation_kind="document", title=title, body=body, identity_scheme=CONTENT_IDENTITY_SCHEME, content_identity=identity, creator_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, predecessor_content_version_id=None, contract_binding_id=binding.binding_id, created_dish_version=1, created_at=call.now)
-        state = models.DishState(generation_id=generation.generation_id, task_id=task_id, current_content_version_id=version_id, section_id=section.section_id, registry_version_id=transition_registry.registry_version_id, catalog_version_id=active.catalog_version_id, completed=False, completion_reason="archive", dish_version=1, placement_version=1, completion_version=1, updated_at=call.now)
+        state = models.DishState(generation_id=generation.generation_id, task_id=task_id, current_content_version_id=version_id, section_id=section.section_id, registry_version_id=(None if transition_registry is None else transition_registry.registry_version_id), catalog_version_id=active.catalog_version_id, completed=False, completion_reason="archive", dish_version=1, placement_version=1, completion_version=1, updated_at=call.now)
         self.session.add(task)
         self.session.flush()
         execution.task_id = task_id

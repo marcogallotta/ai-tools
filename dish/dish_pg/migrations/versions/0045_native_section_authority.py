@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
+import uuid
 
 import sqlalchemy as sa
 from alembic import context, op
+from dish_pg.document_authority import parse_canonical_document, render_parts
+from dish_tool._task_document_types import PlanningBrief
+from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
 
 revision = "0045_native_section_authority"
 down_revision = "0044_independent_archive"
@@ -161,6 +166,265 @@ def _drop_column(table: str, column: str) -> None:
         return
     with op.batch_alter_table(table) as batch:
         batch.drop_column(column)
+
+
+_CONTENT_TRANSFORM_NAMESPACE = uuid.UUID("1dc43577-e57f-5fe7-8b88-c284a36aa986")
+
+
+def _uuid(value) -> uuid.UUID:
+    return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+
+
+def _derived_uuid(kind: str, source) -> uuid.UUID:
+    return uuid.uuid5(_CONTENT_TRANSFORM_NAMESPACE, f"{kind}:{source}")
+
+
+def _db_uuid(bind, value: uuid.UUID):
+    return value.hex if bind.dialect.name == "sqlite" else value
+
+
+def _carry_ready_documents_to_native_sections() -> None:
+    """Create immutable native-destination occurrences and inherited signoffs."""
+    bind = op.get_bind()
+    unsettled = bind.execute(
+        sa.text(
+            "SELECT operation_id FROM workflow_operations "
+            "WHERE lifecycle='open' AND phase<>'await_submission' LIMIT 1"
+        )
+    ).first()
+    if unsettled is not None:
+        raise RuntimeError(
+            "0045_native_section_authority refuses pending/open workflow work; "
+            "settle it before migration"
+        )
+    rows = bind.execute(
+        sa.text(
+            "SELECT s.generation_id,s.task_id,s.current_content_version_id,s.dish_version,"
+            "s.catalog_version_id,v.title,v.body,v.contract_binding_id "
+            "FROM dish_states s JOIN task_content_versions v "
+            "ON v.generation_id=s.generation_id AND v.task_id=s.task_id "
+            "AND v.content_version_id=s.current_content_version_id"
+        )
+    ).mappings()
+    for row in rows:
+        try:
+            parts = parse_canonical_document(title=row["title"], body=row["body"])
+        except ValueError:
+            continue
+        destination = parts.document.planning_brief.values["Destination section"]
+        # Native destinations and non-destination placeholders need no rewrite.
+        if " — section:" in destination or " — " not in destination:
+            continue
+        display_name, external_gid = destination.rsplit(" — ", 1)
+        if not external_gid.isdigit():
+            continue
+        if parts.document.state.values["Status"] != "ready":
+            raise RuntimeError(
+                "0045_native_section_authority refuses a pending legacy-GID document; "
+                "settle its workflow before migration"
+            )
+        aliases = bind.execute(
+            sa.text(
+                "SELECT a.section_id FROM section_external_aliases a "
+                "WHERE a.external_system='asana' AND a.external_id=:gid AND a.state='active'"
+            ),
+            {"gid": external_gid},
+        ).all()
+        if len(aliases) != 1:
+            raise RuntimeError(
+                "0045_native_section_authority cannot resolve one native Section for "
+                f"legacy destination {external_gid}"
+            )
+        section_id = _uuid(aliases[0][0])
+        native_destination = f"{display_name} — section:{section_id}"
+        planning = dict(parts.document.planning_brief.values)
+        planning["Destination section"] = native_destination
+        transformed = render_parts(
+            dataclasses.replace(
+                parts.document,
+                planning_brief=PlanningBrief(planning),
+            )
+        )
+        # The only open workflow safe to carry is an already approved occurrence
+        # waiting for submit. Other live work must be settled before the migration.
+        lineage = bind.execute(
+            sa.text(
+                "SELECT o.operation_id,o.phase,c.cycle_id,c.cycle_sequence,"
+                "sg.signoff_id,sg.inspection_id,sg.verifier_actor_fact_id,"
+                "sg.command_execution_id,sg.signed_at,i.verifier_run_id,i.attestation,"
+                "i.section_id,i.registry_version_id,i.placement_version,e.request_id "
+                "FROM workflow_operations o "
+                "JOIN verification_cycles c ON c.operation_id=o.operation_id "
+                "JOIN verification_signoffs sg ON sg.cycle_id=c.cycle_id "
+                "JOIN verification_inspection_occurrences i ON i.inspection_id=sg.inspection_id "
+                "JOIN command_executions e ON e.execution_id=sg.command_execution_id "
+                "WHERE o.generation_id=:generation_id AND o.task_id=:task_id "
+                "AND o.lifecycle='open' AND o.phase='await_submission' "
+                "AND c.lifecycle='approved' AND sg.signed_content_version_id=:content_version_id "
+                "ORDER BY c.cycle_sequence DESC LIMIT 1"
+            ),
+            {
+                "generation_id": row["generation_id"],
+                "task_id": row["task_id"],
+                "content_version_id": row["current_content_version_id"],
+            },
+        ).mappings().first()
+        if lineage is None:
+            raise RuntimeError(
+                "0045_native_section_authority refuses a ready legacy-GID document "
+                "without one approved await-submission lineage"
+            )
+        import_run_id = bind.execute(
+            sa.text(
+                "SELECT r.import_run_id FROM section_catalog_versions c "
+                "JOIN section_registry_versions r "
+                "ON r.registry_version_id=c.source_registry_version_id "
+                "WHERE c.catalog_version_id=:catalog_version_id"
+            ),
+            {"catalog_version_id": row["catalog_version_id"]},
+        ).scalar_one()
+        source_version_id = _uuid(row["current_content_version_id"])
+        new_version_id = _derived_uuid("content", source_version_id)
+        new_cycle_id = _derived_uuid("cycle", source_version_id)
+        new_inspection_id = _derived_uuid("inspection", source_version_id)
+        new_signoff_id = _derived_uuid("signoff", source_version_id)
+        next_dish_version = int(row["dish_version"]) + 1
+        bind.execute(
+            sa.text(
+                "INSERT INTO dish_mutation_receipts("
+                "generation_id,task_id,dish_version,source_route,import_run_id,"
+                "command_execution_id,content_changed,placement_changed,completion_changed,"
+                "archive_changed,occurred_at) VALUES ("
+                ":generation_id,:task_id,:dish_version,'import',:import_run_id,NULL,"
+                ":yes,:no,:no,:no,:occurred_at)"
+            ),
+            {
+                "generation_id": row["generation_id"],
+                "task_id": row["task_id"],
+                "dish_version": next_dish_version,
+                "import_run_id": import_run_id,
+                "yes": True,
+                "no": False,
+                "occurred_at": lineage["signed_at"],
+            },
+        )
+        bind.execute(
+            sa.text(
+                "INSERT INTO task_content_versions("
+                "content_version_id,generation_id,task_id,representation_kind,title,body,"
+                "identity_scheme,content_identity,creator_route,import_run_id,command_execution_id,"
+                "predecessor_content_version_id,contract_binding_id,created_dish_version,created_at) "
+                "VALUES (:content_version_id,:generation_id,:task_id,'document',:title,:body,"
+                ":identity_scheme,:content_identity,'import',:import_run_id,NULL,"
+                ":predecessor_content_version_id,:contract_binding_id,:created_dish_version,:created_at)"
+            ),
+            {
+                "content_version_id": _db_uuid(bind, new_version_id),
+                "generation_id": row["generation_id"],
+                "task_id": row["task_id"],
+                "title": transformed.title,
+                "body": transformed.body,
+                "identity_scheme": CONTENT_IDENTITY_SCHEME,
+                "content_identity": content_identity(transformed.title, transformed.body),
+                "import_run_id": import_run_id,
+                "predecessor_content_version_id": _db_uuid(bind, source_version_id),
+                "contract_binding_id": row["contract_binding_id"],
+                "created_dish_version": next_dish_version,
+                "created_at": lineage["signed_at"],
+            },
+        )
+        bind.execute(
+            sa.text(
+                "INSERT INTO verification_cycles("
+                "cycle_id,generation_id,task_id,operation_id,reviewed_content_version_id,"
+                "contract_binding_id,cycle_sequence,lifecycle,outcome,import_run_id,"
+                "created_by_execution_id,created_at,terminal_at) VALUES ("
+                ":cycle_id,:generation_id,:task_id,:operation_id,:content_version_id,"
+                ":contract_binding_id,:cycle_sequence,'approved','approved',NULL,"
+                ":execution_id,:at,:at)"
+            ),
+            {
+                "cycle_id": _db_uuid(bind, new_cycle_id),
+                "generation_id": row["generation_id"],
+                "task_id": row["task_id"],
+                "operation_id": lineage["operation_id"],
+                "content_version_id": _db_uuid(bind, new_version_id),
+                "contract_binding_id": row["contract_binding_id"],
+                "cycle_sequence": int(lineage["cycle_sequence"]) + 1,
+                "execution_id": lineage["command_execution_id"],
+                "at": lineage["signed_at"],
+            },
+        )
+        bind.execute(
+            sa.text(
+                "INSERT INTO verification_inspection_occurrences("
+                "inspection_id,cycle_id,operation_id,generation_id,task_id,"
+                "reviewed_content_version_id,verifier_actor_fact_id,verifier_run_id,attestation,"
+                "section_id,registry_version_id,catalog_version_id,placement_version,request_id,"
+                "command_execution_id,inspected_at) VALUES ("
+                ":inspection_id,:cycle_id,:operation_id,:generation_id,:task_id,"
+                ":content_version_id,:actor_id,:run_id,:attestation,:section_id,"
+                ":registry_version_id,:catalog_version_id,:placement_version,:request_id,"
+                ":execution_id,:at)"
+            ),
+            {
+                "inspection_id": _db_uuid(bind, new_inspection_id),
+                "cycle_id": _db_uuid(bind, new_cycle_id),
+                "operation_id": lineage["operation_id"],
+                "generation_id": row["generation_id"],
+                "task_id": row["task_id"],
+                "content_version_id": _db_uuid(bind, new_version_id),
+                "actor_id": lineage["verifier_actor_fact_id"],
+                "run_id": lineage["verifier_run_id"],
+                "attestation": (
+                    "Native Section identity carry-forward of inspection "
+                    f"{lineage['inspection_id']}: {lineage['attestation']}"
+                ),
+                "section_id": lineage["section_id"],
+                "registry_version_id": lineage["registry_version_id"],
+                "catalog_version_id": row["catalog_version_id"],
+                "placement_version": lineage["placement_version"],
+                # The approval request is distinct from the original inspection request.
+                "request_id": lineage["request_id"],
+                "execution_id": lineage["command_execution_id"],
+                "at": lineage["signed_at"],
+            },
+        )
+        bind.execute(
+            sa.text(
+                "INSERT INTO verification_signoffs("
+                "signoff_id,cycle_id,task_id,signed_content_version_id,inspection_id,"
+                "verifier_actor_fact_id,inherited_from_signoff_id,signoff_kind,"
+                "command_execution_id,signed_at) VALUES ("
+                ":signoff_id,:cycle_id,:task_id,:content_version_id,:inspection_id,"
+                ":actor_id,:prior_signoff_id,'inherited_non_material',:execution_id,:at)"
+            ),
+            {
+                "signoff_id": _db_uuid(bind, new_signoff_id),
+                "cycle_id": _db_uuid(bind, new_cycle_id),
+                "task_id": row["task_id"],
+                "content_version_id": _db_uuid(bind, new_version_id),
+                "inspection_id": _db_uuid(bind, new_inspection_id),
+                "actor_id": lineage["verifier_actor_fact_id"],
+                "prior_signoff_id": lineage["signoff_id"],
+                "execution_id": lineage["command_execution_id"],
+                "at": lineage["signed_at"],
+            },
+        )
+        bind.execute(
+            sa.text(
+                "UPDATE dish_states SET current_content_version_id=:content_version_id,"
+                "dish_version=:dish_version,updated_at=:at "
+                "WHERE generation_id=:generation_id AND task_id=:task_id"
+            ),
+            {
+                "content_version_id": _db_uuid(bind, new_version_id),
+                "dish_version": next_dish_version,
+                "at": lineage["signed_at"],
+                "generation_id": row["generation_id"],
+                "task_id": row["task_id"],
+            },
+        )
 
 
 def upgrade() -> None:
@@ -343,6 +607,33 @@ def upgrade() -> None:
         "INSERT INTO active_section_catalogs(generation_id,catalog_version_id,catalog_activation_id,catalog_revision,updated_at) "
         "SELECT generation_id,registry_version_id,registry_activation_id,registry_revision,updated_at FROM active_section_registries"
     )
+    if op.get_bind().dialect.name == "postgresql":
+        # Catalog backfill and immutable ready-occurrence conversion are one
+        # migration-owned rewrite, not ordinary scalar mutations.
+        op.execute("DROP TRIGGER dish_states_validate ON dish_states")
+        for table in (
+            "task_execution_fences",
+            "verification_inspection_occurrences",
+        ):
+            op.execute(f"DROP TRIGGER {table}_immutable_update ON {table}")
+        op.execute(
+            "DROP TRIGGER authority_activations_immutable_update ON authority_activations"
+        )
+        op.execute(
+            "DROP TRIGGER release_candidate_manifests_immutable_update "
+            "ON release_candidate_manifests"
+        )
+        # PostgreSQL rejects ALTER TABLE after this transaction has queued
+        # trigger events on DishState.  Relax the legacy registry binding
+        # before the migration-owned data rewrite begins.
+        op.execute(
+            "ALTER TABLE dish_states ALTER COLUMN registry_version_id DROP NOT NULL"
+        )
+        op.create_index(
+            "ix_dish_states_catalog",
+            "dish_states",
+            ["generation_id", "catalog_version_id", "task_id"],
+        )
     op.execute("UPDATE dish_states SET catalog_version_id=registry_version_id")
     op.execute("UPDATE task_execution_fences SET expected_placement_version=(SELECT s.placement_version FROM dish_states s WHERE s.generation_id=task_execution_fences.generation_id AND s.task_id=task_execution_fences.task_id), catalog_version_id=(SELECT s.catalog_version_id FROM dish_states s WHERE s.generation_id=task_execution_fences.generation_id AND s.task_id=task_execution_fences.task_id)")
     op.execute("UPDATE workflow_operations SET catalog_version_id=(SELECT s.catalog_version_id FROM dish_states s WHERE s.generation_id=workflow_operations.generation_id AND s.task_id=workflow_operations.task_id)")
@@ -350,6 +641,35 @@ def upgrade() -> None:
     op.execute("UPDATE authority_activations SET catalog_version_id=registry_version_id")
     op.execute("UPDATE release_candidates SET catalog_version_id=registry_version_id")
     op.execute("UPDATE release_candidate_manifests SET catalog_version_id=registry_version_id")
+    _carry_ready_documents_to_native_sections()
+    if op.get_bind().dialect.name == "postgresql":
+        for table in (
+            "task_execution_fences",
+            "verification_inspection_occurrences",
+        ):
+            op.execute(
+                f"CREATE TRIGGER {table}_immutable_update BEFORE UPDATE ON {table} "
+                "FOR EACH ROW EXECUTE FUNCTION dish_reject_scalar_authority_mutation()"
+            )
+        op.execute(
+            "CREATE TRIGGER authority_activations_immutable_update "
+            "BEFORE UPDATE ON authority_activations FOR EACH ROW "
+            "EXECUTE FUNCTION dish_reject_immutable_authority()"
+        )
+        op.execute(
+            "CREATE TRIGGER release_candidate_manifests_immutable_update "
+            "BEFORE UPDATE ON release_candidate_manifests FOR EACH ROW "
+            "EXECUTE FUNCTION dish_reject_immutable_candidate_manifest_evidence()"
+        )
+    if op.get_bind().dialect.name != "postgresql":
+        dish_state_triggers = _sqlite_suspend_triggers_referencing("dish_states")
+        with op.batch_alter_table(
+            "dish_states", recreate=_constraint_batch_mode()
+        ) as batch:
+            batch.alter_column(
+                "registry_version_id", existing_type=sa.Uuid(), nullable=True
+            )
+        _sqlite_restore_triggers(dish_state_triggers)
     fence_triggers = _sqlite_suspend_triggers_referencing("task_execution_fences")
     with op.batch_alter_table("task_execution_fences", recreate=_constraint_batch_mode()) as batch:
         batch.drop_constraint("fk_task_execution_fence_membership_head", type_="foreignkey")
@@ -397,9 +717,60 @@ def upgrade() -> None:
                     "AND length(observed_readiness_completion_sha256) = 64) OR (manifest_version IN (3, 4, 5) "
                     "AND observed_readiness_inventory_sha256 IS NULL AND observed_readiness_completion_sha256 IS NULL))",
                 )
-    op.create_index("ix_dish_states_catalog", "dish_states", ["generation_id", "catalog_version_id", "task_id"])
+    if op.get_bind().dialect.name != "postgresql":
+        op.create_index(
+            "ix_dish_states_catalog",
+            "dish_states",
+            ["generation_id", "catalog_version_id", "task_id"],
+        )
     if op.get_bind().dialect.name == "postgresql":
         op.execute(_candidate_transition_sql(native=True))
+        # Retain the scalar receipt/content checks while replacing its legacy
+        # placement clause with the post-burn native catalog rule.  Rewriting
+        # PostgreSQL's authoritative function text avoids duplicating the long
+        # 0044 scalar invariant in this transition revision.
+        op.execute(
+            r"""
+            DO $_dish_0045$
+            DECLARE definition text;
+            BEGIN
+              SELECT pg_get_functiondef('dish_validate_scalar_state()'::regprocedure)
+                INTO definition;
+              definition := replace(
+                definition,
+                'OR (NOT receipt.placement_changed AND (NEW.section_id IS DISTINCT FROM OLD.section_id OR NEW.registry_version_id IS DISTINCT FROM OLD.registry_version_id))',
+                'OR (NOT receipt.placement_changed AND (NEW.section_id IS DISTINCT FROM OLD.section_id OR NEW.registry_version_id IS DISTINCT FROM OLD.registry_version_id OR NEW.catalog_version_id IS DISTINCT FROM OLD.catalog_version_id))'
+              );
+              definition := replace(
+                definition,
+                $old$IF NOT EXISTS (SELECT 1 FROM section_registry_entries e
+              WHERE e.registry_version_id=NEW.registry_version_id AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id))
+          THEN RAISE EXCEPTION 'DishState placement is absent from registry'; END IF;$old$,
+                $new$IF (NEW.registry_version_id IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM section_registry_entries e
+                 WHERE e.registry_version_id=NEW.registry_version_id
+                   AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)))
+             OR (NEW.registry_version_id IS NULL AND (
+                NOT EXISTS (SELECT 1 FROM authority_activations a
+                 WHERE a.generation_id=NEW.generation_id AND a.outcome='activated')
+                OR NOT EXISTS (SELECT 1 FROM section_catalog_entries e
+                 WHERE e.catalog_version_id=NEW.catalog_version_id
+                   AND e.section_id=NEW.section_id)))
+          THEN RAISE EXCEPTION 'DishState placement is absent from native authority'; END IF;$new$
+              );
+              IF position('DishState placement is absent from native authority' in definition) = 0
+                 OR position('NEW.catalog_version_id IS DISTINCT FROM OLD.catalog_version_id' in definition) = 0
+              THEN
+                RAISE EXCEPTION '0045 scalar authority function template drift';
+              END IF;
+              EXECUTE definition;
+            END $_dish_0045$;
+            """
+        )
+        op.execute(
+            "CREATE TRIGGER dish_states_validate BEFORE INSERT OR UPDATE ON dish_states "
+            "FOR EACH ROW EXECUTE FUNCTION dish_validate_scalar_state()"
+        )
         # The Asana-shaped registry remains immutable transition evidence, but
         # its active pointer no longer governs native Dish placement.
         op.execute("DROP TRIGGER IF EXISTS active_registry_dish_states_guard ON active_section_registries")
@@ -491,6 +862,12 @@ def downgrade() -> None:
             )
     if op.get_bind().dialect.name == "postgresql":
         op.execute(_candidate_transition_sql(native=False))
+        # Restore the exact predecessor scalar guard before removing native
+        # catalog columns.
+        previous = importlib.import_module(
+            "dish_pg.migrations.versions.0044_independent_archive"
+        )
+        previous._replace_postgresql_guard(independent=True)
         op.execute("DROP TRIGGER IF EXISTS active_catalog_dish_states_guard ON active_section_catalogs")
         op.execute("DROP TRIGGER IF EXISTS dish_states_active_catalog_guard ON dish_states")
         op.execute("DROP TRIGGER IF EXISTS dish_states_native_catalog_validate ON dish_states")
@@ -508,6 +885,10 @@ def downgrade() -> None:
         op.execute("DROP TRIGGER IF EXISTS dish_states_active_catalog_guard")
         op.execute("DROP TRIGGER IF EXISTS dish_states_native_catalog_validate_update")
         op.execute("DROP TRIGGER IF EXISTS dish_states_native_catalog_validate_insert")
+    dish_state_triggers = _sqlite_suspend_triggers_referencing("dish_states")
+    with op.batch_alter_table("dish_states", recreate=_constraint_batch_mode()) as batch:
+        batch.alter_column("registry_version_id", existing_type=sa.Uuid(), nullable=False)
+    _sqlite_restore_triggers(dish_state_triggers)
     op.drop_index("ix_dish_states_catalog", table_name="dish_states")
     for table in ("cutover_approval_manifest_bindings", "candidate_manifest_revalidations"):
         with op.batch_alter_table(table, recreate=_constraint_batch_mode()) as batch:
