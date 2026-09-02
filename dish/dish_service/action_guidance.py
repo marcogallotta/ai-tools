@@ -150,10 +150,17 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
 
         if command == "read":
             binding = data.get("identity_binding")
-            if isinstance(binding, Mapping) and _text(binding.get("dish_id")):
+            dish_id = _text(binding.get("dish_id")) if isinstance(binding, Mapping) else None
+            task_gid = _text(binding.get("task_gid")) if isinstance(binding, Mapping) else None
+            if dish_id:
+                continuation_identity = (
+                    "Use the returned task_gid for task-scoped continuation;"
+                    if task_gid
+                    else "No task_gid is bound; use the returned dish_id for task-scoped continuation;"
+                )
                 instructions.append(
                     "This data.identity_binding is Dish's exact canonical Dish-to-task binding. "
-                    "Use only the returned task_gid for task-scoped continuation; do not rediscover "
+                    f"{continuation_identity} do not rediscover "
                     "the Dish through sections or title matching, and never use dish_id as submission_id."
                 )
 
