@@ -190,7 +190,11 @@ def plan_command(
             fence=snapshot.fence,
             audit_event_type="task_missing",
         )
-    if snapshot.archived and definition.profile != "Q":
+    if (
+        snapshot.archived
+        and definition.profile != "Q"
+        and intent.command_name != "record-cook-log"
+    ):
         return CommandPlan(
             definition=definition,
             legal=False,
