@@ -12,6 +12,10 @@ This document separates semantic judgment from executable evidence and final lan
 
 Design Review evaluates an exact frozen design generation when the governing workflow requires it. Code Review evaluates an exact GitHub PR head against the accepted task/design, handoff, architecture, and evidence. These are different candidates and neither role acquires Implementation or Integration authority.
 
+Design Review challenges both correctness and proportionality. It may BLOCK a material defect and state the violated outcome/constraint, but any remedy it suggests is non-authoritative: a material correction returns to Design as a new exact candidate and then receives fresh independent Design Review. A materially large design, major scope expansion, or new subsystem/mechanism needs explicit Marco sign-off before `VERDICT: PASS` or Implementation readiness.
+
+Code Review classifies a blocker before dispatch. An implementation defect resolvable within the accepted design may enter bounded Implementation; evidence that correctness requires a new or changed design requirement stops the PR and returns to Design. Re-review of an implementation fix is focused on the blocker and fix-caused regressions; a genuinely new material defect may block, but re-review is not an unbounded new audit.
+
 Ordinary CI certifies the exact PR source head selected from the formal Review event, not a synthetic merge commit. [The shared gate predicate](../../../../scripts/pr_gate.py) combines current PR metadata, formal exact-head Review, status evidence, and applicable local certification into a deterministic Integration predicate. CI still pending does not delay semantic Review. CI failure authorizes a fix only after ownership is classified as PR-owned; unrelated/current-main/infrastructure failures remain visible without mutating the candidate.
 
 Final landing is a separately authorized local Integration action bound by an explicit exact-head handoff and fresh GitHub/Asana reads. Mechanical reconciliation that changes the head still requires an exact-head recheck; any semantic choice returns to Implementation and substantive Review.

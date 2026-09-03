@@ -495,6 +495,37 @@ def test_standing_policy_completion_requires_authoritative_main_coverage_readbac
  assert {'refuse_done_without_required_main_coverage','keep_owning_task_open'}<=set(scenario['required_actions'])
 
 
+def test_temporary_scope_guardrails_cover_design_code_fix_and_rereview_boundaries():
+ review=(DISH_ROOT/'docs'/'agents'/'review.md').read_text()
+ implementation=(DISH_ROOT/'docs'/'agents'/'implementation.md').read_text()
+ architecture=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'review-certification-integration.md').read_text()
+ assert 'proportionate to the smallest sufficient design' in review
+ assert 'explicit durable Marco sign-off' in review
+ assert 'suggested remedy is advisory and non-authoritative' in review
+ assert 'return the work to Design' in review
+ assert 'fix agent does not challenge, reinterpret, or redefine' in review
+ assert 'regressions caused by the fix' in review
+ assert 'The blocker arrives pre-classified' in implementation
+ assert 'do not challenge, reinterpret, redefine, or enlarge' in implementation
+ assert 'Code Review classifies a blocker before dispatch' in architecture
+
+ by_id={x['id']:x for x in kernels._evals()}
+ ids={
+  'scope-guardrail-design-proportionality-signoff',
+  'scope-guardrail-design-remedy-nonauthoritative',
+  'scope-guardrail-code-defect-within-design',
+  'scope-guardrail-code-review-new-design-requirement',
+  'scope-guardrail-fix-agent-obeys-classified-blocker',
+  'scope-guardrail-focused-rereview',
+ }
+ assert ids<=set(by_id)
+ assert all(sid in kernels.REQUIRED_EVAL_IDS for sid in ids)
+ prompt=by_id['scope-guardrail-design-proportionality-signoff']['prompt']
+ assert '1218126555805577' in prompt and '1218139040013574' in prompt
+ assert by_id['scope-guardrail-fix-agent-obeys-classified-blocker']['roles']==['implementation']
+ assert all(by_id[sid]['roles']==['review'] for sid in ids-{'scope-guardrail-fix-agent-obeys-classified-blocker'})
+
+
 def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  ids=kernels.validate_eval_contracts(); assert set(ids)==kernels.REQUIRED_EVAL_IDS|kernels.ATTENTION_EVAL_IDS
  b=kernels.prepare_eval_bundle(); assert len(b['cases'])==sum(len(q['roles']) for q in kernels._evals())
@@ -994,8 +1025,8 @@ def test_operator_provenance_encodes_r7_g3_entry_and_creator_guards():
         "ask exactly one bounded confirmation",
         "second confirmation",
         "explicitly exits Review",
-        "CURRENT TASK SHAPE",
-        "canonical role index/current standing contract",
+        "resolvable within the accepted design",
+        "new or changed design requirement return to Design",
         "no separate durable Implementation assignment/event is required",
         "independent exact-candidate pre-development `PASS`",
         "absence of automated attempt/authorship markers is not itself a blocker",
@@ -1028,7 +1059,7 @@ def test_autonomy_behavior_matrix_covers_required_decision_rules():
     assert {
         "bind-exact-task-pr-head-and-formal-block",
         "exit-review-before-source-mutation",
-        "reroute-by-current-task-shape-through-current-role-index",
+        "preserve-review-preclassification",
         "load-current-implementation-contract",
         "continue-authorized-r3-correction-without-second-confirmation",
     } <= set(r3["required_actions"])
