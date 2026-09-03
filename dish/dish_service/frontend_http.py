@@ -42,7 +42,7 @@ _PUBLIC_STATIC_PREFIXES = ("/assets/", "/styles/", "/js/")
 _MAX_STATIC_BYTES = 10 * 1024 * 1024
 
 def is_frontend_get(path: str) -> bool:
-    return path in {"/", "/admin", "/archive", "/login", "/frontend/session", "/frontend/board", "/frontend/search", "/frontend/admin", "/frontend/archive", "/openapi/frontend.json"} or path.startswith(_PUBLIC_STATIC_PREFIXES) or path.startswith("/frontend/sections/") or path.startswith("/frontend/tasks/") or path.startswith("/dishes/")
+    return path in {"/", "/admin", "/cooked", "/login", "/frontend/session", "/frontend/board", "/frontend/search", "/frontend/admin", "/frontend/archive", "/openapi/frontend.json"} or path.startswith(_PUBLIC_STATIC_PREFIXES) or path.startswith("/frontend/sections/") or path.startswith("/frontend/tasks/") or path.startswith("/dishes/")
 
 def is_frontend_post(path: str) -> bool:
     return path in {"/frontend/login", "/frontend/logout"}
@@ -63,7 +63,7 @@ def dispatch_get(handler, runtime) -> bool:
             _serve_static(handler, runtime, path)
         elif path == "/login":
             _serve_html(handler, runtime, login=True)
-        elif path in {"/", "/admin", "/archive"} or _HTML_TASK_RE.fullmatch(path):
+        elif path in {"/", "/admin", "/cooked"} or _HTML_TASK_RE.fullmatch(path):
             _serve_protected_html(handler, runtime, path, parsed.query)
         elif path == "/frontend/session":
             _session(handler, runtime, parsed.query)

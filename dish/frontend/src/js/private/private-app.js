@@ -144,7 +144,7 @@ export async function bootPrivateFrontend(root, { mode, fetchImpl = globalThis.f
         environmentLabel,
         onAuthenticationLost,
       });
-    } else if (window.location.pathname === "/archive") {
+    } else if (window.location.pathname === "/cooked") {
       protectedController = await renderLocalPostgresqlArchive(root, {
         environmentLabel,
         onAuthenticationLost,

@@ -10,6 +10,7 @@ from dish_pg.command_contract import (
     validate_postgres_action_request,
 )
 from dish_pg.database import session_scope
+from dish_pg.frontend_board_query import FrontendBoardQuery
 from dish_service.cli import build_parser
 from sqlalchemy import func, select
 
@@ -150,3 +151,9 @@ def test_record_cook_log_is_lifecycle_neutral(workflow_db, lifecycle: str) -> No
             state.completed,
             state.archived_at,
         ) == before
+        cooked = FrontendBoardQuery(session).archived_tasks(max_results=10).results
+        if lifecycle == "cooked":
+            assert [item.task_id for item in cooked] == [task_id]
+            assert [[text for _, text in item.cook_logs] for item in cooked] == [["cooked"]]
+        else:
+            assert not cooked

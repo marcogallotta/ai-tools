@@ -16,10 +16,12 @@ function exactKeys(value, required) {
 }
 function text(value, maximum) { if (typeof value !== "string" || value.length < 1 || value.length > maximum) mismatch(); return value; }
 function date(value) { const result = text(value, 64); if (Number.isNaN(Date.parse(result))) mismatch(); return result; }
+function log(value) { exactKeys(value, ["recorded_at", "text"]); return { recordedAt: date(value.recorded_at), text: text(value.text, 8000) }; }
 function dish(value) {
-  exactKeys(value, ["task_id", "title", "archived_at"]);
+  exactKeys(value, ["task_id", "title", "archived_at", "cook_logs"]);
   if (!taskPattern.test(value.task_id)) mismatch();
-  return { id: value.task_id, title: text(value.title, 500), archivedAt: date(value.archived_at) };
+  if (!Array.isArray(value.cook_logs)) mismatch();
+  return { id: value.task_id, title: text(value.title, 500), archivedAt: date(value.archived_at), cookLogs: value.cook_logs.map(log) };
 }
 
 export function mapArchiveResponse(value) {

@@ -30,8 +30,8 @@ export function createApplicationFrame({ environmentLabel, navigationSuffix = ""
   adminLink.href = `/admin${navigationSuffix}`;
   adminLink.textContent = "Admin";
   const archiveLink = document.createElement("a");
-  archiveLink.href = `/archive${navigationSuffix}`;
-  archiveLink.textContent = "Archived";
+  archiveLink.href = `/cooked${navigationSuffix}`;
+  archiveLink.textContent = "Cooked";
   nav.append(boardLink, archiveLink, adminLink);
   header.append(nav);
   if (environmentLabel) {

@@ -223,6 +223,10 @@ class FrontendBoardService:
                     "task_id": self._task_route(item.task_id),
                     "title": item.title.strip(),
                     "archived_at": item.archived_at.isoformat(),
+                    "cook_logs": [
+                        {"recorded_at": recorded_at.isoformat(), "text": text}
+                        for recorded_at, text in item.cook_logs
+                    ],
                 }
                 for item in facts.results
             ],

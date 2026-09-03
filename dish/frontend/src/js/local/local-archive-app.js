@@ -16,7 +16,7 @@ export async function renderLocalPostgresqlArchive(root, { environmentLabel = "L
     try { renderArchive(main, mapArchiveResponse(await client.archive())); return true; }
     catch (error) {
       if (onAuthenticationLost(error)) { stopped = true; return false; }
-      renderInitialErrorState(main, () => void refresh(), { description: "Archive data could not be loaded." });
+      renderInitialErrorState(main, () => void refresh(), { description: "Cooked data could not be loaded." });
       return false;
     }
   };

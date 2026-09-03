@@ -281,13 +281,13 @@ def test_private_search_is_authenticated_bounded_and_failure_is_isolated(private
     assert api(body) == {"kind": "board"}
 
 
-def test_private_archive_is_authenticated_and_html_route_is_protected(private_server) -> None:
+def test_private_cooked_is_authenticated_and_html_route_is_protected(private_server) -> None:
     server, runtime = private_server
     status, _, body = request(server, "GET", "/frontend/archive", cookie=TOKEN)
     assert status == 200
     assert api(body) == {"generated_at": "2026-08-27T10:00:00+00:00", "dishes": [], "truncated": False}
     assert runtime.archive_calls == 1
-    status, headers, body = request(server, "GET", "/archive", contract=None)
+    status, headers, body = request(server, "GET", "/cooked", contract=None)
     assert status == 303
     assert header_values(headers, "Location")[0].startswith("/login?return=rt1.")
     assert body == b""

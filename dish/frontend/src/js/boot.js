@@ -47,7 +47,7 @@ export async function boot(root = document.querySelector("#app")) {
     await renderLocalPostgresqlAdmin(root);
     return;
   }
-  if (window.location.pathname === "/archive") {
+  if (window.location.pathname === "/cooked") {
     await renderLocalPostgresqlArchive(root);
     return;
   }
