@@ -212,6 +212,29 @@ def test_retained_admin_commands_accept_postgres_command_result(
     assert invoke(client) is response
 
 
+@pytest.mark.parametrize(
+    ("command", "expects_request_id"),
+    [("queue", False), ("archive", True)],
+)
+def test_admin_client_request_id_is_optional_only_for_queue(
+    monkeypatch, command, expects_request_id
+):
+    client = DishAdminServiceClient(
+        "http://dish.invalid", token="admin-secret", run_id=str(uuid.uuid4())
+    )
+    response = _postgres_result(command)
+
+    def request_json(path, *, method, payload, ambiguous_after_dispatch=False):
+        assert path == f"/v1/admin/{command}"
+        assert method == "POST"
+        assert ("request_id" in payload["client"]) is expects_request_id
+        return response
+
+    monkeypatch.setattr(client._transport, "request_json", request_json)
+
+    assert client.execute(command, request_id=str(uuid.uuid4())) is response
+
+
 def test_retained_admin_command_rejects_wrong_command_without_ambiguity(monkeypatch):
     client = DishAdminServiceClient(
         "http://dish.invalid", token="admin-secret", run_id=str(uuid.uuid4())

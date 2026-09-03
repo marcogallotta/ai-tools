@@ -91,11 +91,12 @@ Their retained disposition is executable in
 
 Retained PostgreSQL admin-principal commands (queue, recovery, discard/abandon, Human Review,
 evidence, migrate, and lease recovery/expiry) are reachable only through the private admin bearer on
-`/v1/admin/<command>` and the admin lease routes, and only when the runtime is bound to the PROD
-profile; the agent/action surfaces expose only retained non-admin commands, and retired/non-retained
-historical commands (backup-create, backup-restore) stay unroutable everywhere. A TEST-profile
-runtime hides every admin route (`not_found`) regardless of bearer, so TEST rehearsals never reach
-live recovery authority. The private lease recovery (`/v1/admin/leases/<operation_id>/recover`)
+`/v1/admin/<command>` and the admin lease routes when the runtime is bound to the PROD profile; the
+agent/action surfaces expose only retained non-admin commands, and retired/non-retained historical
+commands (backup-create, backup-restore) stay unroutable everywhere. A TEST-profile runtime exposes
+only `queue` and `archive` through that private bearer so their operator paths can be qualified;
+every recovery, destructive-maintenance, lease-admin, and other admin route remains `not_found`.
+The private lease recovery (`/v1/admin/leases/<operation_id>/recover`)
 and expiry (`/v1/admin/leases/expire`) routes bridge onto canonical `recover-lease`/`expire-lease`
 and resolve operation/task/lease identity exclusively from PostgreSQL (`ServiceLease`,
 `TaskExternalAlias`); this is part of the zero-Asana runtime contract and never reaches Asana.

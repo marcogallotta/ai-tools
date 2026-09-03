@@ -15,8 +15,8 @@ from dish_pg.command_port import CommandResult
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.transition import ProjectionService
-from dish_service import cli
-from dish_service.client import DishServiceClient
+from dish_service import admin_cli, cli
+from dish_service.client import DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import DishHTTPServer
 from dish_service.leases import ServicePrincipal
@@ -663,6 +663,9 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
         action_public_base_url="https://dish-pg-test.example.invalid/test",
     )
     service._profile = "prod"
+    assert service.supports_http_route("admin", "queue") is True
+    assert service.supports_http_route("admin", "archive") is True
+    assert service.supports_http_route("admin", "inspect") is True
     assert service.supports_http_route("agent", "recover") is False
     assert service.supports_http_route("admin", "recover") is True
     assert service.supports_http_route("admin", "recover-lease") is True
@@ -720,16 +723,73 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
     assert "/v1/action/cooked" in openapi["paths"]
 
 
-def test_postgresql_admin_routes_stay_hidden_outside_prod_profile(
+def test_postgresql_test_admin_allowlist_exposes_only_queue_and_archive(
     workflow_db, tmp_path: Path
 ) -> None:
     factory, _ids, _context, _task_id = workflow_db
     service = runtime_service(factory, tmp_path)
     assert service._profile == "test"
+    assert service.supports_http_route("admin", "queue") is True
+    assert service.supports_http_route("admin", "archive") is True
+    assert service.supports_http_route("admin", "inspect") is False
     assert service.supports_http_route("admin", "recover") is False
     assert service.supports_http_route("admin", "recover-lease") is False
     assert service.supports_http_route("admin-lease", "recover-lease") is False
     assert service.supports_http_route("admin-lease-expiry", "expire-lease") is False
+
+
+def test_postgresql_test_admin_queue_and_archive_work_through_dish_admin_cli(
+    workflow_db, tmp_path: Path, capsys
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="marco-admin",
+            agent="marco",
+        )
+
+    service = runtime_service(factory, tmp_path)
+    assert service._profile == "test"
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-test-admin-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        client = DishAdminServiceClient(
+            base,
+            token="postgres-admin-token",
+            run_id=str(run_id),
+        )
+
+        def invoke(*arguments: str) -> dict[str, object]:
+            assert admin_cli.main(list(arguments), application=client) == 0
+            return json.loads(capsys.readouterr().out)
+
+        try:
+            queue = invoke("--profile", "test", "--json", "queue", "--non-interactive")
+            archived = invoke(
+                "--profile", "test", "--json", "archive", str(task_id), "--yes"
+            )
+            hidden_status, hidden = _post_json(
+                f"{base}/v1/admin/inspect",
+                token="postgres-admin-token",
+                body={
+                    "client": {"run_id": str(run_id)},
+                    "arguments": {"dish": str(task_id)},
+                },
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert queue["ok"] is True
+    assert queue["command"] == "queue"
+    assert archived["ok"] is True
+    assert archived["command"] == "archive"
+    assert archived["data"]["completion_state"] == "archived"
+    assert hidden_status == 404
+    assert hidden == {"ok": False, "error": "not_found"}
 
 
 def test_postgresql_action_canonical_ids_work_without_asana_identity(

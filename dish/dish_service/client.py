@@ -218,7 +218,9 @@ class DishAdminServiceClient(DishServiceClient):
                 "provide command arguments as a mapping or keywords, not both"
             )
         prepared = dict(arguments or keyword_arguments)
-        if request_id is None:
+        if command == "queue":
+            request_id = None
+        elif request_id is None:
             request_id = str(uuid.uuid4())
         return command_result_request(
             command=command,
