@@ -23,9 +23,8 @@ flowchart LR
     IN --> M[Source landed]
     M --> A[Rollout/runtime acceptance when required]
     A --> D[Complete]
-    CR -->|In-design BLOCK| F[Same-lineage fix]
+    CR -->|BLOCK| F[Same-lineage fix]
     F --> CR
-    CR -->|New design requirement| R
 ```
 
 Research/design becomes Implementation-ready only when its required decisions and pre-development review are durably satisfied. Implementation owns one task/branch lineage, publishes a real PR, finishes scoped evidence, and explicitly moves the PR from draft to review-ready. Review and ordinary exact-head CI may then proceed independently; pending CI is not a reason to delay semantic Review. A formal MERGE verdict begins gate evaluation rather than completing the task.
@@ -35,7 +34,7 @@ Integration uses the exact reviewed candidate and performs only authorized mecha
 ## Invariants
 
 - Each semantic task retains its own commit/PR/task lineage even in an ordered stack.
-- Review BLOCKs classified as resolvable within the accepted design stay on the existing task/PR lineage; new or changed design requirements return to Design.
+- Review BLOCK fixes stay on the existing task/PR lineage.
 - A successor head never inherits an older exact-head verdict silently.
 - CI ownership is classified before a failing candidate is modified.
 - Post-merge gates remain in their real phase and do not become source-merge blockers by proximity.
