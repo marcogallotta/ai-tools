@@ -56,6 +56,7 @@ _ADMIN_EXPOSED_COMMANDS = frozenset(
     for name in ADMIN_COMMANDS
     if COMMAND_DEFINITIONS[name].retained
 )
+_TEST_ADMIN_EXPOSED_COMMANDS = frozenset({"archive", "queue"})
 _AGENT_EXPOSED_COMMANDS = frozenset(
     name
     for name, definition in COMMAND_DEFINITIONS.items()
@@ -167,16 +168,20 @@ class PostgresRuntimeService:
         implemented PostgreSQL command contract; unsupported legacy Action
         commands remain hidden rather than falling through to another backend.
         Admin-principal commands are reachable only through the admin
-        transport, never the agent route, and only when this runtime is bound
-        to the PROD profile: TEST rehearsals never expose live recovery
-        authority, matching TEST evidence never proving PROD.
+        transport, never the agent route. PROD retains the complete supported
+        admin inventory; TEST exposes only the non-recovery queue and archive
+        commands needed to qualify the operator surface.
         """
 
         if surface == "agent":
             return command in _AGENT_EXPOSED_COMMANDS
         if surface == "action":
             return command in ACTION_COMMANDS
-        if surface in {"admin", "admin-lease", "admin-lease-expiry"}:
+        if surface == "admin":
+            if self._profile == "test":
+                return command in _TEST_ADMIN_EXPOSED_COMMANDS
+            return command in _ADMIN_EXPOSED_COMMANDS
+        if surface in {"admin-lease", "admin-lease-expiry"}:
             return self._profile == "prod" and command in _ADMIN_EXPOSED_COMMANDS
         return False
 

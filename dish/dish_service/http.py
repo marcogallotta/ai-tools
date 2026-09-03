@@ -39,6 +39,8 @@ from .frontend_http import (
 
 LOG = logging.getLogger("dish.service")
 
+_ADMIN_REQUEST_ID_OPTIONAL_COMMANDS = frozenset({"queue"})
+
 
 class _DuplicateJSONKey(ValueError):
     def __init__(self, key: str) -> None:
@@ -58,10 +60,11 @@ def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, An
 def _requires_request_id(surface: str, command: str) -> bool:
     if surface in {"agent", "action"}:
         return command in REPLAY_SAFE_COMMANDS
+    if surface == "admin":
+        return command not in _ADMIN_REQUEST_ID_OPTIONAL_COMMANDS
     return surface in {
         "lease",
         "action-lease",
-        "admin",
         "admin-lease",
         "admin-lease-expiry",
         "admin-backup",
