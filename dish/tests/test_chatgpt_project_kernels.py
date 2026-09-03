@@ -994,8 +994,8 @@ def test_operator_provenance_encodes_r7_g3_entry_and_creator_guards():
         "ask exactly one bounded confirmation",
         "second confirmation",
         "explicitly exits Review",
-        "CURRENT TASK SHAPE",
-        "canonical role index/current standing contract",
+        "resolvable within the accepted design",
+        "new or changed design requirement return to Design",
         "no separate durable Implementation assignment/event is required",
         "independent exact-candidate pre-development `PASS`",
         "absence of automated attempt/authorship markers is not itself a blocker",
@@ -1028,7 +1028,7 @@ def test_autonomy_behavior_matrix_covers_required_decision_rules():
     assert {
         "bind-exact-task-pr-head-and-formal-block",
         "exit-review-before-source-mutation",
-        "reroute-by-current-task-shape-through-current-role-index",
+        "preserve-review-preclassification",
         "load-current-implementation-contract",
         "continue-authorized-r3-correction-without-second-confirmation",
     } <= set(r3["required_actions"])

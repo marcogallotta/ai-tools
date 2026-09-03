@@ -101,7 +101,7 @@ For Development Workflow design/research work, the owning Asana task is the dura
 
 - Before design review dispatch, persist the complete proposed design in the owning task and read it back. A chat-only design is not review-ready.
 - The review handoff names the owning task plus the review role/question. The reviewer reads the live task as canonical input rather than a copied chat subset.
-- Persist the review verdict, blockers, and amendments to that same task and verify the write. If review amends the design, fold the accepted/current design into task notes; comments remain chronology, not the current design source.
+- Persist the review verdict and blockers to that same task and verify the write. Design Review suggestions are non-authoritative; when Design produces a material revised candidate, fold that current design into task notes and require fresh independent Design Review. Comments remain chronology, not the current design source.
 - Before Implementation dispatch, ensure the task notes contain the accepted current design. The handoff names the owning task and current repository authority; it must not substitute a partial copied design.
 - A chat-only design/review result remains incomplete until persisted and read back. A stale copied chat subset never overrides newer Asana task state.
 
