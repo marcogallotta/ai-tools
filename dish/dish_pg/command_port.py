@@ -292,19 +292,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             ):
                 if task is None:
                     raise CommandRuleError("TASK_REQUIRED", "planning start requires a task")
-                state = self.session.scalar(
-                    select(models.DishState)
-                    .where(
-                        models.DishState.generation_id == generation.generation_id,
-                        models.DishState.task_id == task.task_id,
-                    )
-                    .execution_options(populate_existing=True)
+                state, _membership = self.workflow.repo.lock_task_currentness(
+                    generation_id=generation.generation_id,
+                    task_id=task.task_id,
                 )
-                if state is None:
-                    raise CommandRuleError(
-                        "COMPLETION_AUTHORITY_MISSING",
-                        "task completion authority is incomplete",
-                    )
+                self._assert_task_not_archived(state)
                 self._assert_planning_task_reopened(state)
                 self._validate_planning_intent_basis(call, initial=True)
                 self._validate_planning_agent(
@@ -1434,6 +1426,15 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "retry start with kind=planning using a fresh client.request_id"
                 ),
             },
+        )
+
+    @staticmethod
+    def _assert_task_not_archived(state: models.DishState) -> None:
+        if state.archived_at is None:
+            return
+        raise CommandRuleError(
+            "TASK_ARCHIVED",
+            "archived tasks cannot admit further workflow mutation",
         )
 
     def _lock_operation_transition(
@@ -3467,19 +3468,6 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError("ARCHIVE_AUTHORITY_MISSING", "task archive authority is incomplete")
         if current.completed or current.archived_at is not None:
             raise CommandRuleError("TASK_NOT_ACTIVE", "Archive requires an active Dish")
-        blocking_operation = self.session.scalar(
-            select(wf.WorkflowOperation.operation_id).where(
-                wf.WorkflowOperation.generation_id == generation.generation_id,
-                wf.WorkflowOperation.task_id == task.task_id,
-                wf.WorkflowOperation.lifecycle == "open",
-            ).limit(1)
-        )
-        if blocking_operation is not None:
-            raise CommandRuleError(
-                "TASK_NOT_RESTING",
-                "Archive requires a resting Dish with no open workflow operation",
-                data={"open_operation_id": str(blocking_operation)},
-            )
         self._scalar_mutation(
             generation_id=generation.generation_id,
             task_id=task.task_id,

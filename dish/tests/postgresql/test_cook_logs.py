@@ -128,8 +128,25 @@ def test_record_cook_log_is_lifecycle_neutral(workflow_db, lifecycle: str) -> No
             assert port.execute(_call("cooked", run_id=run_id, request_id=_next(ids), arguments={"dish_id": str(task_id), "agent": "codex"})).ok
         else:
             assert port.execute(_call("archive", run_id=run_id, request_id=_next(ids), arguments={"dish_id": str(task_id), "agent": "codex"})).ok
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        assert state is not None
+        before = (
+            state.current_content_version_id,
+            state.dish_version,
+            state.completed,
+            state.archived_at,
+        )
         result = port.execute(_call(
             "record-cook-log", run_id=run_id, request_id=_next(ids),
             arguments={"dish_id": str(task_id), "agent": "codex", "text": lifecycle},
         ))
         assert result.ok, (result.code, result.data)
+        assert result.data["content_version_id"] == str(before[0])
+        assert result.data["dish_version"] == before[1]
+        session.refresh(state)
+        assert (
+            state.current_content_version_id,
+            state.dish_version,
+            state.completed,
+            state.archived_at,
+        ) == before

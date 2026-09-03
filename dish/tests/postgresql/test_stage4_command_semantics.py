@@ -938,10 +938,7 @@ def test_newly_created_incomplete_archive_reason_remains_active_not_archived(
         assert task_id in {item.task_id for item in page.items}
 
 
-@pytest.mark.parametrize("command_name", ("cooked", "archive"))
-def test_cooked_and_archive_reject_open_workflow_without_partial_completion(
-    workflow_db, command_name: str
-) -> None:
+def test_cooked_rejects_open_workflow_without_partial_completion(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     run_id = _next(ids)
     with session_scope(factory) as session:
@@ -957,7 +954,7 @@ def test_cooked_and_archive_reject_open_workflow_without_partial_completion(
 
         result = port.execute(
             _call(
-                command_name,
+                "cooked",
                 run_id=run_id,
                 request_id=_next(ids),
                 arguments={"task_id": str(task_id)},
@@ -972,3 +969,63 @@ def test_cooked_and_archive_reject_open_workflow_without_partial_completion(
         )
         assert current is not None
         assert (current.dish_version, current.completion_version, current.completed) == before_identity
+
+
+def test_archive_overrides_open_workflow_preserves_history_and_fences_late_mutation(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
+        operation_id = uuid.UUID(started.data["operation_id"])
+        lease_id = uuid.UUID(started.data["lease_id"])
+        request_count = session.scalar(select(func.count()).select_from(wf.ServiceRequest))
+
+        archived = port.execute(
+            _call(
+                "archive",
+                run_id=run_id,
+                request_id=_next(ids),
+                principal="admin",
+                arguments={"task_id": str(task_id), "confirmed": True},
+            )
+        )
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        lease = session.get(wf.ServiceLease, lease_id)
+
+        assert archived.ok is True
+        assert archived.data["completion_state"] == "archived"
+        assert operation.lifecycle == "open"
+        assert lease.state == "active"
+        assert session.scalar(select(func.count()).select_from(wf.ServiceRequest)) == request_count + 1
+
+        for command_name, arguments in (
+            ("renew-lease", {"operation_id": str(operation_id)}),
+            (
+                "inspect",
+                {
+                    "task_id": str(task_id),
+                    "operation_id": str(operation_id),
+                    "agent": "claude",
+                    "independence_attestation": (
+                        "I independently inspected this exact candidate."
+                    ),
+                },
+            ),
+        ):
+            blocked = port.execute(
+                _call(
+                    command_name,
+                    run_id=run_id,
+                    request_id=_next(ids),
+                    arguments=arguments,
+                )
+            )
+            assert blocked.ok is False
+            assert blocked.code == "TASK_ARCHIVED"
+
+        assert session.get(wf.WorkflowOperation, operation_id).lifecycle == "open"
+        assert session.get(wf.ServiceLease, lease_id).state == "active"
