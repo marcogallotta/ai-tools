@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0045_cook_log_entries"
+ALEMBIC_HEAD = "0046_task_run_revocations"
 
 
 class ReleaseCandidateService(

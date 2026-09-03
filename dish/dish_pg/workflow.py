@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -858,6 +858,55 @@ class WorkflowAuthorityRepository:
         self.session.expire(execution)
         return execution
 
+    def lock_service_runs_for_archive(self) -> None:
+        if self.session.get_bind().dialect.name == "postgresql":
+            self.session.execute(text("LOCK TABLE service_runs IN SHARE MODE"))
+
+    def revoke_generation_runs_for_task(
+        self, *, generation_id: uuid.UUID, task_id: uuid.UUID, archive_execution_id: uuid.UUID, revoked_at: datetime
+    ) -> list[wf.TaskRunRevocation]:
+        runs = self.session.scalars(
+            select(wf.ServiceRun).where(wf.ServiceRun.generation_id == generation_id)
+        ).all()
+        rows: list[wf.TaskRunRevocation] = []
+        for run in runs:
+            existing = self.session.scalar(
+                select(wf.TaskRunRevocation).where(
+                    wf.TaskRunRevocation.generation_id == generation_id,
+                    wf.TaskRunRevocation.task_id == task_id,
+                    wf.TaskRunRevocation.run_id == run.run_id,
+                )
+            )
+            if existing is not None:
+                rows.append(existing)
+                continue
+            row = wf.TaskRunRevocation(
+                revocation_id=uuid.uuid4(),
+                generation_id=generation_id,
+                task_id=task_id,
+                run_id=run.run_id,
+                archive_execution_id=archive_execution_id,
+                reason="Dish archived",
+                revoked_at=revoked_at,
+            )
+            self.session.add(row)
+            rows.append(row)
+        self.session.flush()
+        return rows
+
+    def assert_task_run_not_revoked(
+        self, *, generation_id: uuid.UUID, task_id: uuid.UUID, run_id: uuid.UUID
+    ) -> None:
+        revoked = self.session.scalar(
+            select(wf.TaskRunRevocation.revocation_id).where(
+                wf.TaskRunRevocation.generation_id == generation_id,
+                wf.TaskRunRevocation.task_id == task_id,
+                wf.TaskRunRevocation.run_id == run_id,
+            )
+        )
+        if revoked is not None:
+            raise StaleAuthorityError("service run is revoked for this archived task")
+
     def lock_task_currentness(
         self, *, generation_id: uuid.UUID, task_id: uuid.UUID
     ) -> tuple[models.DishState, models.TaskMembershipHead]:
@@ -887,9 +936,22 @@ class WorkflowAuthorityRepository:
     def capture_task_fence(
         self, *, execution_id: uuid.UUID, generation_id: uuid.UUID, task_id: uuid.UUID, at: datetime
     ) -> wf.TaskExecutionFence:
+        execution = self.session.get(wf.CommandExecution, execution_id)
+        if execution is None:
+            raise WorkflowAuthorityError("unknown command execution")
+        request = self.session.get(wf.ServiceRequest, execution.request_id)
+        if request is None:
+            raise WorkflowAuthorityError("execution has no request authority")
         state, membership = self.lock_task_currentness(
             generation_id=generation_id, task_id=task_id
         )
+        # While archived, preserve the canonical TASK_ARCHIVED surface. The
+        # tombstone becomes authoritative if the task is later unarchived, so
+        # pre-archive runs can never regain workflow authority.
+        if state.archived_at is None:
+            self.assert_task_run_not_revoked(
+                generation_id=generation_id, task_id=task_id, run_id=request.run_id
+            )
         row = wf.TaskExecutionFence(
             execution_id=execution_id,
             generation_id=generation_id,
@@ -906,9 +968,17 @@ class WorkflowAuthorityRepository:
         fence = self.session.get(wf.TaskExecutionFence, execution_id)
         if fence is None:
             raise WorkflowAuthorityError("execution has no task fence")
+        execution = self.session.get(wf.CommandExecution, execution_id)
+        request = self.session.get(wf.ServiceRequest, execution.request_id) if execution is not None else None
+        if request is None:
+            raise WorkflowAuthorityError("execution has no request authority")
         state, membership = self.lock_task_currentness(
             generation_id=fence.generation_id, task_id=fence.task_id
         )
+        if state.archived_at is None:
+            self.assert_task_run_not_revoked(
+                generation_id=fence.generation_id, task_id=fence.task_id, run_id=request.run_id
+            )
         if (
             state is None
             or membership is None
@@ -1386,6 +1456,157 @@ class WorkflowAuthorityService:
         )
         self.session.flush()
         return lease
+
+    def terminalize_task_for_archive(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        archive_execution_id: uuid.UUID,
+        archive_request_id: uuid.UUID,
+        actor: str,
+        at: datetime,
+    ) -> dict[str, int]:
+        counts = {
+            "operations": 0, "cycles": 0, "leases": 0, "challenges": 0,
+            "holds": 0, "reviews": 0, "abandonments": 0, "executions": 0,
+        }
+        def locked(model, *where):
+            stmt = select(model).where(*where)
+            if self.session.get_bind().dialect.name == "postgresql":
+                stmt = stmt.with_for_update().execution_options(populate_existing=True)
+            return list(self.session.scalars(stmt).all())
+
+        operations = locked(
+            wf.WorkflowOperation,
+            wf.WorkflowOperation.generation_id == generation_id,
+            wf.WorkflowOperation.task_id == task_id,
+            wf.WorkflowOperation.lifecycle == "open",
+        )
+        cycles = locked(
+            wf.VerificationCycle,
+            wf.VerificationCycle.generation_id == generation_id,
+            wf.VerificationCycle.task_id == task_id,
+            wf.VerificationCycle.lifecycle == "open",
+        )
+        leases = locked(
+            wf.ServiceLease,
+            wf.ServiceLease.generation_id == generation_id,
+            wf.ServiceLease.task_id == task_id,
+            wf.ServiceLease.state == "active",
+        )
+        challenges = locked(
+            wf.PlanningIntentChallenge,
+            wf.PlanningIntentChallenge.generation_id == generation_id,
+            wf.PlanningIntentChallenge.task_id == task_id,
+            wf.PlanningIntentChallenge.state.in_(("issued", "claimed")),
+        )
+        holds = locked(
+            wf.EvidenceHold,
+            wf.EvidenceHold.generation_id == generation_id,
+            wf.EvidenceHold.task_id == task_id,
+            wf.EvidenceHold.state == "open",
+        )
+        reviews = locked(
+            wf.HumanReviewRequirement,
+            wf.HumanReviewRequirement.generation_id == generation_id,
+            wf.HumanReviewRequirement.task_id == task_id,
+            wf.HumanReviewRequirement.state == "open",
+        )
+        abandonments = locked(
+            wf.AbandonmentAttempt,
+            wf.AbandonmentAttempt.generation_id == generation_id,
+            wf.AbandonmentAttempt.task_id == task_id,
+            wf.AbandonmentAttempt.state.in_(("preparing", "published", "blocked", "reconciling")),
+        )
+        executions = locked(
+            wf.CommandExecution,
+            wf.CommandExecution.generation_id == generation_id,
+            wf.CommandExecution.task_id == task_id,
+            wf.CommandExecution.execution_id != archive_execution_id,
+            wf.CommandExecution.status.in_(("pending", "claimed", "uncertain")),
+        )
+        uncertain = [row for row in executions if row.status == "uncertain"]
+        if uncertain:
+            raise WorkflowAuthorityError(
+                "archive cannot settle uncertain command execution: "
+                + ",".join(str(row.execution_id) for row in uncertain)
+            )
+
+        for row in cycles:
+            row.lifecycle = "abandoned"
+            row.outcome = "archived"
+            row.terminal_at = at
+            counts["cycles"] += 1
+        for row in leases:
+            prior_revision = row.lease_revision
+            prior_expiry = row.expires_at
+            row.state = "released"
+            row.lease_revision += 1
+            row.terminal_at = at
+            self.session.add(wf.LeaseEvent(
+                lease_event_id=self.uuid_factory(), lease_id=row.lease_id, event_kind="released",
+                request_id=archive_request_id, command_execution_id=archive_execution_id,
+                prior_revision=prior_revision, resulting_revision=prior_revision + 1,
+                prior_expiry=prior_expiry, resulting_expiry=prior_expiry,
+                reason="Dish archived", occurred_at=at,
+            ))
+            counts["leases"] += 1
+        for row in challenges:
+            row.state = "settled"
+            row.claiming_request_id = None
+            row.intent_basis = None
+            row.override_reason = None
+            row.settled_by = actor
+            row.settlement_reason = "Dish archived"
+            row.terminal_at = at
+            counts["challenges"] += 1
+        for row in holds:
+            row.state = "cancelled"
+            row.terminal_at = at
+            self.session.add(wf.EvidenceHoldEvent(
+                hold_event_id=self.uuid_factory(), hold_id=row.hold_id, event_kind="cancelled",
+                evidence_payload={"reason": "Dish archived"}, request_id=archive_request_id,
+                command_execution_id=archive_execution_id, occurred_at=at,
+            ))
+            counts["holds"] += 1
+        for row in reviews:
+            row.state = "cancelled"
+            row.terminal_at = at
+            counts["reviews"] += 1
+        for row in abandonments:
+            row.state = "cancelled"
+            row.terminal_at = at
+            counts["abandonments"] += 1
+        for row in operations:
+            row.lifecycle = "abandoned"
+            row.terminal_outcome = "archived"
+            row.persisted_actions = []
+            row.operation_revision += 1
+            row.terminal_at = at
+            counts["operations"] += 1
+        for row in executions:
+            row.status = "cancelled"
+            row.claim_owner = None
+            row.claim_token = None
+            row.claim_expires_at = None
+            row.execution_revision += 1
+            row.terminal_at = at
+            outcome = self.session.scalar(
+                select(wf.ServiceRequestOutcome).where(
+                    wf.ServiceRequestOutcome.request_id == row.request_id
+                )
+            )
+            if outcome is None:
+                payload = {"code": "TASK_ARCHIVED", "task_id": str(task_id)}
+                self.session.add(wf.ServiceRequestOutcome(
+                    outcome_id=self.uuid_factory(), request_id=row.request_id, outcome_class="retired",
+                    result_code="TASK_ARCHIVED", http_status=409, result_payload=payload,
+                    result_sha256=sha256_json(payload), immutable_success=False, recorded_at=at,
+                ))
+            counts["executions"] += 1
+        self.session.flush()
+        return counts
 
     def record_inspection(
         self,

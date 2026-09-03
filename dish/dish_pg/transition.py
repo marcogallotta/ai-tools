@@ -1391,6 +1391,48 @@ class ProjectionService:
                 attempt.terminal_at = retired_at
         self.session.flush()
 
+    def terminalize_task_projection_for_archive(
+        self, *, generation_id: uuid.UUID, task_id: uuid.UUID, at: datetime
+    ) -> int:
+        # After rollback burn projection rows are forensic only and cannot dispatch.
+        if not external_projection_required(self.session, generation_id=generation_id):
+            return 0
+        stmt = select(tx.ProjectionOutboxEvent).where(
+            tx.ProjectionOutboxEvent.generation_id == generation_id,
+            tx.ProjectionOutboxEvent.task_id == task_id,
+            tx.ProjectionOutboxEvent.origin == "live",
+            tx.ProjectionOutboxEvent.state.in_(("pending", "claimed", "uncertain", "blocked")),
+        ).order_by(tx.ProjectionOutboxEvent.aggregate_sequence)
+        if self.session.get_bind().dialect.name == "postgresql":
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        events = list(self.session.scalars(stmt).all())
+        unsafe: list[str] = []
+        for event in events:
+            attempt_stmt = select(tx.ProjectionAttempt).where(
+                tx.ProjectionAttempt.projection_event_id == event.projection_event_id
+            ).order_by(tx.ProjectionAttempt.attempt_number.desc()).limit(1)
+            if self.session.get_bind().dialect.name == "postgresql":
+                attempt_stmt = attempt_stmt.with_for_update().execution_options(populate_existing=True)
+            latest = self.session.scalar(attempt_stmt)
+            if event.state in {"uncertain", "blocked"}:
+                unsafe.append(str(event.projection_event_id))
+                continue
+            if latest is not None and latest.state in {"dispatched", "uncertain", "blocked"}:
+                unsafe.append(f"{event.projection_event_id}:{latest.attempt_id}")
+        if unsafe:
+            raise TransitionAuthorityError(
+                "archive requires projection reconciliation before success: " + ",".join(unsafe)
+            )
+        for event in events:
+            event.state = "superseded"
+            event.claim_owner = None
+            event.claim_token = None
+            event.claim_expires_at = None
+            event.outbox_revision += 1
+            event.terminal_at = at
+        self.session.flush()
+        return len(events)
+
     def record(
         self,
         *,

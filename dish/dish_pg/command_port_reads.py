@@ -512,9 +512,26 @@ class PostgresCommandReadMixin:
                 )
             ).all()
         )
-        available = [
-            row for row in rows if row[0].operation_id in {None, operation_id}
-        ]
+        latest_archive_version = self.session.scalar(
+            select(models.DishMutationReceipt.dish_version)
+            .where(
+                models.DishMutationReceipt.generation_id == generation_id,
+                models.DishMutationReceipt.task_id == task_id,
+                models.DishMutationReceipt.archive_changed.is_(True),
+            )
+            .order_by(models.DishMutationReceipt.dish_version.desc())
+            .limit(1)
+        )
+        available = []
+        for row in rows:
+            grant = row[0]
+            if grant.operation_id not in {None, operation_id}:
+                continue
+            if latest_archive_version is not None:
+                fence = self.session.get(wf.TaskExecutionFence, grant.command_execution_id)
+                if fence is None or fence.expected_dish_version < latest_archive_version:
+                    continue
+            available.append(row)
         # Prefer a grant bound to this exact operation over a task-wide grant.
         available.sort(key=lambda row: row[0].operation_id is None)
         matched: list[tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]] = []

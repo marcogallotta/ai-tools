@@ -73,6 +73,32 @@ class ServiceRun(Base):
     )
 
 
+class TaskRunRevocation(Base):
+    __tablename__ = "task_run_revocations"
+
+    revocation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("service_runs.run_id", ondelete="RESTRICT"), nullable=False
+    )
+    archive_execution_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("command_executions.execution_id", ondelete="RESTRICT"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("generation_id", "task_id", "run_id", name="uq_task_run_revocation"),
+        CheckConstraint("length(trim(reason)) > 0", name="reason_nonblank"),
+        Index("ix_task_run_revocations_task", "generation_id", "task_id", "run_id"),
+    )
+
+
 class ServiceRequest(Base):
     __tablename__ = "service_requests"
 

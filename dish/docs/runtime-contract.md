@@ -386,7 +386,7 @@ promise that the submitted candidate text was written byte-for-byte unchanged.
 | `VALIDATION_FAILED` | 2 | Agent-correctable only when the protocol makes the defect agent-owned. Correct the exact task/candidate, update provenance or `Material changes` where required, reread, and rerun. |
 | `WRONG_STATE` | 3 | Inspect the live task and operation; take only a returned legal action. |
 | `TASK_NOT_ACTIVE` | 3 | The Dish is already completed or is no longer in the active Cooking lifecycle. Inspect its exact identity; never relabel a cooked or manually completed Dish as archived. |
-| `TASK_NOT_RESTING` | 3 | The Dish has open workflow, lease, hold, proposal, request, or effect authority. Resolve the reported blocker before considering archive; do not force or retry the mutation. |
+| `TASK_NOT_RESTING` | 3 | Archive owns cleanup of ordinary provably effect-free internal workflow authority. This blocker is reserved for authority whose terminal outcome cannot be proved safely in the archive transaction, especially dispatched/uncertain/blocked external effects or uncertain command outcomes. Reconcile the exact reported identity before retrying; do not force archive. |
 | `AGENT_MISMATCH` | 3 | The caller is not the recorded actor. Use the correct actor or a protocol-valid ownership route. |
 | `VERIFIER_FAMILY_MISMATCH` | 3 | Legacy compatibility code; treat as a closed transition and inspect. Current Verification independence is identity/attestation based, not opposite-family routing. |
 | `PROTOCOL_INCOMPATIBLE` | 3 | The record belongs to an explicitly unsupported legacy workflow. Diagnostic reads remain available, but mutations are blocked; preserve the record and use the documented migration or manual disposition route. |

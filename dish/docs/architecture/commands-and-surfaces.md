@@ -155,10 +155,15 @@ capability. It has no operator-supplied reason: the durable invocation provenanc
 `system_reason=admin_archive`. In the SQLite/Asana authority it requires confirmation, an active
 incomplete Dish, and a distinct configured Cooking History project; it then marks the task complete,
 adds Cooking History, removes Cooking last, and confirms preserved identity from an exact reread.
-Archive supersedes open workflow state without deleting or terminalizing it; preserved operations,
-leases, proposals, requests, and unresolved records are historical/inert. PostgreSQL serializes task
-currentness at command admission, and every later mutating command is rejected while archived;
-private admin inspection remains read-only and available. `cooked` remains resting-only.
+PostgreSQL archive owns terminalization of ordinary effect-free workflow authority in the same
+transaction as `archived_at`: open operations/cycles are abandoned, active leases are released, open
+holds/review requirements/challenges/abandonment attempts are closed, pending/claimed task executions
+are retired, safe undispatched projection intents are superseded, and every run committed on the
+pre-archive side receives a task-scoped revocation. Exact history remains readable. Dispatched,
+uncertain, or blocked external-effect work fails archive closed rather than reporting partial success.
+Every later mutating command is rejected while archived; after any future explicit unarchive, the
+pre-archive run tombstones and archive-version grant barrier keep old principals permanently stale.
+Private admin inspection remains read-only and available. `cooked` remains resting-only.
 In PostgreSQL authority the same private admin command is a narrow additional principal for the
 existing agent-owned `archive` semantic. Agent exposure and semantics remain unchanged, and the
 PostgreSQL path creates no Asana projection. The private admin transport also retains exact-ID
