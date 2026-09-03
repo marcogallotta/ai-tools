@@ -6,6 +6,7 @@ INDEX = ROOT / "dish" / "docs" / "agents" / "index.md"
 POLICY = ROOT / "OPERATOR_CONTROL_PLANE.md"
 SOURCE = ROOT / "dish" / "docs" / "chatgpt-projects" / "source.json"
 CLAUDE = ROOT / "CLAUDE.md"
+CLAUDE_GLOBAL = ROOT / "CLAUDE-global.md"
 CLAUDE_OPERATOR_STYLE = ROOT / ".claude" / "output-styles" / "dish-operator.md"
 
 
@@ -51,3 +52,18 @@ def test_attention_contract_keeps_depth_and_minimum_packet_in_one_generated_sour
     assert "not an independent communication authority" in style
     for rule in rules:
         assert f"- {rule}" in style
+
+
+def test_named_governed_task_preserves_required_asana_persistence_without_widening_ad_hoc_reads():
+    global_text = CLAUDE_GLOBAL.read_text()
+    mutation_policy = global_text.split("## Communication", 1)[0]
+    asana_policy = global_text.split("## Asana write safety", 1)[1]
+    index = INDEX.read_text()
+
+    assert "`research task X`" in mutation_policy
+    assert "required owning-task Asana persistence" in mutation_policy
+    assert "`research this text` is read-only" in mutation_policy
+    assert "generic/ad-hoc" in mutation_policy
+    assert "An explicit assignment to perform a governed workflow authorizes the Asana writes" in asana_policy
+    assert "without another chat confirmation" in asana_policy
+    assert "bounded Asana persistence" in index
