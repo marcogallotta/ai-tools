@@ -1,0 +1,3 @@
+#!/bin/sh
+cd "$(dirname "$0")/.." || exit
+exec python3 -m dish_pg.cooking_history_reconciliation "$@"
