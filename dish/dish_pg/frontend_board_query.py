@@ -105,6 +105,7 @@ class ArchivedTaskFact:
     task_id: UUID
     title: str
     archived_at: datetime
+    cook_logs: tuple[tuple[datetime, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,10 +247,18 @@ class FrontendBoardQuery:
                 select(
                     models.DishTask.task_id,
                     models.ContentVersion.title,
-                    models.DishState.archived_at,
+                    models.DishMutationReceipt.occurred_at.label("archived_at"),
                 )
                 .select_from(models.DishState)
                 .join(models.DishTask, models.DishTask.task_id == models.DishState.task_id)
+                .join(
+                    models.DishMutationReceipt,
+                    and_(
+                        models.DishMutationReceipt.generation_id == models.DishState.generation_id,
+                        models.DishMutationReceipt.task_id == models.DishState.task_id,
+                        models.DishMutationReceipt.dish_version == models.DishState.completion_version,
+                    ),
+                )
                 .join(
                     models.ContentVersion,
                     and_(
@@ -260,19 +269,35 @@ class FrontendBoardQuery:
                 )
                 .where(
                     models.DishState.generation_id == context.generation_id,
-                    models.DishState.archived_at.is_not(None),
+                    models.DishState.completed.is_(True),
+                    models.DishState.completion_reason == "cooked",
+                    models.DishState.archived_at.is_(None),
                     models.DishTask.existence_state.in_(("ordinary", "isolated")),
                 )
                 .order_by(
-                    models.DishState.archived_at.desc(),
+                    models.DishMutationReceipt.occurred_at.desc(),
                     func.lower(models.ContentVersion.title),
                     models.DishTask.task_id,
                 )
                 .limit(max_results + 1)
             ).mappings()
         )
+        visible = rows[:max_results]
+        logs: dict[UUID, list[tuple[datetime, str]]] = {row["task_id"]: [] for row in visible}
+        for log in self.session.execute(
+            select(workflow.CookLogEntry.task_id, workflow.CookLogEntry.recorded_at, workflow.CookLogEntry.text)
+            .where(
+                workflow.CookLogEntry.generation_id == context.generation_id,
+                workflow.CookLogEntry.task_id.in_(logs),
+            )
+            .order_by(workflow.CookLogEntry.recorded_at, workflow.CookLogEntry.log_id)
+        ).mappings():
+            logs[log["task_id"]].append((log["recorded_at"], log["text"]))
         return ArchivedTaskFacts(
-            results=tuple(ArchivedTaskFact(**dict(row)) for row in rows[:max_results]),
+            results=tuple(
+                ArchivedTaskFact(**dict(row), cook_logs=tuple(logs[row["task_id"]]))
+                for row in visible
+            ),
             truncated=len(rows) > max_results,
             evaluation_time=context.evaluation_time,
         )
