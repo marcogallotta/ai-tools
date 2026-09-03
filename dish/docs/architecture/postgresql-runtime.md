@@ -29,6 +29,13 @@ Authority transfer is explicit and one-way for the activated generation. Importe
 - During the required dual-stack TEST qualification, the normal TEST service is this PostgreSQL/no-Asana runtime on the canonical TEST ports. The optional legacy comparator runs on separate loopback ports, a separate SQLite state root, and a designated disposable TEST Asana project; it is comparison evidence only, never load-balanced, synchronized, or used as automatic failover. The active TEST PostgreSQL generation must keep external effects disabled while comparator mutations are exercised.
 - Retained admin-principal PostgreSQL commands (recovery, evidence, Human Review, lease recovery/expiry, and equivalents) are reachable only through the private admin bearer on `/v1/admin/<command>` (and the admin lease routes) when the bound runtime profile is PROD; the agent surface exposes only retained non-admin commands, and retired/non-retained commands stay unroutable on every surface. A TEST-profile runtime exposes only `queue` and `archive` through the private admin bearer for bounded operator qualification; every recovery, destructive-maintenance, lease-admin, and other admin route returns `not_found`, consistent with TEST evidence never proving PROD recovery authority. Private lease recovery/expiry resolve operation/task/lease identity exclusively from PostgreSQL (`ServiceLease`, `TaskExternalAlias`); they never construct or query Asana.
 - Validation-only failures are recorded through the target replay authority (`record_replay_validation_failure` / `record_validation_failure`) where applicable.
+- On an active `initial_cutover` generation, the first authenticated PostgreSQL mutation may create
+  its exact `ServiceRun` in the same caller-owned transaction immediately before request admission.
+  The runtime derives owner from bearer identity and agent from validated command arguments (or
+  `marco` for private admin); an unknown run without that agent evidence fails closed. Concurrent
+  first mutations use insert-or-observe semantics and accept only the same active
+  run/generation/owner/agent identity. Recovery generations never use this bootstrap path, and
+  reads or pre-execution validation failures do not create runs.
 - The first-request reservation and activation/admission controls prevent uncontrolled authority opening.
 - Projection origin/effect settlement remain separate from canonical command authority.
 - Reconciliation is evidence/repair machinery, not an alternate canonical writer.
