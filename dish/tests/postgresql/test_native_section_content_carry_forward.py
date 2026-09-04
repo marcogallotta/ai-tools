@@ -22,6 +22,7 @@ from dish_pg.native_section_carry_forward import (
     REQUIRED_SECTIONS,
     CarryForwardExpectation,
     NativeSectionCarryForwardError,
+    RepositoryIdentity,
     apply_carry_forward,
     build_carry_forward_plan,
 )
@@ -33,9 +34,18 @@ from tests.support.postgresql.core import _bootstrap_registry, _next
 ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 9, 4, 13, 0, tzinfo=timezone.utc)
 SOURCE_COMMIT = "a" * 40
+SOURCE_TREE = "b" * 40
 READY_BASELINE_LINE = "Verified by: Codex - migration-assigned baseline, 2026-08-01"
 pytestmark = pytest.mark.database_boundary
 pytest_plugins = ("tests.support.postgresql.core",)
+
+
+@pytest.fixture(autouse=True)
+def _verified_repository_identity(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "dish_pg.native_section_carry_forward._verified_repository_identity",
+        lambda: RepositoryIdentity(commit_sha=SOURCE_COMMIT, tree_sha=SOURCE_TREE),
+    )
 
 
 def _body(*, status: str, destination: str) -> str:
@@ -322,6 +332,8 @@ def test_pr3_stages_native_content_without_switching_current_authority(core_db) 
         assert receipt["current_dish_state_mutated"] is False
         assert receipt["staged_occurrence_count"] == 23
         assert receipt["ready_baseline_occurrence_count"] == 3
+        assert receipt["source_commit_sha"] == SOURCE_COMMIT
+        assert receipt["source_tree_sha"] == SOURCE_TREE
 
         active = session.get(models.ActiveSectionCatalog, seeded["generation_id"])
         assert active is not None and active.catalog_revision == 2
@@ -374,6 +386,8 @@ def test_pr3_stages_native_content_without_switching_current_authority(core_db) 
         assert event is not None
         assert event.revision == "0048_native_section_content_carry_forward"
         assert event.details["decision"] == "carry_forward_completed"
+        assert event.details["source_commit_sha"] == SOURCE_COMMIT
+        assert event.details["source_tree_sha"] == SOURCE_TREE
         assert event.details["ready_baseline_override"]["database_signoffs_fabricated"] is False
 
         rerun = apply_carry_forward(
@@ -385,6 +399,32 @@ def test_pr3_stages_native_content_without_switching_current_authority(core_db) 
         )
         assert rerun["inserted"] is False
         assert rerun["migration_event_id"] == receipt["migration_event_id"]
+
+
+def test_pr3_rejects_operator_commit_not_matching_executable_checkout(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        _, expectation, _ = _fixture(session, ids)
+        plan = build_carry_forward_plan(session, expectation=expectation)
+        with pytest.raises(
+            NativeSectionCarryForwardError,
+            match="does not match the clean checkout",
+        ):
+            apply_carry_forward(
+                session,
+                expected_snapshot_sha256=plan.source_snapshot_sha256,
+                source_commit="c" * 40,
+                expectation=expectation,
+                now=NOW,
+            )
+        assert (
+            session.scalar(
+                select(func.count()).select_from(
+                    models.NativeSectionContentCarryForwardOccurrence
+                )
+            )
+            == 0
+        )
 
 
 def test_pr3_rejects_snapshot_drift_before_any_transition_write(core_db) -> None:
