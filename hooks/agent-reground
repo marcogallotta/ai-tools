@@ -243,19 +243,6 @@ def _authority_record(repo: Path, relative: str, text: str) -> dict[str, Any]:
     }
 
 
-def _all_role_contract_paths(index_text: str) -> list[str]:
-    paths = []
-    for line in index_text.splitlines():
-        if not line.startswith("|"):
-            continue
-        match = MARKDOWN_LINK_RE.search(line)
-        if match:
-            path = match.group("path")
-            if not path.startswith("../"):
-                paths.append(f"dish/docs/agents/{path}")
-    return sorted(set(paths))
-
-
 def _task_gid(identity: dict[str, Any]) -> str | None:
     direct = identity.get("owning_task_gid")
     active = identity.get("active_worktree")
@@ -512,8 +499,6 @@ def perform_reground(payload: dict[str, Any], agent_id: str, host: str) -> dict[
 
         preload: dict[str, str] = {}
         if role == "development-workflow":
-            for path in _all_role_contract_paths(index_text):
-                preload[path] = _read_required(repo, path)
             contributor = "dish/docs/agents/contributor-base.md"
             preload[contributor] = _read_required(repo, contributor)
 
