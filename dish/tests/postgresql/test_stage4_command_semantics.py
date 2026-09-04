@@ -852,7 +852,7 @@ def test_archive_alone_accepts_private_admin_principal_without_projection(workfl
         assert view.completion_state == "archived"
         assert view.completed is False
         archive = FrontendBoardQuery(session).archived_tasks(max_results=10)
-        assert [item.task_id for item in archive.results] == [task_id]
+        assert archive.results == ()
         page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
             section_reference=context["section_id"]
         )

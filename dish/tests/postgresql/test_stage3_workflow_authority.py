@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg.database import session_scope
+from dish_pg.migrations.frozen_tables import FROZEN_TABLE_NAMES
 from dish_pg.repositories import DishRepository, ScalarMutationSource
 from dish_pg.workflow import (
     ContentionLost,
@@ -90,7 +91,9 @@ def test_stage3_migration_renders_guards_and_reaches_head(tmp_path: Path) -> Non
     command.upgrade(online, "0003_workflow_authority")
     engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
     try:
-        assert set(wf.STAGE3_TABLE_NAMES).issubset(inspect(engine).get_table_names())
+        assert set(FROZEN_TABLE_NAMES["0003_workflow_authority"]).issubset(
+            inspect(engine).get_table_names()
+        )
         with engine.connect() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
                 "0003_workflow_authority"
