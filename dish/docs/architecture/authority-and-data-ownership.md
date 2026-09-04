@@ -27,6 +27,7 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 | Request identity/outcome | Replay authority | Permanent identity semantics |
 | Kill request-to-revocation binding | SQLite replay/kill authority | Exact immutable request, operation, owner, run, source authority, and revocation identity; written atomically with revocation |
 | PostgreSQL canonical state | PostgreSQL only after explicit cutover | Before cutover it is target/shadow evidence |
+| Native Section identity and catalog definition | `Section`, immutable catalog versions/entries/activations, and the CAS `ActiveSectionCatalog` pointer | Definition authority is independent of Project/Asana topology; the legacy registry remains runtime placement authority until the separately reviewed runtime switch |
 | Dark-launch artifacts | No live authority | Evidence only |
 | Frontend password/session/limiter/audit state | Frontend security store | Access support only; never task or workflow authority |
 | Frontend board/detail DTOs | Derived from the active canonical read source | Presentation snapshots; never writer or legality authority |
@@ -37,6 +38,8 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 - Derived views, caches, renderers, and transports may contain logic, but must not independently contradict the authoritative fact they represent.
 - Missing or contradictory evidence is handled explicitly rather than treated as permission.
 - Dark-launch evidence cannot silently become current authority.
+- Native catalog definition currentness does not by itself switch task placement or runtime reads
+  away from the legacy Section registry.
 - After PostgreSQL authority activation, Asana observations do not promote themselves back into canonical backend state.
 - Frontend read projections, caches, presentation registries, and browser state cannot become
   task, placement, completion, workflow, or projection authority.

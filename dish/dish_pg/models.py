@@ -362,6 +362,170 @@ class GovernedSection(Base):
     )
 
 
+class Section(Base):
+    """Stable native Section identity, independent of legacy Project topology."""
+
+    __tablename__ = "sections"
+
+    section_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    logical_name: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
+    lifecycle: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("lifecycle IN ('active','retired')", name="lifecycle_allowed"),
+        CheckConstraint("length(trim(logical_name)) > 0", name="logical_name_nonblank"),
+        CheckConstraint(
+            "(lifecycle = 'active' AND retired_at IS NULL) OR "
+            "(lifecycle = 'retired' AND retired_at IS NOT NULL)",
+            name="retirement_consistent",
+        ),
+    )
+
+
+class SectionCatalogVersion(Base):
+    """Immutable native catalog definition bound to one Honest contract."""
+
+    __tablename__ = "section_catalog_versions"
+
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    version_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    contract_binding_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    catalog_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_registry_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT"),
+    )
+    transform_sha256: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("version_number > 0", name="positive_version"),
+        CheckConstraint("length(catalog_sha256) = 64", name="catalog_hash_length"),
+        CheckConstraint(
+            "(source_registry_version_id IS NULL AND transform_sha256 IS NULL) OR "
+            "(source_registry_version_id IS NOT NULL AND length(transform_sha256) = 64)",
+            name="transition_transform_exact",
+        ),
+        UniqueConstraint(
+            "generation_id", "version_number", name="uq_catalog_generation_version"
+        ),
+    )
+
+
+class SectionCatalogEntry(Base):
+    __tablename__ = "section_catalog_entries"
+
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_versions.catalog_version_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    section_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("sections.section_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    workflow_role: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("ordinal >= 0", name="nonnegative_ordinal"),
+        CheckConstraint("length(trim(display_name)) > 0", name="display_name_nonblank"),
+        CheckConstraint("length(trim(workflow_role)) > 0", name="workflow_role_nonblank"),
+        UniqueConstraint("catalog_version_id", "ordinal", name="uq_catalog_entry_ordinal"),
+        UniqueConstraint(
+            "catalog_version_id", "workflow_role", name="uq_catalog_entry_workflow_role"
+        ),
+    )
+
+
+class SectionCatalogActivation(Base):
+    __tablename__ = "section_catalog_activations"
+
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    activation_route: Mapped[str] = mapped_column(String(24), nullable=False)
+    import_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT"),
+    )
+    command_execution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    catalog_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "activation_route IN ('transition','command_execution','recovery')",
+            name="route_allowed",
+        ),
+        CheckConstraint(
+            "(activation_route = 'transition' AND import_run_id IS NOT NULL "
+            "AND command_execution_id IS NULL) OR "
+            "(activation_route = 'command_execution' AND import_run_id IS NULL "
+            "AND command_execution_id IS NOT NULL) OR "
+            "(activation_route = 'recovery' AND import_run_id IS NULL "
+            "AND command_execution_id IS NULL)",
+            name="exact_provenance_route",
+        ),
+        CheckConstraint("catalog_revision > 0", name="positive_revision"),
+        UniqueConstraint(
+            "generation_id", "catalog_revision", name="uq_catalog_activation_revision"
+        ),
+        UniqueConstraint(
+            "generation_id", "catalog_version_id", name="uq_catalog_activation_version"
+        ),
+    )
+
+
+class ActiveSectionCatalog(Base):
+    """Current native catalog definition; it is not runtime-switch authority."""
+
+    __tablename__ = "active_section_catalogs"
+
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_activations.catalog_activation_id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    catalog_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (CheckConstraint("catalog_revision > 0", name="positive_revision"),)
+
+
 class SectionRegistryVersion(Base):
     __tablename__ = "section_registry_versions"
 
@@ -891,6 +1055,9 @@ IMMUTABLE_TABLE_NAMES = (
     "section_registry_versions",
     "section_registry_entries",
     "section_registry_activations",
+    "section_catalog_versions",
+    "section_catalog_entries",
+    "section_catalog_activations",
     "task_content_versions",
     "dish_mutation_receipts",
     "task_project_membership_events",
@@ -965,6 +1132,133 @@ def _install_sqlite_immutability_triggers() -> None:
 
 
 _install_sqlite_immutability_triggers()
+
+
+def _install_sqlite_native_catalog_triggers() -> None:
+    section = Base.metadata.tables["sections"]
+    version = Base.metadata.tables["section_catalog_versions"]
+    entry = Base.metadata.tables["section_catalog_entries"]
+    activation = Base.metadata.tables["section_catalog_activations"]
+    active = Base.metadata.tables["active_section_catalogs"]
+
+    event.listen(
+        section,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER sections_identity_immutable BEFORE UPDATE OF section_id ON sections "
+            "BEGIN SELECT RAISE(ABORT, 'Section identity is immutable'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        active,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER sections_active_catalog_retirement_guard "
+            "BEFORE UPDATE OF lifecycle ON sections "
+            "WHEN NEW.lifecycle='retired' AND EXISTS ("
+            "SELECT 1 FROM active_section_catalogs a "
+            "JOIN authority_generations g ON g.generation_id=a.generation_id "
+            "JOIN section_catalog_entries e "
+            "ON e.catalog_version_id=a.catalog_version_id "
+            "WHERE e.section_id=OLD.section_id AND g.status='active') "
+            "BEGIN SELECT RAISE(ABORT, 'active catalog Section cannot be retired'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        section,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER sections_delete_forbidden BEFORE DELETE ON sections "
+            "BEGIN SELECT RAISE(ABORT, 'Section cannot be deleted'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        version,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER section_catalog_versions_binding_validate "
+            "BEFORE INSERT ON section_catalog_versions WHEN NOT EXISTS ("
+            "SELECT 1 FROM authority_generations g JOIN honest_contract_bindings b "
+            "ON b.binding_id=NEW.contract_binding_id WHERE g.generation_id=NEW.generation_id "
+            "AND g.status='active' AND b.binding_kind='release' "
+            "AND b.dish_release=g.dish_release) "
+            "BEGIN SELECT RAISE(ABORT, 'native catalog Honest binding mismatch'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        entry,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER section_catalog_entries_section_validate "
+            "BEFORE INSERT ON section_catalog_entries WHEN NOT EXISTS ("
+            "SELECT 1 FROM sections s WHERE s.section_id=NEW.section_id "
+            "AND s.lifecycle='active') "
+            "BEGIN SELECT RAISE(ABORT, 'native catalog entry requires active Section'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        activation,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER section_catalog_activations_version_validate "
+            "BEFORE INSERT ON section_catalog_activations WHEN NOT EXISTS ("
+            "SELECT 1 FROM section_catalog_versions v "
+            "WHERE v.catalog_version_id=NEW.catalog_version_id "
+            "AND v.generation_id=NEW.generation_id "
+            "AND v.version_number=NEW.catalog_revision) "
+            "BEGIN SELECT RAISE(ABORT, 'native catalog activation mismatch'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    pointer_match = (
+        "EXISTS (SELECT 1 FROM section_catalog_activations a "
+        "JOIN section_catalog_versions v ON v.catalog_version_id=a.catalog_version_id "
+        "WHERE a.catalog_activation_id=NEW.catalog_activation_id "
+        "AND a.generation_id=NEW.generation_id "
+        "AND a.catalog_version_id=NEW.catalog_version_id "
+        "AND a.catalog_revision=NEW.catalog_revision "
+        "AND v.generation_id=NEW.generation_id "
+        "AND v.version_number=NEW.catalog_revision "
+        "AND EXISTS (SELECT 1 FROM section_catalog_entries e "
+        "JOIN sections s ON s.section_id=e.section_id "
+        "WHERE e.catalog_version_id=NEW.catalog_version_id) "
+        "AND NOT EXISTS (SELECT 1 FROM section_catalog_entries e "
+        "JOIN sections s ON s.section_id=e.section_id "
+        "WHERE e.catalog_version_id=NEW.catalog_version_id AND s.lifecycle<>'active'))"
+    )
+    event.listen(
+        active,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER active_section_catalogs_validate_insert "
+            "BEFORE INSERT ON active_section_catalogs WHEN "
+            f"NEW.catalog_revision<>1 OR NOT {pointer_match} "
+            "BEGIN SELECT RAISE(ABORT, 'active native catalog pointer is invalid'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        active,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER active_section_catalogs_validate_update "
+            "BEFORE UPDATE ON active_section_catalogs WHEN "
+            "NEW.generation_id<>OLD.generation_id OR "
+            "NEW.catalog_revision<>OLD.catalog_revision+1 OR "
+            f"NOT {pointer_match} "
+            "BEGIN SELECT RAISE(ABORT, 'active native catalog transition is invalid'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+    event.listen(
+        active,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER active_section_catalogs_delete_forbidden "
+            "BEFORE DELETE ON active_section_catalogs "
+            "BEGIN SELECT RAISE(ABORT, 'active native catalog cannot be deleted'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+
+
+_install_sqlite_native_catalog_triggers()
 
 
 def _install_sqlite_scalar_authority_triggers() -> None:

@@ -103,3 +103,14 @@ def test_coordinator_human_review_is_explicit_and_scoped_not_blanket():
     assert "Never turn generic consequentiality into whole-PR human code review" in coordinator
     assert "always record `HUMAN REVIEW REQUIRED` or `HUMAN REVIEW NOT REQUIRED`" not in coordinator
     assert "`PENDING` or `INADEQUATE` remains blocked from the consequential merge/activation decision" not in coordinator
+
+
+def test_owning_task_scope_is_binding_across_every_agent_phase():
+    role_index = (ROOT / "docs" / "agents" / "index.md").read_text(encoding="utf-8")
+
+    assert "current authoritative scope of the owning task is binding on every agent and lifecycle phase" in role_index
+    assert "later explicit amendments or supersessions under existing chronological" in role_index
+    assert "Review may not add or implement out-of-scope requirements" in role_index
+    assert "BLOCK-to-fix continuation" in role_index
+    assert "stop before that mutation" in role_index
+    assert "return the proposed scope expansion to Marco" in role_index

@@ -32,6 +32,7 @@ fresh every time (see below). Nothing here is a cached or repository-driven auth
 | `1217419962189616` | Dish — Development Workflow |
 | `1217404747383060` | Dish — PostgreSQL / Dark Launch |
 | `1217382473444945` | Dish — Coordinator |
+| `1217381674871544` | Dish — Workflow |
 
 `tools/agent_worktree_lib/asana_v2.py` is the executable projection consumed by local repository
 mutation admission. Focused tests require its GID/base-name mapping and nine-section signature to
@@ -44,8 +45,6 @@ Nothing here migrates them or applies V2 semantics to them.
 
 - **Triage-queue shape** (`Inbox` / `In Progress` / `Triaged` / `Done`): Dish — Development Workflow
   Friction, Dish — Code Smells / Engineering Debt.
-- **Legacy pre-V2 shape** (`Backlog` / `Ready` / `In Progress` / `Review / Integration` /
-  `Blocked / Decision` / `Done`): Dish — Workflow.
 - **Telemetry-log shape**: Dish — Agent Performance.
 - **Unstructured** (only `Untitled section`): Dish — Tests, Dish — Agentic Docs & Agent Behavior.
 
