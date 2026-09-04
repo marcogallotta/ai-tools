@@ -318,6 +318,134 @@ class WorkflowAuthorityRepository:
         self.session.flush()
         return row
 
+    @staticmethod
+    def _initial_cutover_capability_digest(
+        *, generation_id: uuid.UUID, owner_id: str, agent: str, run_id: uuid.UUID
+    ) -> bytes:
+        return hashlib.sha256(
+            canonical_json(
+                {
+                    "namespace": "dish-initial-cutover-service-run-v1",
+                    "generation_id": str(generation_id),
+                    "owner_id": owner_id,
+                    "agent": agent,
+                    "run_id": str(run_id),
+                }
+            ).encode("utf-8")
+        ).digest()
+
+    @staticmethod
+    def _require_bootstrap_run_identity(
+        run: wf.ServiceRun,
+        *,
+        generation_id: uuid.UUID,
+        owner_id: str,
+        agent: str | None,
+    ) -> wf.ServiceRun:
+        if (
+            run.generation_id != generation_id
+            or run.owner_id != owner_id
+            or run.status != "active"
+            or (agent is not None and run.agent != agent)
+        ):
+            raise StaleAuthorityError(
+                "run is stale, retired, or conflicts with the authenticated run identity"
+            )
+        return run
+
+    def ensure_initial_cutover_run(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        run_id: uuid.UUID,
+        owner_id: str,
+        agent: str | None,
+        registered_at: datetime,
+    ) -> wf.ServiceRun:
+        normalized_owner = owner_id.strip()
+        if not normalized_owner:
+            raise WorkflowAuthorityError("run owner is required")
+        normalized_agent = None if agent is None else agent.strip()
+        if normalized_agent is not None and normalized_agent not in {
+            "claude",
+            "gpt",
+            "codex",
+            "marco",
+        }:
+            raise WorkflowAuthorityError("run agent is unsupported")
+
+        generation = self.require_active_generation(
+            generation_id, hold_transition_fence=True
+        )
+
+        def fresh_run() -> wf.ServiceRun | None:
+            return self.session.scalar(
+                select(wf.ServiceRun)
+                .where(wf.ServiceRun.run_id == run_id)
+                .execution_options(populate_existing=True)
+            )
+
+        existing = fresh_run()
+        if existing is not None:
+            return self._require_bootstrap_run_identity(
+                existing,
+                generation_id=generation_id,
+                owner_id=normalized_owner,
+                agent=normalized_agent,
+            )
+        if normalized_agent is None:
+            raise StaleAuthorityError(
+                "unknown run cannot be created without validated agent identity"
+            )
+        if generation.creation_reason != "initial_cutover":
+            raise StaleAuthorityError(
+                "automatic run creation is limited to the initial cutover generation"
+            )
+
+        values = {
+            "run_id": run_id,
+            "generation_id": generation_id,
+            "owner_id": normalized_owner,
+            "agent": normalized_agent,
+            "capability_digest": self._initial_cutover_capability_digest(
+                generation_id=generation_id,
+                owner_id=normalized_owner,
+                agent=normalized_agent,
+                run_id=run_id,
+            ),
+            "bootstrap_id": None,
+            "status": "active",
+            "registered_at": registered_at,
+            "retired_at": None,
+        }
+        dialect = self.session.get_bind().dialect.name
+        if dialect == "postgresql":
+            statement = (
+                postgresql_insert(wf.ServiceRun)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[wf.ServiceRun.run_id])
+            )
+        elif dialect == "sqlite":
+            statement = (
+                sqlite_insert(wf.ServiceRun)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[wf.ServiceRun.run_id])
+            )
+        else:
+            raise WorkflowAuthorityError(
+                f"automatic run creation does not support SQL dialect {dialect!r}"
+            )
+        self.session.execute(statement)
+        run = fresh_run()
+        if run is None:
+            raise StaleAuthorityError("run creation did not converge on a durable row")
+        return self._require_bootstrap_run_identity(
+            run,
+            generation_id=generation_id,
+            owner_id=normalized_owner,
+            agent=normalized_agent,
+        )
+
     def register_run(self, row: wf.ServiceRun) -> None:
         generation = self.require_active_generation(row.generation_id)
         bootstrap = None
@@ -1049,6 +1177,23 @@ class WorkflowAuthorityService:
         self.session = session
         self.uuid_factory = uuid_factory
         self.repo = WorkflowAuthorityRepository(session)
+
+    def ensure_initial_cutover_run(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        run_id: uuid.UUID,
+        owner_id: str,
+        agent: str | None,
+        registered_at: datetime,
+    ) -> wf.ServiceRun:
+        return self.repo.ensure_initial_cutover_run(
+            generation_id=generation_id,
+            run_id=run_id,
+            owner_id=owner_id,
+            agent=agent,
+            registered_at=registered_at,
+        )
 
     def register_run(
         self,

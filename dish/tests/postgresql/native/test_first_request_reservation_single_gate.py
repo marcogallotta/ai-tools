@@ -1,5 +1,7 @@
 """Native PostgreSQL coverage for single-use first-request admission."""
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import uuid
 import psycopg
 import pytest
@@ -12,6 +14,7 @@ from dish_pg.database import session_scope
 from dish_pg.workflow import (
     MutationAdmissionClosed,
     RequestSpec,
+    StaleAuthorityError,
     WorkflowAuthorityService,
     sha256_json,
 )
@@ -276,3 +279,96 @@ def test_native_candidate_dependencies_must_match_generation(core_db) -> None:
             )
     finally:
         raw.close()
+
+
+def test_native_concurrent_identical_first_requests_converge(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids, generation_status="active")
+    generation_id = context["generation_id"]
+    run_id = _next(ids)
+    request_id = _next(ids)
+    payload = {"command": "start", "arguments": {"task_id": "native-first-run"}}
+    barrier = Barrier(2)
+
+    def contend() -> bool:
+        with session_scope(factory) as session:
+            barrier.wait()
+            authority = WorkflowAuthorityService(session)
+            authority.ensure_initial_cutover_run(
+                generation_id=generation_id,
+                run_id=run_id,
+                owner_id="owner-1",
+                agent="codex",
+                registered_at=NOW,
+            )
+            return authority.admit_request(
+                RequestSpec(
+                    request_id=request_id,
+                    generation_id=generation_id,
+                    run_id=run_id,
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    command_name="start",
+                    canonical_payload=payload,
+                    protocol_release="protocol-1",
+                    dish_release="dish-test",
+                    admitted_at=NOW,
+                )
+            ).replayed
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [future.result() for future in (pool.submit(contend), pool.submit(contend))]
+
+    assert sorted(results) == [False, True]
+    with Session(factory.kw["bind"]) as session:
+        runs = session.scalars(select(wf.ServiceRun).where(wf.ServiceRun.run_id == run_id)).all()
+        requests = session.scalars(
+            select(wf.ServiceRequest).where(wf.ServiceRequest.request_id == request_id)
+        ).all()
+        assert len(runs) == len(requests) == 1
+        assert (runs[0].owner_id, runs[0].agent, runs[0].status) == (
+            "owner-1",
+            "codex",
+            "active",
+        )
+
+
+def test_native_conflicting_first_run_identity_has_one_winner(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids, generation_status="active")
+    generation_id = context["generation_id"]
+    run_id = _next(ids)
+    barrier = Barrier(2)
+
+    def contend(owner: str, agent: str) -> tuple[bool, str, str]:
+        try:
+            with session_scope(factory) as session:
+                barrier.wait()
+                WorkflowAuthorityService(session).ensure_initial_cutover_run(
+                    generation_id=generation_id,
+                    run_id=run_id,
+                    owner_id=owner,
+                    agent=agent,
+                    registered_at=NOW,
+                )
+            return True, owner, agent
+        except StaleAuthorityError:
+            return False, owner, agent
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            future.result()
+            for future in (
+                pool.submit(contend, "owner-a", "codex"),
+                pool.submit(contend, "owner-b", "gpt"),
+            )
+        ]
+
+    winners = [result for result in results if result[0]]
+    assert len(winners) == 1
+    with Session(factory.kw["bind"]) as session:
+        run = session.get(wf.ServiceRun, run_id)
+        assert run is not None
+        assert (run.owner_id, run.agent) == winners[0][1:]

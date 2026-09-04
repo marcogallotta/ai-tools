@@ -40,7 +40,11 @@ from .database import DatabaseSettings, create_database_engine, session_factory,
 from .frontend_board_query import FrontendBoardQuery
 from .openapi import postgres_action_openapi
 from .read_model import InvalidCursor, PostgresReadModel, ReadModelError
-from .workflow import RequestIdentityConflict, WorkflowAuthorityError
+from .workflow import (
+    RequestIdentityConflict,
+    WorkflowAuthorityError,
+    WorkflowAuthorityService,
+)
 
 
 _SUPPORTED_PROFILES = ("test", "prod")
@@ -670,6 +674,18 @@ class PostgresRuntimeService:
             },
         )
 
+    @staticmethod
+    def _bootstrap_agent(
+        *, principal_class: str, arguments: Mapping[str, Any]
+    ) -> str | None:
+        if principal_class == "admin":
+            return "marco"
+        raw_agent = arguments.get("agent")
+        if not isinstance(raw_agent, str):
+            return None
+        agent = raw_agent.strip()
+        return agent if agent in {"claude", "gpt", "codex"} else None
+
     def _execute_command(
         self,
         command: str,
@@ -720,6 +736,24 @@ class PostgresRuntimeService:
                         else:
                             result = self._execute_search(session, search_arguments)
                 else:
+                    definition = COMMAND_DEFINITIONS[command]
+                    if definition.retained and definition.profile != "Q":
+                        generation_id = session.scalar(
+                            select(models.AuthorityGeneration.generation_id).where(
+                                models.AuthorityGeneration.status == "active"
+                            )
+                        )
+                        if generation_id is None:
+                            raise WorkflowAuthorityError("no active authority generation")
+                        WorkflowAuthorityService(session).ensure_initial_cutover_run(
+                            generation_id=generation_id,
+                            run_id=run_id,
+                            owner_id=principal.owner_id,
+                            agent=self._bootstrap_agent(
+                                principal_class=principal_class, arguments=arguments
+                            ),
+                            registered_at=datetime.now(timezone.utc),
+                        )
                     result = PostgresCommandPort(
                         session,
                         cursor_secret=self._cursor_secret,
