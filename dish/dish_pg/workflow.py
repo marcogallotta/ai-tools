@@ -24,6 +24,7 @@ from . import reservation_models as reservations
 from . import stage3_models as wf
 from . import stage5_models as projection_models
 from . import stage6_models as rel
+from .command_port_common import ArchiveNotRestingError
 from .recovery_rehydration import (
     RECOVERY_QUALIFICATION_REVISION,
     RECOVERY_READINESS_REVISION,
@@ -892,6 +893,19 @@ class WorkflowAuthorityRepository:
             self.session.add(row)
             rows.append(row)
         self.session.flush()
+        revoked_run_ids = set(
+            self.session.scalars(
+                select(wf.TaskRunRevocation.run_id).where(
+                    wf.TaskRunRevocation.generation_id == generation_id,
+                    wf.TaskRunRevocation.task_id == task_id,
+                )
+            ).all()
+        )
+        missing = [str(run.run_id) for run in runs if run.run_id not in revoked_run_ids]
+        if missing:
+            raise WorkflowAuthorityError(
+                "archive run-tombstone closure failed: " + ",".join(missing)
+            )
         return rows
 
     def assert_task_run_not_revoked(
@@ -947,8 +961,9 @@ class WorkflowAuthorityRepository:
         )
         # While archived, preserve the canonical TASK_ARCHIVED surface. The
         # tombstone becomes authoritative if the task is later unarchived, so
-        # pre-archive runs can never regain workflow authority.
-        if state.archived_at is None:
+        # pre-archive runs can never regain workflow authority. Cook-log is the
+        # explicit lifecycle-neutral exception and remains legal after unarchive.
+        if state.archived_at is None and request.command_name != "record-cook-log":
             self.assert_task_run_not_revoked(
                 generation_id=generation_id, task_id=task_id, run_id=request.run_id
             )
@@ -975,7 +990,7 @@ class WorkflowAuthorityRepository:
         state, membership = self.lock_task_currentness(
             generation_id=fence.generation_id, task_id=fence.task_id
         )
-        if state.archived_at is None:
+        if state.archived_at is None and request.command_name != "record-cook-log":
             self.assert_task_run_not_revoked(
                 generation_id=fence.generation_id, task_id=fence.task_id, run_id=request.run_id
             )
@@ -1012,7 +1027,7 @@ class WorkflowAuthorityRepository:
         operation = self.session.get(wf.WorkflowOperation, fence.operation_id)
         if operation is None or (
             operation.operation_revision != fence.expected_operation_revision
-            or operation.phase != fence.expected_phase
+            or operation.phase != fence.expected_operation_phase
         ):
             raise StaleAuthorityError("operation fence is stale")
         return operation
@@ -1225,6 +1240,11 @@ class WorkflowAuthorityService:
             raise WorkflowAuthorityError("planning challenge requires an admitted start request")
         run = self.repo.require_active_run(
             generation_id=request.generation_id, run_id=request.run_id, owner_id=request.owner_id
+        )
+        self.repo.assert_task_run_not_revoked(
+            generation_id=request.generation_id,
+            task_id=task_id,
+            run_id=request.run_id,
         )
         row = wf.PlanningIntentChallenge(
             challenge_id=challenge_id,
@@ -1528,9 +1548,10 @@ class WorkflowAuthorityService:
         )
         uncertain = [row for row in executions if row.status == "uncertain"]
         if uncertain:
-            raise WorkflowAuthorityError(
-                "archive cannot settle uncertain command execution: "
-                + ",".join(str(row.execution_id) for row in uncertain)
+            unresolved = [str(row.execution_id) for row in uncertain]
+            raise ArchiveNotRestingError(
+                "archive requires command-execution reconciliation before success",
+                data={"unresolved_execution_ids": unresolved},
             )
 
         for row in cycles:
@@ -1554,9 +1575,6 @@ class WorkflowAuthorityService:
             counts["leases"] += 1
         for row in challenges:
             row.state = "settled"
-            row.claiming_request_id = None
-            row.intent_basis = None
-            row.override_reason = None
             row.settled_by = actor
             row.settlement_reason = "Dish archived"
             row.terminal_at = at
