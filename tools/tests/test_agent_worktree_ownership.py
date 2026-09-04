@@ -617,6 +617,20 @@ def test_registered_postgresql_ready_claim_requires_and_consumes_exact_local_han
     assert authority["handoff_id"]
 
 
+def test_migrated_workflow_ready_claim_uses_registered_v2_admission(h: Harness) -> None:
+    task, branch, agent = "31101", "agent/workflow-v2-ready", "workflow-impl"
+    h.agent_file(agent, owning_task_gid=task)
+    h.set_task_project(task, "1217381674871544", "Dish — Workflow v2")
+    h.set_task_section(task, "Ready")
+
+    admitted = claim(h, task=task, branch=branch, agent=agent, child=["python3", "-c", "pass"])
+    assert admitted.returncode == 0, admitted.stderr
+    _, payload = record(h, task)
+    authority = payload["repository_assignment_authority"]
+    assert authority["assignment"]["branch"] == branch
+    assert authority["handoff_id"]
+
+
 def test_registered_coordinator_under_development_is_project_agnostic(h: Harness) -> None:
     task, branch, agent = "3111", "agent/coordinator-v2", "coord-impl"
     h.agent_file(agent, owning_task_gid=task)

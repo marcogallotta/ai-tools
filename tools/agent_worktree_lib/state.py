@@ -613,9 +613,10 @@ def _live_repository_mutation_task(
     project, section = matches[0]
     section_name = str(section.get("name") or "").strip() if isinstance(section, dict) else ""
     project_gid = str(project.get("gid") or "")
-    if project_gid == LEGACY_WORKFLOW_PROJECT["gid"]:
-        if str(project.get("name") or "") != LEGACY_WORKFLOW_PROJECT["name"]:
-            fail("MUTATION_TASK_AUTHORITY_INVALID", "legacy owning project identity is contradictory")
+    if (
+        project_gid == LEGACY_WORKFLOW_PROJECT["gid"]
+        and str(project.get("name") or "") == LEGACY_WORKFLOW_PROJECT["name"]
+    ):
         if section_name not in LEGACY_WORKFLOW_PROJECT["sections"]:
             fail("MUTATION_TASK_MODE_BLOCKED", f"current task mode {section_name or 'unknown'!r} does not permit repository Implementation")
         return {"task": task, "assignment_authority": admitted_authority}
