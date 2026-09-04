@@ -358,6 +358,6 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
             )
         assert index_sql is not None
         assert "WHERE state IN ('reserved','consumed')" in index_sql
-        assert ALEMBIC_HEAD == "0046_native_section_catalog_foundation"
+        assert ALEMBIC_HEAD == "0046_task_run_revocations"
     finally:
         engine.dispose()

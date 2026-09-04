@@ -211,6 +211,7 @@ def plan_command(
             audit_event_type="operation_missing",
         )
     if snapshot.open_abandonment_id and intent.command_name not in {
+        "archive",
         "reconcile-abandonment",
         "read",
         "inspect",

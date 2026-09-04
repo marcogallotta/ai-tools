@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Mapping, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
@@ -111,6 +111,137 @@ def record_projection_intent(
             created_at=created_at,
         )
     )
+
+
+def _assert_archive_terminalization_closed(
+    session: Session,
+    *,
+    execution: wf.CommandExecution,
+    task: models.DishTask,
+    scalar_receipt: models.DishMutationReceipt | None,
+) -> None:
+    """Final in-transaction readback for the archive authority cut."""
+
+    generation_id = execution.generation_id
+    task_id = task.task_id
+    state = session.get(models.DishState, (generation_id, task_id))
+    if (
+        scalar_receipt is None
+        or not scalar_receipt.archive_changed
+        or state is None
+        or state.archived_at is None
+    ):
+        raise CommandEffectMismatch("archive scalar authority did not close")
+
+    blockers = {
+        "operations": session.scalar(
+            select(func.count()).select_from(wf.WorkflowOperation).where(
+                wf.WorkflowOperation.generation_id == generation_id,
+                wf.WorkflowOperation.task_id == task_id,
+                wf.WorkflowOperation.lifecycle == "open",
+            )
+        ),
+        "verification_cycles": session.scalar(
+            select(func.count()).select_from(wf.VerificationCycle).where(
+                wf.VerificationCycle.generation_id == generation_id,
+                wf.VerificationCycle.task_id == task_id,
+                wf.VerificationCycle.lifecycle == "open",
+            )
+        ),
+        "leases": session.scalar(
+            select(func.count()).select_from(wf.ServiceLease).where(
+                wf.ServiceLease.generation_id == generation_id,
+                wf.ServiceLease.task_id == task_id,
+                wf.ServiceLease.state == "active",
+            )
+        ),
+        "planning_challenges": session.scalar(
+            select(func.count()).select_from(wf.PlanningIntentChallenge).where(
+                wf.PlanningIntentChallenge.generation_id == generation_id,
+                wf.PlanningIntentChallenge.task_id == task_id,
+                wf.PlanningIntentChallenge.state.in_(("issued", "claimed")),
+            )
+        ),
+        "evidence_holds": session.scalar(
+            select(func.count()).select_from(wf.EvidenceHold).where(
+                wf.EvidenceHold.generation_id == generation_id,
+                wf.EvidenceHold.task_id == task_id,
+                wf.EvidenceHold.state == "open",
+            )
+        ),
+        "human_reviews": session.scalar(
+            select(func.count()).select_from(wf.HumanReviewRequirement).where(
+                wf.HumanReviewRequirement.generation_id == generation_id,
+                wf.HumanReviewRequirement.task_id == task_id,
+                wf.HumanReviewRequirement.state == "open",
+            )
+        ),
+        "abandonments": session.scalar(
+            select(func.count()).select_from(wf.AbandonmentAttempt).where(
+                wf.AbandonmentAttempt.generation_id == generation_id,
+                wf.AbandonmentAttempt.task_id == task_id,
+                wf.AbandonmentAttempt.state.in_(
+                    ("preparing", "published", "blocked", "reconciling")
+                ),
+            )
+        ),
+        "executions": session.scalar(
+            select(func.count()).select_from(wf.CommandExecution).where(
+                wf.CommandExecution.generation_id == generation_id,
+                wf.CommandExecution.task_id == task_id,
+                wf.CommandExecution.execution_id != execution.execution_id,
+                wf.CommandExecution.status.in_(("pending", "claimed", "uncertain")),
+            )
+        ),
+    }
+    live = {name: int(count or 0) for name, count in blockers.items() if count}
+    if live:
+        raise CommandEffectMismatch(
+            f"archive workflow terminalization closure failed: {live!r}"
+        )
+
+    run_count = int(
+        session.scalar(
+            select(func.count()).select_from(wf.ServiceRun).where(
+                wf.ServiceRun.generation_id == generation_id
+            )
+        )
+        or 0
+    )
+    revocation_count = int(
+        session.scalar(
+            select(func.count()).select_from(wf.TaskRunRevocation).where(
+                wf.TaskRunRevocation.generation_id == generation_id,
+                wf.TaskRunRevocation.task_id == task_id,
+            )
+        )
+        or 0
+    )
+    if revocation_count != run_count:
+        raise CommandEffectMismatch(
+            "archive run-tombstone closure failed: "
+            f"expected {run_count}, observed {revocation_count}"
+        )
+
+    if external_projection_required(session, generation_id=generation_id):
+        projection_blockers = int(
+            session.scalar(
+                select(func.count()).select_from(projection.ProjectionOutboxEvent).where(
+                    projection.ProjectionOutboxEvent.generation_id == generation_id,
+                    projection.ProjectionOutboxEvent.task_id == task_id,
+                    projection.ProjectionOutboxEvent.origin == "live",
+                    projection.ProjectionOutboxEvent.state.in_(
+                        ("pending", "claimed", "uncertain", "blocked")
+                    ),
+                )
+            )
+            or 0
+        )
+        if projection_blockers:
+            raise CommandEffectMismatch(
+                "archive projection terminalization closure failed: "
+                f"{projection_blockers} live event(s) remain"
+            )
 
 
 def assert_committed_command_effects(
@@ -221,6 +352,14 @@ def assert_committed_command_effects(
         )
     ) is not None:
         observed.add("append_cook_log")
+
+    if command_name == "archive":
+        _assert_archive_terminalization_closed(
+            session,
+            execution=execution,
+            task=task,
+            scalar_receipt=scalar_receipt,
+        )
 
     if operation is None:
         expected_mutations = set(expected.mutation_kinds)

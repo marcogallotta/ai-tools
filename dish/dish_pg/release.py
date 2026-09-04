@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0046_native_section_catalog_foundation"
+ALEMBIC_HEAD = "0046_task_run_revocations"
 
 
 class ReleaseCandidateService(

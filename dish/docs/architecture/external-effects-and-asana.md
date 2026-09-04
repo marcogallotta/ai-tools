@@ -69,3 +69,12 @@ Asana is transitional. Architecture work should reduce, not institutionalize, de
 - [Authority and data ownership](authority-and-data-ownership.md)
 - [PostgreSQL runtime](postgresql-runtime.md)
 - [ADR-0004](decisions/0004-shadow-origin-never-projects.md)
+
+## Archive boundary for projection effects
+
+Before rollback burn, archive may supersede a live task projection event only while PostgreSQL can prove
+that no external dispatch is in flight: `pending`/`claimed` events with no unsafe latest attempt, including
+a latest `not_applied` attempt, are locked and superseded atomically. A latest `dispatched` attempt or an
+`uncertain`/`blocked` event/attempt makes archive fail closed with no `archived_at` or partial cleanup.
+Archive never performs a synchronous network reconciliation. After rollback burn, retained projection rows
+are forensic and non-dispatchable, so they are preserved and do not become archive blockers.

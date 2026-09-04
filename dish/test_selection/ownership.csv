@@ -3,6 +3,7 @@
   "shards": [
     "ownership/00.csv",
     "ownership/01.csv",
-    "ownership/02.csv"
+    "ownership/02.csv",
+    "ownership/03.csv"
   ]
 }

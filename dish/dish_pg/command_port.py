@@ -53,7 +53,7 @@ from .repositories import (
     ScalarMutationSource,
     registry_source_import_run,
 )
-from .transition import ProjectionService
+from .transition import ProjectionService, TransitionAuthorityError
 from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
 from dish_tool.governed_diff import (
     GOVERNED_FIELDS,
@@ -279,10 +279,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
 
         task: models.DishTask | None = None
         operation: wf.WorkflowOperation | None = None
+        archive_prelocked_operation_id: uuid.UUID | None = None
         execution: wf.CommandExecution | None = None
         execution_id: uuid.UUID | None = None
         self._pending_scalar_mutations.clear()
         try:
+            if call.command_name == "archive":
+                self.workflow.repo.lock_service_runs_for_archive()
             task, operation = self._resolve_targets(call)
             if (
                 call.command_name == "start"
@@ -362,6 +365,16 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 now=call.now,
                 ttl=timedelta(minutes=2),
             )
+            if call.command_name == "archive" and task is not None:
+                prelock_stmt = select(wf.WorkflowOperation).where(
+                    wf.WorkflowOperation.generation_id == generation.generation_id,
+                    wf.WorkflowOperation.task_id == task.task_id,
+                    wf.WorkflowOperation.lifecycle == "open",
+                )
+                if self.session.get_bind().dialect.name == "postgresql":
+                    prelock_stmt = prelock_stmt.with_for_update().execution_options(populate_existing=True)
+                prelocked = self.session.scalar(prelock_stmt)
+                archive_prelocked_operation_id = prelocked.operation_id if prelocked is not None else None
             if operation is not None and call.command_name in {
                 "start",
                 "supply-evidence",
@@ -380,6 +393,16 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     task_id=task.task_id,
                     at=call.now,
                 )
+                if call.command_name == "archive":
+                    current_open_id = self.session.scalar(
+                        select(wf.WorkflowOperation.operation_id).where(
+                            wf.WorkflowOperation.generation_id == generation.generation_id,
+                            wf.WorkflowOperation.task_id == task.task_id,
+                            wf.WorkflowOperation.lifecycle == "open",
+                        )
+                    )
+                    if current_open_id != archive_prelocked_operation_id:
+                        raise ContentionLost("task open-operation authority changed during archive prelock")
             if operation is not None:
                 self.workflow.repo.capture_operation_fence(
                     execution_id=execution_id,
@@ -481,7 +504,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 task,
                 operation,
             )
-        except (WorkflowAuthorityError, CoreAuthorityError) as exc:
+        except (WorkflowAuthorityError, CoreAuthorityError, TransitionAuthorityError) as exc:
             return self._record_rule_failure(
                 call,
                 CommandRuleError("AUTHORITY_MISMATCH", str(exc)),
@@ -3468,6 +3491,26 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError("ARCHIVE_AUTHORITY_MISSING", "task archive authority is incomplete")
         if current.completed or current.archived_at is not None:
             raise CommandRuleError("TASK_NOT_ACTIVE", "Archive requires an active Dish")
+
+        projection_count = ProjectionService(
+            self.session, uuid_factory=self.uuid_factory
+        ).terminalize_task_projection_for_archive(
+            generation_id=generation.generation_id, task_id=task.task_id, at=call.now
+        )
+        counts = self.workflow.terminalize_task_for_archive(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            archive_execution_id=execution.execution_id,
+            archive_request_id=call.request_id,
+            actor=f"{call.owner_id}:{call.run_id}",
+            at=call.now,
+        )
+        revocations = self.workflow.repo.revoke_generation_runs_for_task(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            archive_execution_id=execution.execution_id,
+            revoked_at=call.now,
+        )
         self._scalar_mutation(
             generation_id=generation.generation_id,
             task_id=task.task_id,
@@ -3480,6 +3523,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "completed": current.completed,
             "completion_reason": current.completion_reason,
             "completion_state": "archived",
+            "terminalized": {**counts, "projection_events": projection_count, "runs": len(revocations)},
         }
         if call.principal_class == "admin":
             data.update(system_reason="admin_archive", authority_mode="postgresql")

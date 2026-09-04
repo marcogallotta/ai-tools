@@ -32,7 +32,7 @@ from dish_pg.shadow_worker import (
     _semantic_shadow_request_id,
     _shadow_uuid,
 )
-from dish_pg.workflow import RequestIdentityConflict
+from dish_pg.workflow import RequestIdentityConflict, StaleAuthorityError
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 from tests.support.postgresql.release import _prepare_candidate
@@ -998,8 +998,9 @@ def test_archive_overrides_open_workflow_preserves_history_and_fences_late_mutat
 
         assert archived.ok is True
         assert archived.data["completion_state"] == "archived"
-        assert operation.lifecycle == "open"
-        assert lease.state == "active"
+        assert operation.lifecycle == "abandoned"
+        assert operation.terminal_outcome == "archived"
+        assert lease.state == "released"
         assert session.scalar(select(func.count()).select_from(wf.ServiceRequest)) == request_count + 1
 
         for command_name, arguments in (
@@ -1027,5 +1028,69 @@ def test_archive_overrides_open_workflow_preserves_history_and_fences_late_mutat
             assert blocked.ok is False
             assert blocked.code == "TASK_ARCHIVED"
 
-        assert session.get(wf.WorkflowOperation, operation_id).lifecycle == "open"
-        assert session.get(wf.ServiceLease, lease_id).state == "active"
+        assert session.get(wf.WorkflowOperation, operation_id).lifecycle == "abandoned"
+        assert session.get(wf.ServiceLease, lease_id).state == "released"
+        assert session.scalar(
+            select(func.count()).select_from(wf.TaskRunRevocation).where(
+                wf.TaskRunRevocation.generation_id == context["generation_id"],
+                wf.TaskRunRevocation.task_id == task_id,
+                wf.TaskRunRevocation.run_id == run_id,
+            )
+        ) == 1
+
+
+def test_archive_replay_is_effect_free_and_pre_archive_run_stays_revoked_after_unarchive(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    old_run = _next(ids)
+    archive_request = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=old_run)
+        port = _port(session, ids)
+        _start_initial(port, ids, task_id=task_id, run_id=old_run)
+        archived = port.execute(
+            _call(
+                "archive",
+                run_id=old_run,
+                request_id=archive_request,
+                principal="admin",
+                arguments={"task_id": str(task_id), "confirmed": True},
+            )
+        )
+        assert archived.ok is True
+        revocation_count = session.scalar(
+            select(func.count()).select_from(wf.TaskRunRevocation).where(
+                wf.TaskRunRevocation.generation_id == context["generation_id"],
+                wf.TaskRunRevocation.task_id == task_id,
+            )
+        )
+        lease_event_count = session.scalar(select(func.count()).select_from(wf.LeaseEvent))
+
+        replay = port.execute(
+            _call(
+                "archive",
+                run_id=old_run,
+                request_id=archive_request,
+                principal="admin",
+                arguments={"task_id": str(task_id), "confirmed": True},
+            )
+        )
+        assert replay.ok is True
+        assert replay.request_replayed is True
+        assert replay.data == archived.data
+        assert session.scalar(
+            select(func.count()).select_from(wf.TaskRunRevocation).where(
+                wf.TaskRunRevocation.generation_id == context["generation_id"],
+                wf.TaskRunRevocation.task_id == task_id,
+            )
+        ) == revocation_count
+        assert session.scalar(select(func.count()).select_from(wf.LeaseEvent)) == lease_event_count
+
+        with pytest.raises(StaleAuthorityError, match="revoked for this archived task"):
+            port.workflow.repo.assert_task_run_not_revoked(
+                generation_id=context["generation_id"], task_id=task_id, run_id=old_run
+            )
+        fresh_run = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=fresh_run)
+        port.workflow.repo.assert_task_run_not_revoked(
+            generation_id=context["generation_id"], task_id=task_id, run_id=fresh_run
+        )
