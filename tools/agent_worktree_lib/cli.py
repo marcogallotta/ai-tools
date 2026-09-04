@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from .common import AgentWorktreeError, DISPOSITIONS, GitRunner, reject_repository_overrides
+from .common import AgentWorktreeError, DISPOSITIONS, GitRunner, reject_repository_overrides, resolve_agent_id
 from .commit import command_commit
 from .operations import emit
 from .ownership import claim_status, command_claim, require_active_claim
@@ -120,6 +120,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     reject_repository_overrides()
     args = build_parser().parse_args(argv)
+    # Resolve --agent-id from the host's own session env var before it reaches
+    # require_active_claim (called from here, ahead of command_start/adopt/
+    # resume) as well as those command handlers themselves - both read
+    # args.agent_id, and require_active_claim hard-fails on a raw None before
+    # the handlers' own resolve_agent_id() call ever runs.
+    if hasattr(args, "agent_id"):
+        args.agent_id = resolve_agent_id(args.agent_id)
     runner = GitRunner()
     try:
         if args.command == "claim":

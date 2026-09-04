@@ -59,6 +59,35 @@ def test_resolve_agent_id_falls_back_to_host_session_env_when_flag_omitted(monke
     assert resolve_agent_id(None) == "0199abc0-0000-7000-8000-000000000000"
 
 
+def test_omitted_agent_id_resolves_from_session_env_through_the_real_claim_and_start_cli(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """resolve_agent_id() being correct in isolation isn't enough: main() in
+    cli.py calls require_active_claim() with the *raw* args.agent_id before
+    dispatching to command_start, so a first fix that only patched
+    command_start left the omitted-flag path unreachable through the real
+    CLI. Exercise the actual subprocess entrypoint end to end, not the
+    Python function directly, so a regression here can't hide again."""
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    session_id = "01a09999-e20d-7ed0-828d-25f131807259"
+    task, branch = "1013", "agent/omitted-agent-id"
+    h.agent_file(session_id, owning_task_gid=task)
+
+    claim = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", session_id,
+        "--", "python3", str(SCRIPT), "start",
+        "--task", task, "--branch", branch,
+        "--base-ref", "refs/heads/main", "--base", h.current_remote_main(), "--json",
+        env={"CLAUDE_CODE_SESSION_ID": session_id},
+    )
+    data = payload(claim)
+    assert data["worktree"] == str(h.wt(task, branch))
+    assert h.wt(task, branch).is_dir()
+
+    identity = json.loads((h.home / ".local/state/dish/agents" / f"{session_id}.json").read_text(encoding="utf-8"))
+    assert identity["active_worktree"]["task_gid"] == task
+
+
 def test_fresh_start_creates_locked_owned_worktree_and_compatible_agent_reference(h: Harness) -> None:
     agent_path = h.agent_file("claude-1", custom="preserve")
     base = h.current_remote_main()
