@@ -58,17 +58,17 @@ If this specialist is explicitly assigned repository implementation, it also loa
 
 ## Governed decision-context preload
 
-At fresh startup and after compaction/session replacement, before making lifecycle, test-scope, routing, Integration-mechanics, or native-PostgreSQL workflow conclusions, load the current canonical role index and **every standing role contract it lists**, plus [`contributor-base.md`](contributor-base.md), as read-only decision context. This includes Coordinator, Implementation, Review, Integration, Workflow, PostgreSQL / Dark Launch, and this Development Workflow contract. Re-ground from repository authority rather than remembered conversation state.
+At fresh startup and after compaction/session replacement, re-ground from repository authority by loading the current root instructions, canonical role index, mapped current Development Workflow contract, and [`contributor-base.md`](contributor-base.md) / shared operator obligations. Do **not** eagerly load every standing role contract. The retired blanket pattern was to load "every standing role contract it lists"; that pattern is now explicitly prohibited. The canonical bounded-context rule is in [Change discipline](#change-discipline).
 
-Reading another role contract is context only. It does **not** compose or grant that role's Implementation, Code Review, Integration, merge, PostgreSQL-domain, or production authority. The explicit Implementation composition rule above remains the repository-mutation expansion path. A separately assigned Design Review is a read-only mode governed by `operator-provenance.md` + `review.md`; it is never inferred from preload/context and never permits self-review.
+Load another role contract only when the exact current action requires that bounded context. Reading another role contract is context only: it never composes or grants that role's Implementation, Code Review, Integration, merge, PostgreSQL-domain, or production authority. The explicit Implementation composition rule above remains the repository-mutation expansion path. A separately assigned Design Review is a read-only mode governed by `operator-provenance.md` + `review.md`; it is never inferred from a context read and never permits self-review.
 
 Refresh action-specific authority immediately before the relevant decision:
 
-- **test-scope decisions:** read [`../testing.md`](../testing.md) and [`../architecture/testing-boundaries.md`](../architecture/testing-boundaries.md), and apply them together with the preloaded Review evidence semantics and Integration's literal `TESTS TO RUN` / certification semantics;
+- **test-scope decisions:** read [`../testing.md`](../testing.md) and [`../architecture/testing-boundaries.md`](../architecture/testing-boundaries.md); when the decision depends on cross-role evidence or certification semantics, also read the exact relevant sections of [`review.md`](review.md) for Review evidence semantics and [`integration.md`](integration.md) for Integration's literal `TESTS TO RUN` / certification semantics;
 - **manual Review / fix / Integration handoffs:** read [`review.md`](review.md), [`implementation.md`](implementation.md), and [`integration.md`](integration.md);
 - **native-PostgreSQL workflow mechanics:** read [`../testing.md`](../testing.md) and [`../architecture/postgresql-runtime.md`](../architecture/postgresql-runtime.md). These reads inform development mechanics only and do not grant PostgreSQL specialist or runtime authority.
 
-The Project kernel carries the concise startup/re-grounding dependency declaration. This standing contract carries the same requirement for local/replacement agents; neither host may narrow the preload because conversation history happens to contain one visible downstream contract.
+The Project kernel carries the concise startup/re-grounding dependency declaration. This standing contract carries the same bounded requirement for local/replacement agents; neither host may broaden routine grounding into a blanket all-role preload.
 
 At every fresh or replacement Development Workflow session, before ordinary status conclusions, next-work selection, or dispatch, reconcile the maintained lane Ready / In Progress / Review / Blocked state, stale handoffs and Friction inconsistencies, audit governance/latest audit round, and whether an audit is due from cadence/prior yield/engineering movement/material authority or process migration. Surface due-but-unsent, active, incomplete, or returned audits before ordinary dispatch. Reuse maintained Asana and GitHub truth; keep the manual fast path narrow unless drift is detected; do not create a scheduler, second queue, or parallel lifecycle.
 
@@ -303,7 +303,7 @@ Until automation covers a separate guarantee, governed manual/native evidence re
 
 Do not rely on private conversation memory as durable process state.
 
-For local agents, compaction/session restart should trigger role/process re-grounding at the first safe boundary: current root instructions; the canonical role index plus every standing role contract it lists and `contributor-base.md` under the read-only preload above; the mapped role contract; owning Asana task; and active branch/PR identity as applicable. Apply the same action-specific refreshes before the next governed decision.
+For local agents, compaction/session restart should trigger role/process re-grounding at the first safe boundary: current root instructions; the canonical role index; the mapped current role contract; `contributor-base.md` / shared operator obligations; owning Asana task; and active branch/PR identity as applicable. Do not restore unrelated standing role contracts wholesale; apply only the exact action-specific refreshes required before the next governed decision.
 
 For ChatGPT role Projects, keep Project instructions concise and durable while detailed policy remains repository-owned. Project-memory boundaries must not become a second source of development policy.
 
@@ -316,6 +316,13 @@ GitHub HEAD proves source history, not what is running.
 Development Workflow may own tooling that exposes TEST/production release/schema/generation identity to agents, but observed runtime state remains separate evidence. Asana may mirror a verified observation for coordination but is not runtime authority.
 
 ## Change discipline
+
+The following four 90/10 rules are canonical for Development Workflow across execution hosts:
+
+1. **Bounded context.** Routine Development Workflow work loads the current Development Workflow contract, `contributor-base.md` / shared operator obligations, and exact action-triggered context; it does not eagerly load every standing role contract. Read another role contract only when the current action requires it. Reading it never composes authority.
+2. **Current scope ceiling.** Marco's latest explicit outcome, scope, non-goals, and requested depth constrain active work. Historical context may impose applicable hard safety or authority constraints but may not silently enlarge the objective. If correctness requires material expansion, stop only that expansion and name the exact missing primitive or design delta.
+3. **Outcome-first completion.** Proxy or mechanism success does not prove the requested objective. When the requested end-state or observable is directly accessible with current tools and authority, verify it before claiming completion; otherwise state the exact unverified residual.
+4. **Light work stays in the current execution.** Small, reversible, serial mechanics stay in the current execution. Fresh agents or handoffs are reserved for real independence or substantial disjoint parallel work. Required independent Design Review, Code Review, and no-self-review remain unchanged.
 
 Improve the development system using the smallest coherent change around a demonstrated workflow failure or approved design goal. For operator-friction work, preserve one sentence naming the manual/repetitive operator work the proposed slice removes and re-anchor later design/review decisions to that outcome.
 

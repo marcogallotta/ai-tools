@@ -66,22 +66,30 @@ def _install_fake_gh(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
 
-def _write_identity(state_root: Path, repo: Path, agent_id: str = "session-1"):
+def _write_identity(
+    state_root: Path,
+    repo: Path,
+    agent_id: str = "session-1",
+    *,
+    role: str = "workflow",
+    project_gid: str = "1217381674871544",
+    branch: str = "agent/test-reground",
+):
     path = state_root / "agents" / f"{agent_id}.json"
     path.parent.mkdir(parents=True)
     path.write_text(
         json.dumps(
             {
                 "agent_id": agent_id,
-                "role": "workflow",
+                "role": role,
                 "assigned_at": "2026-08-14T00:00:00Z",
                 "workspace": str(repo),
                 "owning_task_gid": "1234567890",
-                "owning_project_gid": "1217381674871544",
+                "owning_project_gid": project_gid,
                 "active_worktree": {
                     "task_gid": "1234567890",
                     "worktree": str(repo),
-                    "branch": "agent/test-reground",
+                    "branch": branch,
                 },
             }
         )
@@ -135,6 +143,86 @@ def test_compaction_reloads_role_asana_and_pr_from_durable_state(
     assert marker["owning_project_gid"] == "1217381674871544"
     assert marker["git"]["branch"] == "agent/test-reground"
     assert marker["pr"]["number"] == 77
+
+def _stub_live_state(agent_reground, monkeypatch, repo: Path):
+    monkeypatch.setattr(agent_reground, "verify_repository", lambda _repo: None)
+    branch = subprocess.run(
+        ["git", "-C", str(repo), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    monkeypatch.setattr(
+        agent_reground,
+        "recover_asana",
+        lambda *_args, **_kwargs: {
+            "task": {"gid": "1234567890", "name": "Owning task"},
+            "project": None,
+            "owning_task_gid": "1234567890",
+            "owning_project_gid": "1217419962189616",
+        },
+    )
+    monkeypatch.setattr(
+        agent_reground,
+        "recover_git_pr",
+        lambda *_args, **_kwargs: {"branch": branch, "local_head": head, "pr": None},
+    )
+    return branch
+
+
+def test_development_workflow_reground_keeps_unrelated_role_contracts_cold(
+    agent_reground, hooks_dir, tmp_path, monkeypatch
+):
+    repo = hooks_dir.parent
+    branch = _stub_live_state(agent_reground, monkeypatch, repo)
+    state_root = tmp_path / "state"
+    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
+    _write_identity(
+        state_root,
+        repo,
+        role="development-workflow",
+        project_gid="1217419962189616",
+        branch=branch,
+    )
+
+    result = agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
+    context = result["hookSpecificOutput"]["additionalContext"]
+
+    assert "CURRENT ROOT CLAUDE.md" in context
+    assert "MAPPED ROLE CONTRACT: dish/docs/agents/development-workflow.md" in context
+    assert "Dish contributor base contract" in context
+    assert "MAPPED ROLE CONTRACT: dish/docs/agents/review.md" not in context
+    assert "MAPPED ROLE CONTRACT: dish/docs/agents/integration.md" not in context
+    assert "READ-ONLY ROLE CONTEXT: dish/docs/agents/review.md" not in context
+    assert "READ-ONLY ROLE CONTEXT: dish/docs/agents/integration.md" not in context
+    assert "READ-ONLY ROLE CONTEXT: dish/docs/agents/contributor-base.md" in context
+
+
+@pytest.mark.parametrize(
+    "role",
+    ["coordinator", "audit", "implementation", "integration", "review", "workflow", "postgresql-dark-launch"],
+)
+def test_non_development_workflow_roles_do_not_gain_new_reground_preload(
+    agent_reground, hooks_dir, tmp_path, monkeypatch, role
+):
+    repo = hooks_dir.parent
+    branch = _stub_live_state(agent_reground, monkeypatch, repo)
+    state_root = tmp_path / "state"
+    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
+    _write_identity(state_root, repo, role=role, branch=branch)
+
+    result = agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
+    context = result["hookSpecificOutput"]["additionalContext"]
+
+    assert f"MAPPED ROLE CONTRACT: dish/docs/agents/{role}.md" in context
+    assert "READ-ONLY ROLE CONTEXT:" not in context
+
 
 def test_compaction_uses_shared_asana_launcher_when_worktree_launcher_is_unavailable(
     agent_reground, tmp_path, monkeypatch
