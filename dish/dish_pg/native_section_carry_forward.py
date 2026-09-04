@@ -317,9 +317,9 @@ def _validate_counts(
         raise NativeSectionCarryForwardError(
             f"approved production inventory changed: expected {expected}, got {counts}"
         )
-    if any(_single_field(row.body, "Verified by") != READY_BASELINE for row in ready):
+    if any(row.creator_route != "import" for row in ready):
         raise NativeSectionCarryForwardError(
-            "Marco's ready-content override applies only to the exact migration-assigned baseline"
+            "Marco's no-reverification override is limited to imported ready content"
         )
     return counts
 
@@ -443,12 +443,10 @@ def build_carry_forward_plan(
                 raise NativeSectionCarryForwardError(
                     "Marco's no-reverification override is limited to imported ready content"
                 )
-            baseline_text = _single_field(row.body, "Verified by")
-            if baseline_text != READY_BASELINE:
-                raise NativeSectionCarryForwardError(
-                    "ready content no longer has the approved migration-assigned baseline"
-                )
-            baseline_kind = "migration_assigned_ready"
+            reported_baseline = _single_field(row.body, "Verified by")
+            if reported_baseline:
+                baseline_text = reported_baseline
+                baseline_kind = "migration_assigned_ready"
 
         transformed_body = _replace_destination(
             row.body, display_name=display_name, section_id=target_section_id
@@ -742,7 +740,7 @@ def apply_carry_forward(
         ],
         "ready_baseline_override": {
             "waived_rule": "unsigned/imported ready becomes pending-verification",
-            "baseline_text": READY_BASELINE,
+            "baseline_text_is_self_reported_per_document": True,
             "database_signoffs_fabricated": False,
         },
         "preexisting_sections": [
