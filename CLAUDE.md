@@ -63,7 +63,7 @@ A reserved `MARCO OVERRIDE — FAST-TRACK PROCESS` block in ChatGPT Project sett
 
 - Before any Asana write, identify the exact target project and freshly read/apply its current repository-owned contract; stale session context is insufficient, project-specific semantics remain distinct, and every state-changing write requires authoritative readback.
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.
-- Agents may use `dish-admin --profile test`; production administration is Marco-only.
+- Agents may use `dish-admin --profile test`; production administration via `dish-admin` is Marco-only. This does not cover the reviewed `dish-pg-migrate --apply` routine migration path (`dish/docs/postgresql-routine-migration.md`), which an assigned agent runs directly under the task's authorization.
 - Do not run raw destructive SQL against production. A reviewed script must be written. Marco's explicit approval is required for genuine exceptions.
 - The production and test services are separate. Never change the public Action route, or alter live dark-launch enablement without Marco's explicit authorization.
 - Dark launch is evidence collection only. SQLite and Asana remain authoritative until an explicit, fenced cutover. Read-only status checks are permitted; operating procedure is in `dish/docs/database-backend-dark-launch-runbook.md`.

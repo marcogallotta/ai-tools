@@ -39,7 +39,7 @@ TEST refuses a production-shaped identity before mutation.
 
 ## PROD
 
-Production mutation authority remains Marco-only. A production apply requires the explicit production environment and an exact human confirmation equal to the expected database name:
+An assigned agent may run the reviewed `--apply` directly against production once Marco has authorized the task — this command is the standing fence (exact source commit derived from the checked-out HEAD, exact expected database name, exclusive evidence journal, fail-closed identity/head checks before and after mutation), not a step that additionally needs Marco to type the confirmation himself. `--confirm-database-name` still must equal `$DISH_PG_EXPECTED_DATABASE_NAME` exactly; the tool refuses otherwise.
 
 ```sh
 SOURCE_COMMIT="$(git rev-parse HEAD)"
@@ -53,7 +53,7 @@ SOURCE_COMMIT="$(git rev-parse HEAD)"
   --confirm-database-name "$DISH_PG_EXPECTED_DATABASE_NAME"
 ```
 
-A fresh production `--check` must still prove the exact expected head before any separately authorized production restart/promotion.
+A fresh production `--check` must still prove the exact expected head before any separately authorized production restart/promotion. Restart/promotion, raw SQL, `dish-admin` production administration, and any non-reviewed production write remain Marco-only.
 
 ## Fail-closed conditions and evidence
 
