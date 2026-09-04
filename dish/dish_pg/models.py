@@ -526,6 +526,114 @@ class ActiveSectionCatalog(Base):
     __table_args__ = (CheckConstraint("catalog_revision > 0", name="positive_revision"),)
 
 
+class NativeCatalogRuntimeAttestation(Base):
+    """The durable native runtime authority root and its successor lineage.
+
+    Revision 1 is the one-way post-cutover authority switch: it is rooted in a
+    generation-bound ``AppliedMigrationEvent`` (PR2's own authority-establishing
+    migration), never in legacy ``AuthorityActivation``.  Successor revisions
+    replace the baseline witness with strict predecessor continuity instead.
+    """
+
+    __tablename__ = "native_catalog_runtime_attestations"
+
+    attestation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("section_catalog_activations.catalog_activation_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    predecessor_attestation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("native_catalog_runtime_attestations.attestation_id", ondelete="RESTRICT"),
+    )
+    baseline_migration_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("applied_migration_events.migration_event_id", ondelete="RESTRICT"),
+    )
+    attestation_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    attestation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("attestation_revision > 0", name="positive_revision"),
+        CheckConstraint("length(attestation_sha256) = 64", name="attestation_hash_length"),
+        CheckConstraint(
+            "(attestation_revision = 1 AND predecessor_attestation_id IS NULL "
+            "AND baseline_migration_event_id IS NOT NULL) OR "
+            "(attestation_revision > 1 AND predecessor_attestation_id IS NOT NULL "
+            "AND baseline_migration_event_id IS NULL)",
+            name="exact_root_or_successor_shape",
+        ),
+        UniqueConstraint(
+            "generation_id", "attestation_revision", name="uq_attestation_generation_revision"
+        ),
+        UniqueConstraint(
+            "generation_id", "catalog_activation_id", name="uq_attestation_generation_activation"
+        ),
+        UniqueConstraint(
+            "attestation_id",
+            "generation_id",
+            "catalog_version_id",
+            "catalog_activation_id",
+            "attestation_revision",
+            name="uq_attestation_exact_identity",
+        ),
+    )
+
+
+class CurrentNativeCatalogRuntime(Base):
+    """The one-way switch pointer: the exact attestation runtime must resolve.
+
+    Its mere presence for a generation means runtime authority has switched to
+    the native catalog; resolution must never fall back to legacy Project/
+    registry/``AuthorityActivation`` authority once this row exists.
+    """
+
+    __tablename__ = "current_native_catalog_runtimes"
+
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    attestation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("native_catalog_runtime_attestations.attestation_id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    attestation_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("attestation_revision > 0", name="positive_revision"),
+        ForeignKeyConstraint(
+            ["attestation_id", "generation_id", "catalog_version_id", "catalog_activation_id", "attestation_revision"],
+            [
+                "native_catalog_runtime_attestations.attestation_id",
+                "native_catalog_runtime_attestations.generation_id",
+                "native_catalog_runtime_attestations.catalog_version_id",
+                "native_catalog_runtime_attestations.catalog_activation_id",
+                "native_catalog_runtime_attestations.attestation_revision",
+            ],
+            name="fk_current_native_runtime_exact_attestation",
+        ),
+    )
+
+
 class SectionRegistryVersion(Base):
     __tablename__ = "section_registry_versions"
 
