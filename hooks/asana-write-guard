@@ -36,10 +36,10 @@ import shlex
 import sys
 from pathlib import Path
 
-# Moving a task needs separate destination-project proof.  This hook receives only
-# the command and the active task identity, so it cannot safely establish that
-# proof; keep moves behind the normal approval prompt.
-OWN_TASK_AUTO_ALLOW = {"set-notes", "append", "replace", "rename"}
+# `move <task> <section>` (per the CLI's own help text) only ever moves a
+# task to a section within its current project - there's no cross-project
+# form to guard against, so it's a same-task write like the others.
+OWN_TASK_AUTO_ALLOW = {"set-notes", "append", "replace", "rename", "move"}
 
 # `add_comment` has no single-op CLI subcommand (only inside batch-apply,
 # which requires >=3 operations), so posting one comment on the agent's own

@@ -13,8 +13,12 @@ deny() {
 
 first=$(printf '%s' "$cmd" | head -n1)
 
-# Redirect to file: > or >> (not inside a quoted string — best-effort)
-if printf '%s' "$first" | grep -Eq '[^<]>[>]?[[:space:]]*/'; then
+# Redirect to file: > or >> (not inside a quoted string — best-effort).
+# /dev/null is exempt: discarding stdout/stderr (e.g. `grep ... 2>/dev/null`
+# on an otherwise read-only command) writes nothing and isn't a Write-tool
+# bypass.
+if printf '%s' "$first" | grep -Eq '[^<]>[>]?[[:space:]]*/' \
+  && ! printf '%s' "$first" | grep -Eq '[^<]>[>]?[[:space:]]*/dev/null\b'; then
   deny "BLOCKED: shell redirect to file. Use the Write tool instead."
 fi
 if printf '%s' "$first" | grep -Eq '[^<]>[>]?[[:space:]]*[^&[:space:]/]'; then
