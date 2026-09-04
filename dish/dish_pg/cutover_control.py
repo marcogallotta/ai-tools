@@ -32,6 +32,7 @@ from .release_validation import (
     validate_writer_fence_observation,
     worker_readiness_report_sha256,
 )
+from .workflow import WorkflowAuthorityError, WorkflowAuthorityService
 from .release_evidence import (
     CUTOVER_REHEARSAL_KIND,
     ReleaseAuthorityError,
@@ -1183,6 +1184,8 @@ class CutoverControlAuthority:
                 "first-admission start kind must be initial, change, or verification"
             )
         _require_nonblank(arguments.get("agent"), "first-admission agent")
+        if arguments.get("agent") not in {"claude", "gpt", "codex"}:
+            raise ReleaseAuthorityError("first-admission agent is unsupported")
         return None
 
     def plan_first_admission(
@@ -1229,14 +1232,6 @@ class CutoverControlAuthority:
         if principal_class not in {"agent", "admin", "verification", "service"}:
             raise ReleaseAuthorityError("first-admission principal class is unsupported")
         candidate = self._candidate(run.candidate_id)
-        service_run = self.session.get(wf.ServiceRun, run_id)
-        if (
-            service_run is None
-            or service_run.generation_id != candidate.generation_id
-            or service_run.owner_id != normalized_owner
-            or service_run.status != "active"
-        ):
-            raise ReleaseAuthorityError("first-admission service run is not active for the exact owner")
         operation_id = self._validate_first_admission_targets(
             candidate=candidate,
             command_name=normalized_command,
@@ -1244,6 +1239,16 @@ class CutoverControlAuthority:
             arguments=arguments,
             task_id=task_id,
         )
+        try:
+            WorkflowAuthorityService(self.session).ensure_initial_cutover_run(
+                generation_id=candidate.generation_id,
+                run_id=run_id,
+                owner_id=normalized_owner,
+                agent=str(arguments["agent"]),
+                registered_at=recorded_at,
+            )
+        except WorkflowAuthorityError as exc:
+            raise ReleaseAuthorityError(str(exc)) from exc
         expected_projection_events = 0
         canonical_request_payload = {
             "command": normalized_command,
