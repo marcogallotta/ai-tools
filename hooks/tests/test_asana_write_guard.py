@@ -258,14 +258,21 @@ class TestMissingCommand:
         assert out.strip() == ""
 
 
-def _install_agent_identity(monkeypatch, tmp_path, task_gid="12345", agent_id="session-1"):
+def _install_agent_identity(monkeypatch, tmp_path, task_gid="12345", agent_id="session-1", lineage_layout=False):
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     home = tmp_path / "home"
     root = home / ".local/state/dish"
     worktree = tmp_path / "owned-worktree"
     worktree.mkdir()
     branch = "agent/own-task"
-    state_path = root / "worktrees" / f"{task_gid}.json"
+    # Claim-gated `start` writes state under a per-task subdirectory
+    # (worktrees/<task_gid>/<branch-digest>-<lineage_id>.json), not the
+    # legacy flat worktrees/<task_gid>.json - exercise both, since the
+    # ownership scan below has to recurse into the former.
+    if lineage_layout:
+        state_path = root / "worktrees" / task_gid / "lineage-abc123.json"
+    else:
+        state_path = root / "worktrees" / f"{task_gid}.json"
     state_path.parent.mkdir(parents=True)
     state_path.write_text(json.dumps({
         "task_gid": task_gid,
@@ -320,6 +327,13 @@ class TestOwnTaskAutoAllow:
     ):
         agent_id, task_gid = _install_agent_identity(monkeypatch, tmp_path)
         decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_explicitly_allowed(decision, f"active task {task_gid}")
+
+    def test_routine_write_is_allowed_under_the_current_lineage_state_layout(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, task_gid = _install_agent_identity(monkeypatch, tmp_path, lineage_layout=True)
+        decision = run_hook_as_agent(asana_write_guard, "asana rename 12345 'new name'", agent_id, monkeypatch, capsys)
         assert_explicitly_allowed(decision, f"active task {task_gid}")
 
     def test_same_task_move_remains_approval_gated_without_destination_proof(

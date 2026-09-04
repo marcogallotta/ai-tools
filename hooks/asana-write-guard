@@ -159,7 +159,14 @@ def _active_own_task(payload):
     worktree_root = root / "worktrees"
     if not worktree_root.is_dir():
         return None
-    for candidate in worktree_root.glob("*.json"):
+    # Claim-gated `start` writes state into a per-task subdirectory
+    # (worktrees/<task_gid>/<branch-digest>-<lineage_id>.json), not the
+    # legacy flat worktrees/<task_gid>.json - glob("*.json") alone only ever
+    # matched the legacy layout, so this always found zero of the agent's
+    # own active worktrees for any currently-claimed task. Recurse to catch
+    # both; claim records living under worktrees/claims/ have no "lifecycle"
+    # key and are filtered out by the check below like any other mismatch.
+    for candidate in worktree_root.glob("**/*.json"):
         other = _read_object(candidate)
         other_owner = other.get("owner") if isinstance(other, dict) else None
         if (
