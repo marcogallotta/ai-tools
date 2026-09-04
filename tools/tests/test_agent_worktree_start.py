@@ -4,11 +4,15 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from agent_worktree_support import GIT, SCRIPT, Harness, assert_error, git, git_out, h, payload, run
+from agent_worktree_support import GIT, SCRIPT, TOOLS_DIR, Harness, assert_error, git, git_out, h, payload, run
+
+sys.path.insert(0, str(TOOLS_DIR))
+from agent_worktree_lib.common import resolve_agent_id  # noqa: E402
 
 
 def _real_candidate(h: Harness, task: str, branch: str) -> Path:
@@ -36,6 +40,24 @@ def _real_candidate(h: Harness, task: str, branch: str) -> Path:
     record = json.loads(claim_files[0].read_text(encoding="utf-8"))
     lineage_id = str(record["lineage_id"])
     return h.worktree_root / task / f"{hashlib.sha256(branch.encode('utf-8')).hexdigest()[:24]}-{lineage_id}"
+
+def test_resolve_agent_id_falls_back_to_host_session_env_when_flag_omitted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+    assert resolve_agent_id(None) is None
+    assert resolve_agent_id("explicit-agent") == "explicit-agent"
+
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "d22933b3-a839-4fdf-ad6b-74fa8552332e")
+    assert resolve_agent_id(None) == "d22933b3-a839-4fdf-ad6b-74fa8552332e"
+    # An explicit --agent-id always wins over the ambient session env var.
+    assert resolve_agent_id("explicit-agent") == "explicit-agent"
+
+    # Codex's own thread id takes priority when both hosts' env vars are set
+    # (e.g. a Codex session shelling out through a Claude-managed sandbox).
+    monkeypatch.setenv("CODEX_THREAD_ID", "0199abc0-0000-7000-8000-000000000000")
+    assert resolve_agent_id(None) == "0199abc0-0000-7000-8000-000000000000"
+
 
 def test_fresh_start_creates_locked_owned_worktree_and_compatible_agent_reference(h: Harness) -> None:
     agent_path = h.agent_file("claude-1", custom="preserve")

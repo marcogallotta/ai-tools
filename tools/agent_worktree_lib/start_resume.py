@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from .common import (AgentWorktreeError, GitRunner, fail, now_utc, require_agent_id, require_full_sha, require_task_gid, worktree_records, find_worktree_record)
+from .common import (AgentWorktreeError, GitRunner, fail, now_utc, resolve_agent_id, require_full_sha, require_task_gid, worktree_records, find_worktree_record)
 from .operations import (
     branch_exists, candidate_path_is_safe, payload_from_state, remote_and_target_observation,
     owner_agent_id, remote_ref_sha, resolve_repository_from_state, update_owner, validate_base_ref,
@@ -265,7 +265,7 @@ def _adopt_remote_branch_locked(
 
 def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
-    agent_id = require_agent_id(args.agent_id)
+    agent_id = resolve_agent_id(args.agent_id)
     base_sha = require_full_sha(args.base, "supplied base SHA")
     expected_head = require_full_sha(args.expected_head, "expected remote branch HEAD")
     validate_agent_state(agent_id)
@@ -308,7 +308,7 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
 
 def command_start(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
-    agent_id = require_agent_id(args.agent_id)
+    agent_id = resolve_agent_id(args.agent_id)
     base_sha = require_full_sha(args.base, "supplied base SHA")
     validate_agent_state(agent_id)
     with TaskLock(task_gid):
@@ -437,7 +437,7 @@ def resume_locked(
 
 def command_resume(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
-    agent_id = require_agent_id(args.agent_id)
+    agent_id = resolve_agent_id(args.agent_id)
     if args.takeover and agent_id is None:
         fail("TAKEOVER_REQUIRES_AGENT", "--takeover requires --agent-id")
     with TaskLock(task_gid):

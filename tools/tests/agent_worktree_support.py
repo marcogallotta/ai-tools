@@ -136,7 +136,7 @@ class Harness:
                 "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE",
                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES",
                 "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_EXEC_PATH", "GIT_EXTERNAL_DIFF", "GIT_SHALLOW_FILE",
-                "GIT_IMPLICIT_WORK_TREE",
+                "GIT_IMPLICIT_WORK_TREE", "CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID",
             } or key.startswith("GIT_CONFIG_") or key.startswith("DISH_AGENT_"):
                 self.env.pop(key, None)
         self.env.update(

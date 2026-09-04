@@ -70,6 +70,26 @@ def require_agent_id(value: str | None) -> str | None:
     return value
 
 
+# Env vars each host exposes to its own Bash subprocesses, carrying the same
+# session identifier the host's own PreToolUse hooks receive as payload
+# `session_id`. Guard-hook auto-allow logic (hooks/asana-write-guard,
+# hooks/agent-reground) matches identity-file agent_id against that live
+# payload value, so an --agent-id typed by hand (or omitted) here almost
+# never matches it in practice - resolving from the same env var the hook
+# itself will see is what makes the two sides agree.
+AGENT_SESSION_ENV_VARS = ("CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID")
+
+
+def resolve_agent_id(value: str | None) -> str | None:
+    if value is None:
+        for env_var in AGENT_SESSION_ENV_VARS:
+            found = os.environ.get(env_var)
+            if found:
+                value = found
+                break
+    return require_agent_id(value)
+
+
 def require_full_sha(value: str, label: str) -> str:
     if not FULL_SHA_RE.fullmatch(value):
         fail("INVALID_SHA", f"{label} must be an exact 40-character lowercase Git commit SHA")
