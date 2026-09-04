@@ -55,12 +55,9 @@ def classify_registered_v2_project(
         fail("MUTATION_TASK_AUTHORITY_INVALID", f"registered project {gid} identity is unknown or contradictory: {live_name!r}")
 
     missing = sorted(V2_LIFECYCLE_SECTIONS - section_names)
-    legacy_only = sorted({"Backlog", "In Progress", "Review / Integration", "Blocked / Decision"} & section_names)
-    if missing or legacy_only:
-        details = []
-        if missing:
-            details.append("missing " + ", ".join(missing))
-        if legacy_only:
-            details.append("legacy-only " + ", ".join(legacy_only))
-        fail("MUTATION_TASK_MODE_CONTRADICTORY", f"registered project {gid} has contradictory V2 sections: {'; '.join(details)}")
+    if missing:
+        fail(
+            "MUTATION_TASK_MODE_CONTRADICTORY",
+            f"registered project {gid} is missing required V2 sections: {', '.join(missing)}",
+        )
     return RegisteredV2Project(gid=gid, base_name=base_name, live_name=live_name)

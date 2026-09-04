@@ -63,10 +63,12 @@ For a registered row's base name, the live project name is one of exactly three 
 
 - **Live name equals the base name, with no version suffix** — **LEGACY**. Zero governed V2
   mutation.
-- **Live name equals `<base name> v2`** — **V2**, subject to the section-signature check below: all
-  nine V2 lifecycle sections must exist and no legacy-only section may remain. A match is full V2
-  mutation authority; a mismatch is **CONTRADICTORY** — zero mutation, report the exact mismatch
-  without repairing, renaming, or guessing.
+- **Live name equals `<base name> v2`** — **V2**, subject to the required-section check below: all
+  nine V2 lifecycle sections must exist. Additional sections are ignored for V2 admission and never
+  make the project contradictory by themselves; Asana may retain platform-created or historical
+  sections that are not lifecycle authority. Missing required lifecycle sections are
+  **CONTRADICTORY** — zero mutation, report the exact missing sections without repairing, renaming,
+  or guessing.
 - **Live name equals `<base name> v` followed by anything other than `2`** (`v3`, `v4`, or any
   other value) — **STOP**. Zero governed mutation. Explicitly flag it to Marco and ask what to do.
   Do not guess the new generation's rules and do not fall back to applying V2 rules to it.
