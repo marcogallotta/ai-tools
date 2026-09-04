@@ -27,6 +27,7 @@ REGISTERED_V2_PROJECTS: Mapping[str, str] = {
     "1217419962189616": "Dish — Development Workflow",
     "1217404747383060": "Dish — PostgreSQL / Dark Launch",
     "1217382473444945": "Dish — Coordinator",
+    "1217381674871544": "Dish — Workflow",
 }
 
 
