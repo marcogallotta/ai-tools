@@ -1,6 +1,6 @@
 # PostgreSQL cutover
 
-Status: approved cutover policy; production authority has not moved to PostgreSQL.
+Status: cutover complete; PostgreSQL is production authority and the transfer is irreversible.
 
 This document is the sole product and sequencing authority for transferring Dish from the current
 SQLite/Asana authority to PostgreSQL. It defines decisions, gates, and ordering. It does not contain
@@ -12,11 +12,15 @@ runbooks listed under [Document routing](#document-routing).
 
 ## Current authority
 
-- Asana owns live task content, placement, and completion.
-- Service-owned SQLite owns workflow, requests, leases, recovery, authorization, and audit.
+- PostgreSQL owns authoritative reads and mutations for the active generation.
 - `dish-service` is the live mutation authority; CLI, admin, frontend, and GPT Actions are transports.
-- PostgreSQL is a non-authoritative import, dark-launch, and cutover target until explicit activation.
-- Dark-launch execution never authorizes external effects or transfers authority.
+- Asana and service-owned SQLite are no longer authority. Their content, placement, completion,
+  workflow, and audit history remain read-only forensic evidence.
+- The transfer is irreversible: SQLite/Asana cannot silently become authority again, and recovery
+  uses PostgreSQL restore or forward repair.
+- Post-cutover obligations are in [After cutover](#after-cutover). The sections below record the
+  decisions, gates, and ordering the completed transfer was executed under, and remain the
+  authority for interpreting the evidence it produced.
 
 Current ownership and transaction details live in the architecture knowledge base. This document
 does not duplicate them.
