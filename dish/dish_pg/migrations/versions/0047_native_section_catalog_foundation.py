@@ -5,8 +5,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import context, op
 
-revision = "0046_native_section_catalog_foundation"
-down_revision = "0045_cook_log_entries"
+revision = "0047_native_section_catalog_foundation"
+down_revision = "0046_task_run_revocations"
 branch_labels = None
 depends_on = None
 
@@ -21,7 +21,7 @@ def _online_preflight() -> None:
     ).first()
     if duplicate is not None:
         raise RuntimeError(
-            "0046_native_section_catalog_foundation cannot remove Project scope from "
+            "0047_native_section_catalog_foundation cannot remove Project scope from "
             f"duplicate Section name {duplicate[0]!r}"
         )
     mismatch = bind.exec_driver_sql(
@@ -32,7 +32,7 @@ def _online_preflight() -> None:
     ).first()
     if mismatch is not None:
         raise RuntimeError(
-            "0046_native_section_catalog_foundation requires contiguous legacy registry "
+            "0047_native_section_catalog_foundation requires contiguous legacy registry "
             f"version/activation identity for generation {mismatch[0]}"
         )
 
@@ -566,7 +566,7 @@ def _downgrade_guard() -> None:
                             OR g.lifecycle IS DISTINCT FROM s.lifecycle
                             OR g.retired_at IS DISTINCT FROM s.retired_at
                     ) THEN
-                        RAISE EXCEPTION '0046 downgrade refuses native Section/catalog changes';
+                        RAISE EXCEPTION '0047 downgrade refuses native Section/catalog changes';
                     END IF;
                 END
                 $$
@@ -591,7 +591,7 @@ def _downgrade_guard() -> None:
         f"WHERE {section_drift} LIMIT 1"
     ).first()
     if changed is not None:
-        raise RuntimeError("0046 downgrade refuses native Section/catalog changes")
+        raise RuntimeError("0047 downgrade refuses native Section/catalog changes")
 
 
 def downgrade() -> None:
