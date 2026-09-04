@@ -166,6 +166,7 @@ COMMAND_DEFINITIONS = {
         CommandDefinition("reopen", "R", "admin", True, True, True, workflow_action="reopen"),
         CommandDefinition("supply-evidence", "R", "admin", True, True, True, workflow_action="supply-evidence"),
         CommandDefinition("record-human-decision", "R", "admin", True, True, True, workflow_action="record-human-decision"),
+        CommandDefinition("resolve-legacy-attention", "R", "admin", True, False, False),
         CommandDefinition("resolved", "R", "admin", True, True, True, workflow_action="resolved"),
         CommandDefinition("review-reject", "R", "admin", True, True, True),
         CommandDefinition("authorize-governed-change", "L", "admin", True, True, False),

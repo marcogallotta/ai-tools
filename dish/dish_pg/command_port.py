@@ -27,6 +27,7 @@ from .command_effect_runtime import (
     external_projection_required,
     record_projection_intent,
 )
+from .legacy_history_import import RESOLUTION_EVENT, unresolved_legacy_attention
 from .document_authority import (
     CanonicalDocumentError,
     destination_gid,
@@ -735,6 +736,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "reopen": self._reopen,
             "supply-evidence": self._supply_evidence,
             "record-human-decision": self._record_human_decision,
+            "resolve-legacy-attention": self._resolve_legacy_attention,
             "resolved": self._resolved,
             "authorize-governed-change": self._authorize,
             "revise-section-registry": self._revise_section_registry,
@@ -747,6 +749,17 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         if handler is None:
             raise CommandRuleError("COMMAND_NOT_PORTED", "retained command has no PostgreSQL handler")
         return handler(call, generation, binding, execution, task, operation)
+
+    def _resolve_legacy_attention(self, call, generation, _binding, execution, _task, _operation):
+        attention_id, resolution = str(call.arguments.get("attention_id") or "").strip(), str(call.arguments.get("resolution") or "").strip()
+        if not resolution or len(resolution) > 4000:
+            raise CommandRuleError("INVALID_ARGUMENT", "resolution must contain 1 to 4000 characters", http_status=400)
+        item = next((row for row in unresolved_legacy_attention(self.session, generation.generation_id) if row["attention_id"] == attention_id), None)
+        if item is None:
+            raise CommandRuleError("NOT_FOUND", "unresolved imported legacy attention was not found", http_status=404)
+        imported = self.session.get(wf.GovernedAuditEvent, uuid.UUID(attention_id))
+        self.session.add(wf.GovernedAuditEvent(audit_event_id=self.uuid_factory(), generation_id=generation.generation_id, request_id=call.request_id, command_execution_id=execution.execution_id, task_id=imported.task_id, operation_id=None, event_type=RESOLUTION_EVENT, actor=f"{call.owner_id}:{call.run_id}", payload={"attention_id": attention_id, "source_snapshot_sha256": imported.payload["source_snapshot_sha256"], "resolution": resolution}, occurred_at=call.now))
+        return {"attention_id": attention_id, "resolved": True, "dish_id": item["dish_id"], "next_step": "Start a fresh native PostgreSQL operation for this Dish if work should continue."}
 
     def _record_cook_log(
         self, call, generation, _binding, execution, task, _operation

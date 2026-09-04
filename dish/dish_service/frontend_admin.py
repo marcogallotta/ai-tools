@@ -60,6 +60,7 @@ class FrontendAdminService:
         current_human_review_by_task = {}
         for human_review in facts.human_reviews:
             current_human_review_by_task.setdefault(human_review.task_id, human_review)
+        legacy_by_task = {str(item["task_id"]): item for item in facts.legacy_attentions}
         latest_by_task: dict[object, datetime] = {}
         for event in facts.events:
             latest_by_task.setdefault(event.task_id, event.occurred_at)
@@ -74,6 +75,11 @@ class FrontendAdminService:
         verification_count = 0
         for card in facts.cards:
             codes = self._attention_codes(card)
+            legacy = legacy_by_task.get(str(card.task_id))
+            if legacy is not None:
+                code = "verification_attention" if legacy.get("queue_group") == "human_review" else "recovery_required"
+                if code not in codes:
+                    codes.append(code)
             has_active_operation = card.operation_kind is not None or card.operation_phase is not None
             workflow_code = self._workflow_queue_code(card, section_roles.get(card.section_id))
             if workflow_code is not None:

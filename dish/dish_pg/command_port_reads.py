@@ -20,6 +20,7 @@ from .command_port_common import (
     json_safe as _json_safe,
     task_reference_from_dish as _task_reference_from_dish,
 )
+from .legacy_history_import import unresolved_legacy_attention
 from .document_authority import (
     CanonicalDocumentError,
     parse_canonical_document,
@@ -1076,18 +1077,22 @@ class PostgresCommandReadMixin:
             category_counts[category] += 1
             items.append(item)
 
+        legacy_items = unresolved_legacy_attention(self.session, generation.generation_id)
+        for item in legacy_items:
+            item["operation_id"] = None; category_counts[str(item["category"])] += 1
+        items.extend(legacy_items)
         items.sort(
             key=lambda item: (
                 group_order[str(item["queue_group"])],
                 str(item.get("task_title") or item["dish_id"]).casefold(),
-                str(item["operation_id"]),
+                str(item.get("operation_id") or item.get("source_operation_id") or ""),
             )
         )
         needs_you_count = sum(bool(item["needs_you"]) for item in items)
         system_count = sum(item["queue_group"] == "system" for item in items)
-        active_task_count = len({operation.task_id for operation in operations})
+        active_task_count = len({operation.task_id for operation in operations} | {uuid.UUID(item["task_id"]) for item in legacy_items})
         return {
-            "checked_count": len(operations),
+            "checked_count": len(operations) + len(legacy_items),
             "active_dish_count": active_task_count,
             "live_inspection_count": 0,
             "issue_count": len(items),
@@ -1100,7 +1105,7 @@ class PostgresCommandReadMixin:
             "attention_items": items,
             "read_only": True,
             "source": "postgresql_authority",
-            "message": "Queue built exclusively from canonical PostgreSQL workflow state.",
+            "message": "Queue built from canonical PostgreSQL workflow and imported audit attention.",
         }
 
     def _holds(self) -> Mapping[str, Any]:

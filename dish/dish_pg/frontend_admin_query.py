@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from dish_pg import stage3_models as workflow
 from dish_pg.frontend_board_query import BoardReadUnavailable, CardFact, FrontendBoardQuery, SectionFact
+from dish_pg.legacy_history_import import unresolved_legacy_attention
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,7 @@ class FrontendAdminFacts:
     events: tuple[AdminAuditFact, ...]
     evaluation_time: object
     human_reviews: tuple[AdminHumanReviewFact, ...] = ()
+    legacy_attentions: tuple[dict[str, object], ...] = ()
 
 
 class FrontendAdminQuery:
@@ -130,4 +132,5 @@ class FrontendAdminQuery:
             events=events,
             human_reviews=human_reviews,
             evaluation_time=context.evaluation_time,
+            legacy_attentions=tuple(unresolved_legacy_attention(self.session, context.generation_id)),
         )
