@@ -30,6 +30,15 @@ All roles also apply the shared [`Dish operator / orchestration control plane`](
 | Workflow specialist, workflow agent | [`workflow.md`](workflow.md) |
 | PostgreSQL specialist, dark-launch specialist, dark-launch agent, PostgreSQL agent | [`postgresql-dark-launch.md`](postgresql-dark-launch.md) |
 
+## Owning-task scope authority
+
+The current authoritative scope of the owning task is binding on every agent and lifecycle phase.
+Read and obey any scope, in-scope, out-of-scope, exclusion, boundary, scope-lock, or equivalent
+language, applying later explicit amendments or supersessions under existing chronological
+authority. Review may not add or implement out-of-scope requirements, and BLOCK-to-fix continuation
+remains inside the same current scope. If required work falls outside it, stop before that mutation
+and return the proposed scope expansion to Marco.
+
 ## Shared human-facing workflow rules
 
 Anything shown directly to Marco must use plain English. State what happened, what is happening, what is blocked, and what happens next without relying on internal codenames, task-family shorthand, implementation-phase labels, or repository/process jargon. Technical identifiers such as task IDs, branch names, PR numbers, and exact SHAs may be shown when useful, but pair them with their plain-language meaning. Internal agent-to-agent and machine/audit records may stay technical unless Marco asks to see the internal form.
