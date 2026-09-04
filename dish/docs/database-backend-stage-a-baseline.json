@@ -74,7 +74,7 @@
     "live Asana governed projects/sections/tasks"
   ],
   "governing_source_sha256": {
-    "dish_pg/release.py": "ca4df534ac859891506fa73cf6cc2533735d6ad868a9ef343b14a664088704f9",
+    "dish_pg/release.py": "8b17b2d969727ce8f181aac51f2d2731fc847531ba882367b7024bb039c5d78c",
     "dish_service/admin_cli.py": "ed5199d6cc8e54d5de5f7bce70adae11b96efc4928b54af201b185e3684efe51",
     "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
@@ -93,7 +93,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Reconcile reviewed cooked, queue, and cook-log PostgreSQL command contracts",
+  "last_rebaseline_reason": "Add native Section/catalog definition foundation",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
@@ -101,7 +101,7 @@
     "The evidence characterizes immutable source commit 7dff85921f005c62929c46d347a7ab29ae463480; this evidence-only commit follows it and does not alter characterized runtime source."
   ],
   "production_change_epoch": "2026-08-05",
-  "schema_head": "0045_cook_log_entries",
+  "schema_head": "0046_native_section_catalog_foundation",
   "source_commit": "7dff85921f005c62929c46d347a7ab29ae463480",
   "source_commit_time": "2026-08-05T11:09:00+00:00",
   "source_only_commands": [

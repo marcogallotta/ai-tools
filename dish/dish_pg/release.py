@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0045_cook_log_entries"
+ALEMBIC_HEAD = "0046_native_section_catalog_foundation"
 
 
 class ReleaseCandidateService(

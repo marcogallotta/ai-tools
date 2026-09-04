@@ -660,6 +660,270 @@ class ActiveReleaseContract:
     honest_binding: models.HonestContractBinding
 
 
+@dataclass(frozen=True)
+class ActiveCatalogContract:
+    generation: models.AuthorityGeneration
+    active_catalog: models.ActiveSectionCatalog
+    catalog_version: models.SectionCatalogVersion
+    catalog_activation: models.SectionCatalogActivation
+    honest_binding: models.HonestContractBinding
+    entries: tuple[models.SectionCatalogEntry, ...]
+
+
+class CatalogRepository:
+    """Native Section/catalog definition authority.
+
+    This repository deliberately does not switch runtime authority.  PR2 owns
+    the later runtime attestation/current-pointer seam.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def add_section(self, row: models.Section) -> None:
+        if not row.logical_name.strip():
+            raise CoreAuthorityError("native Section logical name must be nonblank")
+        self.session.add(row)
+        self.session.flush()
+
+    def install_catalog_revision(
+        self,
+        *,
+        version: models.SectionCatalogVersion,
+        entries: Iterable[models.SectionCatalogEntry],
+        activation: models.SectionCatalogActivation,
+        expected_catalog_version_id: uuid.UUID | None,
+        expected_catalog_activation_id: uuid.UUID | None,
+        expected_catalog_revision: int | None,
+    ) -> ActiveCatalogContract:
+        """Install one exact next catalog revision under generation/pointer locks."""
+
+        generation = self.session.scalar(
+            select(models.AuthorityGeneration)
+            .where(models.AuthorityGeneration.generation_id == version.generation_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if generation is None or generation.status != "active":
+            raise CoreAuthorityError("native catalog requires the active authority generation")
+        binding = self.session.get(models.HonestContractBinding, version.contract_binding_id)
+        if (
+            binding is None
+            or binding.binding_kind != "release"
+            or binding.dish_release != generation.dish_release
+        ):
+            raise CoreAuthorityError("native catalog requires the exact Honest release binding")
+
+        current = self.session.scalar(
+            select(models.ActiveSectionCatalog)
+            .where(models.ActiveSectionCatalog.generation_id == version.generation_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        expected = (
+            expected_catalog_version_id,
+            expected_catalog_activation_id,
+            expected_catalog_revision,
+        )
+        actual = (
+            (None, None, None)
+            if current is None
+            else (
+                current.catalog_version_id,
+                current.catalog_activation_id,
+                current.catalog_revision,
+            )
+        )
+        if actual != expected:
+            raise CoreAuthorityError("native catalog compare-and-swap input is stale")
+
+        next_revision = 1 if current is None else current.catalog_revision + 1
+        if version.version_number != next_revision:
+            raise CoreAuthorityError("native catalog version is not contiguous")
+        if (
+            activation.generation_id != version.generation_id
+            or activation.catalog_version_id != version.catalog_version_id
+            or activation.catalog_revision != next_revision
+        ):
+            raise CoreAuthorityError("native catalog activation identity is inconsistent")
+        self._validate_activation_source(version=version, activation=activation)
+
+        catalog_entries = tuple(entries)
+        if not catalog_entries:
+            raise CoreAuthorityError("native catalog must contain at least one Section")
+        seen_sections: set[uuid.UUID] = set()
+        seen_ordinals: set[int] = set()
+        seen_roles: set[str] = set()
+        for entry in catalog_entries:
+            if entry.catalog_version_id != version.catalog_version_id:
+                raise CoreAuthorityError("native catalog entry belongs to another version")
+            if not entry.display_name.strip() or not entry.workflow_role.strip():
+                raise CoreAuthorityError("native catalog entry labels and roles must be nonblank")
+            if (
+                entry.section_id in seen_sections
+                or entry.ordinal in seen_ordinals
+                or entry.workflow_role in seen_roles
+            ):
+                raise CoreAuthorityError(
+                    "native catalog entries require unique Sections, ordinals, and roles"
+                )
+            section = self.session.get(models.Section, entry.section_id)
+            if section is None or section.lifecycle != "active":
+                raise CoreAuthorityError("native catalog entry requires an active Section")
+            seen_sections.add(entry.section_id)
+            seen_ordinals.add(entry.ordinal)
+            seen_roles.add(entry.workflow_role)
+
+        self.session.add(version)
+        self.session.flush()
+        self.session.add_all(catalog_entries)
+        self.session.flush()
+        self.session.add(activation)
+        self.session.flush()
+
+        now = activation.activated_at
+        if current is None:
+            self.session.add(
+                models.ActiveSectionCatalog(
+                    generation_id=version.generation_id,
+                    catalog_version_id=version.catalog_version_id,
+                    catalog_activation_id=activation.catalog_activation_id,
+                    catalog_revision=next_revision,
+                    updated_at=now,
+                )
+            )
+        else:
+            changed = self.session.execute(
+                update(models.ActiveSectionCatalog)
+                .where(
+                    models.ActiveSectionCatalog.generation_id == version.generation_id,
+                    models.ActiveSectionCatalog.catalog_version_id
+                    == expected_catalog_version_id,
+                    models.ActiveSectionCatalog.catalog_activation_id
+                    == expected_catalog_activation_id,
+                    models.ActiveSectionCatalog.catalog_revision
+                    == expected_catalog_revision,
+                )
+                .values(
+                    catalog_version_id=version.catalog_version_id,
+                    catalog_activation_id=activation.catalog_activation_id,
+                    catalog_revision=next_revision,
+                    updated_at=now,
+                )
+            )
+            if changed.rowcount != 1:
+                raise CoreAuthorityError("native catalog compare-and-swap lost its race")
+        self.session.flush()
+        return self.active_catalog_contract(version.generation_id)
+
+    def _validate_activation_source(
+        self,
+        *,
+        version: models.SectionCatalogVersion,
+        activation: models.SectionCatalogActivation,
+    ) -> None:
+        if activation.activation_route == "transition":
+            if version.source_registry_version_id is None:
+                raise CoreAuthorityError("transition catalog requires its source registry")
+            source = self.session.get(
+                models.SectionRegistryVersion, version.source_registry_version_id
+            )
+            if (
+                source is None
+                or source.generation_id != version.generation_id
+                or source.import_run_id != activation.import_run_id
+            ):
+                raise CoreAuthorityError("transition catalog provenance is inconsistent")
+            return
+        if version.source_registry_version_id is not None or version.transform_sha256 is not None:
+            raise CoreAuthorityError("native catalog revision cannot claim transition provenance")
+        if activation.activation_route == "command_execution":
+            execution = self.session.get(wf.CommandExecution, activation.command_execution_id)
+            if (
+                execution is None
+                or execution.generation_id != version.generation_id
+                or execution.contract_binding_id != version.contract_binding_id
+                or execution.status != "claimed"
+            ):
+                raise CoreAuthorityError("native catalog command provenance is inconsistent")
+        elif activation.activation_route != "recovery":
+            raise CoreAuthorityError("unknown native catalog activation route")
+
+    def active_catalog_contract(self, generation_id: uuid.UUID) -> ActiveCatalogContract:
+        generation = self.session.get(models.AuthorityGeneration, generation_id)
+        if generation is None or generation.status != "active":
+            raise CoreAuthorityError("native catalog requires the active authority generation")
+        active = self.session.get(models.ActiveSectionCatalog, generation_id)
+        if active is None:
+            raise CoreAuthorityError("generation has no active native Section catalog")
+        version = self.session.get(models.SectionCatalogVersion, active.catalog_version_id)
+        activation = self.session.get(
+            models.SectionCatalogActivation, active.catalog_activation_id
+        )
+        if (
+            version is None
+            or activation is None
+            or version.generation_id != generation_id
+            or version.version_number != active.catalog_revision
+            or activation.generation_id != generation_id
+            or activation.catalog_version_id != version.catalog_version_id
+            or activation.catalog_revision != active.catalog_revision
+        ):
+            raise CoreAuthorityError("active native catalog pointer is inconsistent")
+        binding = self.session.get(models.HonestContractBinding, version.contract_binding_id)
+        if (
+            binding is None
+            or binding.binding_kind != "release"
+            or binding.dish_release != generation.dish_release
+        ):
+            raise CoreAuthorityError("active native catalog Honest binding is inconsistent")
+        activations = tuple(
+            self.session.scalars(
+                select(models.SectionCatalogActivation)
+                .where(models.SectionCatalogActivation.generation_id == generation_id)
+                .order_by(models.SectionCatalogActivation.catalog_revision)
+            )
+        )
+        if tuple(row.catalog_revision for row in activations) != tuple(
+            range(1, active.catalog_revision + 1)
+        ):
+            raise CoreAuthorityError("native catalog activation lineage is gapped or stale")
+        for row in activations:
+            activated_version = self.session.get(
+                models.SectionCatalogVersion, row.catalog_version_id
+            )
+            if (
+                activated_version is None
+                or activated_version.generation_id != generation_id
+                or activated_version.version_number != row.catalog_revision
+            ):
+                raise CoreAuthorityError("native catalog activation lineage is inconsistent")
+        entries = tuple(
+            self.session.scalars(
+                select(models.SectionCatalogEntry)
+                .where(
+                    models.SectionCatalogEntry.catalog_version_id
+                    == version.catalog_version_id
+                )
+                .order_by(models.SectionCatalogEntry.ordinal)
+            )
+        )
+        if not entries:
+            raise CoreAuthorityError("active native catalog is empty")
+        for entry in entries:
+            section = self.session.get(models.Section, entry.section_id)
+            if section is None or section.lifecycle != "active":
+                raise CoreAuthorityError("active native catalog contains an inactive Section")
+        return ActiveCatalogContract(
+            generation=generation,
+            active_catalog=active,
+            catalog_version=version,
+            catalog_activation=activation,
+            honest_binding=binding,
+            entries=entries,
+        )
+
+
 class RegistryRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
