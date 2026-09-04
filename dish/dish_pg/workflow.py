@@ -1027,7 +1027,7 @@ class WorkflowAuthorityRepository:
         operation = self.session.get(wf.WorkflowOperation, fence.operation_id)
         if operation is None or (
             operation.operation_revision != fence.expected_operation_revision
-            or operation.phase != fence.expected_operation_phase
+            or operation.phase != fence.expected_phase
         ):
             raise StaleAuthorityError("operation fence is stale")
         return operation
@@ -1051,7 +1051,9 @@ class WorkflowAuthorityRepository:
         if request is None:
             raise WorkflowAuthorityError("cannot complete an unknown request")
         existing = self.session.scalar(
-            select(wf.ServiceRequestOutcome).where(wf.ServiceRequestOutcome.request_id == request_id)
+            select(wf.ServiceRequestOutcome).where(
+                wf.ServiceRequestOutcome.request_id == request_id
+            )
         )
         if existing is not None:
             return existing
