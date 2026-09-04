@@ -143,7 +143,6 @@ def _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutov
     first_request_id = _next(ids)
     first_run_id = _next(ids)
     with session_scope(factory) as session:
-        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
         activation = service.burn_rollback(
             cutover_run_id=cutover_id,

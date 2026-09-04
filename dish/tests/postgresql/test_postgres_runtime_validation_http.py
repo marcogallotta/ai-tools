@@ -9,6 +9,7 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 
+from dish_pg import models
 from dish_pg import postgres_service as postgres_service_module
 from dish_pg import stage3_models as wf
 from dish_pg.command_port import CommandResult
@@ -1236,7 +1237,11 @@ def test_expire_lease_by_lease_id_resolves_task_from_postgresql_only(
     run_id = _next(ids)
     with session_scope(factory) as session:
         _register_run(
-            session, generation_id=context["generation_id"], run_id=run_id, owner="marco-admin"
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="marco-admin",
+            agent="marco",
         )
         operation_id = _open_operation(session, ids, context, task_id)
         lease_id = _active_actor_lease(session, ids, context, task_id, operation_id, run_id)
@@ -1262,7 +1267,11 @@ def test_expire_lease_by_task_gid_resolves_through_task_external_alias_only(
     run_id = _next(ids)
     with session_scope(factory) as session:
         _register_run(
-            session, generation_id=context["generation_id"], run_id=run_id, owner="marco-admin"
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="marco-admin",
+            agent="marco",
         )
         operation_id = _open_operation(session, ids, context, task_id)
         lease_id = _active_actor_lease(session, ids, context, task_id, operation_id, run_id)
@@ -1286,3 +1295,307 @@ def test_expire_lease_by_task_gid_resolves_through_task_external_alias_only(
     assert result["ok"] is True
     assert result["data"]["lease_id"] == str(lease_id)
     assert result["data"]["state"] == "expired"
+
+
+
+def test_zero_run_action_first_mutation_bootstraps_once_and_replays(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    request_id = _next(ids)
+    with session_scope(factory) as session:
+        ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="first-run bootstrap Action test authority",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(service.config, action_token="postgres-action-token")
+
+    body = {
+        "client": {"run_id": str(run_id), "request_id": str(request_id)},
+        "arguments": {"agent": "gpt", "title": "First bootstrap mutation"},
+    }
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="postgres-first-run-action-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            first_status, first = _post_json(
+                f"{base}/v1/action/create", token="postgres-action-token", body=body
+            )
+            replay_status, replay = _post_json(
+                f"{base}/v1/action/create", token="postgres-action-token", body=body
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert first_status == replay_status == 200
+    assert first["ok"] is True
+    assert replay["data"]["request_replayed"] is True
+    assert replay["data"]["dish_id"] == first["data"]["dish_id"]
+    with session_scope(factory) as session:
+        run = session.get(wf.ServiceRun, run_id)
+        assert run is not None
+        assert (run.generation_id, run.owner_id, run.agent, run.status) == (
+            context["generation_id"],
+            "gpt-action",
+            "gpt",
+            "active",
+        )
+        assert session.scalar(
+            select(func.count()).select_from(wf.ServiceRun).where(wf.ServiceRun.run_id == run_id)
+        ) == 1
+        assert session.scalar(
+            select(func.count()).select_from(wf.ServiceRequest).where(
+                wf.ServiceRequest.request_id == request_id
+            )
+        ) == 1
+
+
+def test_zero_run_private_cli_and_admin_http_share_bootstrap_boundary(
+    workflow_db, tmp_path: Path, capsys
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    cli_run = _next(ids)
+    admin_run = _next(ids)
+    with session_scope(factory) as session:
+        ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="first-run bootstrap private test authority",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+    service = runtime_service(factory, tmp_path)
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-first-run-private-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        client = DishServiceClient(base, token="postgres-agent-token", run_id=str(cli_run))
+        try:
+            assert cli.main(
+                ["create", "--agent", "codex", "--title", "CLI first bootstrap"],
+                application=client,
+            ) == 0
+            capsys.readouterr()
+            status, archived = _post_json(
+                f"{base}/v1/admin/archive",
+                token="postgres-admin-token",
+                body={
+                    "client": {
+                        "run_id": str(admin_run),
+                        "request_id": str(_next(ids)),
+                    },
+                    "arguments": {"dish": str(task_id), "confirmed": True},
+                },
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert status == 200
+    assert archived["ok"] is True
+    with session_scope(factory) as session:
+        cli_row = session.get(wf.ServiceRun, cli_run)
+        admin_row = session.get(wf.ServiceRun, admin_run)
+        assert cli_row is not None and admin_row is not None
+        assert (cli_row.generation_id, cli_row.owner_id, cli_row.agent) == (
+            context["generation_id"],
+            "cli",
+            "codex",
+        )
+        assert (admin_row.generation_id, admin_row.owner_id, admin_row.agent) == (
+            context["generation_id"],
+            "marco-admin",
+            "marco",
+        )
+
+
+def test_bootstrap_rejects_existing_owner_agent_and_terminal_conflicts(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    service = runtime_service(factory, tmp_path)
+    cases = []
+    with session_scope(factory) as session:
+        owner_run = _next(ids)
+        agent_run = _next(ids)
+        generation_run = _next(ids)
+        retired_run = _next(ids)
+        revoked_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=owner_run,
+            owner="cli",
+            agent="gpt",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=agent_run,
+            owner="cli",
+            agent="gpt",
+        )
+        current_generation = session.get(models.AuthorityGeneration, context["generation_id"])
+        assert current_generation is not None
+        stale_generation_id = _next(ids)
+        session.add(
+            models.AuthorityGeneration(
+                generation_id=stale_generation_id,
+                predecessor_generation_id=None,
+                creation_reason="initial_cutover",
+                external_restore_control_id=None,
+                schema_head=current_generation.schema_head,
+                dish_release=current_generation.dish_release,
+                status="retired",
+                created_at=NOW - timedelta(minutes=2),
+                retired_at=NOW - timedelta(minutes=1),
+            )
+        )
+        session.add(
+            wf.ServiceRun(
+                run_id=generation_run,
+                generation_id=stale_generation_id,
+                owner_id="cli",
+                agent="gpt",
+                capability_digest=b"generation-conflict".ljust(32, b"0"),
+                bootstrap_id=None,
+                status="active",
+                registered_at=NOW - timedelta(minutes=2),
+                retired_at=None,
+            )
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=retired_run,
+            owner="cli",
+            agent="gpt",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=revoked_run,
+            owner="cli",
+            agent="gpt",
+        )
+        for run_id, status in ((retired_run, "retired"), (revoked_run, "revoked")):
+            row = session.get(wf.ServiceRun, run_id)
+            assert row is not None
+            row.status = status
+            row.retired_at = NOW + timedelta(minutes=1)
+        cases = [
+            (owner_run, "other-owner", "gpt"),
+            (agent_run, "cli", "codex"),
+            (generation_run, "cli", "gpt"),
+            (retired_run, "cli", "gpt"),
+            (revoked_run, "cli", "gpt"),
+        ]
+
+    for run_id, owner, agent in cases:
+        try:
+            service.execute_agent(
+                "create",
+                {"agent": agent, "title": "conflict"},
+                principal=ServicePrincipal.from_values(owner, str(run_id)),
+                request_id=str(_next(ids)),
+            )
+            raise AssertionError("expected exact run identity conflict")
+        except DishRuleError as exc:
+            assert exc.code == "CONFLICT"
+            assert exc.rule == "postgresql_command_rejected"
+
+    with session_scope(factory) as session:
+        assert session.get(wf.ServiceRun, owner_run).owner_id == "cli"
+        assert session.get(wf.ServiceRun, agent_run).agent == "gpt"
+        assert session.get(wf.ServiceRun, generation_run).generation_id == stale_generation_id
+        assert session.get(wf.ServiceRun, retired_run).status == "retired"
+        assert session.get(wf.ServiceRun, revoked_run).status == "revoked"
+
+
+def test_reads_and_pre_execution_validation_do_not_bootstrap_runs(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, _context, _task_id = workflow_db
+    read_run = _next(ids)
+    malformed_run = _next(ids)
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(service.config, action_token="postgres-action-token")
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="postgres-bootstrap-negative-action-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            read_status, _read = _post_json(
+                f"{base}/v1/action/sections",
+                token="postgres-action-token",
+                body={
+                    "client": {"run_id": str(read_run)},
+                    "arguments": {"agent": "gpt"},
+                },
+            )
+            malformed_status, _malformed = _post_json(
+                f"{base}/v1/action/create",
+                token="postgres-action-token",
+                body={
+                    "client": {
+                        "run_id": str(malformed_run),
+                        "request_id": str(_next(ids)),
+                    },
+                    "arguments": {"agent": "gpt"},
+                },
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert read_status == 200
+    assert malformed_status in {200, 400, 409}
+    with session_scope(factory) as session:
+        assert session.get(wf.ServiceRun, read_run) is None
+        assert session.get(wf.ServiceRun, malformed_run) is None
+
+
+def test_recovery_generations_never_auto_bootstrap_unknown_runs(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    service = runtime_service(factory, tmp_path)
+    previous_id = context["generation_id"]
+    reasons = (
+        ("test_fixture_recovery", None),
+        ("destructive_restore", "restore-control-1"),
+    )
+    for index, (reason, external_control) in enumerate(reasons, start=1):
+        with session_scope(factory) as session:
+            previous = session.get(models.AuthorityGeneration, previous_id)
+            assert previous is not None
+            previous.status = "retired"
+            previous.retired_at = NOW + timedelta(minutes=index)
+            generation_id = _next(ids)
+            session.add(
+                models.AuthorityGeneration(
+                    generation_id=generation_id,
+                    predecessor_generation_id=previous_id,
+                    creation_reason=reason,
+                    external_restore_control_id=external_control,
+                    schema_head=previous.schema_head,
+                    dish_release=previous.dish_release,
+                    status="active",
+                    created_at=NOW + timedelta(minutes=index),
+                    retired_at=None,
+                )
+            )
+            previous_id = generation_id
+        run_id = _next(ids)
+        try:
+            service.execute_agent(
+                "create",
+                {"agent": "gpt", "title": "recovery must not bootstrap"},
+                principal=ServicePrincipal.from_values("cli", str(run_id)),
+                request_id=str(_next(ids)),
+            )
+            raise AssertionError("expected recovery bootstrap rejection")
+        except DishRuleError as exc:
+            assert exc.code == "CONFLICT"
+            assert exc.rule == "postgresql_command_rejected"
+        with session_scope(factory) as session:
+            assert session.get(wf.ServiceRun, run_id) is None
