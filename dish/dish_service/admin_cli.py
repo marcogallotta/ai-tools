@@ -433,6 +433,10 @@ def build_parser() -> JsonArgumentParser:
             "change Exemptions, Locks, or other canonical fields"
         ),
     }
+    legacy_resolution = subparsers.add_parser(_admin_name("resolve-legacy-attention"), help=argparse.SUPPRESS)
+    legacy_resolution.add_argument("attention_id")
+    legacy_resolution.add_argument("--resolution", required=True)
+
     for name, help_text in _hold_help.items():
         hold = subparsers.add_parser(name, help=argparse.SUPPRESS, description=help_text)
         hold.add_argument("submission_id", help=_submission_target_help)

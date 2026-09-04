@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from dish_pg.database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from dish_pg.history_backfill import require_postgresql_target
+from dish_pg.legacy_history_import import apply_legacy_source, capture_legacy_source
+parser = argparse.ArgumentParser(prog="dish-pg-import-legacy-history")
+parser.add_argument("--database-url", required=True)
+parser.add_argument("--expected-database-name", required=True)
+parser.add_argument("--legacy-database", required=True, type=Path)
+args = parser.parse_args()
+try:
+    source, snapshot_sha = capture_legacy_source(args.legacy_database)
+    engine = create_database_engine(DatabaseSettings(url=args.database_url))
+    try:
+        require_postgresql_target(engine, expected_database_name=args.expected_database_name)
+        with session_scope(session_factory(engine)) as session:
+            receipt = apply_legacy_source(session, source=source, snapshot_sha=snapshot_sha)
+    finally:
+        engine.dispose()
+    print(json.dumps(receipt, sort_keys=True, indent=2))
+except Exception as exc:
+    print(json.dumps({"error": str(exc), "type": type(exc).__name__}, sort_keys=True))
+    raise SystemExit(2)
