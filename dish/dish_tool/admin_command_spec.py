@@ -82,6 +82,7 @@ ADMIN_COMMAND_SPECS = {
             resolve_operation=True,
             operation_scoped=True,
         ),
+        _spec("resolve-legacy-attention"),
         _spec("resolved", resolve_operation=True, operation_scoped=True),
         _spec(
             "authorize-governed-change",
