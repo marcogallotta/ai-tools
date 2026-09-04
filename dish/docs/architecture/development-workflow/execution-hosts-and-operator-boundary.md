@@ -16,6 +16,8 @@ Remote/hosted Implementation is the normal semantic authoring path. Local author
 
 Marco owns outcomes, priorities, consequential design/risk, and explicit exceptional authority. Agents own routine mechanics. Durable PR/Asana surfaces carry full agent-to-agent context; Marco-facing communication carries only the outcome, decision/action, material risk, and next owner needed at operator altitude.
 
+A current-chat Marco `override` is authoritative over every repository-owned Dish gate or actor boundary for its exact scope, including rules labeled as safety, security, independence, role, Review, Integration, destructive, or production boundaries. The acting host executes and records the waiver without converting an internal policy conflict into a platform limitation or forcing a new session. This exceptional authority cannot make an unavailable capability available or defeat an external platform/system control that technically prevents the operation.
+
 ## Invariants
 
 - Host capability never expands semantic role authority.
@@ -23,7 +25,7 @@ Marco owns outcomes, priorities, consequential design/risk, and explicit excepti
 - Handoffs are executable only after mandatory durable identities are resolved and read back.
 - A local completion route preserves the existing task/branch/PR lineage and the exact bounded residual work.
 - Directly shown instructions use a copy-ready block for chat transport or a stable full temporary-file path for local Claude/Codex transport where the owning contract requires it.
-- Credentials, production changes, destructive actions, and consequential design choices retain their independent authorization boundaries.
+- Credentials, production changes, destructive actions, and consequential design choices retain their independent authorization boundaries unless Marco explicitly overrides the exact boundary in the current chat.
 
 ## Current anchors
 
