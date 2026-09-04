@@ -87,6 +87,10 @@ This context-efficiency rule never relaxes required startup/context preload, sta
 
 Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment. For implementation/fix work, use the repository-owned `tools/agent-worktree` lifecycle rather than creating a competing branch/worktree or synchronizing the operator `main` checkout. First creation requires the coordinator-supplied exact base ref + SHA to still match `origin`; resume observes current origin state without automatically resetting, merging, rebasing, or chasing a moved `main`. Enter the returned owned path directly or use `tools/agent-worktree exec --task <gid> -- <agent-command>`.
 
+### Codex usage budget
+
+Codex must treat its weekly usage limit as scarce, operator-owned budget. Without Marco's explicit permission for the specific work, Codex must not start token-heavy work, broad audits or reviews, deep research, large implementations, spawn or fork agents, or repeatedly poll agents, GitHub, Asana, CI, or runtime state. Do not infer that permission from ambiguous phrases such as `continue`, `off for implementation`, a status report, or work merely being ready; if the execution host or requested action is unclear, ask before acting. Default to the smallest bounded answer or action requested, and stop to tell Marco at the first sign that the work is materially heavier than expected. Work sent to ChatGPT remains ChatGPT-owned unless Marco explicitly directs Codex to take it over or coordinate it.
+
 For Claude Code/Codex Implementation/fix work, human action handoffs and durable PR updates follow [`tools/agent-worktree-handoff.md`](tools/agent-worktree-handoff.md). Keep routine narration out of chat; when privileged local work is genuinely required, write the complete helper and persisted result first, then give one exact command.
 
 Create or use the repository-local environment with the current interpreter as needed:
