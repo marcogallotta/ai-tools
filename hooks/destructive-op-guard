@@ -280,7 +280,12 @@ def check_git(segments, cwd=None):
                 continue
             if isolated_worktree:
                 continue
-            return ask("[destructive-op-guard] git-commit (stage + commit) requires explicit approval.")
+            return ask(
+                "[destructive-op-guard] git-commit in the shared main checkout requires "
+                "explicit approval — this is the operator's own terminal, so an agent "
+                "committing/pushing here can repoint or collide with what Marco is looking "
+                "at (P0 2026-08-12). Isolated task worktrees skip this prompt."
+            )
 
     for seg in segments:
         tokens = tokenize(seg)
