@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -43,6 +44,12 @@ _NAMESPACE = uuid.UUID("c183d5da-eaa4-4dbf-b727-f214c98cf9c4")
 
 class NativeSectionCarryForwardError(ValueError):
     """The exact reviewed PR3 inventory/identity contract is not satisfied."""
+
+
+@dataclass(frozen=True)
+class RepositoryIdentity:
+    commit_sha: str
+    tree_sha: str
 
 
 @dataclass(frozen=True)
@@ -531,12 +538,55 @@ def _helper_sha256() -> str:
     return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
+def _git_text(*args: str) -> str:
+    root = Path(__file__).resolve().parents[2]
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise NativeSectionCarryForwardError(
+            "carry-forward apply requires a readable Git checkout for executable identity"
+        ) from exc
+    return completed.stdout.strip()
+
+
+def _verified_repository_identity() -> RepositoryIdentity:
+    root = Path(__file__).resolve().parents[2].resolve()
+    top_level = Path(_git_text("rev-parse", "--show-toplevel")).resolve()
+    if top_level != root:
+        raise NativeSectionCarryForwardError(
+            "running carry-forward module is not rooted in the Git checkout being attested"
+        )
+    status = _git_text(
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+    )
+    if status:
+        raise NativeSectionCarryForwardError(
+            "carry-forward apply refuses a dirty Git checkout; executable bytes are not exact HEAD"
+        )
+    commit_sha = _git_text("rev-parse", "HEAD")
+    tree_sha = _git_text("rev-parse", "HEAD^{tree}")
+    if not _SOURCE_COMMIT_RE.fullmatch(commit_sha) or not _SOURCE_COMMIT_RE.fullmatch(tree_sha):
+        raise NativeSectionCarryForwardError(
+            "Git checkout returned an invalid executable commit/tree identity"
+        )
+    return RepositoryIdentity(commit_sha=commit_sha, tree_sha=tree_sha)
+
+
 def _existing_receipt(
     session: Session,
     *,
     generation_id: uuid.UUID,
     expected_snapshot_sha256: str,
     source_commit: str,
+    source_tree_sha: str,
 ) -> dict[str, Any] | None:
     event = session.scalar(
         select(models.AppliedMigrationEvent).where(
@@ -554,6 +604,10 @@ def _existing_receipt(
     if event.details.get("source_commit_sha") != source_commit:
         raise NativeSectionCarryForwardError(
             "existing PR3 migration event belongs to a different executable commit"
+        )
+    if event.details.get("source_tree_sha") != source_tree_sha:
+        raise NativeSectionCarryForwardError(
+            "existing PR3 migration event belongs to a different executable tree"
         )
     count = int(
         session.scalar(
@@ -593,13 +647,19 @@ def apply_carry_forward(
         raise NativeSectionCarryForwardError(
             "source commit must be the exact 40-character lowercase Git SHA"
         )
+    repository_identity = _verified_repository_identity()
+    if source_commit != repository_identity.commit_sha:
+        raise NativeSectionCarryForwardError(
+            "source commit does not match the clean checkout executing the carry-forward"
+        )
     now = now or datetime.now(timezone.utc)
 
     existing = _existing_receipt(
         session,
         generation_id=expectation.generation_id,
         expected_snapshot_sha256=expected_snapshot_sha256,
-        source_commit=source_commit,
+        source_commit=repository_identity.commit_sha,
+        source_tree_sha=repository_identity.tree_sha,
     )
     if existing is not None:
         return existing
@@ -624,7 +684,7 @@ def apply_carry_forward(
     session.add(
         models.ImportRun(
             import_run_id=import_run_id,
-            source_commit=source_commit,
+            source_commit=repository_identity.commit_sha,
             source_release=CARRY_FORWARD_KIND,
             legacy_generation_id=f"native-section-carry-forward:{plan.generation_id}",
             baseline_high_water_mark=plan.source_snapshot_sha256,
@@ -642,6 +702,8 @@ def apply_carry_forward(
                 "ready_baseline_override": True,
                 "sections_preexisting": True,
                 "asana_projection": False,
+                "source_commit_sha": repository_identity.commit_sha,
+                "source_tree_sha": repository_identity.tree_sha,
             },
         )
     )
@@ -658,7 +720,8 @@ def apply_carry_forward(
         "section_creation_story_gid": SECTION_CREATION_STORY_GID,
         "sections_preexisting": True,
         "repository": "marcogallotta/ai-tools",
-        "source_commit_sha": source_commit,
+        "source_commit_sha": repository_identity.commit_sha,
+        "source_tree_sha": repository_identity.tree_sha,
         "source_snapshot_sha256": plan.source_snapshot_sha256,
         "import_run_id": str(import_run_id),
         "source_catalog_version_id": str(current.catalog_version.catalog_version_id),
