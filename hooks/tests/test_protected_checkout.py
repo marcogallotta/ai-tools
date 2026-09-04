@@ -33,6 +33,34 @@ def test_prompt_free_git_rejects_main_and_unclear_forms(
     assert not classifier_module.prompt_free_git(command, protected_repo[cwd])
 
 
+@pytest.mark.parametrize("command", [
+    "git push origin 138d98b1:refs/heads/agent/native-section-content-carry-forward-1217878303550695",
+    "git push origin HEAD:refs/heads/agent/feature",
+    "git push -u origin agent/feature",
+])
+def test_prompt_free_git_accepts_explicit_non_main_push_from_primary(
+    classifier_module, protected_repo, command
+):
+    """An ordinary fast-forward publication of an explicitly named agent branch
+    is routine workflow even when the primary checkout sits on main."""
+    assert classifier_module.prompt_free_git(command, protected_repo["primary"])
+
+
+@pytest.mark.parametrize("command", [
+    "git push --force origin agent/feature",
+    "git push --force-with-lease origin agent/feature",
+    "git push origin +agent/feature",
+    "git push --delete origin agent/feature",
+    "git push origin HEAD",
+    "git push origin agent/feature:refs/tags/v1",
+    "git push origin",
+])
+def test_prompt_free_git_rejects_force_delete_and_implicit_push_from_primary(
+    classifier_module, protected_repo, command
+):
+    assert not classifier_module.prompt_free_git(command, protected_repo["primary"])
+
+
 def test_prompt_free_git_accepts_direct_pr_command(classifier_module, protected_repo):
     assert classifier_module.prompt_free_git("gh pr merge 42", protected_repo["primary"])
 

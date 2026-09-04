@@ -28,6 +28,8 @@ PROMPT_FREE_UTILITIES = {"echo", "grep", "pwd"}
 BRANCH_MUTATION_FLAGS = ("-c", "-C", "-d", "-D", "-m", "-M", "-u", "--copy", "--delete", "--edit-description", "--move", "--set-upstream-to", "--unset-upstream")
 BRANCH_READ_VALUE_FLAGS = {"--contains", "--format", "--merged", "--no-contains", "--no-merged", "--points-at", "--sort"}
 GIT_EXECUTION_FLAGS = ("--exec-path", "--ext-diff", "--open-files-in-pager", "--textconv")
+PUSH_VALUE_FLAGS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+PUSH_UNSAFE_FLAGS = ("-f", "--force", "--force-with-lease", "--force-if-includes", "-d", "--delete", "--all", "--mirror", "--tags", "--follow-tags")
 
 
 def _safe_direct_tokens(segment):
@@ -113,6 +115,45 @@ def _targets_main(subcommand, args):
     return any(re.search(r"(^|[/:])main($|:)", arg.lstrip("+")) for arg in targets)
 
 
+def _push_targets_explicit_branches(args):
+    """True when a non-force ``git push`` names its destination branches
+    explicitly and none of them is ``main``.
+
+    Such a push cannot touch the current checkout's branch, so the
+    current-branch fallback below is irrelevant to it: an ordinary
+    fast-forward publication of an agent branch from the primary checkout
+    is routine workflow, not a destructive operation needing approval."""
+    positionals = []
+    skip_value = False
+    for arg in args:
+        if skip_value:
+            skip_value = False
+            continue
+        if arg in PUSH_VALUE_FLAGS:
+            skip_value = True
+            continue
+        if arg.startswith("-"):
+            if any(arg == flag or arg.startswith(flag + "=") for flag in PUSH_UNSAFE_FLAGS):
+                return False
+            continue
+        positionals.append(arg)
+    if len(positionals) < 2:
+        return False
+    remote, refspecs = positionals[0], positionals[1:]
+    if remote.startswith("+") or ":" in remote:
+        return False
+    for spec in refspecs:
+        if spec.startswith("+"):
+            return False
+        dst = spec.split(":", 1)[1] if ":" in spec else spec
+        if dst.startswith("refs/") and not dst.startswith("refs/heads/"):
+            return False
+        name = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+        if name in ("", "main", "HEAD", "@") or not re.fullmatch(r"[A-Za-z0-9._/-]+", name):
+            return False
+    return True
+
+
 def prompt_free_workflow(command, cwd=None):
     segments = [part for part in split_segments(command) if part.strip()]
     if not segments:
@@ -159,6 +200,8 @@ def prompt_free_git(command, cwd):
         return False
     if subcommand in {"branch", "checkout", "push", "switch"} and _targets_main(subcommand, args):
         return False
+    if subcommand == "push" and _push_targets_explicit_branches(args):
+        return True
     result = _run_git([*location_args, "branch", "--show-current"], {}, cwd)
     return bool(result and result.returncode == 0 and result.stdout.strip() not in ("", "main"))
 
