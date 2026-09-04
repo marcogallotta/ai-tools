@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from dish_pg.bootstrap import require_postgresql_target
+from dish_pg.database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from dish_pg.native_section_carry_forward import apply_carry_forward, build_carry_forward_plan
+from dish_pg.release import ALEMBIC_HEAD
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="dish-pg-native-section-carry-forward")
+    parser.add_argument("--database-url", required=True)
+    parser.add_argument("--expected-database-name", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check", action="store_true")
+    mode.add_argument("--apply", action="store_true")
+    parser.add_argument("--expected-snapshot-sha256")
+    parser.add_argument("--source-commit")
+    args = parser.parse_args()
+
+    if args.apply and (not args.expected_snapshot_sha256 or not args.source_commit):
+        parser.error("--apply requires --expected-snapshot-sha256 and --source-commit")
+
+    engine = create_database_engine(DatabaseSettings(url=args.database_url))
+    try:
+        require_postgresql_target(
+            engine,
+            expected_database_name=args.expected_database_name,
+            schema_head=ALEMBIC_HEAD,
+        )
+        with session_scope(session_factory(engine)) as session:
+            if args.check:
+                result = build_carry_forward_plan(session).summary()
+            else:
+                result = apply_carry_forward(
+                    session,
+                    expected_snapshot_sha256=args.expected_snapshot_sha256,
+                    source_commit=args.source_commit,
+                )
+    finally:
+        engine.dispose()
+    print(json.dumps(result, sort_keys=True, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(json.dumps({"error": str(exc), "type": type(exc).__name__}, sort_keys=True))
+        raise SystemExit(2)

@@ -832,6 +832,95 @@ class ContentVersion(Base):
     )
 
 
+class NativeSectionContentCarryForwardOccurrence(Base):
+    """Immutable PR3 transition evidence for one future native-content occurrence."""
+
+    __tablename__ = "native_section_content_carry_forward_occurrences"
+
+    carry_forward_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), nullable=False
+    )
+    source_content_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    source_dish_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_content_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    source_status: Mapped[str | None] = mapped_column(String(64))
+    target_catalog_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    target_section_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    destination_legacy_gid: Mapped[str] = mapped_column(String(32), nullable=False)
+    destination_display_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    transformed_title: Mapped[str] = mapped_column(Text, nullable=False)
+    transformed_body: Mapped[str] = mapped_column(Text, nullable=False)
+    transformed_content_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    verification_baseline_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    verification_baseline_text: Mapped[str | None] = mapped_column(Text)
+    transform_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    import_run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT"), nullable=False
+    )
+    migration_event_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("applied_migration_events.migration_event_id", ondelete="RESTRICT"), nullable=False
+    )
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "source_content_version_id"],
+            [
+                "task_content_versions.generation_id",
+                "task_content_versions.task_id",
+                "task_content_versions.content_version_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_native_section_carry_forward_exact_source_content",
+        ),
+        ForeignKeyConstraint(
+            ["generation_id", "task_id", "source_dish_version"],
+            [
+                "dish_mutation_receipts.generation_id",
+                "dish_mutation_receipts.task_id",
+                "dish_mutation_receipts.dish_version",
+            ],
+            ondelete="RESTRICT",
+            name="fk_native_section_carry_forward_exact_source_version",
+        ),
+        ForeignKeyConstraint(
+            ["target_catalog_version_id", "target_section_id"],
+            [
+                "section_catalog_entries.catalog_version_id",
+                "section_catalog_entries.section_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_native_section_carry_forward_exact_target_entry",
+        ),
+        CheckConstraint("source_dish_version > 0", name="positive_source_dish_version"),
+        CheckConstraint("length(trim(destination_legacy_gid)) > 0", name="legacy_gid_nonblank"),
+        CheckConstraint("length(trim(destination_display_name)) > 0", name="display_name_nonblank"),
+        CheckConstraint("length(source_content_identity) > 0", name="source_identity_nonblank"),
+        CheckConstraint("length(transformed_content_identity) > 0", name="transformed_identity_nonblank"),
+        CheckConstraint("length(transform_sha256) = 64", name="transform_hash_length"),
+        CheckConstraint(
+            "verification_baseline_kind IN ('none','migration_assigned_ready')",
+            name="verification_baseline_kind_allowed",
+        ),
+        CheckConstraint(
+            "(verification_baseline_kind = 'none' AND verification_baseline_text IS NULL) OR "
+            "(verification_baseline_kind = 'migration_assigned_ready' AND verification_baseline_text IS NOT NULL)",
+            name="verification_baseline_exact",
+        ),
+        UniqueConstraint("generation_id", "task_id", name="uq_native_section_carry_forward_task"),
+        UniqueConstraint(
+            "generation_id",
+            "task_id",
+            "source_content_version_id",
+            name="uq_native_section_carry_forward_source_content",
+        ),
+    )
+
+
 class DishMutationReceipt(Base):
     __tablename__ = "dish_mutation_receipts"
 
@@ -1267,6 +1356,20 @@ def _install_sqlite_scalar_authority_triggers() -> None:
     dish_state = Base.metadata.tables["dish_states"]
     membership_head = Base.metadata.tables["task_membership_heads"]
     current_membership = Base.metadata.tables["current_task_project_memberships"]
+    native_carry_forward = Base.metadata.tables[
+        "native_section_content_carry_forward_occurrences"
+    ]
+
+    for operation in ("UPDATE", "DELETE"):
+        event.listen(
+            native_carry_forward,
+            "after_create",
+            DDL(
+                f"CREATE TRIGGER native_section_content_carry_forward_immutable_{operation.lower()} "
+                f"BEFORE {operation} ON native_section_content_carry_forward_occurrences "
+                "BEGIN SELECT RAISE(ABORT, 'immutable authority row'); END"
+            ).execute_if(dialect="sqlite"),
+        )
 
     event.listen(
         dish_task,
