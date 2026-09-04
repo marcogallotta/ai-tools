@@ -32,6 +32,18 @@ class CommandRuleError(CommandPortError):
         self.data = dict(data or {})
 
 
+class ArchiveNotRestingError(CommandRuleError):
+    """Archive cannot safely terminalize unresolved workflow/effect authority."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        data: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__("TASK_NOT_RESTING", message, data=data)
+
+
 @dataclass(frozen=True)
 class CommandCall:
     command_name: str

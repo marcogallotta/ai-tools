@@ -19,6 +19,7 @@ from . import models
 from . import stage3_models as wf
 from . import stage5_models as tx
 from .command_effect_runtime import external_projection_required
+from .command_port_common import ArchiveNotRestingError
 from .planner import EffectObservation, adjudicate_effect
 from .shadow_evidence import compare_evidence
 from .workflow import sha256_json
@@ -541,10 +542,6 @@ class ShadowService:
                         tx.ShadowEnvelope.shadow_baseline_id == envelope.shadow_baseline_id,
                         tx.ShadowEnvelope.rollout_sequence.is_not(None),
                         tx.ShadowEnvelope.rollout_sequence < envelope.rollout_sequence,
-                        # Preserve rollout ordering only across work that can still run.
-                        # A terminal failure is durable gap evidence, not a baseline-wide
-                        # cursor: otherwise one bad envelope permanently blinds every
-                        # later comparison until an operator mutates the failed row.
                         tx.ShadowDelivery.state.in_(("pending", "claimed")),
                     )
                 ) or 0)
@@ -992,11 +989,6 @@ class ShadowService:
                 ).all()
                 later_rollout_prevents_requeue = False
                 for later_state, target_result in later_rollout:
-                    # An in-flight later evaluation may already be mutating target state
-                    # in another transaction. A completed real comparison proves that a
-                    # later command was evaluated against the current target sequence.
-                    # Terminal failures roll their evaluation transaction back, while
-                    # skip/operator-void settlements explicitly never evaluate a command.
                     if later_state == "claimed":
                         later_rollout_prevents_requeue = True
                         break
@@ -1311,7 +1303,6 @@ class ProjectionService:
         self.session.flush()
         return row
 
-
     def set_external_effects_enabled(
         self,
         *,
@@ -1390,6 +1381,49 @@ class ProjectionService:
                 attempt.state = "blocked"
                 attempt.terminal_at = retired_at
         self.session.flush()
+
+    def terminalize_task_projection_for_archive(
+        self, *, generation_id: uuid.UUID, task_id: uuid.UUID, at: datetime
+    ) -> int:
+        # After rollback burn projection rows are forensic only and cannot dispatch.
+        if not external_projection_required(self.session, generation_id=generation_id):
+            return 0
+        stmt = select(tx.ProjectionOutboxEvent).where(
+            tx.ProjectionOutboxEvent.generation_id == generation_id,
+            tx.ProjectionOutboxEvent.task_id == task_id,
+            tx.ProjectionOutboxEvent.origin == "live",
+            tx.ProjectionOutboxEvent.state.in_(("pending", "claimed", "uncertain", "blocked")),
+        ).order_by(tx.ProjectionOutboxEvent.aggregate_sequence)
+        if self.session.get_bind().dialect.name == "postgresql":
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        events = list(self.session.scalars(stmt).all())
+        unsafe: list[str] = []
+        for event in events:
+            attempt_stmt = select(tx.ProjectionAttempt).where(
+                tx.ProjectionAttempt.projection_event_id == event.projection_event_id
+            ).order_by(tx.ProjectionAttempt.attempt_number.desc()).limit(1)
+            if self.session.get_bind().dialect.name == "postgresql":
+                attempt_stmt = attempt_stmt.with_for_update().execution_options(populate_existing=True)
+            latest = self.session.scalar(attempt_stmt)
+            if event.state in {"uncertain", "blocked"}:
+                unsafe.append(str(event.projection_event_id))
+                continue
+            if latest is not None and latest.state in {"dispatched", "uncertain", "blocked"}:
+                unsafe.append(f"{event.projection_event_id}:{latest.attempt_id}")
+        if unsafe:
+            raise ArchiveNotRestingError(
+                "archive requires projection reconciliation before success",
+                data={"unresolved_projection_authority": unsafe},
+            )
+        for event in events:
+            event.state = "superseded"
+            event.claim_owner = None
+            event.claim_token = None
+            event.claim_expires_at = None
+            event.outbox_revision += 1
+            event.terminal_at = at
+        self.session.flush()
+        return len(events)
 
     def record(
         self,
@@ -1650,8 +1684,6 @@ class ProjectionService:
 
     @staticmethod
     def _utc_comparable(value: datetime) -> datetime:
-        # SQLite returns timezone-aware columns as naive values. Public callers
-        # provide aware timestamps; normalize only for durable lease comparison.
         if value.tzinfo is None or value.utcoffset() is None:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)

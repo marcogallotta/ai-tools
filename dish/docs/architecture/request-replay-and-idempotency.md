@@ -70,3 +70,11 @@ Historical incomplete rows can remain fail-closed when evidence is insufficient.
 - [ADR-0002](decisions/0002-request-identity-is-permanent.md)
 - [Operations, leases, and fencing](operations-leases-and-fencing.md)
 - [PostgreSQL runtime](postgresql-runtime.md)
+
+## Archive replay and retired work
+
+Exact archive replay is resolved from the stored request outcome before archive-only locks, cleanup, or run
+revocation work, so replay is effect-free and returns the original archived result. During the first successful
+archive transaction, any other task execution that is still safely pending/claimed is cancelled and its request
+is settled with terminal `TASK_ARCHIVED` retirement evidence. An uncertain execution is not guessed or retired;
+it blocks archive until the existing uncertainty path establishes a safe terminal outcome.
