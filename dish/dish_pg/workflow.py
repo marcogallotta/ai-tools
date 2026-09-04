@@ -142,10 +142,6 @@ class WorkflowAuthorityRepository:
                 models.AuthorityGeneration.generation_id == generation_id
             )
             if self.session.get_bind().dialect.name == "postgresql":
-                # Consequential command transactions hold a shared generation-liveness fence
-                # through the caller-owned commit. Generation rollover takes FOR UPDATE on
-                # this same row, so either the command commits before the successor snapshot
-                # or rollover wins and this fresh read observes the retired predecessor.
                 statement = statement.with_for_update(read=True)
             statement = statement.execution_options(populate_existing=True)
             generation = self.session.scalar(statement)
@@ -227,17 +223,13 @@ class WorkflowAuthorityRepository:
         lock_operation: bool = True,
     ) -> None:
         operation = (
-            self._locked_operation(
-                generation_id=generation_id, operation_id=operation_id
-            )
+            self._locked_operation(generation_id=generation_id, operation_id=operation_id)
             if lock_operation
             else self.session.get(wf.WorkflowOperation, operation_id)
         )
         if operation is None or operation.generation_id != generation_id:
             raise StaleAuthorityError("operation belongs to another authority generation")
-        if not operation_revocation_history_reconciled(
-            self.session, operation=operation
-        ):
+        if not operation_revocation_history_reconciled(self.session, operation=operation):
             raise ImportedRevocationHistoryUnreconciled(
                 "legacy imported operation exact-run revocation history is unreconciled"
             )
@@ -347,15 +339,9 @@ class WorkflowAuthorityRepository:
             self.session.flush()
 
     @staticmethod
-    def _validation_payload_matches_spec(
-        payload: Mapping[str, Any], *, spec: RequestSpec
-    ) -> bool:
+    def _validation_payload_matches_spec(payload: Mapping[str, Any], *, spec: RequestSpec) -> bool:
         validation_error = payload.get("validation_error")
-        errors = (
-            validation_error.get("errors")
-            if isinstance(validation_error, Mapping)
-            else None
-        )
+        errors = validation_error.get("errors") if isinstance(validation_error, Mapping) else None
         return (
             spec.principal_class in {"agent", "admin"}
             and payload.get("request_kind") == VALIDATION_FAILURE_REQUEST_KIND
@@ -372,9 +358,7 @@ class WorkflowAuthorityRepository:
         )
 
     @staticmethod
-    def _validation_outcome_matches_identity(
-        payload: Mapping[str, Any], *, outcome: StoredOutcome
-    ) -> bool:
+    def _validation_outcome_matches_identity(payload: Mapping[str, Any], *, outcome: StoredOutcome) -> bool:
         validation_error = payload["validation_error"]
         result = outcome.result_payload
         data = result.get("data") if isinstance(result, Mapping) else None
@@ -392,9 +376,7 @@ class WorkflowAuthorityRepository:
         )
 
     @staticmethod
-    def _request_identity_matches(
-        request: wf.ServiceRequest, *, spec: RequestSpec, payload_sha: str
-    ) -> bool:
+    def _request_identity_matches(request: wf.ServiceRequest, *, spec: RequestSpec, payload_sha: str) -> bool:
         return (
             request.generation_id == spec.generation_id
             and request.run_id == spec.run_id
@@ -406,30 +388,21 @@ class WorkflowAuthorityRepository:
             and request.dish_release == spec.dish_release
         )
 
-    def _recover_request_admission(
-        self, *, spec: RequestSpec, payload_sha: str
-    ) -> RequestAdmission | None:
+    def _recover_request_admission(self, *, spec: RequestSpec, payload_sha: str) -> RequestAdmission | None:
         recovered = self.session.execute(
             select(wf.ServiceRequest, wf.ServiceRequestOutcome)
-            .outerjoin(
-                wf.ServiceRequestOutcome,
-                wf.ServiceRequestOutcome.request_id == wf.ServiceRequest.request_id,
-            )
+            .outerjoin(wf.ServiceRequestOutcome, wf.ServiceRequestOutcome.request_id == wf.ServiceRequest.request_id)
             .where(wf.ServiceRequest.request_id == spec.request_id)
             .execution_options(populate_existing=True)
         ).one_or_none()
         if recovered is None:
             return None
         request, outcome = recovered
-        if not self._request_identity_matches(
-            request, spec=spec, payload_sha=payload_sha
-        ):
+        if not self._request_identity_matches(request, spec=spec, payload_sha=payload_sha):
             raise RequestIdentityConflict("service request identity conflict")
         return RequestAdmission(request, True, outcome)
 
-    def _insert_validation_request(
-        self, *, spec: RequestSpec, payload: Mapping[str, Any], payload_sha: str
-    ) -> bool:
+    def _insert_validation_request(self, *, spec: RequestSpec, payload: Mapping[str, Any], payload_sha: str) -> bool:
         values = {
             "request_id": spec.request_id,
             "generation_id": spec.generation_id,
@@ -449,13 +422,9 @@ class WorkflowAuthorityRepository:
         elif dialect == "sqlite":
             statement = sqlite_insert(wf.ServiceRequest).values(**values)
         else:
-            raise WorkflowAuthorityError(
-                "validation request persistence requires PostgreSQL or SQLite"
-            )
+            raise WorkflowAuthorityError("validation request persistence requires PostgreSQL or SQLite")
         inserted_request_id = self.session.scalar(
-            statement.on_conflict_do_nothing(
-                index_elements=[wf.ServiceRequest.request_id]
-            ).returning(wf.ServiceRequest.request_id)
+            statement.on_conflict_do_nothing(index_elements=[wf.ServiceRequest.request_id]).returning(wf.ServiceRequest.request_id)
         )
         self.session.flush()
         return inserted_request_id is not None
@@ -472,34 +441,20 @@ class WorkflowAuthorityRepository:
         obligation_id: uuid.UUID,
         invocation_metadata: Mapping[str, Any],
     ) -> RequestAdmission:
-        """Bind and complete a pre-execution failure without mutation admission."""
-
-        self.require_active_run(
-            generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
-        )
+        self.require_active_run(generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id)
         payload = dict(spec.canonical_payload)
         if not self._validation_payload_matches_spec(payload, spec=spec):
-            raise WorkflowAuthorityError(
-                "validation request identity is incomplete or inconsistent"
-            )
+            raise WorkflowAuthorityError("validation request identity is incomplete or inconsistent")
         if not self._validation_outcome_matches_identity(payload, outcome=outcome):
-            raise WorkflowAuthorityError(
-                "validation outcome does not match its stable error identity"
-            )
+            raise WorkflowAuthorityError("validation outcome does not match its stable error identity")
         payload_sha = sha256_json(payload)
-        inserted = self._insert_validation_request(
-            spec=spec, payload=payload, payload_sha=payload_sha
-        )
+        inserted = self._insert_validation_request(spec=spec, payload=payload, payload_sha=payload_sha)
         request = self.session.get(wf.ServiceRequest, spec.request_id)
         if request is None:
             raise ContentionLost("validation request binding was not visible")
         if not self._request_identity_matches(request, spec=spec, payload_sha=payload_sha):
             raise RequestIdentityConflict("service request identity conflict")
-        existing = self.session.scalar(
-            select(wf.ServiceRequestOutcome).where(
-                wf.ServiceRequestOutcome.request_id == spec.request_id
-            )
-        )
+        existing = self.session.scalar(select(wf.ServiceRequestOutcome).where(wf.ServiceRequestOutcome.request_id == spec.request_id))
         if not inserted:
             if existing is None:
                 raise ContentionLost("request outcome is not yet authoritative")
@@ -522,38 +477,22 @@ class WorkflowAuthorityRepository:
         return RequestAdmission(request, False, recorded)
 
     def admit_request(self, spec: RequestSpec) -> RequestAdmission:
-        generation = self.require_active_generation(
-            spec.generation_id, hold_transition_fence=True
-        )
-        self.require_active_run(
-            generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
-        )
+        generation = self.require_active_generation(spec.generation_id, hold_transition_fence=True)
+        self.require_active_run(generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id)
         payload = dict(spec.canonical_payload)
         payload_sha = sha256_json(payload)
         existing = self.session.get(wf.ServiceRequest, spec.request_id)
         if existing is not None:
-            if not self._request_identity_matches(
-                existing, spec=spec, payload_sha=payload_sha
-            ):
+            if not self._request_identity_matches(existing, spec=spec, payload_sha=payload_sha):
                 raise RequestIdentityConflict("service request identity conflict")
-            outcome = self.session.scalar(
-                select(wf.ServiceRequestOutcome).where(
-                    wf.ServiceRequestOutcome.request_id == existing.request_id
-                )
-            )
+            outcome = self.session.scalar(select(wf.ServiceRequestOutcome).where(wf.ServiceRequestOutcome.request_id == existing.request_id))
             return RequestAdmission(existing, True, outcome)
 
         candidate_exists = self.session.scalar(
-            select(rel.ReleaseCandidate.candidate_id).where(
-                rel.ReleaseCandidate.generation_id == spec.generation_id
-            ).limit(1)
+            select(rel.ReleaseCandidate.candidate_id).where(rel.ReleaseCandidate.generation_id == spec.generation_id).limit(1)
         ) is not None
         if generation.creation_reason == "destructive_restore" and not candidate_exists:
-            bootstrap = self.session.scalar(
-                select(models.GenerationBootstrapAuthority).where(
-                    models.GenerationBootstrapAuthority.generation_id == generation.generation_id
-                )
-            )
+            bootstrap = self.session.scalar(select(models.GenerationBootstrapAuthority).where(models.GenerationBootstrapAuthority.generation_id == generation.generation_id))
             rehydration = self.session.scalar(
                 select(models.AppliedMigrationEvent).where(
                     models.AppliedMigrationEvent.generation_id == spec.generation_id,
@@ -568,23 +507,17 @@ class WorkflowAuthorityRepository:
                     details is not None
                     and bootstrap is not None
                     and details.get("route") == route
-                    and details.get("external_restore_control_id")
-                    == generation.external_restore_control_id
-                    and details.get("predecessor_generation_id")
-                    == str(generation.predecessor_generation_id)
+                    and details.get("external_restore_control_id") == generation.external_restore_control_id
+                    and details.get("predecessor_generation_id") == str(generation.predecessor_generation_id)
                     and details.get("successor_generation_id") == str(generation.generation_id)
                     and details.get("bootstrap_id") == str(bootstrap.bootstrap_id)
-                    and details.get("bootstrap_capability_sha256")
-                    == bootstrap.capability_digest.hex()
-                    and bootstrap.external_control_id
-                    == generation.external_restore_control_id
+                    and details.get("bootstrap_capability_sha256") == bootstrap.capability_digest.hex()
+                    and bootstrap.external_control_id == generation.external_restore_control_id
                     and details.get("external_effects_enabled") is False
                 )
 
             if not recovery_lineage_valid(rehydration, RECOVERY_REHYDRATION_REVISION):
-                raise MutationAdmissionClosed(
-                    "restored generation mutation admission requires deliberate reissue control"
-                )
+                raise MutationAdmissionClosed("restored generation mutation admission requires deliberate reissue control")
             qualification = self.session.scalar(
                 select(models.AppliedMigrationEvent).where(
                     models.AppliedMigrationEvent.generation_id == spec.generation_id,
@@ -601,27 +534,22 @@ class WorkflowAuthorityRepository:
             )
             qualification_valid = (
                 recovery_lineage_valid(qualification, RECOVERY_QUALIFICATION_REVISION)
-                and qualification.details.get("rehydration_event_id")
-                == str(rehydration.migration_event_id)
+                and qualification.details.get("rehydration_event_id") == str(rehydration.migration_event_id)
                 and qualification.details.get("protocol_release") == spec.protocol_release
                 and qualification.details.get("dish_release") == spec.dish_release
             )
             readiness_valid = (
                 recovery_lineage_valid(readiness, RECOVERY_READINESS_REVISION)
                 and qualification_valid
-                and readiness.details.get("rehydration_event_id")
-                == str(rehydration.migration_event_id)
-                and readiness.details.get("qualification_event_id")
-                == str(qualification.migration_event_id)
-                and readiness.details.get("qualification_request_id")
-                == qualification.details.get("request_id")
+                and readiness.details.get("rehydration_event_id") == str(rehydration.migration_event_id)
+                and readiness.details.get("qualification_event_id") == str(qualification.migration_event_id)
+                and readiness.details.get("qualification_request_id") == qualification.details.get("request_id")
                 and readiness.details.get("ordinary_mutation_admission_open") is True
             )
             if not readiness_valid:
                 epoch = self.session.scalar(
                     select(projection_models.ProjectionEpoch).where(
-                        projection_models.ProjectionEpoch.generation_id
-                        == generation.generation_id,
+                        projection_models.ProjectionEpoch.generation_id == generation.generation_id,
                         projection_models.ProjectionEpoch.status == "active",
                     )
                 )
@@ -638,9 +566,7 @@ class WorkflowAuthorityRepository:
                     and qualification.details.get("ordinary_mutation_admission_open") is False
                 )
                 if not exact_qualification_request:
-                    raise MutationAdmissionClosed(
-                        "restored generation mutation admission is closed pending recovery readiness"
-                    )
+                    raise MutationAdmissionClosed("restored generation mutation admission is closed pending recovery readiness")
         reservation = None
         if candidate_exists:
             control = self.session.get(rel.MutationAdmissionControl, spec.generation_id)
@@ -654,21 +580,11 @@ class WorkflowAuthorityRepository:
                 )
                 .with_for_update()
             )
-            if (
-                self.session.get_bind().dialect.name == "postgresql"
-                and reservation is not None
-                and reservation.state == "consumed"
-            ):
-                recovered = self._recover_request_admission(
-                    spec=spec, payload_sha=payload_sha
-                )
+            if self.session.get_bind().dialect.name == "postgresql" and reservation is not None and reservation.state == "consumed":
+                recovered = self._recover_request_admission(spec=spec, payload_sha=payload_sha)
                 if recovered is not None:
                     return recovered
-            cutover = (
-                None
-                if reservation is None
-                else self.session.get(rel.CutoverRun, reservation.cutover_run_id)
-            )
+            cutover = None if reservation is None else self.session.get(rel.CutoverRun, reservation.cutover_run_id)
             if control.state == "open":
                 if (
                     reservation is None
@@ -677,9 +593,7 @@ class WorkflowAuthorityRepository:
                     or cutover.candidate_id != control.candidate_id
                     or cutover.state not in {"first_admission_verified", "completed"}
                 ):
-                    raise MutationAdmissionClosed(
-                        "open PostgreSQL mutation admission lacks a verified consumed first request"
-                    )
+                    raise MutationAdmissionClosed("open PostgreSQL mutation admission lacks a verified consumed first request")
                 reservation = None
             elif control.state == "closed":
                 if (
@@ -688,13 +602,9 @@ class WorkflowAuthorityRepository:
                     or cutover.candidate_id != control.candidate_id
                     or cutover.state != "admission_open"
                 ):
-                    raise MutationAdmissionClosed(
-                        "PostgreSQL mutation admission is closed pending first-request gate"
-                    )
+                    raise MutationAdmissionClosed("PostgreSQL mutation admission is closed pending first-request gate")
                 if reservation.state != "reserved":
-                    raise MutationAdmissionClosed(
-                        "PostgreSQL mutation admission is closed pending first-admission verification"
-                    )
+                    raise MutationAdmissionClosed("PostgreSQL mutation admission is closed pending first-admission verification")
                 reserved_identity = (
                     reservation.request_id == spec.request_id
                     and reservation.command_name == spec.command_name
@@ -704,9 +614,7 @@ class WorkflowAuthorityRepository:
                     and reservation.canonical_payload_sha256 == payload_sha
                 )
                 if not reserved_identity:
-                    raise FirstRequestReservationMismatch(
-                        "first PostgreSQL mutation does not match the reserved request"
-                    )
+                    raise FirstRequestReservationMismatch("first PostgreSQL mutation does not match the reserved request")
             else:
                 raise MutationAdmissionClosed("PostgreSQL mutation admission is closed")
 
@@ -729,20 +637,14 @@ class WorkflowAuthorityRepository:
                 inserted_request_id = self.session.scalar(
                     postgresql_insert(wf.ServiceRequest)
                     .values(**request_values)
-                    .on_conflict_do_nothing(
-                        index_elements=[wf.ServiceRequest.request_id]
-                    )
+                    .on_conflict_do_nothing(index_elements=[wf.ServiceRequest.request_id])
                     .returning(wf.ServiceRequest.request_id)
                 )
                 self.session.flush()
                 if inserted_request_id is None:
-                    recovered = self._recover_request_admission(
-                        spec=spec, payload_sha=payload_sha
-                    )
+                    recovered = self._recover_request_admission(spec=spec, payload_sha=payload_sha)
                     if recovered is None:
-                        raise ContentionLost(
-                            "concurrent request admission winner was not visible"
-                        )
+                        raise ContentionLost("concurrent request admission winner was not visible")
                     return recovered
             else:
                 self.session.add(row)
@@ -818,9 +720,7 @@ class WorkflowAuthorityRepository:
             )
         previous_revision = execution.execution_revision
         allowed = execution.status == "pending" or (
-            execution.status == "claimed"
-            and execution.claim_expires_at is not None
-            and execution.claim_expires_at <= now
+            execution.status == "claimed" and execution.claim_expires_at is not None and execution.claim_expires_at <= now
         )
         if not allowed:
             raise ContentionLost("execution is already claimed or terminal")
@@ -864,11 +764,14 @@ class WorkflowAuthorityRepository:
             self.session.execute(text("LOCK TABLE service_runs IN SHARE MODE"))
 
     def revoke_generation_runs_for_task(
-        self, *, generation_id: uuid.UUID, task_id: uuid.UUID, archive_execution_id: uuid.UUID, revoked_at: datetime
+        self,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        archive_execution_id: uuid.UUID,
+        revoked_at: datetime,
     ) -> list[wf.TaskRunRevocation]:
-        runs = self.session.scalars(
-            select(wf.ServiceRun).where(wf.ServiceRun.generation_id == generation_id)
-        ).all()
+        runs = self.session.scalars(select(wf.ServiceRun).where(wf.ServiceRun.generation_id == generation_id)).all()
         rows: list[wf.TaskRunRevocation] = []
         for run in runs:
             existing = self.session.scalar(
@@ -903,9 +806,7 @@ class WorkflowAuthorityRepository:
         )
         missing = [str(run.run_id) for run in runs if run.run_id not in revoked_run_ids]
         if missing:
-            raise WorkflowAuthorityError(
-                "archive run-tombstone closure failed: " + ",".join(missing)
-            )
+            raise WorkflowAuthorityError("archive run-tombstone closure failed: " + ",".join(missing))
         return rows
 
     def assert_task_run_not_revoked(
@@ -924,8 +825,6 @@ class WorkflowAuthorityRepository:
     def lock_task_currentness(
         self, *, generation_id: uuid.UUID, task_id: uuid.UUID
     ) -> tuple[models.DishState, models.TaskMembershipHead]:
-        """Lock the existing scalar-currentness pair in canonical writer order."""
-
         state_statement = select(models.DishState).where(
             models.DishState.generation_id == generation_id,
             models.DishState.task_id == task_id,
@@ -937,12 +836,8 @@ class WorkflowAuthorityRepository:
         if self.session.get_bind().dialect.name == "postgresql":
             state_statement = state_statement.with_for_update()
             membership_statement = membership_statement.with_for_update()
-        state = self.session.scalar(
-            state_statement.execution_options(populate_existing=True)
-        )
-        membership = self.session.scalar(
-            membership_statement.execution_options(populate_existing=True)
-        )
+        state = self.session.scalar(state_statement.execution_options(populate_existing=True))
+        membership = self.session.scalar(membership_statement.execution_options(populate_existing=True))
         if state is None or membership is None:
             raise WorkflowAuthorityError("task has incomplete scalar/membership authority")
         return state, membership
@@ -956,17 +851,9 @@ class WorkflowAuthorityRepository:
         request = self.session.get(wf.ServiceRequest, execution.request_id)
         if request is None:
             raise WorkflowAuthorityError("execution has no request authority")
-        state, membership = self.lock_task_currentness(
-            generation_id=generation_id, task_id=task_id
-        )
-        # While archived, preserve the canonical TASK_ARCHIVED surface. The
-        # tombstone becomes authoritative if the task is later unarchived, so
-        # pre-archive runs can never regain workflow authority. Cook-log is the
-        # explicit lifecycle-neutral exception and remains legal after unarchive.
+        state, membership = self.lock_task_currentness(generation_id=generation_id, task_id=task_id)
         if state.archived_at is None and request.command_name != "record-cook-log":
-            self.assert_task_run_not_revoked(
-                generation_id=generation_id, task_id=task_id, run_id=request.run_id
-            )
+            self.assert_task_run_not_revoked(generation_id=generation_id, task_id=task_id, run_id=request.run_id)
         row = wf.TaskExecutionFence(
             execution_id=execution_id,
             generation_id=generation_id,
@@ -987,13 +874,9 @@ class WorkflowAuthorityRepository:
         request = self.session.get(wf.ServiceRequest, execution.request_id) if execution is not None else None
         if request is None:
             raise WorkflowAuthorityError("execution has no request authority")
-        state, membership = self.lock_task_currentness(
-            generation_id=fence.generation_id, task_id=fence.task_id
-        )
+        state, membership = self.lock_task_currentness(generation_id=fence.generation_id, task_id=fence.task_id)
         if state.archived_at is None and request.command_name != "record-cook-log":
-            self.assert_task_run_not_revoked(
-                generation_id=fence.generation_id, task_id=fence.task_id, run_id=request.run_id
-            )
+            self.assert_task_run_not_revoked(generation_id=fence.generation_id, task_id=fence.task_id, run_id=request.run_id)
         if (
             state is None
             or membership is None
@@ -1027,7 +910,7 @@ class WorkflowAuthorityRepository:
         operation = self.session.get(wf.WorkflowOperation, fence.operation_id)
         if operation is None or (
             operation.operation_revision != fence.expected_operation_revision
-            or operation.phase != fence.expected_operation_phase
+            or operation.phase != fence.expected_phase
         ):
             raise StaleAuthorityError("operation fence is stale")
         return operation
@@ -1050,9 +933,7 @@ class WorkflowAuthorityRepository:
         request = self.session.get(wf.ServiceRequest, request_id)
         if request is None:
             raise WorkflowAuthorityError("cannot complete an unknown request")
-        existing = self.session.scalar(
-            select(wf.ServiceRequestOutcome).where(wf.ServiceRequestOutcome.request_id == request_id)
-        )
+        existing = self.session.scalar(select(wf.ServiceRequestOutcome).where(wf.ServiceRequestOutcome.request_id == request_id))
         if existing is not None:
             return existing
         payload = dict(outcome.result_payload)
@@ -1073,13 +954,7 @@ class WorkflowAuthorityRepository:
             execution = self.session.get(wf.CommandExecution, execution_id)
             if execution is None or execution.request_id != request_id:
                 raise WorkflowAuthorityError("outcome execution does not own request")
-            execution.status = (
-                "committed"
-                if outcome.outcome_class == "success"
-                else "uncertain"
-                if outcome.outcome_class == "uncertain"
-                else "failed"
-            )
+            execution.status = "committed" if outcome.outcome_class == "success" else "uncertain" if outcome.outcome_class == "uncertain" else "failed"
             execution.claim_owner = None
             execution.claim_token = None
             execution.claim_expires_at = None
@@ -1123,14 +998,7 @@ class WorkflowAuthorityRepository:
 
 
 class WorkflowAuthorityService:
-    """Stage 3 domain orchestration with caller-owned transaction boundaries."""
-
-    def __init__(
-        self,
-        session: Session,
-        *,
-        uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
-    ) -> None:
+    def __init__(self, session: Session, *, uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4) -> None:
         self.session = session
         self.uuid_factory = uuid_factory
         self.repo = WorkflowAuthorityRepository(session)
@@ -1163,28 +1031,8 @@ class WorkflowAuthorityService:
     def admit_request(self, spec: RequestSpec) -> RequestAdmission:
         return self.repo.admit_request(spec)
 
-    def record_validation_failure(
-        self,
-        *,
-        spec: RequestSpec,
-        outcome: StoredOutcome,
-        audit_event_id: uuid.UUID,
-        audit_event_type: str,
-        actor: str,
-        audit_payload: Mapping[str, Any],
-        obligation_id: uuid.UUID,
-        invocation_metadata: Mapping[str, Any],
-    ) -> RequestAdmission:
-        return self.repo.record_validation_failure(
-            spec=spec,
-            outcome=outcome,
-            audit_event_id=audit_event_id,
-            audit_event_type=audit_event_type,
-            actor=actor,
-            audit_payload=audit_payload,
-            obligation_id=obligation_id,
-            invocation_metadata=invocation_metadata,
-        )
+    def record_validation_failure(self, **kwargs) -> RequestAdmission:
+        return self.repo.record_validation_failure(**kwargs)
 
     def begin_execution(self, spec: ExecutionSpec) -> wf.CommandExecution:
         return self.repo.begin_execution(spec)
@@ -1238,9 +1086,7 @@ class WorkflowAuthorityService:
         request = self.session.get(wf.ServiceRequest, issuing_request_id)
         if request is None or request.command_name != "start":
             raise WorkflowAuthorityError("planning challenge requires an admitted start request")
-        run = self.repo.require_active_run(
-            generation_id=request.generation_id, run_id=request.run_id, owner_id=request.owner_id
-        )
+        run = self.repo.require_active_run(generation_id=request.generation_id, run_id=request.run_id, owner_id=request.owner_id)
         self.repo.assert_task_run_not_revoked(
             generation_id=request.generation_id,
             task_id=task_id,
@@ -1296,10 +1142,7 @@ class WorkflowAuthorityService:
             raise WorkflowAuthorityError("agent override requires a reason")
         result = self.session.execute(
             update(wf.PlanningIntentChallenge)
-            .where(
-                wf.PlanningIntentChallenge.challenge_id == challenge_id,
-                wf.PlanningIntentChallenge.state == "issued",
-            )
+            .where(wf.PlanningIntentChallenge.challenge_id == challenge_id, wf.PlanningIntentChallenge.state == "issued")
             .values(
                 state="claimed",
                 claiming_request_id=claiming_request_id,
@@ -1314,11 +1157,7 @@ class WorkflowAuthorityService:
         return challenge
 
     def consume_planning_challenge(
-        self,
-        *,
-        challenge_id: uuid.UUID,
-        operation_id: uuid.UUID,
-        consumed_at: datetime,
+        self, *, challenge_id: uuid.UUID, operation_id: uuid.UUID, consumed_at: datetime
     ) -> wf.PlanningIntentChallenge:
         challenge = self.session.get(wf.PlanningIntentChallenge, challenge_id)
         operation = self.session.get(wf.WorkflowOperation, operation_id)
@@ -1333,12 +1172,7 @@ class WorkflowAuthorityService:
         return challenge
 
     def settle_planning_challenge(
-        self,
-        *,
-        challenge_id: uuid.UUID,
-        actor: str,
-        reason: str,
-        settled_at: datetime,
+        self, *, challenge_id: uuid.UUID, actor: str, reason: str, settled_at: datetime
     ) -> wf.PlanningIntentChallenge:
         challenge = self.session.get(wf.PlanningIntentChallenge, challenge_id)
         if challenge is None or challenge.state != "issued":
@@ -1370,9 +1204,7 @@ class WorkflowAuthorityService:
         operation = self.session.get(wf.WorkflowOperation, operation_id)
         if execution is None or operation is None or execution.task_id != operation.task_id:
             raise WorkflowAuthorityError("lease requires matching execution and operation")
-        self.repo.require_active_run(
-            generation_id=execution.generation_id, run_id=run_id, owner_id=owner_id
-        )
+        self.repo.require_active_run(generation_id=execution.generation_id, run_id=run_id, owner_id=owner_id)
         self.repo.assert_operation_run_not_revoked(
             generation_id=execution.generation_id,
             operation_id=operation_id,
@@ -1436,9 +1268,7 @@ class WorkflowAuthorityService:
             raise WorkflowAuthorityError("unknown lease or execution")
         if execution.generation_id != lease.generation_id:
             raise StaleAuthorityError("lease and execution belong to different generations")
-        self.repo.require_active_run(
-            generation_id=lease.generation_id, run_id=run_id, owner_id=owner_id
-        )
+        self.repo.require_active_run(generation_id=lease.generation_id, run_id=run_id, owner_id=owner_id)
         if lease.operation_id is not None:
             self.repo.assert_operation_run_not_revoked(
                 generation_id=lease.generation_id,
@@ -1488,9 +1318,16 @@ class WorkflowAuthorityService:
         at: datetime,
     ) -> dict[str, int]:
         counts = {
-            "operations": 0, "cycles": 0, "leases": 0, "challenges": 0,
-            "holds": 0, "reviews": 0, "abandonments": 0, "executions": 0,
+            "operations": 0,
+            "cycles": 0,
+            "leases": 0,
+            "challenges": 0,
+            "holds": 0,
+            "reviews": 0,
+            "abandonments": 0,
+            "executions": 0,
         }
+
         def locked(model, *where):
             stmt = select(model).where(*where)
             if self.session.get_bind().dialect.name == "postgresql":
@@ -1565,13 +1402,21 @@ class WorkflowAuthorityService:
             row.state = "released"
             row.lease_revision += 1
             row.terminal_at = at
-            self.session.add(wf.LeaseEvent(
-                lease_event_id=self.uuid_factory(), lease_id=row.lease_id, event_kind="released",
-                request_id=archive_request_id, command_execution_id=archive_execution_id,
-                prior_revision=prior_revision, resulting_revision=prior_revision + 1,
-                prior_expiry=prior_expiry, resulting_expiry=prior_expiry,
-                reason="Dish archived", occurred_at=at,
-            ))
+            self.session.add(
+                wf.LeaseEvent(
+                    lease_event_id=self.uuid_factory(),
+                    lease_id=row.lease_id,
+                    event_kind="released",
+                    request_id=archive_request_id,
+                    command_execution_id=archive_execution_id,
+                    prior_revision=prior_revision,
+                    resulting_revision=prior_revision + 1,
+                    prior_expiry=prior_expiry,
+                    resulting_expiry=prior_expiry,
+                    reason="Dish archived",
+                    occurred_at=at,
+                )
+            )
             counts["leases"] += 1
         for row in challenges:
             row.state = "settled"
@@ -1582,11 +1427,17 @@ class WorkflowAuthorityService:
         for row in holds:
             row.state = "cancelled"
             row.terminal_at = at
-            self.session.add(wf.EvidenceHoldEvent(
-                hold_event_id=self.uuid_factory(), hold_id=row.hold_id, event_kind="cancelled",
-                evidence_payload={"reason": "Dish archived"}, request_id=archive_request_id,
-                command_execution_id=archive_execution_id, occurred_at=at,
-            ))
+            self.session.add(
+                wf.EvidenceHoldEvent(
+                    hold_event_id=self.uuid_factory(),
+                    hold_id=row.hold_id,
+                    event_kind="cancelled",
+                    evidence_payload={"reason": "Dish archived"},
+                    request_id=archive_request_id,
+                    command_execution_id=archive_execution_id,
+                    occurred_at=at,
+                )
+            )
             counts["holds"] += 1
         for row in reviews:
             row.state = "cancelled"
@@ -1611,17 +1462,23 @@ class WorkflowAuthorityService:
             row.execution_revision += 1
             row.terminal_at = at
             outcome = self.session.scalar(
-                select(wf.ServiceRequestOutcome).where(
-                    wf.ServiceRequestOutcome.request_id == row.request_id
-                )
+                select(wf.ServiceRequestOutcome).where(wf.ServiceRequestOutcome.request_id == row.request_id)
             )
             if outcome is None:
                 payload = {"code": "TASK_ARCHIVED", "task_id": str(task_id)}
-                self.session.add(wf.ServiceRequestOutcome(
-                    outcome_id=self.uuid_factory(), request_id=row.request_id, outcome_class="retired",
-                    result_code="TASK_ARCHIVED", http_status=409, result_payload=payload,
-                    result_sha256=sha256_json(payload), immutable_success=False, recorded_at=at,
-                ))
+                self.session.add(
+                    wf.ServiceRequestOutcome(
+                        outcome_id=self.uuid_factory(),
+                        request_id=row.request_id,
+                        outcome_class="retired",
+                        result_code="TASK_ARCHIVED",
+                        http_status=409,
+                        result_payload=payload,
+                        result_sha256=sha256_json(payload),
+                        immutable_success=False,
+                        recorded_at=at,
+                    )
+                )
             counts["executions"] += 1
         self.session.flush()
         return counts
@@ -1687,9 +1544,7 @@ class WorkflowAuthorityService:
         operation = self.session.get(wf.WorkflowOperation, operation_id)
         if execution is None or operation is None or execution.task_id != operation.task_id:
             raise WorkflowAuthorityError("actor fact requires matching execution and operation")
-        self.repo.require_active_run(
-            generation_id=execution.generation_id, run_id=run_id, owner_id=owner_id
-        )
+        self.repo.require_active_run(generation_id=execution.generation_id, run_id=run_id, owner_id=owner_id)
         self.repo.assert_operation_run_not_revoked(
             generation_id=execution.generation_id,
             operation_id=operation_id,
@@ -1900,9 +1755,7 @@ class WorkflowAuthorityService:
             raise WorkflowAuthorityError("verification cycle task mismatch")
         cycle_sequence = int(
             self.session.scalar(
-                select(func.coalesce(func.max(wf.VerificationCycle.cycle_sequence), 0)).where(
-                    wf.VerificationCycle.operation_id == operation_id
-                )
+                select(func.coalesce(func.max(wf.VerificationCycle.cycle_sequence), 0)).where(wf.VerificationCycle.operation_id == operation_id)
             )
             or 0
         ) + 1
@@ -1947,10 +1800,8 @@ class WorkflowAuthorityService:
             correction = self.session.scalar(
                 select(wf.VerificationCorrection).where(
                     wf.VerificationCorrection.cycle_id == cycle_id,
-                    wf.VerificationCorrection.source_content_version_id
-                    == inspection.reviewed_content_version_id,
-                    wf.VerificationCorrection.corrected_content_version_id
-                    == signed_content_version_id,
+                    wf.VerificationCorrection.source_content_version_id == inspection.reviewed_content_version_id,
+                    wf.VerificationCorrection.corrected_content_version_id == signed_content_version_id,
                 )
             )
             signed = self.session.get(models.ContentVersion, signed_content_version_id)
@@ -1959,8 +1810,7 @@ class WorkflowAuthorityService:
                 and signed is not None
                 and signed.generation_id == cycle.generation_id
                 and signed.task_id == cycle.task_id
-                and signed.predecessor_content_version_id
-                == inspection.reviewed_content_version_id
+                and signed.predecessor_content_version_id == inspection.reviewed_content_version_id
             )
             if correction is None and not direct_status_transition:
                 raise WorkflowAuthorityError(
@@ -2167,9 +2017,7 @@ class WorkflowAuthorityService:
         self.session.flush()
         return row
 
-    def mark_abandonment_blocked(
-        self, *, abandonment_id: uuid.UUID, reason: str
-    ) -> wf.AbandonmentAttempt:
+    def mark_abandonment_blocked(self, *, abandonment_id: uuid.UUID, reason: str) -> wf.AbandonmentAttempt:
         attempt = self.session.get(wf.AbandonmentAttempt, abandonment_id)
         if attempt is None or attempt.state not in {"preparing", "reconciling"}:
             raise WorkflowAuthorityError("abandonment cannot enter blocked state")
@@ -2195,9 +2043,7 @@ class WorkflowAuthorityService:
         payload_dict = dict(payload)
         payload_sha = sha256_json(payload_dict)
         existing = self.session.scalar(
-            select(wf.InvocationAuditRepair).where(
-                wf.InvocationAuditRepair.repair_identity == repair_identity
-            )
+            select(wf.InvocationAuditRepair).where(wf.InvocationAuditRepair.repair_identity == repair_identity)
         )
         if existing is not None:
             if existing.payload_sha256 != payload_sha or existing.obligation_id != obligation_id:
