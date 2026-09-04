@@ -39,6 +39,11 @@ Authority transfer is explicit and one-way for the activated generation. Importe
 - The first-request reservation and activation/admission controls prevent uncontrolled authority opening.
 - Projection origin/effect settlement remain separate from canonical command authority.
 - Reconciliation is evidence/repair machinery, not an alternate canonical writer.
+- Native `Section` rows are stable identities without a Project or Asana identifier. Immutable
+  catalog versions, entries, and activations bind one exact Honest release contract, while
+  `ActiveSectionCatalog` advances by a contiguous compare-and-swap revision. This is definition
+  currentness only: no runtime placement reader or writer switches until the separately reviewed
+  runtime-root transition.
 - Forward candidate-authority manifests use contract v3: they bind the exact approval-time reconciliation run and exclude all post-burn worker-readiness state. Historical v2 fingerprints keep their original stored semantics.
 - Supplemental terminal-history application and candidate validation serialize on the active generation. Primary-only v3 manifest fingerprints retain their original bytes; when supplemental terminal history exists, the v3 builder extension folds a deterministic digest of supplemental ImportRun/source/primary linkage and exact imported terminal operations, verification cycles, and leases into `import_completion_sha256`.
 - Rollback burn disables external projection for the exact candidate generation. Post-burn runtime attestation binds the PostgreSQL service/route and disabled projection mode; projection-worker readiness and fresh Asana reconciliation are not first-admission authority. Historical readiness/reconciliation rows retain their original evidence semantics.

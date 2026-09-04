@@ -53,6 +53,11 @@ def test_stage2_schema_stops_before_command_authority() -> None:
         "honest_contract_bindings",
         "governed_projects",
         "governed_sections",
+        "sections",
+        "section_catalog_versions",
+        "section_catalog_entries",
+        "section_catalog_activations",
+        "active_section_catalogs",
         "section_registry_versions",
         "section_registry_entries",
         "section_registry_activations",
@@ -112,7 +117,17 @@ def test_stage2_alembic_upgrade_reaches_head_from_empty_database(tmp_path: Path)
     engine = create_engine(database_url, future=True)
     try:
         table_names = set(inspect(engine).get_table_names())
-        assert set(models.CORE_TABLE_NAMES).issubset(table_names)
+        native_catalog_tables = {
+            "sections",
+            "section_catalog_versions",
+            "section_catalog_entries",
+            "section_catalog_activations",
+            "active_section_catalogs",
+        }
+        assert (set(models.CORE_TABLE_NAMES) - native_catalog_tables).issubset(
+            table_names
+        )
+        assert native_catalog_tables.isdisjoint(table_names)
         with engine.connect() as connection:
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
