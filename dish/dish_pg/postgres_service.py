@@ -535,6 +535,16 @@ class PostgresRuntimeService:
         query = str(arguments["query"])
         page_size = int(arguments["page_size"])
         reads = PostgresReadModel(session, cursor_secret=self._cursor_secret)
+        try:
+            native_result = reads.native_search(
+                query=query, page_size=page_size, cursor=arguments.get("cursor")
+            )
+        except InvalidCursor as exc:
+            return CommandResult(False, SEARCH_COMMAND, "INVALID_ARGUMENT", 400, {"message": str(exc), "field": "cursor"})
+        except ReadModelError as exc:
+            return CommandResult(False, SEARCH_COMMAND, "BACKEND_REJECTED", 409, {"message": str(exc)}, retryable=True)
+        if native_result is not None:
+            return CommandResult(True, SEARCH_COMMAND, "OK", 200, native_result)
         board = FrontendBoardQuery(session)
         context = board.context()
         normalized_query = query.lower()
