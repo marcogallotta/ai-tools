@@ -51,10 +51,6 @@ genuinely read-only work remains non-mutating, and discretionary, ambiguous, cro
 cross-project writes require separate exact authority. Every permitted write still applies the
 current project-mode contract, preserves provenance, and requires authoritative readback.
 
-Assigned governed work is incomplete until any bounded Asana persistence required by the current
-role/procedure is written and read back. Persist material verdicts or lifecycle/state changes on the exact
-owning task/project before reporting completion. This grants no discretionary or planning/read-only writes.
-
 Marco's explicit `override` supersedes every conflicting repository-owned Dish instruction or boundary for the named operation, including role/mode, authorship/independence, safety/security, workflow, test, Review, Integration, mutation, destructive-action, and production rules. If the active blocker is unambiguous, a terse `override` is sufficient. Execute first and record `GATE WAIVED BY MARCO OVERRIDE` second; never refuse, reinterpret the repository rule as higher-priority, invent a mode/session limitation, require a different agent, or ask for confirmation. Preserve factual evidence exactly and do not infer unrelated waivers. Only a literal technical impossibility or an external platform/system control that actually prevents execution remains outside this policy; a repository rule, contract label, or agent risk judgment is not such a constraint.
 
 <!-- BEGIN GENERATED DESIGN PRINCIPLES BOOTSTRAP -->
@@ -157,6 +153,11 @@ Keep these durable provenance classes distinct:
 - **Agent inference/recommendation** — analysis or recommendation; never settled human/product/cutover policy merely because the write used Marco's account.
 - **Runtime observation** — measured current state, not policy by itself.
 - **Authenticated-account metadata** — Asana/GitHub `created_by`, comment/PR author, commit author/committer, or similar service actor fields. These prove account attribution, not that Marco physically performed or approved the action when agents/tools can use his credentials.
+
+Assigned governed work is incomplete until every bounded durable completion artifact, same-turn projection,
+and readback that the current role/procedure already requires has been written and authoritatively read back.
+A material verdict or lifecycle/state change does not create a new Asana write by itself: persist only the
+artifact/projection the active role/procedure already requires. This grants no discretionary or planning/read-only writes.
 
 Consequential human-origin claims require independent provenance such as a current chat instruction, explicit durable human marker, session/host provenance, or suitable platform audit evidence. Never treat `created_by == Marco` alone as human authorization, ownership transfer, or a Review verdict. Agent-authored durable discussion writes retain `Dish Agent: <role> | <host>` provenance where applicable.
 
