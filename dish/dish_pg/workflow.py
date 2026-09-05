@@ -31,6 +31,7 @@ from .recovery_rehydration import (
     RECOVERY_REHYDRATION_REVISION,
 )
 from .release_history import operation_revocation_history_reconciled
+from .repositories import CatalogRepository, CoreAuthorityError
 
 
 VALIDATION_FAILURE_REQUEST_KIND = "pre_execution_validation_failure"
@@ -1051,29 +1052,47 @@ class WorkflowAuthorityRepository:
 
     def lock_task_currentness(
         self, *, generation_id: uuid.UUID, task_id: uuid.UUID
-    ) -> tuple[models.DishState, models.TaskMembershipHead]:
-        """Lock the existing scalar-currentness pair in canonical writer order."""
+    ) -> tuple[models.DishState, models.TaskMembershipHead, uuid.UUID | None]:
+        """Lock task scalar currentness and resolve the active runtime fence domain."""
 
         state_statement = select(models.DishState).where(
             models.DishState.generation_id == generation_id,
             models.DishState.task_id == task_id,
         )
+        if self.session.get_bind().dialect.name == "postgresql":
+            state_statement = state_statement.with_for_update()
+        state = self.session.scalar(
+            state_statement.execution_options(populate_existing=True)
+        )
+        if state is None:
+            raise WorkflowAuthorityError("task has incomplete scalar authority")
+        try:
+            native_contract = CatalogRepository(
+                self.session
+            ).active_runtime_catalog_contract(generation_id)
+        except CoreAuthorityError as exc:
+            raise StaleAuthorityError(str(exc)) from exc
+
         membership_statement = select(models.TaskMembershipHead).where(
             models.TaskMembershipHead.generation_id == generation_id,
             models.TaskMembershipHead.task_id == task_id,
         )
-        if self.session.get_bind().dialect.name == "postgresql":
-            state_statement = state_statement.with_for_update()
+        if (
+            native_contract is None
+            and self.session.get_bind().dialect.name == "postgresql"
+        ):
             membership_statement = membership_statement.with_for_update()
-        state = self.session.scalar(
-            state_statement.execution_options(populate_existing=True)
-        )
         membership = self.session.scalar(
             membership_statement.execution_options(populate_existing=True)
         )
-        if state is None or membership is None:
-            raise WorkflowAuthorityError("task has incomplete scalar/membership authority")
-        return state, membership
+        if membership is None:
+            raise WorkflowAuthorityError("task legacy membership adapter is missing")
+        if native_contract is None:
+            return state, membership, None
+        catalog_version_id = native_contract.catalog_version.catalog_version_id
+        if state.catalog_version_id != catalog_version_id:
+            raise StaleAuthorityError("task native placement/catalog authority is stale")
+        return state, membership, catalog_version_id
 
     def capture_task_fence(
         self, *, execution_id: uuid.UUID, generation_id: uuid.UUID, task_id: uuid.UUID, at: datetime
@@ -1084,7 +1103,7 @@ class WorkflowAuthorityRepository:
         request = self.session.get(wf.ServiceRequest, execution.request_id)
         if request is None:
             raise WorkflowAuthorityError("execution has no request authority")
-        state, membership = self.lock_task_currentness(
+        state, membership, catalog_version_id = self.lock_task_currentness(
             generation_id=generation_id, task_id=task_id
         )
         # While archived, preserve the canonical TASK_ARCHIVED surface. The
@@ -1101,6 +1120,10 @@ class WorkflowAuthorityRepository:
             task_id=task_id,
             expected_dish_version=state.dish_version,
             expected_membership_revision=membership.membership_revision,
+            expected_placement_version=(
+                state.placement_version if catalog_version_id is not None else None
+            ),
+            catalog_version_id=catalog_version_id,
             captured_at=at,
         )
         self.session.add(row)
@@ -1115,18 +1138,36 @@ class WorkflowAuthorityRepository:
         request = self.session.get(wf.ServiceRequest, execution.request_id) if execution is not None else None
         if request is None:
             raise WorkflowAuthorityError("execution has no request authority")
-        state, membership = self.lock_task_currentness(
+        state, membership, catalog_version_id = self.lock_task_currentness(
             generation_id=fence.generation_id, task_id=fence.task_id
         )
         if state.archived_at is None and request.command_name != "record-cook-log":
             self.assert_task_run_not_revoked(
                 generation_id=fence.generation_id, task_id=fence.task_id, run_id=request.run_id
             )
+        native_fence = (
+            fence.expected_placement_version is not None
+            and fence.catalog_version_id is not None
+        )
         if (
-            state is None
-            or membership is None
+            (fence.expected_placement_version is None)
+            != (fence.catalog_version_id is None)
+        ):
+            raise StaleAuthorityError("task fence is stale")
+        if catalog_version_id is None:
+            if native_fence or (
+                state.dish_version != fence.expected_dish_version
+                or membership.membership_revision
+                != fence.expected_membership_revision
+            ):
+                raise StaleAuthorityError("task fence is stale")
+            return state
+        if (
+            not native_fence
             or state.dish_version != fence.expected_dish_version
-            or membership.membership_revision != fence.expected_membership_revision
+            or state.placement_version != fence.expected_placement_version
+            or state.catalog_version_id != fence.catalog_version_id
+            or catalog_version_id != fence.catalog_version_id
         ):
             raise StaleAuthorityError("task fence is stale")
         return state
@@ -1137,6 +1178,11 @@ class WorkflowAuthorityRepository:
         operation = self.session.get(wf.WorkflowOperation, operation_id)
         if operation is None:
             raise WorkflowAuthorityError("unknown workflow operation")
+        task_fence = self.session.get(wf.TaskExecutionFence, execution_id)
+        if task_fence is None:
+            raise WorkflowAuthorityError("operation fence requires the exact task fence")
+        if operation.catalog_version_id != task_fence.catalog_version_id:
+            raise StaleAuthorityError("operation catalog authority is stale")
         row = wf.OperationExecutionFence(
             execution_id=execution_id,
             operation_id=operation_id,
@@ -1153,9 +1199,11 @@ class WorkflowAuthorityRepository:
         if fence is None:
             raise WorkflowAuthorityError("execution has no operation fence")
         operation = self.session.get(wf.WorkflowOperation, fence.operation_id)
-        if operation is None or (
+        task_fence = self.session.get(wf.TaskExecutionFence, execution_id)
+        if operation is None or task_fence is None or (
             operation.operation_revision != fence.expected_operation_revision
             or operation.phase != fence.expected_phase
+            or operation.catalog_version_id != task_fence.catalog_version_id
         ):
             raise StaleAuthorityError("operation fence is stale")
         return operation
@@ -1352,6 +1400,9 @@ class WorkflowAuthorityService:
         if execution is None or execution.task_id != task_id:
             raise WorkflowAuthorityError("operation requires matching command execution")
         self.repo.assert_task_fence(execution_id)
+        task_fence = self.session.get(wf.TaskExecutionFence, execution_id)
+        if task_fence is None:
+            raise WorkflowAuthorityError("operation requires the exact task fence")
         row = wf.WorkflowOperation(
             operation_id=operation_id,
             generation_id=execution.generation_id,
@@ -1363,6 +1414,7 @@ class WorkflowAuthorityService:
             creation_request_id=execution.request_id,
             creation_execution_id=execution_id,
             contract_binding_id=execution.contract_binding_id,
+            catalog_version_id=task_fence.catalog_version_id,
             predecessor_operation_id=predecessor_operation_id,
             terminal_outcome=None,
             operation_revision=1,
@@ -1793,9 +1845,10 @@ class WorkflowAuthorityService:
             raise WorkflowAuthorityError("inspection actor/cycle mismatch")
         if actor.run_id != verifier_run_id or not attestation.strip():
             raise WorkflowAuthorityError("inspection requires exact verifier run and attestation")
-        placement = self.session.get(models.DishState, (cycle.generation_id, cycle.task_id))
-        if placement is None:
-            raise WorkflowAuthorityError("inspection requires current placement evidence")
+        placement = self.repo.assert_task_fence(execution_id)
+        fence = self.session.get(wf.TaskExecutionFence, execution_id)
+        if fence is None:
+            raise WorkflowAuthorityError("inspection requires the exact task fence")
         row = wf.VerificationInspectionOccurrence(
             inspection_id=inspection_id,
             cycle_id=cycle_id,
@@ -1808,6 +1861,7 @@ class WorkflowAuthorityService:
             attestation=attestation,
             section_id=placement.section_id,
             registry_version_id=placement.registry_version_id,
+            catalog_version_id=fence.catalog_version_id,
             placement_version=placement.placement_version,
             request_id=execution.request_id,
             command_execution_id=execution_id,

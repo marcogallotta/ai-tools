@@ -61,7 +61,9 @@ class ScalarDishMutation:
         generation_id: uuid.UUID,
         task_id: uuid.UUID,
         expected_dish_version: int,
-        expected_membership_revision: int,
+        expected_membership_revision: int | None,
+        expected_placement_version: int | None = None,
+        catalog_version_id: uuid.UUID | None = None,
         source: ScalarMutationSource,
         uuid_factory=uuid.uuid4,
     ) -> None:
@@ -70,10 +72,14 @@ class ScalarDishMutation:
         self.task_id = task_id
         self.expected_dish_version = expected_dish_version
         self.expected_membership_revision = expected_membership_revision
+        self.expected_placement_version = expected_placement_version
+        self.catalog_version_id = catalog_version_id
         self.source = source
         self.uuid_factory = uuid_factory
         self._content: models.ContentVersion | None = None
-        self._placement: tuple[uuid.UUID | None, uuid.UUID] | None = None
+        self._placement: tuple[
+            uuid.UUID | None, uuid.UUID | None, uuid.UUID | None
+        ] | None = None
         self._completion: tuple[bool, str] | None = None
         self._archived_at: datetime | None = None
         self._finalized = False
@@ -87,21 +93,42 @@ class ScalarDishMutation:
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        membership = session.scalar(
-            select(models.TaskMembershipHead)
-            .where(
-                models.TaskMembershipHead.generation_id == generation_id,
-                models.TaskMembershipHead.task_id == task_id,
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if self.state is None or membership is None:
-            raise CoreAuthorityError("Dish scalar or membership authority is missing")
+        if self.state is None:
+            raise CoreAuthorityError("Dish scalar authority is missing")
         if self.state.dish_version != expected_dish_version:
             raise CoreAuthorityError("Dish scalar authority is stale")
-        if membership.membership_revision != expected_membership_revision:
-            raise CoreAuthorityError("Dish membership authority is stale")
+        native_fence = catalog_version_id is not None or expected_placement_version is not None
+        runtime_contract = CatalogRepository(session).active_runtime_catalog_contract(
+            generation_id
+        )
+        if (runtime_contract is not None) != native_fence:
+            raise CoreAuthorityError("scalar fence authority domain is stale")
+        if native_fence:
+            if catalog_version_id is None or expected_placement_version is None:
+                raise CoreAuthorityError("native scalar fence identity is incomplete")
+            assert runtime_contract is not None
+            if (
+                runtime_contract.catalog_version.catalog_version_id != catalog_version_id
+                or self.state.catalog_version_id != catalog_version_id
+                or self.state.placement_version != expected_placement_version
+            ):
+                raise CoreAuthorityError("Dish placement/catalog authority is stale")
+        else:
+            if expected_membership_revision is None:
+                raise CoreAuthorityError("legacy scalar fence has no membership revision")
+            membership = session.scalar(
+                select(models.TaskMembershipHead)
+                .where(
+                    models.TaskMembershipHead.generation_id == generation_id,
+                    models.TaskMembershipHead.task_id == task_id,
+                )
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if membership is None:
+                raise CoreAuthorityError("Dish membership authority is missing")
+            if membership.membership_revision != expected_membership_revision:
+                raise CoreAuthorityError("Dish membership authority is stale")
 
     @property
     def resulting_dish_version(self) -> int:
@@ -152,14 +179,31 @@ class ScalarDishMutation:
         )
         return content_version_id
 
-    def place(self, *, section_id: uuid.UUID | None, registry_version_id: uuid.UUID) -> None:
+    def place(
+        self,
+        *,
+        section_id: uuid.UUID | None,
+        registry_version_id: uuid.UUID | None = None,
+        catalog_version_id: uuid.UUID | None = None,
+    ) -> None:
         if self._placement is not None:
             raise CoreAuthorityError("placement may be staged only once")
+        if self.catalog_version_id is not None:
+            if catalog_version_id != self.catalog_version_id or registry_version_id is not None:
+                raise CoreAuthorityError("native placement must use the exact fenced catalog")
+            if section_id is not None and self.session.get(
+                models.SectionCatalogEntry, (catalog_version_id, section_id)
+            ) is None:
+                raise CoreAuthorityError("placement is not present in the selected native catalog")
+            self._placement = (section_id, None, catalog_version_id)
+            return
+        if registry_version_id is None or catalog_version_id is not None:
+            raise CoreAuthorityError("legacy placement must use the selected registry")
         if section_id is not None and self.session.get(
             models.SectionRegistryEntry, (registry_version_id, section_id)
         ) is None:
             raise CoreAuthorityError("placement is not present in the selected registry")
-        self._placement = (section_id, registry_version_id)
+        self._placement = (section_id, registry_version_id, None)
 
     def set_completion(self, *, completed: bool, reason: str) -> None:
         if self._completion is not None:
@@ -223,11 +267,11 @@ class ScalarDishMutation:
         if self._content is not None:
             values["current_content_version_id"] = self._content.content_version_id
         if self._placement is not None:
-            values.update(
-                section_id=self._placement[0],
-                registry_version_id=self._placement[1],
-                placement_version=next_version,
-            )
+            values.update(section_id=self._placement[0], placement_version=next_version)
+            if self._placement[1] is not None:
+                values["registry_version_id"] = self._placement[1]
+            if self._placement[2] is not None:
+                values["catalog_version_id"] = self._placement[2]
         if self._completion is not None:
             values.update(
                 completed=self._completion[0],
@@ -236,13 +280,21 @@ class ScalarDishMutation:
             )
         elif self._archived_at is not None:
             values["archived_at"] = self._archived_at
+        currentness = [
+            models.DishState.generation_id == self.generation_id,
+            models.DishState.task_id == self.task_id,
+            models.DishState.dish_version == self.expected_dish_version,
+        ]
+        if self.catalog_version_id is not None:
+            currentness.extend(
+                [
+                    models.DishState.placement_version == self.expected_placement_version,
+                    models.DishState.catalog_version_id == self.catalog_version_id,
+                ]
+            )
         result = self.session.execute(
             update(models.DishState)
-            .where(
-                models.DishState.generation_id == self.generation_id,
-                models.DishState.task_id == self.task_id,
-                models.DishState.dish_version == self.expected_dish_version,
-            )
+            .where(*currentness)
             .values(**values)
             .execution_options(synchronize_session=False)
         )
@@ -264,7 +316,9 @@ class DishRepository:
         generation_id: uuid.UUID,
         task_id: uuid.UUID,
         expected_dish_version: int,
-        expected_membership_revision: int,
+        expected_membership_revision: int | None,
+        expected_placement_version: int | None = None,
+        catalog_version_id: uuid.UUID | None = None,
         source: ScalarMutationSource,
     ) -> ScalarDishMutation:
         return ScalarDishMutation(
@@ -273,6 +327,8 @@ class DishRepository:
             task_id=task_id,
             expected_dish_version=expected_dish_version,
             expected_membership_revision=expected_membership_revision,
+            expected_placement_version=expected_placement_version,
+            catalog_version_id=catalog_version_id,
             source=source,
             uuid_factory=self.uuid_factory,
         )
@@ -284,7 +340,9 @@ class DishRepository:
         generation_id: uuid.UUID,
         task_id: uuid.UUID,
         expected_dish_version: int,
-        expected_membership_revision: int,
+        expected_membership_revision: int | None,
+        expected_placement_version: int | None = None,
+        catalog_version_id: uuid.UUID | None = None,
         source: ScalarMutationSource,
     ) -> Iterator[ScalarDishMutation]:
         mutation = self.begin_scalar_mutation(
@@ -292,6 +350,8 @@ class DishRepository:
             task_id=task_id,
             expected_dish_version=expected_dish_version,
             expected_membership_revision=expected_membership_revision,
+            expected_placement_version=expected_placement_version,
+            catalog_version_id=catalog_version_id,
             source=source,
         )
         yield mutation
@@ -922,6 +982,35 @@ class CatalogRepository:
             honest_binding=binding,
             entries=entries,
         )
+
+    def active_runtime_catalog_contract(
+        self, generation_id: uuid.UUID
+    ) -> ActiveCatalogContract | None:
+        """Resolve the exact native catalog selected by runtime authority, if switched."""
+
+        try:
+            resolved = models.resolve_current_native_catalog_runtime(
+                self.session, generation_id
+            )
+        except ValueError as exc:
+            raise CoreAuthorityError("native runtime current pointer is inconsistent") from exc
+        if resolved is None:
+            return None
+        pointer, attestation = resolved
+        contract = self.active_catalog_contract(generation_id)
+        if (
+            pointer.catalog_version_id != contract.catalog_version.catalog_version_id
+            or pointer.catalog_activation_id
+            != contract.catalog_activation.catalog_activation_id
+            or attestation.catalog_version_id
+            != contract.catalog_version.catalog_version_id
+            or attestation.catalog_activation_id
+            != contract.catalog_activation.catalog_activation_id
+        ):
+            raise CoreAuthorityError(
+                "native runtime catalog is not the exact active native catalog"
+            )
+        return contract
 
 
 class RegistryRepository:
