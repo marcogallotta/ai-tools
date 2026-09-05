@@ -58,19 +58,26 @@ def test_mcp_tool_schemas_project_postgresql_action_openapi():
         operation = spec["paths"][f"/v1/action/{command}"]["post"]
         tool = _tool(command)
         expected_input = operation["requestBody"]["content"]["application/json"]["schema"]
-        expected_output = operation["responses"]["200"]["content"]["application/json"]["schema"]
+        expected_output = mcp_server._resolve_local_refs(
+            operation["responses"]["200"]["content"]["application/json"]["schema"],
+            schemas,
+        )
+        if "type" not in expected_output:
+            expected_output = {"type": "object", **expected_output}
         assert tool["inputSchema"] == expected_input
-        assert tool["outputSchema"] == mcp_server._resolve_local_refs(expected_output, schemas)
+        assert tool["outputSchema"] == expected_output
+        assert tool["outputSchema"]["type"] == "object"
         assert "$ref" not in json.dumps(tool["outputSchema"])
 
 
-def test_mcp_annotations_follow_command_replay_metadata():
+def test_mcp_annotations_follow_replay_metadata_conservatively():
     for command in EXPECTED_COMMANDS:
+        is_mutation = COMMAND_DEFINITIONS[command].request_replay
         annotations = _tool(command)["annotations"]
         assert annotations == {
-            "readOnlyHint": not COMMAND_DEFINITIONS[command].request_replay,
+            "readOnlyHint": not is_mutation,
             "idempotentHint": True,
-            "destructiveHint": False,
+            "destructiveHint": is_mutation,
             "openWorldHint": False,
         }
 

@@ -59,20 +59,26 @@ def _resolve_local_refs(value: Any, schemas: Mapping[str, Any]) -> Any:
     }
 
 
+def _mcp_output_schema(value: Any, schemas: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the canonical Action response as a valid MCP object output schema."""
+    resolved = _resolve_local_refs(value, schemas)
+    if not isinstance(resolved, dict):
+        raise ValueError("Dish MCP output schema must resolve to an object schema")
+    schema_type = resolved.get("type")
+    if schema_type is None:
+        resolved["type"] = "object"
+    elif schema_type != "object":
+        raise ValueError("Dish MCP output schema must have type object")
+    return resolved
+
+
 def _tool_annotations(command: str) -> dict[str, bool]:
     definition = COMMAND_DEFINITIONS[command]
-    if definition.request_replay:
-        # Exact repeated MCP inputs contain the same durable Dish request identity.
-        return {
-            "readOnlyHint": False,
-            "idempotentHint": True,
-            "destructiveHint": False,
-            "openWorldHint": False,
-        }
+    is_mutation = definition.request_replay
     return {
-        "readOnlyHint": True,
+        "readOnlyHint": not is_mutation,
         "idempotentHint": True,
-        "destructiveHint": False,
+        "destructiveHint": is_mutation,
         "openWorldHint": False,
     }
 
@@ -96,7 +102,7 @@ def build_tools() -> tuple[dict[str, Any], ...]:
                     "unchanged as client plus arguments."
                 ),
                 "inputSchema": _resolve_local_refs(request_schema, schemas),
-                "outputSchema": _resolve_local_refs(response_schema, schemas),
+                "outputSchema": _mcp_output_schema(response_schema, schemas),
                 "annotations": _tool_annotations(command),
             }
         )
