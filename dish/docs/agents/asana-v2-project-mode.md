@@ -6,10 +6,10 @@ complete a task in a project registered below. Read-only inspection may continue
 is refused.
 
 This doc does not replace [`development-workflow-asana-mode.md`](development-workflow-asana-mode.md).
-That file remains the standalone, unmodified authority that existing ChatGPT Development Workflow
-sessions already read directly; it stays in force until those sessions are confirmed replaced and a
-separate follow-up task retires or forwards it. This doc is the authority for every other governed
-project, and the shared reference point for the general V2 mechanics.
+That file remains a standalone entry point that existing ChatGPT Development Workflow sessions read
+directly; it stays in force until those sessions are confirmed replaced and a separate follow-up task
+retires or forwards it. Its V2 admission semantics must stay aligned with this shared contract: every
+project registered below, including Development Workflow, follows the same V2 required-section rule.
 
 Immediately before each governed write, freshly read this contract, the project's exact current
 registry row, and the exact live project name, complete section list, fields, task, and relevant
@@ -35,7 +35,7 @@ fresh every time (see below). Nothing here is a cached or repository-driven auth
 | `1217381674871544` | Dish — Workflow |
 
 `tools/agent_worktree_lib/asana_v2.py` is the executable projection consumed by local repository
-mutation admission. Focused tests require its GID/base-name mapping and nine-section signature to
+mutation admission. Focused tests require its GID/base-name mapping and nine-section required set to
 remain aligned with this maintained registry; it is not a cached live-mode authority.
 
 ### Reference only: other real Dish project shapes (not registered, not migrated)
