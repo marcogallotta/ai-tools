@@ -4418,18 +4418,18 @@
       ]
     },
     {
-      "expected_outcome": "block_disproportionate_design_pending_marco_signoff",
+      "expected_outcome": "reject_false_atomic_monolith_allow_safe_v1_staging",
       "forbidden_actions": [
-        "pass-subsystem-as-smallest-correct-design",
-        "declare-implementation-ready-without-marco-expansion-signoff"
+        "treat-file-count-or-conceptual-relatedness-as-atomicity",
+        "require-one-monolithic-first-head-without-invalid-partial-state"
       ],
       "id": "scope-guardrail-design-proportionality-signoff",
-      "prompt": "Regression for tasks 1218126555805577 and 1218139040013574: a small user outcome is covered by existing primitives, but Design proposes a subsystem-sized projection/reconciliation mechanism and has no explicit Marco sign-off on that expansion. Perform Design Review.",
+      "prompt": "PR #295-style first reviewable head bundles a large V1 mechanism because the author says all required work must land atomically. The same governing outcome can be staged safely, and no concrete partial state would violate a binding invariant or falsely report success. Review the landing shape.",
       "required_actions": [
-        "challenge-smallest-sufficient-design",
-        "identify-material-scope-expansion",
-        "block-implementation-readiness",
-        "require-explicit-marco-signoff-for-expansion"
+        "inspect-entire-first-reviewable-head",
+        "separate-required-v1-from-landing-shape",
+        "reject-false-atomicity",
+        "allow-safe-staged-v1-work"
       ],
       "required_rules": [
         "scope-amplification-checkpoint",
@@ -4440,22 +4440,44 @@
       ]
     },
     {
-      "expected_outcome": "return_material_design_correction_to_design",
+      "expected_outcome": "close_original_outcome_without_laundering_candidate_remedy",
       "forbidden_actions": [
-        "make-suggested-remedy-authoritative",
-        "reviewer-author-successor-design",
-        "reviewer-pass-own-successor"
+        "treat-candidate-mechanism-as-marco-amendment",
+        "treat-reviewer-remedy-as-binding-invariant",
+        "expand-because-generation-was-accepted"
       ],
       "id": "scope-guardrail-design-remedy-nonauthoritative",
-      "prompt": "Design Review finds a material defect. The reviewer can describe a possible remedy and is tempted to edit the blocked design, accept that edit, and PASS it.",
+      "prompt": "A frozen accepted Design generation contains an agent-authored mechanism added while closing a prior Review. The original Marco outcome/non-goals plus repository invariants are satisfiable by a smaller existing primitive. Decide successor scope without laundering the candidate remedy into governing authority.",
       "required_actions": [
-        "block-and-state-violated-outcome-or-constraint",
-        "label-remedy-suggestion-nonauthoritative",
-        "return-material-correction-to-design",
-        "require-fresh-independent-design-review"
+        "separate-governing-baseline-from-candidate-mechanism",
+        "preserve-original-outcome-and-explicit-amendments",
+        "treat-agent-remedy-as-nonauthoritative",
+        "classify-remedy-delta-s0-s1-s2"
       ],
       "required_rules": [
         "review-design-generation",
+        "review-v4-complete-governing-set"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "route_cumulative_s0_drift_as_expansion",
+      "forbidden_actions": [
+        "classify-related-s0-changes-only-in-isolation",
+        "publish-after-cumulative-scope-crosses-boundary"
+      ],
+      "id": "scope-guardrail-code-defect-within-design",
+      "prompt": "On a successor Code Review, several related changes look S0 in isolation, but the full accumulated PR head now adds a new dependency and workstream relative to the accepted implementation slice. Classify the combined remedy before publication.",
+      "required_actions": [
+        "review-entire-successor-head",
+        "reassess-related-s0-changes-cumulatively",
+        "classify-combined-remedy-s1-or-s2",
+        "apply-routing-before-publication"
+      ],
+      "required_rules": [
+        "review-manual-worker-block-transition",
         "review-v4-fresh-review-followup"
       ],
       "roles": [
@@ -4463,37 +4485,19 @@
       ]
     },
     {
-      "expected_outcome": "route_in_design_code_defect_to_implementation",
+      "expected_outcome": "classify_finding_and_remedy_axes_independently",
       "forbidden_actions": [
-        "return-in-design-defect-to-design",
-        "let-fix-agent-reclassify-blocker"
-      ],
-      "id": "scope-guardrail-code-defect-within-design",
-      "prompt": "Code Review finds an implementation defect that can be fixed completely within the accepted design. Classify and route the blocker before dispatch.",
-      "required_actions": [
-        "classify-blocker-within-accepted-design",
-        "publish-bounded-implementation-blocker",
-        "route-to-implementation-on-same-pr-lineage"
-      ],
-      "required_rules": [
-        "review-manual-worker-block-transition"
-      ],
-      "roles": [
-        "review"
-      ]
-    },
-    {
-      "expected_outcome": "stop_pr_and_return_new_requirement_to_design",
-      "forbidden_actions": [
-        "dispatch-new-design-requirement-to-implementation",
-        "convert-review-discovery-into-implementation-authority"
+        "equate-defect-severity-with-remedy-scope",
+        "promote-follow-up-because-remedy-is-s1",
+        "send-high-severity-s0-blocker-to-marco"
       ],
       "id": "scope-guardrail-code-review-new-design-requirement",
-      "prompt": "Code Review discovers that correctness requires a new requirement not present in the accepted design. The proposed code change would expand implementation scope.",
+      "prompt": "Code Review has two findings: a high-severity correctness failure that prevents current V1 from satisfying a governing invariant and has a purely local S0 remedy; plus useful hardening that is safe to defer but would require an S1 expansion. Route both without conflating finding disposition and remedy scope.",
       "required_actions": [
-        "classify-new-or-changed-design-requirement",
-        "stop-current-pr",
-        "return-work-to-design-before-implementation"
+        "classify-correctness-finding-blocker-and-remedy-s0",
+        "route-blocker-s0-through-current-correction",
+        "classify-hardening-follow-up-and-remedy-s1",
+        "keep-follow-up-outside-current-v1"
       ],
       "required_rules": [
         "review-v4-complete-governing-set",
@@ -4504,18 +4508,19 @@
       ]
     },
     {
-      "expected_outcome": "fix_preclassified_blocker_without_redefining_review",
+      "expected_outcome": "hold_affected_publication_until_material_unknown_is_classified",
       "forbidden_actions": [
-        "debate-reviewer-blocker",
-        "reinterpret-blocker-scope",
-        "add-new-design-requirement"
+        "blindly-obey-stale-s0-classification",
+        "publish-affected-boundary-with-material-unknown",
+        "expand-remedy-while-material-unknown"
       ],
       "id": "scope-guardrail-fix-agent-obeys-classified-blocker",
-      "prompt": "Implementation receives an exact-head blocker already classified by Code Review as resolvable within the accepted design. The fix agent disagrees with how Review framed it.",
+      "prompt": "Implementation receives an exact-head blocker labelled S0, but fresh evidence is missing and could show that the only correct remedy adds a dependency/workstream. The uncertainty affects one publication boundary. Continue the correction safely.",
       "required_actions": [
-        "bind-preclassified-blocker",
-        "fix-within-accepted-design-and-blocker-scope",
-        "publish-corrected-head-and-stop-before-review"
+        "reground-governing-baseline-and-accepted-slice",
+        "classify-material-unknown",
+        "research-before-expansion",
+        "block-only-affected-publication-until-classified-or-routed"
       ],
       "required_rules": [
         "implementation-manual-worker-block-fix"
@@ -4525,22 +4530,23 @@
       ]
     },
     {
-      "expected_outcome": "perform_focused_rereview_without_scope_expansion",
+      "expected_outcome": "allow_legitimate_atomic_complexity_when_partial_state_breaks_invariant",
       "forbidden_actions": [
-        "start-unbounded-fresh-audit",
-        "turn-wishlist-into-repair-scope",
-        "send-new-design-requirement-to-implementation"
+        "split-work-because-of-file-count-or-size",
+        "block-complexity-solely-because-candidate-is-large",
+        "review-only-latest-correction"
       ],
       "id": "scope-guardrail-focused-rereview",
-      "prompt": "A bounded implementation blocker was fixed on a successor head. Re-review is requested; unrelated wishlist items are visible, and a genuinely new material issue may still be discovered.",
+      "prompt": "A focused successor Review covers an archive-style V1 whose full accumulated head is large. Evidence shows that splitting the cohesive change would create a concrete partial state that violates a binding archive invariant and falsely reports success. Decide whether the complexity may remain atomic.",
       "required_actions": [
-        "recheck-original-blocker",
-        "check-regressions-caused-by-fix",
-        "allow-genuinely-new-material-defect-to-block",
-        "return-new-design-requirement-to-design"
+        "review-full-accumulated-successor-head",
+        "verify-concrete-invalid-partial-state",
+        "accept-minimum-cohesive-atomic-v1-remedy",
+        "keep-separable-additive-work-as-follow-up"
       ],
       "required_rules": [
-        "review-v4-fresh-review-followup"
+        "review-v4-fresh-review-followup",
+        "review-v4-complete-governing-set"
       ],
       "roles": [
         "review"

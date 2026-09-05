@@ -994,8 +994,8 @@ def test_operator_provenance_encodes_r7_g3_entry_and_creator_guards():
         "ask exactly one bounded confirmation",
         "second confirmation",
         "explicitly exits Review",
-        "resolvable within the accepted design",
-        "new or changed design requirement return to Design",
+        "`BLOCKER × S0 LOCAL`",
+        "S1/S2/material-unknown routes are not deterministic",
         "no separate durable Implementation assignment/event is required",
         "independent exact-candidate pre-development `PASS`",
         "absence of automated attempt/authorship markers is not itself a blocker",
@@ -1005,6 +1005,19 @@ def test_operator_provenance_encodes_r7_g3_entry_and_creator_guards():
     ]
     for phrase in required:
         assert phrase in text
+
+
+def test_scope_containment_fixtures_distinguish_required_routing_cases():
+    by_id = {x["id"]: x for x in kernels._evals()}
+    markers = {
+        "scope-guardrail-design-remedy-nonauthoritative": "smaller existing primitive",
+        "scope-guardrail-design-proportionality-signoff": "PR #295-style first reviewable head",
+        "scope-guardrail-code-defect-within-design": "full accumulated PR head",
+        "scope-guardrail-code-review-new-design-requirement": "high-severity correctness failure",
+        "scope-guardrail-fix-agent-obeys-classified-blocker": "fresh evidence is missing",
+        "scope-guardrail-focused-rereview": "archive-style V1",
+    }
+    assert all(marker in by_id[scenario_id]["prompt"] for scenario_id, marker in markers.items())
 
 
 def test_autonomy_behavior_matrix_covers_required_decision_rules():
