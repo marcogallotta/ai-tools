@@ -119,6 +119,20 @@ def is_exempt_rm_target(target):
     return target.startswith(RM_EXEMPT_PREFIXES)
 
 
+def _resolve_relative_target(token, cwd):
+    """A bare relative target (e.g. `rm -rf bundle_inspect`) is exempt when
+    it resolves under the command's actual cwd (from the hook payload's real
+    process cwd, not a guess) and that resolution lands in /tmp/ - the same
+    scratch space the literal-prefix check already exempts. Left unresolved
+    (as-is) for anything absolute/tilde-prefixed, or a $VAR reference that
+    _expand_leading_var couldn't resolve - joining an unresolved variable's
+    literal "$NAME" text with cwd would fabricate a path that has nothing to
+    do with what the shell will actually expand it to."""
+    if token.startswith(("/", "~", "$")):
+        return token
+    return os.path.normpath(os.path.join(cwd, token))
+
+
 # Find the index of "rm" only when it is the actual command being invoked -
 # the first token, or the first token after simple wrappers (sudo/env/nice/
 # ionice) and their own flags/VAR=val assignments. This deliberately does
@@ -155,11 +169,12 @@ def _expand_leading_var(token, known_vars):
     return known_vars[name] + rest if name in known_vars else token
 
 
-# Skip the prompt when every target literally starts with an exempt prefix
-# (/tmp/ or ~/Downloads/) - scratch space, not worth an approval round-trip.
-# Targets are expanded against simple VAR=value assignments made earlier in
-# the same command first (see _expand_leading_var). Any other target (or no
-# resolvable target) falls back to asking.
+# Skip the prompt when every target resolves under an exempt prefix (/tmp/
+# or ~/Downloads/) - scratch space, not worth an approval round-trip. Targets
+# are expanded against simple VAR=value assignments made earlier in the same
+# command first (see _expand_leading_var), then resolved against the actual
+# cwd if still relative (see _resolve_relative_target). Any other target (or
+# no resolvable target) falls back to asking.
 #
 # Also exempt entirely inside an isolated worktree of this repo (a linked
 # `tools/agent-worktree` checkout, not the shared primary one) - rm there
@@ -191,7 +206,8 @@ def check_rm(segments, cwd=None):
             continue
         targets = [t for t in tokens[idx + 1:] if not t.startswith("-")]
         expanded = [_expand_leading_var(t, known_vars) for t in targets]
-        if targets and all(is_exempt_rm_target(t) for t in expanded):
+        resolved = [_resolve_relative_target(t, current_cwd) for t in expanded]
+        if targets and all(is_exempt_rm_target(t) for t in resolved):
             continue
         return ask("[destructive-op-guard] Destructive: 'rm' requires explicit approval.")
     return None

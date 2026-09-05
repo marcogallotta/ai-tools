@@ -130,11 +130,15 @@ class TestRm:
         assert_allowed(decision)
 
     def test_rm_non_tmp_target_asked(self, destructive_op_guard, monkeypatch, capsys):
-        decision = run_hook(destructive_op_guard, "rm -rf foo", monkeypatch, capsys)
+        decision = run_hook(
+            destructive_op_guard, "rm -rf foo", monkeypatch, capsys, cwd="/home/marco/project"
+        )
         assert_asked(decision, "'rm' requires explicit approval")
 
     def test_rm_mixed_tmp_and_non_tmp_targets_asked(self, destructive_op_guard, monkeypatch, capsys):
-        decision = run_hook(destructive_op_guard, "rm -rf /tmp/foo bar", monkeypatch, capsys)
+        decision = run_hook(
+            destructive_op_guard, "rm -rf /tmp/foo bar", monkeypatch, capsys, cwd="/home/marco/project"
+        )
         assert_asked(decision, "'rm' requires explicit approval")
 
     def test_rm_no_resolvable_target_asked(self, destructive_op_guard, monkeypatch, capsys):
@@ -176,7 +180,9 @@ class TestRm:
         assert_allowed(decision)
 
     def test_sudo_rm_non_tmp_target_still_asked(self, destructive_op_guard, monkeypatch, capsys):
-        decision = run_hook(destructive_op_guard, "sudo rm -rf foo", monkeypatch, capsys)
+        decision = run_hook(
+            destructive_op_guard, "sudo rm -rf foo", monkeypatch, capsys, cwd="/home/marco/project"
+        )
         assert_asked(decision, "'rm' requires explicit approval")
 
     def test_sudo_rm_tmp_target_allowed(self, destructive_op_guard, monkeypatch, capsys):
@@ -220,6 +226,38 @@ class TestRm:
     def test_rm_unresolved_var_still_asked(self, destructive_op_guard, monkeypatch, capsys):
         # No assignment for $UNKNOWN anywhere in the command - falls back to asking.
         decision = run_hook(destructive_op_guard, 'rm -rf "$UNKNOWN"', monkeypatch, capsys)
+        assert_asked(decision, "'rm' requires explicit approval")
+
+    def test_rm_relative_target_under_tmp_cwd_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard,
+            "rm -rf bundle_inspect",
+            monkeypatch,
+            capsys,
+            cwd="/tmp/claude-1000/scratchpad",
+        )
+        assert_allowed(decision)
+
+    def test_rm_relative_target_escaping_tmp_cwd_still_asked(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "rm -rf ../../../etc", monkeypatch, capsys, cwd="/tmp/a/b"
+        )
+        assert_asked(decision, "'rm' requires explicit approval")
+
+    def test_rm_relative_target_outside_tmp_cwd_still_asked(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "rm -rf important_dir", monkeypatch, capsys, cwd="/home/marco/project"
+        )
+        assert_asked(decision, "'rm' requires explicit approval")
+
+    def test_rm_unresolved_var_not_resolved_relative_to_tmp_cwd(
+        self, destructive_op_guard, monkeypatch, capsys
+    ):
+        # $UNKNOWN has no assignment anywhere - must not be joined with cwd
+        # as if it were a literal relative path segment.
+        decision = run_hook(
+            destructive_op_guard, 'rm -rf "$UNKNOWN"', monkeypatch, capsys, cwd="/tmp/scratch"
+        )
         assert_asked(decision, "'rm' requires explicit approval")
 
     def test_rm_non_tmp_target_in_linked_worktree_allowed(
@@ -444,7 +482,9 @@ class TestSegmentsAndCompoundCommands:
         assert_allowed(decision)
 
     def test_second_segment_rm_non_tmp_asked(self, destructive_op_guard, monkeypatch, capsys):
-        decision = run_hook(destructive_op_guard, "ls; rm -rf foo", monkeypatch, capsys)
+        decision = run_hook(
+            destructive_op_guard, "ls; rm -rf foo", monkeypatch, capsys, cwd="/home/marco/project"
+        )
         assert_asked(decision, "'rm' requires explicit approval")
 
     @pytest.mark.parametrize("command,reason", [
@@ -455,7 +495,7 @@ class TestSegmentsAndCompoundCommands:
     def test_risk_wins_over_prompt_free_git(
         self, destructive_op_guard, monkeypatch, capsys, command, reason
     ):
-        decision = run_hook(destructive_op_guard, command, monkeypatch, capsys)
+        decision = run_hook(destructive_op_guard, command, monkeypatch, capsys, cwd="/home/marco/project")
         assert_asked(decision, reason)
 
 
