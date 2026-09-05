@@ -1,0 +1,11 @@
+{
+  "format": "dish-test-health-thresholds-v1",
+  "minimum_samples": 5,
+  "mad_multiplier": 3.0,
+  "sizes": {
+    "small": {"ratio": 1.5, "absolute_seconds": 2.0},
+    "medium": {"ratio": 1.35, "absolute_seconds": 10.0},
+    "large": {"ratio": 1.25, "absolute_seconds": 30.0}
+  },
+  "policy": "advisory-only; changing these values cannot change test selection, certification, Review, or merge authority"
+}
