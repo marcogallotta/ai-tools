@@ -83,8 +83,7 @@ class PostgresCommandReadMixin:
                     for item in page.items
                 ],
                 "next_cursor": page.next_cursor,
-                "registry_version_id": str(page.registry_version_id),
-                "registry_revision": page.registry_revision,
+                **page.read_authority,
             }
         elif call.command_name == "proposals":
             data = self._proposals()
@@ -228,7 +227,9 @@ class PostgresCommandReadMixin:
             )
             freshness = dict(view.projection_freshness)
             freshness = dict(self.projection_recorder.task_freshness(view.task_id))
-            data = asdict(view) | {
+            view_data = asdict(view)
+            read_authority = view_data.pop("read_authority")
+            data = view_data | read_authority | {
                 "dish_id": str(view.task_id),
                 "task_id": str(view.task_id),
                 "content_version_id": str(view.content_version_id),
