@@ -410,3 +410,63 @@ class TestOwnTaskAutoAllow:
         command = "echo '{}' | ~/.local/bin/asana raw POST '/tasks/12345'"
         decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
         assert_asked(decision, "Approve this Asana write")
+
+    def test_own_task_comment_via_raw_stories_post_heredoc_is_allowed(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, task_gid = _install_agent_identity(monkeypatch, tmp_path)
+        command = (
+            "~/.local/bin/asana raw POST '/tasks/12345/stories' <<'EOF'\n"
+            '{"text": "durable handoff story"}\n'
+            "EOF"
+        )
+        decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_explicitly_allowed(decision, f"active task {task_gid}")
+
+    def test_own_task_comment_via_raw_stories_post_heredoc_dash_is_allowed(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, task_gid = _install_agent_identity(monkeypatch, tmp_path)
+        command = (
+            "~/.local/bin/asana raw POST '/tasks/12345/stories' <<-'EOF'\n"
+            '\t{"text": "durable handoff story"}\n'
+            "\tEOF"
+        )
+        decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_explicitly_allowed(decision, f"active task {task_gid}")
+
+    def test_other_task_comment_via_raw_stories_post_heredoc_remains_gated(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        command = (
+            "~/.local/bin/asana raw POST '/tasks/54321/stories' <<'EOF'\n"
+            '{"text": "correction"}\n'
+            "EOF"
+        )
+        decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_asked(decision, "Approve this Asana write")
+
+    def test_raw_post_heredoc_to_non_stories_endpoint_remains_gated(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        command = (
+            "~/.local/bin/asana raw POST '/tasks/12345' <<'EOF'\n"
+            "{}\n"
+            "EOF"
+        )
+        decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_asked(decision, "Approve this Asana write")
+
+    def test_raw_post_heredoc_with_trailing_junk_after_delimiter_remains_gated(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        command = (
+            "~/.local/bin/asana raw POST '/tasks/12345/stories' extra <<'EOF'\n"
+            '{"text": "x"}\n'
+            "EOF"
+        )
+        decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_asked(decision, "Approve this Asana write")

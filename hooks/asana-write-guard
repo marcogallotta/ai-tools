@@ -222,6 +222,39 @@ def _own_task_raw_comment(cmd, payload):
     return task_gid, "add-comment"
 
 
+HEREDOC_OP_RE = re.compile(r"^<<-?[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _own_task_heredoc_raw_comment(cmd, payload):
+    """The other natural way to post a single story: the JSON body as a
+    heredoc directly on the asana invocation (`asana raw POST '/tasks/<gid>/
+    stories' <<'EOF' ... EOF`) rather than piped in from a separate echo/
+    printf. Same own-task ownership proof as _own_task_raw_comment, just a
+    single segment instead of two - by this point `cmd` has already had
+    strip_heredocs() blank the body, so only the invocation line's shape
+    needs checking."""
+    segments = [segment for segment in split_segments(cmd) if segment.strip()]
+    if len(segments) != 1:
+        return None
+    first_line = segments[0].split("\n", 1)[0]
+    tokens = tokenize(first_line)
+    if tokens and is_word(tokens[0], "bash") and len(tokens) >= 2 and is_word(tokens[1], "asana"):
+        tokens = tokens[1:]
+    if len(tokens) != 5 or not is_word(tokens[0], "asana"):
+        return None
+    if tokens[1].lower() != "raw" or tokens[2].upper() != "POST":
+        return None
+    if not HEREDOC_OP_RE.match(tokens[4]):
+        return None
+    match = RAW_STORIES_RE.match(tokens[3])
+    if not match:
+        return None
+    task_gid = _active_own_task(payload)
+    if task_gid is None or match.group(1) != task_gid:
+        return None
+    return task_gid, "add-comment"
+
+
 HEREDOC_RE = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
@@ -415,7 +448,11 @@ def evaluate(cmd, payload=None):
     payload = payload or {}
     cmd = strip_heredocs(cmd)
 
-    own_write = _direct_own_task_write(cmd, payload) or _own_task_raw_comment(cmd, payload)
+    own_write = (
+        _direct_own_task_write(cmd, payload)
+        or _own_task_raw_comment(cmd, payload)
+        or _own_task_heredoc_raw_comment(cmd, payload)
+    )
     if own_write is not None:
         task_gid, subcommand = own_write
         return allow(f"[asana-write-guard] Routine same-task {subcommand} allowed for active task {task_gid}.")
