@@ -6,10 +6,10 @@ complete a task in a project registered below. Read-only inspection may continue
 is refused.
 
 This doc does not replace [`development-workflow-asana-mode.md`](development-workflow-asana-mode.md).
-That file remains the standalone, unmodified authority that existing ChatGPT Development Workflow
-sessions already read directly; it stays in force until those sessions are confirmed replaced and a
-separate follow-up task retires or forwards it. This doc is the authority for every other governed
-project, and the shared reference point for the general V2 mechanics.
+That file remains a standalone entry point that existing ChatGPT Development Workflow sessions read
+directly; it stays in force until those sessions are confirmed replaced and a separate follow-up task
+retires or forwards it. Its V2 admission semantics must stay aligned with this shared contract: every
+project registered below, including Development Workflow, follows the same V2 required-section rule.
 
 Immediately before each governed write, freshly read this contract, the project's exact current
 registry row, and the exact live project name, complete section list, fields, task, and relevant
@@ -35,7 +35,7 @@ fresh every time (see below). Nothing here is a cached or repository-driven auth
 | `1217381674871544` | Dish — Workflow |
 
 `tools/agent_worktree_lib/asana_v2.py` is the executable projection consumed by local repository
-mutation admission. Focused tests require its GID/base-name mapping and nine-section signature to
+mutation admission. Focused tests require its GID/base-name mapping and nine-section required set to
 remain aligned with this maintained registry; it is not a cached live-mode authority.
 
 ### Reference only: other real Dish project shapes (not registered, not migrated)
@@ -63,10 +63,12 @@ For a registered row's base name, the live project name is one of exactly three 
 
 - **Live name equals the base name, with no version suffix** — **LEGACY**. Zero governed V2
   mutation.
-- **Live name equals `<base name> v2`** — **V2**, subject to the section-signature check below: all
-  nine V2 lifecycle sections must exist and no legacy-only section may remain. A match is full V2
-  mutation authority; a mismatch is **CONTRADICTORY** — zero mutation, report the exact mismatch
-  without repairing, renaming, or guessing.
+- **Live name equals `<base name> v2`** — **V2**, subject to the required-section check below: all
+  nine V2 lifecycle sections must exist. Additional sections are ignored for V2 admission and never
+  make the project contradictory by themselves; Asana may retain platform-created or historical
+  sections that are not lifecycle authority. Missing required lifecycle sections are
+  **CONTRADICTORY** — zero mutation, report the exact missing sections without repairing, renaming,
+  or guessing.
 - **Live name equals `<base name> v` followed by anything other than `2`** (`v3`, `v4`, or any
   other value) — **STOP**. Zero governed mutation. Explicitly flag it to Marco and ask what to do.
   Do not guess the new generation's rules and do not fall back to applying V2 rules to it.
