@@ -65,6 +65,7 @@ from dish_tool.governed_diff import (
 from dish_tool.errors import DishRuleError
 from dish_tool.task_document import (
     DESTINATION_RE,
+    NATIVE_DESTINATION_RE,
     DocumentParseError,
     finding_payload,
     parse_canonical_planning_notes,
@@ -1730,6 +1731,93 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             reservations.append((grant.grant_id, token))
         return attested, reservations, required
 
+    def _validate_planning_destination(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        destination_value: str,
+    ) -> uuid.UUID | None:
+        native_match = NATIVE_DESTINATION_RE.fullmatch(destination_value)
+        try:
+            current_runtime = models.resolve_current_native_catalog_runtime(
+                self.session, generation_id
+            )
+        except ValueError as exc:
+            raise CoreAuthorityError(str(exc)) from exc
+
+        if current_runtime is not None:
+            if native_match is None:
+                raise CommandRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning requires a native Section UUID destination after the native runtime switch",
+                    http_status=400,
+                    data={"rule": "planning_destination_native_required"},
+                )
+            return self._validate_native_planning_destination(
+                catalog_version_id=current_runtime[0].catalog_version_id,
+                destination_match=native_match,
+            )
+
+        if native_match is not None:
+            active_catalog = self.session.get(models.ActiveSectionCatalog, generation_id)
+            if active_catalog is None:
+                raise CommandRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning destination is not governed by the active native catalog",
+                    http_status=400,
+                    data={"rule": "planning_destination_unresolved"},
+                )
+            return self._validate_native_planning_destination(
+                catalog_version_id=active_catalog.catalog_version_id,
+                destination_match=native_match,
+            )
+
+        legacy_match = DESTINATION_RE.fullmatch(destination_value)
+        if legacy_match is None:
+            raise CommandRuleError(
+                "VALIDATION_FAILED",
+                "Planning destination is malformed",
+                http_status=400,
+                data={"rule": "planning_destination_invalid"},
+            )
+        try:
+            self.reads.resolve_section(legacy_match.group("gid"))
+        except ReadModelError as exc:
+            raise CommandRuleError(
+                "VALIDATION_FAILED",
+                "Planning destination is not governed by the active registry",
+                http_status=400,
+                data={"rule": "planning_destination_unresolved"},
+            ) from exc
+        return None
+
+    def _validate_native_planning_destination(
+        self,
+        *,
+        catalog_version_id: uuid.UUID,
+        destination_match: Any,
+    ) -> uuid.UUID:
+        section_id = uuid.UUID(destination_match.group("section_id"))
+        entry = self.session.get(
+            models.SectionCatalogEntry, (catalog_version_id, section_id)
+        )
+        section = self.session.get(models.Section, section_id)
+        if entry is None or section is None or section.lifecycle != "active":
+            raise CommandRuleError(
+                "VALIDATION_FAILED",
+                "Planning destination is not governed by the native catalog",
+                http_status=400,
+                data={"rule": "planning_destination_unresolved"},
+            )
+        if entry.display_name != destination_match.group("name"):
+            raise CommandRuleError(
+                "VALIDATION_FAILED",
+                "Planning destination display name does not match its native Section UUID",
+                http_status=400,
+                data={"rule": "planning_destination_identity_mismatch"},
+            )
+        return section_id
+
     def _prepare(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         if operation.lifecycle != "open":
@@ -1772,23 +1860,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     data={"errors": [finding_payload(item) for item in findings]},
                 )
             destination_value = brief.values["Destination section"]
-            destination_match = DESTINATION_RE.fullmatch(destination_value)
-            if destination_match is None:
-                raise CommandRuleError(
-                    "VALIDATION_FAILED",
-                    "Planning destination is malformed",
-                    http_status=400,
-                    data={"rule": "planning_destination_invalid"},
-                )
-            try:
-                self.reads.resolve_section(destination_match.group("gid"))
-            except ReadModelError as exc:
-                raise CommandRuleError(
-                    "VALIDATION_FAILED",
-                    "Planning destination is not governed by the active registry",
-                    http_status=400,
-                    data={"rule": "planning_destination_unresolved"},
-                ) from exc
+            self._validate_planning_destination(
+                generation_id=generation.generation_id,
+                destination_value=destination_value,
+            )
             notes = render_planning_brief_notes(brief)
             try:
                 exact_brief = parse_canonical_planning_notes(notes)

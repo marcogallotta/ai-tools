@@ -12,6 +12,7 @@ from ._task_document_syntax import (
     ALLOWED_EXEMPTION_TAGS,
     ALLOWED_STATUSES,
     DESTINATION_RE,
+    NATIVE_DESTINATION_RE,
     EXEMPTION_TAG_AT_START_RE,
     PLANNING_FIELDS,
     REQUIRED_SECTIONS,
@@ -80,11 +81,16 @@ def validate_planning_brief(brief: PlanningBrief) -> DocumentValidation:
             )
         )
     destination = brief.values["Destination section"]
-    if destination and destination not in {"[destination missing]", "[destination invalid]"} and not DESTINATION_RE.match(destination):
+    if (
+        destination
+        and destination not in {"[destination missing]", "[destination invalid]"}
+        and not DESTINATION_RE.fullmatch(destination)
+        and not NATIVE_DESTINATION_RE.fullmatch(destination)
+    ):
         findings.append(DocumentFinding(
             "planning.destination",
             FindingKind.AGENT_CORRECTABLE,
-            "Destination section must be name — gid or a canonical defect marker",
+            "Destination section must be name — gid, name — section:<uuid>, or a canonical defect marker",
             "Destination section",
             current=destination,
         ))
