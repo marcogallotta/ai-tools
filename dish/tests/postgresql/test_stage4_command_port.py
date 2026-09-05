@@ -13,7 +13,7 @@ from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as projection
 from dish_pg.command_contract import ACTION_COMMANDS
 from dish_pg.command_port import CommandCall, PostgresCommandPort, _task_reference_from_dish
-from dish_pg.document_authority import parse_canonical_document
+from dish_pg.document_authority import destination_section_id, parse_canonical_document
 from dish_pg.database import session_scope
 from dish_pg.openapi import postgres_action_openapi
 from dish_pg.planner import (
@@ -26,7 +26,7 @@ from dish_pg.planner import (
 )
 from dish_pg.protocol import AuthenticationError, PostgresProtocolService, ScopedBearerAuthenticator
 from dish_pg.read_model import InvalidCursor
-from dish_pg.repositories import DishRepository, ScalarMutationSource
+from dish_pg.repositories import CatalogRepository, DishRepository, ScalarMutationSource
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import WorkflowAuthorityService
 from dish_tool.models import material_editor_line
@@ -98,6 +98,144 @@ def _move_operation_to_retired_generation(session, ids, operation):
     operation.generation_id = generation_id
     session.flush()
     return generation_id
+
+
+def _install_native_planning_catalog(
+    session, ids, context, *, establish_runtime: bool
+) -> uuid.UUID:
+    section_id = _next(ids)
+    catalog = CatalogRepository(session)
+    catalog.add_section(
+        models.Section(
+            section_id=section_id,
+            logical_name="Sichuan",
+            lifecycle="active",
+            created_at=NOW,
+            retired_at=None,
+        )
+    )
+    version_id = _next(ids)
+    activation_id = _next(ids)
+    active = catalog.install_catalog_revision(
+        version=models.SectionCatalogVersion(
+            catalog_version_id=version_id,
+            generation_id=context["generation_id"],
+            version_number=1,
+            contract_binding_id=context["binding_id"],
+            catalog_sha256="a" * 64,
+            source_registry_version_id=None,
+            transform_sha256=None,
+            created_at=NOW,
+        ),
+        entries=(
+            models.SectionCatalogEntry(
+                catalog_version_id=version_id,
+                section_id=section_id,
+                ordinal=0,
+                display_name="Sichuan",
+                workflow_role="native_destination",
+            ),
+        ),
+        activation=models.SectionCatalogActivation(
+            catalog_activation_id=activation_id,
+            generation_id=context["generation_id"],
+            catalog_version_id=version_id,
+            activation_route="recovery",
+            import_run_id=None,
+            command_execution_id=None,
+            catalog_revision=1,
+            activated_at=NOW,
+        ),
+        expected_catalog_version_id=None,
+        expected_catalog_activation_id=None,
+        expected_catalog_revision=None,
+    )
+    if not establish_runtime:
+        return section_id
+
+    event_id = _next(ids)
+    session.add(
+        models.AppliedMigrationEvent(
+            migration_event_id=event_id,
+            generation_id=context["generation_id"],
+            revision="test-pr2f-switch",
+            predecessor_revision="0049_native_catalog_runtime_authority_root",
+            migration_code_sha256="b" * 64,
+            dish_release="dish-42619b9",
+            initiator="test",
+            outcome="applied",
+            started_at=NOW,
+            terminal_at=NOW,
+            details={"source_commit_sha": "c" * 40},
+        )
+    )
+    attestation_id = _next(ids)
+    session.add(
+        models.NativeCatalogRuntimeAttestation(
+            attestation_id=attestation_id,
+            generation_id=context["generation_id"],
+            catalog_version_id=active.catalog_version.catalog_version_id,
+            catalog_activation_id=active.catalog_activation.catalog_activation_id,
+            predecessor_attestation_id=None,
+            baseline_migration_event_id=event_id,
+            attestation_revision=1,
+            attestation_sha256=models.compute_attestation_sha256(
+                generation_id=context["generation_id"],
+                catalog_version_id=active.catalog_version.catalog_version_id,
+                catalog_activation_id=active.catalog_activation.catalog_activation_id,
+                contract_binding_id=context["binding_id"],
+                attestation_revision=1,
+                predecessor_attestation_id=None,
+                baseline_migration_event_id=event_id,
+                baseline_revision="test-pr2f-switch",
+                baseline_migration_code_sha256="b" * 64,
+                baseline_dish_release="dish-42619b9",
+                baseline_source_commit_sha="c" * 40,
+            ),
+            recorded_at=NOW,
+        )
+    )
+    session.flush()
+    session.add(
+        models.CurrentNativeCatalogRuntime(
+            generation_id=context["generation_id"],
+            attestation_id=attestation_id,
+            catalog_version_id=active.catalog_version.catalog_version_id,
+            catalog_activation_id=active.catalog_activation.catalog_activation_id,
+            attestation_revision=1,
+            updated_at=NOW,
+        )
+    )
+    session.flush()
+    return section_id
+
+
+def _start_planning_operation(port, ids, *, task_id: uuid.UUID, run_id: uuid.UUID):
+    challenge = port.execute(
+        _call(
+            "start",
+            run_id=run_id,
+            request_id=_next(ids),
+            arguments={"task_id": str(task_id), "kind": "planning", "agent": "claude"},
+        )
+    )
+    assert challenge.code == "CONFIRMATION_REQUIRED"
+    started = port.execute(
+        _call(
+            "start",
+            run_id=run_id,
+            request_id=_next(ids),
+            arguments={
+                "task_id": str(task_id),
+                "kind": "planning",
+                "agent": "claude",
+                "intent_challenge_id": challenge.data["intent_challenge_id"],
+                "intent_basis": "user_requested",
+            },
+        )
+    )
+    assert started.ok
+    return started
 
 
 def _ensure_migration_operation(port, ids, context, task_id):
@@ -1815,6 +1953,143 @@ def test_protocol_authenticates_before_loading_body(workflow_db) -> None:
                 now=NOW,
             )
         assert loaded is False
+
+
+def test_document_authority_returns_canonical_native_section_uuid() -> None:
+    section_id = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
+    native = TASK.replace(
+        "Destination section: Sichuan — 12345",
+        f"Destination section: Sichuan — section:{section_id}",
+    )
+    parts = parse_canonical_document(file_text=native)
+    assert destination_section_id(parts.document) == section_id
+
+
+def test_planning_prepare_accepts_native_destination_before_runtime_switch(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        section_id = _install_native_planning_catalog(
+            session, ids, context, establish_runtime=False
+        )
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        started = _start_planning_operation(
+            port, ids, task_id=task_id, run_id=run_id
+        )
+        planning = f"""### Planning brief
+Dish candidate: Test dish
+Purpose: Compare texture
+Role: main
+Priors: None
+Locks: Keep crisp
+Exemptions: None
+Research emphasis: Compare two hydration levels
+Destination section: Sichuan — section:{section_id}
+"""
+        prepared = port.execute(
+            _call(
+                "prepare",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": planning,
+                    "agent": "claude",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert prepared.ok, (prepared.code, prepared.http_status, prepared.data)
+        state = session.get(models.DishState, (context["generation_id"], task_id))
+        current = session.get(models.ContentVersion, state.current_content_version_id)
+        assert f"Destination section: Sichuan — section:{section_id}" in current.body
+
+
+def test_planning_runtime_pointer_requires_native_destination_and_exact_identity(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _add_destination_section(session, ids, context, external_id="12345")
+        section_id = _install_native_planning_catalog(
+            session, ids, context, establish_runtime=True
+        )
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        started = _start_planning_operation(
+            port, ids, task_id=task_id, run_id=run_id
+        )
+        base = """### Planning brief
+Dish candidate: Test dish
+Purpose: Compare texture
+Role: main
+Priors: None
+Locks: Keep crisp
+Exemptions: None
+Research emphasis: Compare two hydration levels
+Destination section: {destination}
+"""
+
+        legacy = port.execute(
+            _call(
+                "prepare",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": base.format(destination="Sichuan — 12345"),
+                    "agent": "claude",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert not legacy.ok
+        assert legacy.code == "VALIDATION_FAILED"
+        assert legacy.data["rule"] == "planning_destination_native_required"
+
+        mismatch = port.execute(
+            _call(
+                "prepare",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": base.format(
+                        destination=f"Wrong name — section:{section_id}"
+                    ),
+                    "agent": "claude",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert not mismatch.ok
+        assert mismatch.code == "VALIDATION_FAILED"
+        assert mismatch.data["rule"] == "planning_destination_identity_mismatch"
+
+        native = port.execute(
+            _call(
+                "prepare",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": base.format(
+                        destination=f"Sichuan — section:{section_id}"
+                    ),
+                    "agent": "claude",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert native.ok, (native.code, native.http_status, native.data)
 
 
 @pytest.mark.parametrize("start_away_from_research", [False, True])
