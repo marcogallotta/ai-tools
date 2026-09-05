@@ -389,6 +389,7 @@ def test_postgresql_command_inventory_matches_independent_stage_a_baseline() -> 
         "archive",
         "record-cook-log",
         "cook-logs",
+        "resolve-legacy-attention",
     } == set(COMMAND_DEFINITIONS)
     assert "holds" in ADMIN_COMMANDS
     assert "resolved" in ADMIN_COMMANDS
