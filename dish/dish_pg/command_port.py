@@ -619,7 +619,19 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raw_actions = ["start"]
         elif task is not None:
             task_view = self.reads.task_view(task.task_id)
-            raw_actions = ["start"] if task_view.operation_id is None and task_view.body.startswith("### Planning brief\n") else list(task_view.legal_actions)
+            raw_actions = list(task_view.legal_actions)
+            if (
+                not raw_actions
+                and task_view.operation_id is None
+                and not task_view.completed
+            ):
+                try:
+                    parse_canonical_planning_notes(task_view.body)
+                except DocumentParseError:
+                    pass
+                else:
+                    raw_actions = ["start"]
+                    result_data.setdefault("required_start_kind", "initial")
         else:
             raw_actions = []
 
