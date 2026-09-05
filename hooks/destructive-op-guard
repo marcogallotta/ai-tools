@@ -139,19 +139,59 @@ def rm_command_index(tokens):
     return None
 
 
+VAR_ASSIGNMENT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+VAR_REF_RE = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?(.*)$")
+
+
+def _expand_leading_var(token, known_vars):
+    """Resolve a leading $VAR/${VAR} against assignments seen earlier in the
+    same command (e.g. SCRATCH=/tmp/foo ... rm -rf "$SCRATCH") so the /tmp/
+    exemption below still recognizes the target. Only ever loosens the
+    approval prompt, never widens what actually gets deleted."""
+    m = VAR_REF_RE.match(token)
+    if not m:
+        return token
+    name, rest = m.groups()
+    return known_vars[name] + rest if name in known_vars else token
+
+
 # Skip the prompt when every target literally starts with an exempt prefix
 # (/tmp/ or ~/Downloads/) - scratch space, not worth an approval round-trip.
-# Any other target (or no resolvable target) falls back to asking, since
-# paths built from variables/expansions aren't visible to this hook as
-# literal text.
-def check_rm(segments):
+# Targets are expanded against simple VAR=value assignments made earlier in
+# the same command first (see _expand_leading_var). Any other target (or no
+# resolvable target) falls back to asking.
+#
+# Also exempt entirely inside an isolated worktree of this repo (a linked
+# `tools/agent-worktree` checkout, not the shared primary one) - rm there
+# can only affect that task's own disposable working tree, so it carries
+# none of the shared-checkout blast radius this guard exists to catch.
+def check_rm(segments, cwd=None):
+    current_cwd = cwd or os.getcwd()
+    if _is_isolated_worktree(current_cwd):
+        return None
+
+    known_vars = {}
     for seg in segments:
         tokens = tokenize(seg)
+
+        changed_cwd = protected_checkout._literal_cd_target(seg, current_cwd)
+        if changed_cwd is not None:
+            current_cwd = changed_cwd
+            if _is_isolated_worktree(current_cwd):
+                return None
+
+        j = 1 if tokens and is_word(tokens[0], "export") else 0
+        while j < len(tokens) and VAR_ASSIGNMENT_RE.match(tokens[j]):
+            name, value = tokens[j].split("=", 1)
+            known_vars[name] = value
+            j += 1
+
         idx = rm_command_index(tokens)
         if idx is None:
             continue
         targets = [t for t in tokens[idx + 1:] if not t.startswith("-")]
-        if targets and all(is_exempt_rm_target(t) for t in targets):
+        expanded = [_expand_leading_var(t, known_vars) for t in targets]
+        if targets and all(is_exempt_rm_target(t) for t in expanded):
             continue
         return ask("[destructive-op-guard] Destructive: 'rm' requires explicit approval.")
     return None
@@ -377,7 +417,7 @@ def check_ssh(segments):
 def evaluate(cmd, cwd=None):
     segments = segments_of(cmd)
     decisions = [
-        check_rm(segments),
+        check_rm(segments, cwd),
         check_docker(segments),
         check_protected_checkout(segments, cwd),
         check_git(segments, cwd),

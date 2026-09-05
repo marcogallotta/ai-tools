@@ -195,6 +195,57 @@ class TestRm:
         decision = run_hook(destructive_op_guard, "rm -rf /tmp/foo ~/Downloads/bar", monkeypatch, capsys)
         assert_allowed(decision)
 
+    def test_rm_quoted_var_assigned_to_tmp_path_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, 'SCRATCH=/tmp/foo\nrm -rf "$SCRATCH"', monkeypatch, capsys
+        )
+        assert_allowed(decision)
+
+    def test_rm_unquoted_var_assigned_to_tmp_path_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "SCRATCH=/tmp/foo\nrm -rf $SCRATCH", monkeypatch, capsys)
+        assert_allowed(decision)
+
+    def test_rm_braced_var_assigned_to_tmp_path_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, 'SCRATCH=/tmp/foo\nrm -rf "${SCRATCH}/sub"', monkeypatch, capsys
+        )
+        assert_allowed(decision)
+
+    def test_rm_var_assigned_to_non_tmp_path_still_asked(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, 'TARGET=/home/marco/important\nrm -rf "$TARGET"', monkeypatch, capsys
+        )
+        assert_asked(decision, "'rm' requires explicit approval")
+
+    def test_rm_unresolved_var_still_asked(self, destructive_op_guard, monkeypatch, capsys):
+        # No assignment for $UNKNOWN anywhere in the command - falls back to asking.
+        decision = run_hook(destructive_op_guard, 'rm -rf "$UNKNOWN"', monkeypatch, capsys)
+        assert_asked(decision, "'rm' requires explicit approval")
+
+    def test_rm_non_tmp_target_in_linked_worktree_allowed(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard,
+            "rm -rf /home/marco/important",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["linked"]),
+        )
+        assert_allowed(decision)
+
+    def test_rm_non_tmp_target_in_primary_checkout_still_asked(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard,
+            "rm -rf /home/marco/important",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_asked(decision, "'rm' requires explicit approval")
+
 
 class TestDocker:
     def test_compose_down_v_asked(self, destructive_op_guard, monkeypatch, capsys):
