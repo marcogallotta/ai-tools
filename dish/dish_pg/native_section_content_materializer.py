@@ -92,7 +92,6 @@ def _validate_source(
         source.generation_id != occurrence.generation_id
         or source.task_id != occurrence.task_id
         or source.content_version_id != occurrence.source_content_version_id
-        or source.created_dish_version != occurrence.source_dish_version
         or source.identity_scheme != CONTENT_IDENTITY_SCHEME
         or source.content_identity != occurrence.source_content_identity
         or content_identity(source.title, source.body) != occurrence.source_content_identity

@@ -113,6 +113,94 @@ def test_materializes_staged_successors_inside_caller_transaction(core_db) -> No
             assert (retry.materialized_count, retry.already_materialized_count) == (0, 23)
 
 
+def test_materializes_when_current_content_predates_source_dish_version(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        seeded, expectation, source_rows = _fixture(session, ids)
+        task_id, content_version_id = source_rows[0]
+        state = session.get(models.DishState, (seeded["generation_id"], task_id))
+        source = session.get(models.ContentVersion, content_version_id)
+        assert state is not None and source is not None
+        assert state.dish_version == source.created_dish_version == 1
+
+        advanced_version = state.dish_version + 1
+        session.add(
+            models.DishMutationReceipt(
+                generation_id=seeded["generation_id"],
+                task_id=task_id,
+                dish_version=advanced_version,
+                source_route="import",
+                import_run_id=seeded["import_run_id"],
+                command_execution_id=None,
+                content_changed=False,
+                placement_changed=False,
+                completion_changed=True,
+                archive_changed=False,
+                occurred_at=NOW,
+            )
+        )
+        session.flush()
+        advanced = session.execute(
+            update(models.DishState)
+            .where(
+                models.DishState.generation_id == seeded["generation_id"],
+                models.DishState.task_id == task_id,
+                models.DishState.dish_version == 1,
+            )
+            .values(
+                completed=True,
+                completion_reason="imported",
+                dish_version=advanced_version,
+                completion_version=advanced_version,
+                updated_at=NOW,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        assert advanced.rowcount == 1
+        session.flush()
+        session.expire(state)
+        assert state.current_content_version_id == content_version_id
+        assert state.dish_version == advanced_version
+        assert source.created_dish_version < state.dish_version
+
+        plan = build_carry_forward_plan(session, expectation=expectation)
+        receipt = apply_carry_forward(
+            session,
+            expected_snapshot_sha256=plan.source_snapshot_sha256,
+            source_commit=SOURCE_COMMIT,
+            expectation=expectation,
+            now=NOW,
+        )
+        migration_event_id = uuid.UUID(receipt["migration_event_id"])
+        occurrence = session.scalar(
+            select(models.NativeSectionContentCarryForwardOccurrence).where(
+                models.NativeSectionContentCarryForwardOccurrence.task_id == task_id
+            )
+        )
+        assert occurrence is not None
+        assert occurrence.source_content_version_id == content_version_id
+        assert occurrence.source_dish_version == advanced_version
+        assert source.created_dish_version < occurrence.source_dish_version
+
+        result = materialize_staged_native_section_content(
+            session,
+            generation_id=seeded["generation_id"],
+            migration_event_id=migration_event_id,
+            catalog_version_id=expectation.base_catalog_version_id,
+            materialized_at=NOW,
+        )
+        assert (result.materialized_count, result.already_materialized_count) == (23, 0)
+        successor_id = materialized_content_version_id(occurrence.carry_forward_id)
+        successor = session.get(models.ContentVersion, successor_id)
+        session.expire(state)
+        assert successor is not None
+        assert successor.predecessor_content_version_id == content_version_id
+        assert successor.created_dish_version == advanced_version + 1
+        assert state.current_content_version_id == successor_id
+        assert state.dish_version == advanced_version + 1
+        assert state.completion_version == advanced_version
+
+
 def test_rejects_stale_current_content_pointer(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
