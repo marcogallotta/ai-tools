@@ -7,6 +7,8 @@ complete documents, logical location, and completion.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -526,6 +528,141 @@ class ActiveSectionCatalog(Base):
     __table_args__ = (CheckConstraint("catalog_revision > 0", name="positive_revision"),)
 
 
+ATTESTATION_HASH_SERIALIZER_VERSION = "native_catalog_runtime_attestation_hash_v1"
+
+
+def compute_attestation_sha256(
+    *,
+    generation_id: uuid.UUID,
+    catalog_version_id: uuid.UUID,
+    catalog_activation_id: uuid.UUID,
+    contract_binding_id: uuid.UUID,
+    attestation_revision: int,
+    predecessor_attestation_id: uuid.UUID | None,
+    baseline_migration_event_id: uuid.UUID | None,
+    baseline_revision: str | None = None,
+    baseline_migration_code_sha256: str | None = None,
+    baseline_dish_release: str | None = None,
+    baseline_source_commit_sha: str | None = None,
+) -> str:
+    payload = {
+        "serializer_version": ATTESTATION_HASH_SERIALIZER_VERSION,
+        "generation_id": str(generation_id),
+        "catalog_version_id": str(catalog_version_id),
+        "catalog_activation_id": str(catalog_activation_id),
+        "contract_binding_id": str(contract_binding_id),
+        "attestation_revision": attestation_revision,
+        "predecessor_attestation_id": (
+            str(predecessor_attestation_id) if predecessor_attestation_id else None
+        ),
+        "baseline_migration_event_id": (
+            str(baseline_migration_event_id) if baseline_migration_event_id else None
+        ),
+        "baseline_revision": baseline_revision,
+        "baseline_migration_code_sha256": baseline_migration_code_sha256,
+        "baseline_dish_release": baseline_dish_release,
+        "baseline_source_commit_sha": baseline_source_commit_sha,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+class NativeCatalogRuntimeAttestation(Base):
+    """Immutable native runtime root/successor identity; PR2a defines no producer."""
+
+    __tablename__ = "native_catalog_runtime_attestations"
+
+    attestation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("section_catalog_activations.catalog_activation_id", ondelete="RESTRICT"), nullable=False
+    )
+    predecessor_attestation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("native_catalog_runtime_attestations.attestation_id", ondelete="RESTRICT")
+    )
+    baseline_migration_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("applied_migration_events.migration_event_id", ondelete="RESTRICT")
+    )
+    attestation_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    attestation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("attestation_revision > 0", name="positive_revision"),
+        CheckConstraint("length(attestation_sha256) = 64", name="attestation_hash_length"),
+        CheckConstraint(
+            "(attestation_revision = 1 AND predecessor_attestation_id IS NULL "
+            "AND baseline_migration_event_id IS NOT NULL) OR "
+            "(attestation_revision > 1 AND predecessor_attestation_id IS NOT NULL "
+            "AND baseline_migration_event_id IS NULL)",
+            name="exact_root_or_successor_shape",
+        ),
+        UniqueConstraint("generation_id", "attestation_revision", name="uq_attestation_generation_revision"),
+        UniqueConstraint("generation_id", "catalog_activation_id", name="uq_attestation_generation_activation"),
+        UniqueConstraint(
+            "attestation_id", "generation_id", "catalog_version_id",
+            "catalog_activation_id", "attestation_revision",
+            name="uq_attestation_exact_identity",
+        ),
+    )
+
+
+class CurrentNativeCatalogRuntime(Base):
+    """Exact current pointer. Absence means native runtime authority is not established."""
+
+    __tablename__ = "current_native_catalog_runtimes"
+
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), primary_key=True
+    )
+    attestation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    catalog_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    catalog_activation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    attestation_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("attestation_revision > 0", name="positive_revision"),
+        ForeignKeyConstraint(
+            ["attestation_id", "generation_id", "catalog_version_id", "catalog_activation_id", "attestation_revision"],
+            [
+                "native_catalog_runtime_attestations.attestation_id",
+                "native_catalog_runtime_attestations.generation_id",
+                "native_catalog_runtime_attestations.catalog_version_id",
+                "native_catalog_runtime_attestations.catalog_activation_id",
+                "native_catalog_runtime_attestations.attestation_revision",
+            ],
+            name="fk_current_native_runtime_exact_attestation",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+def resolve_current_native_catalog_runtime(
+    session: Session, generation_id: uuid.UUID
+) -> tuple[CurrentNativeCatalogRuntime, NativeCatalogRuntimeAttestation] | None:
+    """Resolve an existing pointer without creating or activating runtime authority."""
+
+    pointer = session.get(CurrentNativeCatalogRuntime, generation_id)
+    if pointer is None:
+        return None
+    attestation = session.get(NativeCatalogRuntimeAttestation, pointer.attestation_id)
+    if (
+        attestation is None
+        or attestation.generation_id != pointer.generation_id
+        or attestation.catalog_version_id != pointer.catalog_version_id
+        or attestation.catalog_activation_id != pointer.catalog_activation_id
+        or attestation.attestation_revision != pointer.attestation_revision
+    ):
+        raise ValueError("native runtime current pointer is inconsistent")
+    return pointer, attestation
+
+
 class SectionRegistryVersion(Base):
     __tablename__ = "section_registry_versions"
 
@@ -992,6 +1129,9 @@ class DishState(Base):
     registry_version_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT"), nullable=False
     )
+    catalog_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT")
+    )
     completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     completion_reason: Mapped[str] = mapped_column(String(32), nullable=False)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1147,6 +1287,7 @@ IMMUTABLE_TABLE_NAMES = (
     "section_catalog_versions",
     "section_catalog_entries",
     "section_catalog_activations",
+    "native_catalog_runtime_attestations",
     "task_content_versions",
     "dish_mutation_receipts",
     "task_project_membership_events",
@@ -1229,6 +1370,17 @@ def _install_sqlite_native_catalog_triggers() -> None:
     entry = Base.metadata.tables["section_catalog_entries"]
     activation = Base.metadata.tables["section_catalog_activations"]
     active = Base.metadata.tables["active_section_catalogs"]
+    current_runtime = Base.metadata.tables["current_native_catalog_runtimes"]
+
+    event.listen(
+        current_runtime,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER current_native_catalog_runtimes_delete_forbidden "
+            "BEFORE DELETE ON current_native_catalog_runtimes "
+            "BEGIN SELECT RAISE(ABORT, 'immutable authority row'); END"
+        ).execute_if(dialect="sqlite"),
+    )
 
     event.listen(
         section,
@@ -1567,4 +1719,17 @@ def _validate_sqlite_active_registry_bindings(session: Session) -> None:
             orig=RuntimeError("DishState registry binding is not transaction-final"),
         )
 
-CORE_TABLE_NAMES = tuple(Base.metadata.tables)
+# ``CORE_TABLE_NAMES`` is the Stage 2/core-authority inventory used by the
+# historical Stage 2 boundary tests. Later transition-only evidence and the
+# inert PR2a runtime-spine tables share this metadata registry but are not part
+# of that Stage 2 inventory.
+_NON_STAGE2_CORE_TABLE_NAMES = frozenset(
+    {
+        "native_section_content_carry_forward_occurrences",
+        "native_catalog_runtime_attestations",
+        "current_native_catalog_runtimes",
+    }
+)
+CORE_TABLE_NAMES = tuple(
+    name for name in Base.metadata.tables if name not in _NON_STAGE2_CORE_TABLE_NAMES
+)

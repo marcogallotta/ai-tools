@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0048_native_section_content_carry_forward"
+ALEMBIC_HEAD = "0049_native_catalog_runtime_authority_root"
 
 
 class ReleaseCandidateService(

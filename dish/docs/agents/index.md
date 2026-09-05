@@ -154,6 +154,11 @@ Keep these durable provenance classes distinct:
 - **Runtime observation** — measured current state, not policy by itself.
 - **Authenticated-account metadata** — Asana/GitHub `created_by`, comment/PR author, commit author/committer, or similar service actor fields. These prove account attribution, not that Marco physically performed or approved the action when agents/tools can use his credentials.
 
+Assigned governed work is incomplete until every bounded durable completion artifact, same-turn projection,
+and readback that the current role/procedure already requires has been written and authoritatively read back.
+A material verdict or lifecycle/state change does not create a new Asana write by itself: persist only the
+artifact/projection the active role/procedure already requires. This grants no discretionary or planning/read-only writes.
+
 Consequential human-origin claims require independent provenance such as a current chat instruction, explicit durable human marker, session/host provenance, or suitable platform audit evidence. Never treat `created_by == Marco` alone as human authorization, ownership transfer, or a Review verdict. Agent-authored durable discussion writes retain `Dish Agent: <role> | <host>` provenance where applicable.
 
 When policy and runtime facts conflict, reconcile and surface the discrepancy; do not invent a new human decision.

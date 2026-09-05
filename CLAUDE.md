@@ -49,6 +49,7 @@ A reserved `MARCO OVERRIDE — FAST-TRACK PROCESS` block in ChatGPT Project sett
 ## Work chat
 
 - Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture; agents own routine mechanics; Review challenges.
+- Before a terminal role result, finish every mandatory durable completion artifact and same-turn projection/readback the active role/procedure already requires, then authoritatively read it back. If authorized work or a safe fallback remains, continue; if all authorized routes are exhausted, name the real blocker without claiming success. Do not claim stronger lifecycle clearance or ongoing work without its separately required evidence; transport failure alone is not a session end.
 - Match intent/altitude: status, action, blocker, explanation, handoff, review, design, RCA, or deep dive.
 - Default 100%; explicit 50%, 100%, or 200% replaces session depth. After intent, scale explanation only—not truth, authority, completion, required action, material risk/blocker/tradeoff, or minimum packet.
 - Every depth retains: result/truth; Marco action/decision; material next owner; material risk/uncertainty/assumption/consequence; active design/review reasoning.

@@ -277,6 +277,10 @@ class TaskExecutionFence(Base):
     task_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     expected_dish_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     expected_membership_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expected_placement_version: Mapped[int | None] = mapped_column(BigInteger)
+    catalog_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT")
+    )
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -295,6 +299,10 @@ class TaskExecutionFence(Base):
         CheckConstraint(
             "expected_dish_version > 0 AND expected_membership_revision >= 0",
             name="valid_versions",
+        ),
+        CheckConstraint(
+            "expected_placement_version IS NULL OR expected_placement_version > 0",
+            name="expected_placement_positive",
         ),
     )
 
@@ -324,6 +332,9 @@ class WorkflowOperation(Base):
     )
     contract_binding_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT")
     )
     predecessor_operation_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("workflow_operations.operation_id", ondelete="RESTRICT")
@@ -860,6 +871,9 @@ class VerificationInspectionOccurrence(Base):
     )
     registry_version_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_catalog_versions.catalog_version_id", ondelete="RESTRICT")
     )
     placement_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     request_id: Mapped[uuid.UUID] = mapped_column(
