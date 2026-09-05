@@ -2200,6 +2200,34 @@ Destination section: Sichuan — 12345
         )
         assert "_placement_changed" not in prepared.data
 
+        asana_alias = session.scalar(
+            select(models.TaskExternalAlias).where(
+                models.TaskExternalAlias.task_id == task_id,
+                models.TaskExternalAlias.external_system == "asana",
+                models.TaskExternalAlias.state == "active",
+            )
+        )
+        assert asana_alias is not None
+        session.delete(asana_alias)
+        session.flush()
+
+        resting = port.execute(
+            _call("read", run_id=run_id, arguments={"dish_id": str(task_id)})
+        )
+        assert resting.ok, (resting.code, resting.http_status, resting.data)
+        assert resting.data["dish_id"] == str(task_id)
+        assert resting.data["identity_binding"] == {
+            "dish_id": str(task_id),
+            "task_gid": None,
+        }
+        assert resting.task_gid is None
+        assert resting.allowed_actions == ("start",)
+        assert resting.data["required_start_kind"] == "initial"
+        assert resting.data["agent_action"] == {
+            "command": "start",
+            "arguments": {"dish_id": str(task_id), "kind": "initial"},
+        }
+
         operation = session.get(wf.WorkflowOperation, uuid.UUID(started.data["operation_id"]))
         assert operation.lifecycle == "completed"
         assert operation.phase == "completed"
