@@ -479,7 +479,7 @@ def test_pr3_migration_renders_staging_only_without_runtime_root() -> None:
     config = Config(str(ROOT / "alembic.ini"))
     buffer = io.StringIO()
     config.attributes["output_buffer"] = buffer
-    command.upgrade(config, ALEMBIC_HEAD, sql=True)
+    command.upgrade(config, "0048_native_section_content_carry_forward", sql=True)
     rendered = buffer.getvalue()
     assert "CREATE TABLE native_section_content_carry_forward_occurrences" in rendered
     assert "native_section_content_carry_forward_immutable" in rendered
