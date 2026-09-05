@@ -1018,6 +1018,11 @@ def test_scope_containment_fixtures_distinguish_required_routing_cases():
         "scope-guardrail-focused-rereview": "archive-style V1",
     }
     assert all(marker in by_id[scenario_id]["prompt"] for scenario_id, marker in markers.items())
+    for scenario_id in markers:
+        assert "recorded pilot lineage" in by_id[scenario_id]["prompt"]
+    non_pilot = by_id["scope-guardrail-non-pilot-preserves-standing-behavior"]
+    assert "has not yet recorded its three pilot" in non_pilot["prompt"]
+    assert non_pilot["expected_outcome"] == "apply_pre_trial_standing_behavior_outside_pilot"
 
 
 def test_autonomy_behavior_matrix_covers_required_decision_rules():

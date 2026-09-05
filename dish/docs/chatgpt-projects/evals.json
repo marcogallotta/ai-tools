@@ -4424,7 +4424,7 @@
         "require-one-monolithic-first-head-without-invalid-partial-state"
       ],
       "id": "scope-guardrail-design-proportionality-signoff",
-      "prompt": "PR #295-style first reviewable head bundles a large V1 mechanism because the author says all required work must land atomically. The same governing outcome can be staged safely, and no concrete partial state would violate a binding invariant or falsely report success. Review the landing shape.",
+      "prompt": "On a recorded pilot lineage, PR #295-style first reviewable head bundles a large V1 mechanism because the author says all required work must land atomically. The same governing outcome can be staged safely, and no concrete partial state would violate a binding invariant or falsely report success. Review the landing shape.",
       "required_actions": [
         "inspect-entire-first-reviewable-head",
         "separate-required-v1-from-landing-shape",
@@ -4447,7 +4447,7 @@
         "expand-because-generation-was-accepted"
       ],
       "id": "scope-guardrail-design-remedy-nonauthoritative",
-      "prompt": "A frozen accepted Design generation contains an agent-authored mechanism added while closing a prior Review. The original Marco outcome/non-goals plus repository invariants are satisfiable by a smaller existing primitive. Decide successor scope without laundering the candidate remedy into governing authority.",
+      "prompt": "On a recorded pilot lineage, a frozen accepted Design generation contains an agent-authored mechanism added while closing a prior Review. The original Marco outcome/non-goals plus repository invariants are satisfiable by a smaller existing primitive. Decide successor scope without laundering the candidate remedy into governing authority.",
       "required_actions": [
         "separate-governing-baseline-from-candidate-mechanism",
         "preserve-original-outcome-and-explicit-amendments",
@@ -4469,7 +4469,7 @@
         "publish-after-cumulative-scope-crosses-boundary"
       ],
       "id": "scope-guardrail-code-defect-within-design",
-      "prompt": "On a successor Code Review, several related changes look S0 in isolation, but the full accumulated PR head now adds a new dependency and workstream relative to the accepted implementation slice. Classify the combined remedy before publication.",
+      "prompt": "On a recorded pilot lineage's successor Code Review, several related changes look S0 in isolation, but the full accumulated PR head now adds a new dependency and workstream relative to the accepted implementation slice. Classify the combined remedy before publication.",
       "required_actions": [
         "review-entire-successor-head",
         "reassess-related-s0-changes-cumulatively",
@@ -4492,7 +4492,7 @@
         "send-high-severity-s0-blocker-to-marco"
       ],
       "id": "scope-guardrail-code-review-new-design-requirement",
-      "prompt": "Code Review has two findings: a high-severity correctness failure that prevents current V1 from satisfying a governing invariant and has a purely local S0 remedy; plus useful hardening that is safe to defer but would require an S1 expansion. Route both without conflating finding disposition and remedy scope.",
+      "prompt": "On a recorded pilot lineage, Code Review has two findings: a high-severity correctness failure that prevents current V1 from satisfying a governing invariant and has a purely local S0 remedy; plus useful hardening that is safe to defer but would require an S1 expansion. Route both without conflating finding disposition and remedy scope.",
       "required_actions": [
         "classify-correctness-finding-blocker-and-remedy-s0",
         "route-blocker-s0-through-current-correction",
@@ -4515,7 +4515,7 @@
         "expand-remedy-while-material-unknown"
       ],
       "id": "scope-guardrail-fix-agent-obeys-classified-blocker",
-      "prompt": "Implementation receives an exact-head blocker labelled S0, but fresh evidence is missing and could show that the only correct remedy adds a dependency/workstream. The uncertainty affects one publication boundary. Continue the correction safely.",
+      "prompt": "On a recorded pilot lineage, Implementation receives an exact-head blocker labelled S0, but fresh evidence is missing and could show that the only correct remedy adds a dependency/workstream. The uncertainty affects one publication boundary. Continue the correction safely.",
       "required_actions": [
         "reground-governing-baseline-and-accepted-slice",
         "classify-material-unknown",
@@ -4537,7 +4537,7 @@
         "review-only-latest-correction"
       ],
       "id": "scope-guardrail-focused-rereview",
-      "prompt": "A focused successor Review covers an archive-style V1 whose full accumulated head is large. Evidence shows that splitting the cohesive change would create a concrete partial state that violates a binding archive invariant and falsely reports success. Decide whether the complexity may remain atomic.",
+      "prompt": "On a recorded pilot lineage, a focused successor Review covers an archive-style V1 whose full accumulated head is large. Evidence shows that splitting the cohesive change would create a concrete partial state that violates a binding archive invariant and falsely reports success. Decide whether the complexity may remain atomic.",
       "required_actions": [
         "review-full-accumulated-successor-head",
         "verify-concrete-invalid-partial-state",
@@ -4547,6 +4547,26 @@
       "required_rules": [
         "review-v4-fresh-review-followup",
         "review-v4-complete-governing-set"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "apply_pre_trial_standing_behavior_outside_pilot",
+      "forbidden_actions": [
+        "apply-s0-s1-s2-classification-outside-recorded-pilot-lineage",
+        "treat-unrecorded-lineage-as-pilot"
+      ],
+      "id": "scope-guardrail-non-pilot-preserves-standing-behavior",
+      "prompt": "Task 1218204649733269 has not yet recorded its three pilot task/Review lineage IDs. Code Review finds a blocker fully resolvable within the accepted design on an unrelated task. Route it.",
+      "required_actions": [
+        "confirm-lineage-is-not-a-recorded-pilot-id",
+        "apply-pre-trial-in-design-defect-routing",
+        "route-to-implementation-on-same-pr-lineage-without-s0-s1-s2-labels"
+      ],
+      "required_rules": [
+        "review-manual-worker-block-transition"
       ],
       "roles": [
         "review"
