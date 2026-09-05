@@ -45,9 +45,44 @@ def test_planning_finding_payload_is_actionable():
     brief = parse_planning_brief("""Dish candidate: X\nPurpose: X\nRole: main\nPriors: None\nLocks: None\nExemptions: None\nResearch emphasis: X\nDestination section: Reference (123)\n""")
     finding = validate_planning_brief(brief).findings[0]
     payload = finding_payload(finding)
-    assert payload["message"] == "Destination section must be name — gid or a canonical defect marker"
+    assert payload["message"] == (
+        "Destination section must be name — gid, name — section:<uuid>, "
+        "or a canonical defect marker"
+    )
     assert payload["location"] == "Destination section"
     assert payload["current"] == "Reference (123)"
+
+
+def test_planning_accepts_canonical_native_section_uuid_destination():
+    brief = parse_planning_brief(
+        """Dish candidate: X
+Purpose: X
+Role: main
+Priors: None
+Locks: None
+Exemptions: None
+Research emphasis: X
+Destination section: Reference — section:123e4567-e89b-12d3-a456-426614174000
+"""
+    )
+    assert validate_planning_brief(brief).ok
+
+
+def test_planning_rejects_noncanonical_native_section_uuid_destination():
+    brief = parse_planning_brief(
+        """Dish candidate: X
+Purpose: X
+Role: main
+Priors: None
+Locks: None
+Exemptions: None
+Research emphasis: X
+Destination section: Reference — section:123E4567-E89B-12D3-A456-426614174000
+"""
+    )
+    finding = validate_planning_brief(brief).findings[0]
+    assert finding.rule == "planning.destination"
+
 
 
 @pytest.mark.parametrize(

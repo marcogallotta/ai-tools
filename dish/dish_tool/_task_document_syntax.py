@@ -38,6 +38,9 @@ RESEARCH_BASIS_PREFIXES = (
     "Source-backed dish", "Halal port of ", "Intentional test dish, human-approved",
 )
 DESTINATION_RE = re.compile(r"^(?P<name>.+?)\s+—\s+(?P<gid>[0-9]+)$")
+NATIVE_DESTINATION_RE = re.compile(
+    r"^(?P<name>.+?)\s+—\s+section:(?P<section_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+)
 EXEMPTION_TAG_AT_START_RE = re.compile(r"\A\s*\[([^\]]+)\]")
 ALLOWED_EXEMPTION_TAGS = frozenset(
     {"nutrition-kcal", "nutrition-protein", "nutrition-fat"}

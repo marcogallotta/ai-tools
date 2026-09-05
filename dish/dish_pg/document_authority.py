@@ -7,6 +7,7 @@ the parsed document rather than from ad-hoc text scanning or caller hints.
 from __future__ import annotations
 
 import dataclasses
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping
@@ -22,6 +23,7 @@ from dish_tool.governed_diff import (
 from dish_tool.models import material_change_line, material_editor_line, verification_actor_line
 from dish_tool.task_document import (
     DESTINATION_RE,
+    NATIVE_DESTINATION_RE,
     CanonicalTaskDocument,
     DocumentParseError,
     TaskState,
@@ -440,6 +442,26 @@ def destination_gid(document: CanonicalTaskDocument) -> str:
             ],
         )
     return match.group("gid")
+
+
+def destination_section_id(document: CanonicalTaskDocument) -> uuid.UUID:
+    """Return the exact canonical native Section UUID carried by the document."""
+
+    value = document.planning_brief.values["Destination section"]
+    match = NATIVE_DESTINATION_RE.fullmatch(value)
+    if match is None:
+        raise CanonicalDocumentError(
+            "signed document has no exact native Section destination",
+            errors=[
+                {
+                    "rule": "planning.destination",
+                    "message": "Destination section must be name — section:<uuid>",
+                    "field": "Destination section",
+                    "current": value,
+                }
+            ],
+        )
+    return uuid.UUID(match.group("section_id"))
 
 
 def _validated_parts(
