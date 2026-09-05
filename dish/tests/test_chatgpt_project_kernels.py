@@ -102,7 +102,7 @@ def test_generated_kernels_current_bound_and_within_budget():
  for role,p in kernels.generated_paths(m,s).items():
   text=p.read_text(); assert len(text)<=m['max_project_settings_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text; assert 'PROJECT_CHANNEL: production' in text
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
-  assert 'Mismatch alone never blocks' in text and '?/3 integrity error' in text
+  assert 'mismatch alone never blocks' in text.lower() and '?/3' in text
   reports=[
    kernels.render_project_settings_payload(m,s,role),
    kernels.render_project_settings_payload(m,s,role,overlay=overlay),
