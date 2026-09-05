@@ -45,6 +45,7 @@ from .planner import (
 from .read_model import PostgresReadModel, ReadModelError
 from .repositories import (
     AuthorityRepository,
+    CatalogRepository,
     CoreAuthorityError,
     DishRepository,
     REGISTRY_ROLE_CORRECTION_KIND,
@@ -297,7 +298,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             ):
                 if task is None:
                     raise CommandRuleError("TASK_REQUIRED", "planning start requires a task")
-                state, _membership = self.workflow.repo.lock_task_currentness(
+                state, _membership, _catalog_version_id = self.workflow.repo.lock_task_currentness(
                     generation_id=generation.generation_id,
                     task_id=task.task_id,
                 )
@@ -1105,27 +1106,54 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         title = str(call.arguments.get("title", "")).strip()
         if not title:
             raise CommandRuleError("TITLE_REQUIRED", "create requires a non-blank title", http_status=400)
+        native_contract = self._active_runtime_catalog_contract(generation.generation_id)
         active = self.session.get(models.ActiveSectionRegistry, generation.generation_id)
-        entry = self.session.scalar(
-            select(models.SectionRegistryEntry).where(
-                models.SectionRegistryEntry.registry_version_id == active.registry_version_id,
-                models.SectionRegistryEntry.workflow_role == "research_queue",
+        if native_contract is None:
+            entry = self.session.scalar(
+                select(models.SectionRegistryEntry).where(
+                    models.SectionRegistryEntry.registry_version_id == active.registry_version_id,
+                    models.SectionRegistryEntry.workflow_role == "research_queue",
+                )
+            ) if active else None
+            if active is None or entry is None:
+                raise CommandRuleError("RESEARCH_QUEUE_MISSING", "active registry has no Research Queue")
+            section = self.session.get(models.GovernedSection, entry.section_id)
+            if section is None:
+                raise CommandRuleError(
+                    "RESEARCH_QUEUE_MISSING", "active registry has no Research Queue"
+                )
+            section_id = section.section_id
+            catalog_version_id = None
+            membership_revision = 1
+        else:
+            entry = next(
+                (
+                    row
+                    for row in native_contract.entries
+                    if row.workflow_role == "research_queue"
+                ),
+                None,
             )
-        ) if active else None
-        if active is None or entry is None:
-            raise CommandRuleError("RESEARCH_QUEUE_MISSING", "active registry has no Research Queue")
-        section = self.session.get(models.GovernedSection, entry.section_id)
+            if entry is None:
+                raise CommandRuleError(
+                    "RESEARCH_QUEUE_MISSING", "active native catalog has no Research Queue"
+                )
+            if active is None or self.session.get(models.GovernedSection, entry.section_id) is None:
+                raise CommandRuleError(
+                    "PLACEMENT_ADAPTER_MISSING",
+                    "native Research Queue has no legacy placement adapter row",
+                )
+            section_id = entry.section_id
+            catalog_version_id = native_contract.catalog_version.catalog_version_id
+            membership_revision = 0
         task_id, version_id = self.uuid_factory(), self.uuid_factory()
         body = str(call.arguments.get("body", ""))
         identity = content_identity(title, body)
         task = models.DishTask(task_id=task_id, existence_state="ordinary", creation_route="create", import_run_id=None, command_execution_id=execution.execution_id, created_at=call.now, retired_at=None)
         receipt = models.DishMutationReceipt(generation_id=generation.generation_id, task_id=task_id, dish_version=1, source_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, content_changed=True, placement_changed=True, completion_changed=True, occurred_at=call.now)
         version = models.ContentVersion(content_version_id=version_id, generation_id=generation.generation_id, task_id=task_id, representation_kind="document", title=title, body=body, identity_scheme=CONTENT_IDENTITY_SCHEME, content_identity=identity, creator_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, predecessor_content_version_id=None, contract_binding_id=binding.binding_id, created_dish_version=1, created_at=call.now)
-        state = models.DishState(generation_id=generation.generation_id, task_id=task_id, current_content_version_id=version_id, section_id=section.section_id, registry_version_id=active.registry_version_id, completed=False, completion_reason="archive", dish_version=1, placement_version=1, completion_version=1, updated_at=call.now)
-        membership_head = models.TaskMembershipHead(generation_id=generation.generation_id, task_id=task_id, membership_revision=1, updated_at=call.now)
-        membership_id = self.uuid_factory()
-        membership_event = models.TaskProjectMembershipEvent(membership_event_id=membership_id, generation_id=generation.generation_id, task_id=task_id, project_id=section.project_id, event_kind="joined", membership_revision=1, provenance_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, occurred_at=call.now)
-        current_membership = models.CurrentTaskProjectMembership(generation_id=generation.generation_id, task_id=task_id, project_id=section.project_id, latest_event_id=membership_id, is_member=True, membership_revision=1, updated_at=call.now)
+        state = models.DishState(generation_id=generation.generation_id, task_id=task_id, current_content_version_id=version_id, section_id=section_id, registry_version_id=active.registry_version_id, catalog_version_id=catalog_version_id, completed=False, completion_reason="archive", dish_version=1, placement_version=1, completion_version=1, updated_at=call.now)
+        membership_head = models.TaskMembershipHead(generation_id=generation.generation_id, task_id=task_id, membership_revision=membership_revision, updated_at=call.now)
         self.session.add(task)
         self.session.flush()
         execution.task_id = task_id
@@ -1138,16 +1166,20 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         self.session.flush()
         self.session.add(membership_head)
         self.session.flush()
-        self.session.add(membership_event)
-        self.session.flush()
-        self.session.add(current_membership)
-        self.session.flush()
+        if native_contract is None:
+            membership_id = self.uuid_factory()
+            membership_event = models.TaskProjectMembershipEvent(membership_event_id=membership_id, generation_id=generation.generation_id, task_id=task_id, project_id=section.project_id, event_kind="joined", membership_revision=1, provenance_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, occurred_at=call.now)
+            current_membership = models.CurrentTaskProjectMembership(generation_id=generation.generation_id, task_id=task_id, project_id=section.project_id, latest_event_id=membership_id, is_member=True, membership_revision=1, updated_at=call.now)
+            self.session.add(membership_event)
+            self.session.flush()
+            self.session.add(current_membership)
+            self.session.flush()
         projection_id = self._project(generation.generation_id, execution.execution_id, task_id, "create_task", {"title": title}, call.now)
         return {
             "dish_id": str(task_id),
             "task_id": str(task_id),
             "content_version_id": str(version_id),
-            "section_id": str(section.section_id),
+            "section_id": str(section_id),
             "projection_event_id": projection_id,
         }
 
@@ -3362,28 +3394,18 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "SAFE_RECLAIM_VERIFICATION_LEASE_MISMATCH",
                     "Verification reclaim requires the exact source cycle lease",
                 )
-            active_registry = self.session.get(
-                models.ActiveSectionRegistry, generation.generation_id
-            )
             placement = self.session.get(
                 models.DishState,
                 (generation.generation_id, task.task_id),
             )
-            verification_section_id = (
-                self.session.scalar(
-                    select(models.SectionRegistryEntry.section_id).where(
-                        models.SectionRegistryEntry.registry_version_id
-                        == active_registry.registry_version_id,
-                        models.SectionRegistryEntry.workflow_role
-                        == "verification_queue",
-                    )
-                )
-                if active_registry is not None
-                else None
+            verification_section_id = self._section_for_role(
+                generation.generation_id,
+                "verification_queue",
+                missing_code="VERIFICATION_QUEUE_MISSING",
+                missing_message="active Section authority has no Verification Queue",
             )
             if (
                 placement is None
-                or verification_section_id is None
                 or placement.section_id != verification_section_id
             ):
                 raise CommandRuleError(
@@ -4533,6 +4555,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             task_id=task_id,
             expected_dish_version=fence.expected_dish_version,
             expected_membership_revision=fence.expected_membership_revision,
+            expected_placement_version=fence.expected_placement_version,
+            catalog_version_id=fence.catalog_version_id,
             source=ScalarMutationSource(
                 route="command_execution",
                 command_execution_id=execution_id,
@@ -4690,6 +4714,19 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         missing_code: str,
         missing_message: str,
     ) -> uuid.UUID:
+        native_contract = self._active_runtime_catalog_contract(generation_id)
+        if native_contract is not None:
+            entry = next(
+                (
+                    row
+                    for row in native_contract.entries
+                    if row.workflow_role == workflow_role
+                ),
+                None,
+            )
+            if entry is None:
+                raise CommandRuleError(missing_code, missing_message)
+            return entry.section_id
         active = self.session.get(models.ActiveSectionRegistry, generation_id)
         entry = (
             self.session.scalar(
@@ -4705,7 +4742,32 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError(missing_code, missing_message)
         return entry.section_id
 
+    def _active_runtime_catalog_contract(self, generation_id: uuid.UUID):
+        try:
+            return CatalogRepository(self.session).active_runtime_catalog_contract(
+                generation_id
+            )
+        except CoreAuthorityError as exc:
+            raise CommandRuleError("CATALOG_AUTHORITY_DRIFT", str(exc)) from exc
+
     def _set_placement(self, generation_id, task_id, section_id, execution_id, at) -> None:
+        native_contract = self._active_runtime_catalog_contract(generation_id)
+        if native_contract is not None:
+            if not any(row.section_id == section_id for row in native_contract.entries):
+                raise CommandRuleError(
+                    "DESTINATION_NOT_REGISTERED",
+                    "destination is not in the active native catalog",
+                )
+            self._scalar_mutation(
+                generation_id=generation_id,
+                task_id=task_id,
+                execution_id=execution_id,
+                at=at,
+            ).place(
+                section_id=section_id,
+                catalog_version_id=native_contract.catalog_version.catalog_version_id,
+            )
+            return
         active = self.session.get(models.ActiveSectionRegistry, generation_id)
         if active is None:
             raise CommandRuleError("PLACEMENT_AUTHORITY_MISSING", "task placement authority is incomplete")
