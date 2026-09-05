@@ -82,7 +82,7 @@ def test_archive_supersedes_pending_and_claimed_undispatched_projection_and_stal
         )
         service.record_observation_and_adjudicate(
             attempt_id=first_attempt.attempt_id,
-            observation_kind="external_reread",
+            observation_kind="reread",
             observed_applied=True,
             observed_identity=first_attempt.request_sha256,
             reread_complete=True,
@@ -211,7 +211,7 @@ def test_archive_accepts_proven_not_applied_projection(workflow_db) -> None:
         )
         adjudication = service.record_observation_and_adjudicate(
             attempt_id=attempt.attempt_id,
-            observation_kind="external_reread",
+            observation_kind="reread",
             observed_applied=False,
             observed_identity=None,
             reread_complete=True,
