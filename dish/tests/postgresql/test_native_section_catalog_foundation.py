@@ -353,14 +353,15 @@ def test_populated_upgrade_backfills_definition_authority_only(tmp_path: Path) -
     command.upgrade(config, ALEMBIC_HEAD)
     engine = create_engine(database_url, future=True)
     try:
-        assert (
-            "native_catalog_runtime_attestations"
-            not in inspect(engine).get_table_names()
-        )
-        assert (
-            "current_native_catalog_runtimes" not in inspect(engine).get_table_names()
-        )
+        assert "native_catalog_runtime_attestations" in inspect(engine).get_table_names()
+        assert "current_native_catalog_runtimes" in inspect(engine).get_table_names()
         with Session(engine) as session:
+            assert session.scalar(
+                select(func.count()).select_from(models.NativeCatalogRuntimeAttestation)
+            ) == 0
+            assert session.scalar(
+                select(func.count()).select_from(models.CurrentNativeCatalogRuntime)
+            ) == 0
             section = session.get(models.Section, legacy["section_id"])
             version = session.get(
                 models.SectionCatalogVersion, legacy["registry_version_id"]
@@ -423,5 +424,227 @@ def test_offline_migration_contains_foundation_without_runtime_switch() -> None:
     assert "CREATE TABLE section_catalog_versions" in rendered
     assert "CREATE TABLE active_section_catalogs" in rendered
     assert "dish_validate_active_section_catalog" in rendered
-    assert "native_catalog_runtime_attestations" not in rendered
-    assert "current_native_catalog_runtimes" not in rendered
+    assert "CREATE TABLE native_catalog_runtime_attestations" in rendered
+    assert "CREATE TABLE current_native_catalog_runtimes" in rendered
+    assert "INSERT INTO native_catalog_runtime_attestations" not in rendered
+    assert "INSERT INTO current_native_catalog_runtimes" not in rendered
+
+
+def test_pr2a_attestation_hash_has_fixed_vector() -> None:
+    value = models.compute_attestation_sha256(
+        generation_id=uuid.UUID(int=1),
+        catalog_version_id=uuid.UUID(int=2),
+        catalog_activation_id=uuid.UUID(int=3),
+        contract_binding_id=uuid.UUID(int=4),
+        attestation_revision=1,
+        predecessor_attestation_id=None,
+        baseline_migration_event_id=uuid.UUID(int=5),
+        baseline_revision="0049",
+        baseline_migration_code_sha256="a" * 64,
+        baseline_dish_release="dish-test",
+        baseline_source_commit_sha="b" * 40,
+    )
+    assert value == "d0a12fc94bdb1000a1b47bea0b83768ffa3eb93e4901b69463969215c3e6826e"
+
+
+def test_pr2a_schema_only_upgrade_adds_spine_without_rows(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pr2a.sqlite3'}"
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, ALEMBIC_HEAD)
+
+    engine = create_engine(database_url, future=True)
+    try:
+        inspector = inspect(engine)
+        assert {
+            "native_catalog_runtime_attestations",
+            "current_native_catalog_runtimes",
+        }.issubset(inspector.get_table_names())
+        assert "catalog_version_id" in {
+            column["name"] for column in inspector.get_columns("dish_states")
+        }
+        assert {
+            "expected_placement_version",
+            "catalog_version_id",
+        }.issubset(
+            column["name"] for column in inspector.get_columns("task_execution_fences")
+        )
+        assert "catalog_version_id" in {
+            column["name"] for column in inspector.get_columns("workflow_operations")
+        }
+        assert "catalog_version_id" in {
+            column["name"]
+            for column in inspector.get_columns("verification_inspection_occurrences")
+        }
+        with Session(engine) as session:
+            assert session.scalar(
+                select(func.count()).select_from(models.NativeCatalogRuntimeAttestation)
+            ) == 0
+            assert session.scalar(
+                select(func.count()).select_from(models.CurrentNativeCatalogRuntime)
+            ) == 0
+    finally:
+        engine.dispose()
+
+
+def test_pr2a_offline_sql_contains_no_runtime_authority_rows() -> None:
+    buffer = io.StringIO()
+    offline_config = Config(str(ROOT / "alembic.ini"))
+    offline_config.set_main_option("sqlalchemy.url", "postgresql://offline/pr2a")
+    offline_config.attributes["output_buffer"] = buffer
+    command.upgrade(
+        offline_config,
+        "0048_native_section_content_carry_forward:0049_native_catalog_runtime_authority_root",
+        sql=True,
+    )
+    rendered = buffer.getvalue()
+    assert "CREATE TABLE native_catalog_runtime_attestations" in rendered
+    assert "CREATE TABLE current_native_catalog_runtimes" in rendered
+    assert "INSERT INTO native_catalog_runtime_attestations" not in rendered
+    assert "INSERT INTO current_native_catalog_runtimes" not in rendered
+
+
+def _seed_pr2a_attestation(
+    factory, ids: Iterator[uuid.UUID]
+) -> dict[str, uuid.UUID]:
+    with session_scope(factory) as session:
+        generation_id, binding_id = _add_native_generation(session, ids)
+        section_id = _next(ids)
+        CatalogRepository(session).add_section(
+            models.Section(
+                section_id=section_id,
+                logical_name="PR2a Section",
+                lifecycle="active",
+                created_at=NOW,
+                retired_at=None,
+            )
+        )
+        active = _install_recovery_catalog(
+            session,
+            ids,
+            generation_id=generation_id,
+            binding_id=binding_id,
+            section_ids=(section_id,),
+            revision=1,
+            expected=(None, None, None),
+        )
+        event_id = _next(ids)
+        session.add(
+            models.AppliedMigrationEvent(
+                migration_event_id=event_id,
+                generation_id=generation_id,
+                revision="later-pr2f-switch",
+                predecessor_revision=ALEMBIC_HEAD,
+                migration_code_sha256="c" * 64,
+                dish_release="dish-native-catalog",
+                initiator="test",
+                outcome="applied",
+                started_at=NOW,
+                terminal_at=NOW,
+                details={"source_commit_sha": "d" * 40},
+            )
+        )
+        attestation_id = _next(ids)
+        session.add(
+            models.NativeCatalogRuntimeAttestation(
+                attestation_id=attestation_id,
+                generation_id=generation_id,
+                catalog_version_id=active.catalog_version.catalog_version_id,
+                catalog_activation_id=active.catalog_activation.catalog_activation_id,
+                predecessor_attestation_id=None,
+                baseline_migration_event_id=event_id,
+                attestation_revision=1,
+                attestation_sha256=models.compute_attestation_sha256(
+                    generation_id=generation_id,
+                    catalog_version_id=active.catalog_version.catalog_version_id,
+                    catalog_activation_id=active.catalog_activation.catalog_activation_id,
+                    contract_binding_id=binding_id,
+                    attestation_revision=1,
+                    predecessor_attestation_id=None,
+                    baseline_migration_event_id=event_id,
+                    baseline_revision="later-pr2f-switch",
+                    baseline_migration_code_sha256="c" * 64,
+                    baseline_dish_release="dish-native-catalog",
+                    baseline_source_commit_sha="d" * 40,
+                ),
+                recorded_at=NOW,
+            )
+        )
+        return {
+            "generation": generation_id,
+            "catalog": active.catalog_version.catalog_version_id,
+            "activation": active.catalog_activation.catalog_activation_id,
+            "attestation": attestation_id,
+        }
+
+
+def test_pr2a_pointer_constraints_and_read_only_resolution(core_db) -> None:
+    factory, ids = core_db
+    values = _seed_pr2a_attestation(factory, ids)
+
+    with factory() as session:
+        session.add(
+            models.CurrentNativeCatalogRuntime(
+                generation_id=values["generation"],
+                attestation_id=values["attestation"],
+                catalog_version_id=uuid.UUID(int=999),
+                catalog_activation_id=values["activation"],
+                attestation_revision=1,
+                updated_at=NOW,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+    with session_scope(factory) as session:
+        assert models.resolve_current_native_catalog_runtime(
+            session, values["generation"]
+        ) is None
+        session.add(
+            models.CurrentNativeCatalogRuntime(
+                generation_id=values["generation"],
+                attestation_id=values["attestation"],
+                catalog_version_id=values["catalog"],
+                catalog_activation_id=values["activation"],
+                attestation_revision=1,
+                updated_at=NOW,
+            )
+        )
+
+    with session_scope(factory) as session:
+        resolved = models.resolve_current_native_catalog_runtime(
+            session, values["generation"]
+        )
+        assert resolved is not None
+        assert resolved[0].attestation_id == values["attestation"]
+        resolved[1].attestation_sha256 = "e" * 64
+        with pytest.raises(IntegrityError):
+            session.flush()
+
+    with factory() as session:
+        pointer = session.get(models.CurrentNativeCatalogRuntime, values["generation"])
+        assert pointer is not None
+        session.delete(pointer)
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_pr2a_absent_pointer_preserves_legacy_authority(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        legacy = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head=ALEMBIC_HEAD,
+        )
+        assert models.resolve_current_native_catalog_runtime(
+            session, legacy["generation_id"]
+        ) is None
+        contract = RegistryRepository(session).active_release_contract(
+            legacy["generation_id"]
+        )
+        assert (
+            contract.registry_version.registry_version_id
+            == legacy["registry_version_id"]
+        )
