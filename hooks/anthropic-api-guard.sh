@@ -21,9 +21,17 @@ ask() {
   exit 0
 }
 
+# The mandated commit/PR attribution footer (Co-Authored-By: ... <noreply@
+# anthropic.com>) and reading this guard's own source both contain the bare
+# word "anthropic" without meaning API spend. Strip that one known-safe
+# substring before matching so routine commits and `cat`/`grep` of this file
+# don't false-trigger; api.anthropic.com and ANTHROPIC_API_KEY are distinct
+# strings and still match untouched.
+scan=$(printf '%s' "$cmd" | sed -E 's/noreply@anthropic\.com//gI')
+
 # (a) known API-calling scripts        (b) direct Anthropic API signals that
 # always mean spend, regardless of context.
-if printf '%s' "$cmd" | grep -Eiq \
+if printf '%s' "$scan" | grep -Eiq \
   '(tag_eval|submit_tagging_batch|ingest_tagging_batch|agreement_gate)([._[:space:]]|$)|anthropic|ANTHROPIC_API_KEY|api\.anthropic\.com|messages\.(create|batches)'; then
   ask "Anthropic API spend — limited prepaid budget; explicit per-run approval required (\$ leaves the budget). A --dry/no-spend run is safe to approve."
 fi
