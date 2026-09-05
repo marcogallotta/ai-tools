@@ -149,6 +149,7 @@ The PR must contain the complete agent-to-agent instructions; Marco must not be 
 
 For the current publication-friction containment path, the GitHub connector remains the normal publication path. Do **not** pre-route local merely because a candidate is large, multi-file, or looks inconvenient to publish. First attempt normal connector publication. Only when that actual attempt is failing/unavailable or starts degrading into slow manual blob/chunk/base64 work, and the remote Implementation agent still has the complete exact candidate bytes, may this local fallback activate. The human relay is then deliberately minimal:
 
+- before producing the bundle, post the durable local-claim handoff witness to the owning task using the exact `dish-prelaunch:v1 ... host=local ...` source/marker shape in `templates/implementation-handoff.md` ("For a local first claim..."), with this PR's exact branch/base/PR/head. Without it, `tools/agent-worktree` refuses the local agent's first claim on this branch;
 - before stopping the GitHub connector path, tell Marco **why it stopped and exactly what was tried**. Name the concrete connector mutation(s)/fallback(s) attempted and the observed failure/degradation; `large`, `multi-file`, or `looks slow` is not a stop reason by itself;
 - produce **one downloadable exact candidate Git bundle**; that bundle is the only file Marco is expected to download or pass to the local agent;
 - deliver that bundle through a **working directly downloadable file/attachment surface**. Do **not** use the ChatGPT generated-file/artifact-card or sandbox-link/card form Marco has reported as non-working. If the current host cannot produce a working download, do not claim the local handoff is ready: keep the PR draft and tell Marco which delivery surface(s) were tried and why delivery stopped;
@@ -163,6 +164,7 @@ This is temporary containment, not a second publication architecture. Existing m
 
 A local Implementation-completion agent accepting this ownership handoff must:
 
+- before claiming, verify that witness story already exists on the task for this exact branch/base/PR/head; if it is missing, do not fabricate it under Implementation authority — report the gap and either wait for it to be posted or post it yourself under a separate, explicitly logged Development Workflow action;
 - continue on the same existing PR branch;
 - apply only the unpublished mechanical delta named in the blocker section, with no semantic broadening;
 - never write directly to `main`;
