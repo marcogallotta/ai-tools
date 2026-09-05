@@ -537,6 +537,7 @@ class TestProtectedCheckoutBranchIsolation:
         )
         assert_denied(decision, "Refusing 'switch' branch change")
 
+
     def test_dash_c_primary_from_elsewhere_denied(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
         decision = run_hook(
             destructive_op_guard,
@@ -1008,6 +1009,78 @@ def _register_active_task(protected_repo, monkeypatch, tmp_path, task_gid="12345
     }) + "\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
     return task_gid
+
+
+class TestCdViaVariable:
+    # Real repro: `WT=<worktree path>; cd "$WT"; git checkout <ref> -- <files>`
+    # inside a registered agent worktree. cwd tracking previously only
+    # recognized a literal `cd /path`, so `cd "$WT"` left current_cwd frozen
+    # at whatever cwd preceded the whole script (the operator's primary
+    # checkout, on main) - and the resulting stale branch check ("main")
+    # wrongly forced an approval prompt for a routine file-restore checkout
+    # that was actually happening inside an isolated worktree.
+    def test_checkout_after_cd_via_variable_into_linked_worktree_allowed(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        command = (
+            f'WT="{protected_repo["linked"]}"\n'
+            'cd "$WT"\n'
+            "git checkout HEAD -- README.md"
+        )
+        decision = run_hook(
+            destructive_op_guard, command, monkeypatch, capsys, cwd=str(protected_repo["primary"])
+        )
+        assert_allowed(decision)
+
+    def test_checkout_after_cd_via_braced_variable_into_linked_worktree_allowed(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        command = (
+            f'WT="{protected_repo["linked"]}"\n'
+            'cd "${WT}"\n'
+            "git checkout HEAD -- README.md"
+        )
+        decision = run_hook(
+            destructive_op_guard, command, monkeypatch, capsys, cwd=str(protected_repo["primary"])
+        )
+        assert_allowed(decision)
+
+    def test_checkout_after_cd_via_variable_resolving_to_primary_still_asked(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # The variable resolves to the shared primary checkout (still on
+        # main) rather than an isolated worktree - the fix must not turn
+        # this into a bypass.
+        command = (
+            f'WT="{protected_repo["primary"]}"\n'
+            'cd "$WT"\n'
+            "git checkout HEAD -- README.md"
+        )
+        decision = run_hook(
+            destructive_op_guard, command, monkeypatch, capsys, cwd=str(protected_repo["linked"])
+        )
+        assert_asked(decision, "requires explicit approval")
+
+    def test_checkout_after_cd_via_unresolved_variable_still_asked(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # $WT has no assignment anywhere in the command - falls back to the
+        # existing behavior (frozen at the starting cwd) rather than
+        # guessing.
+        command = 'cd "$WT"\ngit checkout HEAD -- README.md'
+        decision = run_hook(
+            destructive_op_guard, command, monkeypatch, capsys, cwd=str(protected_repo["primary"])
+        )
+        assert_asked(decision, "requires explicit approval")
+
+    def test_rm_after_cd_via_variable_into_linked_worktree_allowed(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        command = f'WT="{protected_repo["linked"]}"\ncd "$WT"\nrm -rf some_dir'
+        decision = run_hook(
+            destructive_op_guard, command, monkeypatch, capsys, cwd=str(protected_repo["primary"])
+        )
+        assert_allowed(decision)
 
 
 class TestActiveTaskGitBoundary:

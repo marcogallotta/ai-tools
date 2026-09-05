@@ -169,6 +169,36 @@ def _expand_leading_var(token, known_vars):
     return known_vars[name] + rest if name in known_vars else token
 
 
+def _update_known_vars(tokens, known_vars):
+    """Record any leading VAR=value assignments (optionally after `export`)
+    in `known_vars`, in place - shared tracking so a `cd "$VAR"` a few lines
+    later can resolve the same way an `rm "$VAR"` target does."""
+    j = 1 if tokens and is_word(tokens[0], "export") else 0
+    while j < len(tokens) and VAR_ASSIGNMENT_RE.match(tokens[j]):
+        name, value = tokens[j].split("=", 1)
+        known_vars[name] = value
+        j += 1
+
+
+def _cd_target_with_resolved_vars(seg, known_vars, cwd):
+    """Like protected_checkout._literal_cd_target, but first resolves a
+    leading $VAR/${VAR} `cd` argument against known_vars (e.g. WT=/home/...
+    a few lines earlier, then `cd "$WT"`) - _literal_cd_target's own
+    _reject_shell_expansion deliberately refuses any raw '$' text since it
+    can't know the value; substituting a value we've actually seen assigned
+    in this same command lets tracking follow the real cwd instead of
+    silently freezing at whatever cwd preceded the command."""
+    tokens = tokenize(seg)
+    if not tokens or not is_word(tokens[0], "cd"):
+        return protected_checkout._literal_cd_target(seg, cwd)
+    resolved = [tokens[0]] + [_expand_leading_var(t, known_vars) for t in tokens[1:]]
+    if resolved == tokens:
+        return protected_checkout._literal_cd_target(seg, cwd)
+    return protected_checkout._literal_cd_target(
+        " ".join(shlex.quote(t) for t in resolved), cwd
+    )
+
+
 # Skip the prompt when every target resolves under an exempt prefix (/tmp/
 # or ~/Downloads/) - scratch space, not worth an approval round-trip. Targets
 # are expanded against simple VAR=value assignments made earlier in the same
@@ -189,17 +219,13 @@ def check_rm(segments, cwd=None):
     for seg in segments:
         tokens = tokenize(seg)
 
-        changed_cwd = protected_checkout._literal_cd_target(seg, current_cwd)
+        changed_cwd = _cd_target_with_resolved_vars(seg, known_vars, current_cwd)
         if changed_cwd is not None:
             current_cwd = changed_cwd
             if _is_isolated_worktree(current_cwd):
                 return None
 
-        j = 1 if tokens and is_word(tokens[0], "export") else 0
-        while j < len(tokens) and VAR_ASSIGNMENT_RE.match(tokens[j]):
-            name, value = tokens[j].split("=", 1)
-            known_vars[name] = value
-            j += 1
+        _update_known_vars(tokens, known_vars)
 
         idx = rm_command_index(tokens)
         if idx is None:
@@ -284,6 +310,7 @@ def _is_isolated_worktree(cwd):
 def check_git(segments, cwd=None):
     current_cwd = cwd or os.getcwd()
     isolated_worktree = _is_isolated_worktree(current_cwd)
+    known_vars = {}
 
     # Active Dish task worktrees have a single canonical mutation boundary.
     # Raw staging/commit/publication paths are hard denials, not approval
@@ -321,9 +348,10 @@ def check_git(segments, cwd=None):
                     "-m <message> -- <explicit paths...>"
                 )
 
-        changed_cwd = protected_checkout._literal_cd_target(seg, current_cwd)
+        changed_cwd = _cd_target_with_resolved_vars(seg, known_vars, current_cwd)
         if changed_cwd is not None:
             current_cwd = changed_cwd
+        _update_known_vars(tokens, known_vars)
 
     for seg in segments:
         tokens = tokenize(seg)
@@ -354,7 +382,7 @@ def check_git(segments, cwd=None):
 
     current_cwd = cwd or os.getcwd()
     for seg in segments:
-        changed_cwd = protected_checkout._literal_cd_target(seg, current_cwd)
+        changed_cwd = _cd_target_with_resolved_vars(seg, known_vars, current_cwd)
         if changed_cwd is not None:
             current_cwd = changed_cwd
             continue
