@@ -37,11 +37,10 @@ python3 -m venv .venv
 
 ### ChatGPT MCP app
 
-Dish reaches ChatGPT through OpenAI Secure MCP Tunnel, not through the public Tailscale Funnel.
-The tunnel client runs the existing stdio adapter locally, so neither the MCP server nor the
-production Action token is exposed at a public `/dish` route. Install the official client at
-`/home/marco/.local/bin/tunnel-client`; create a dedicated OpenAI tunnel and a separate runtime
-key, then configure and supervise it using [the MCP app runbook](deploy/mcp-app.md).
+Dish reaches ChatGPT at `https://laptop.tail46f0b9.ts.net/dish/mcp` through the existing Tailscale
+Funnel and Caddy router. The MCP server stays on loopback; FastMCP supplies the OAuth server and
+uses GitHub only for login. Access is restricted to Marco's immutable GitHub user ID. Configure the
+GitHub OAuth app and supervise the service using [the MCP app runbook](deploy/mcp-app.md).
 
 ### PostgreSQL development target
 

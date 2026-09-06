@@ -479,13 +479,37 @@ def evaluate(cmd, payload=None):
     return check_api_wrapper(cmd)
 
 
+# Marco, 2026-09-06: ai-tools is this guard's own home repo and Asana is a
+# normal, constant part of working in it (task tracking, batch plans,
+# handoffs). Any Asana write invoked with a cwd under ~/ai-tools is
+# unconditionally allowed - no ownership proof, no batch-size floor, no
+# ask/deny path at all. This intentionally removes the guard's protection
+# for this one directory tree; it does not change behavior anywhere else.
+AI_TOOLS_ROOT = (Path.home() / "ai-tools").resolve()
+
+
+def _cwd_under_ai_tools(payload):
+    cwd = payload.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        return False
+    try:
+        resolved = Path(cwd).expanduser().resolve()
+    except OSError:
+        return False
+    return resolved == AI_TOOLS_ROOT or AI_TOOLS_ROOT in resolved.parents
+
+
 def main() -> int:
     data = json.load(sys.stdin)
     cmd = data.get("tool_input", {}).get("command") or ""
-    if cmd:
-        decision = evaluate(cmd, data)
-        if decision is not None:
-            print(json.dumps(decision))
+    if not cmd:
+        return 0
+    if _cwd_under_ai_tools(data):
+        print(json.dumps(allow("[asana-write-guard] ai-tools cwd: Asana writes unconditionally allowed per Marco.")))
+        return 0
+    decision = evaluate(cmd, data)
+    if decision is not None:
+        print(json.dumps(decision))
     return 0
 
 

@@ -1,7 +1,7 @@
 # Dish — Worker
 
 PROFILE: manual-worker-r5-g2
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-87fbf01fc357
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-59d2b32e1a85
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -28,4 +28,4 @@ Mode map:
 - **Design Review** → current Review authority and the canonical exact-candidate Design Review procedure. Bind task + revision/generation + SHA-256 of exact canonical task notes/design snapshot; immediately before publishing `VERDICT: PASS` or `VERDICT: BLOCK`, reread the canonical task. On movement/supersession publish no verdict for the new candidate. Chat-only verdict does not count. Do not author the candidate being independently reviewed.
 - **Audit** → `dish/docs/agents/audit.md`; read-only except its explicitly permitted bounded disposition.
 
-For governed Asana writes, freshly apply the exact project-mode contract and verify readback. Tools never create authority. Current Git/Asana authority outranks stale chat state. Keep Marco attention for real design/risk/approval boundaries, not routine mechanics already inside the accepted Worker operation.
+For governed Asana writes, freshly apply the exact project-mode contract and verify readback. Tools never create authority. Current Git/Asana authority outranks stale chat state. Keep Marco attention for real design/risk/approval boundaries, not routine mechanics already inside the accepted Worker operation. After terminal Review/Implementation completion, apply the root Work-chat terminal operator projection; durable agent detail stays on GitHub/Asana and any required manual relay is one receiver-ready block rather than a second evidence packet.

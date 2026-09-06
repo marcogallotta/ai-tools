@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0049_native_catalog_runtime_authority_root"
+ALEMBIC_HEAD = "0050_native_catalog_runtime_authority_switch"
 
 
 class ReleaseCandidateService(

@@ -4,18 +4,28 @@ from __future__ import annotations
 
 import sys
 
+from agent_worktree_lib.argv_normalization import propagate_takeover_to_wrapped_resume
 from agent_worktree_lib.cli import main
 from agent_worktree_lib.common import AgentWorktreeError, GitRunner
-from agent_worktree_lib.fast_track import build_fast_track_parser, command_fast_track_commit, command_fast_track_publish
+from agent_worktree_lib.fast_track import (
+    build_fast_track_parser,
+    command_fast_track_commit,
+    command_fast_track_publish,
+)
 from agent_worktree_lib.operations import emit
 
 if __name__ == "__main__":
     try:
+        sys.argv[:] = propagate_takeover_to_wrapped_resume(sys.argv)
         if len(sys.argv) > 1 and sys.argv[1] in {"fast-track-commit", "fast-track-publish"}:
             args = build_fast_track_parser().parse_args(sys.argv[1:])
             runner = GitRunner()
             try:
-                payload = command_fast_track_commit(args, runner) if args.command == "fast-track-commit" else command_fast_track_publish(args, runner)
+                payload = (
+                    command_fast_track_commit(args, runner)
+                    if args.command == "fast-track-commit"
+                    else command_fast_track_publish(args, runner)
+                )
                 emit(payload, getattr(args, "json", False))
             finally:
                 runner.close()
