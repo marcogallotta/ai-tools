@@ -443,6 +443,21 @@ def test_validate_command_result_accepts_postgres_failure_strings(failure_code):
     assert validate_command_result(result, expected_command="read") is result
 
 
+def test_validate_command_result_accepts_postgres_legacy_hybrid_shape():
+    """The PostgreSQL command port's CommandResult always carries both the full
+    legacy envelope fields and http_status (dish_pg/command_port_common.py); this
+    is its real, exact wire shape and must validate, not just the two pure families."""
+    result = {**_legacy_result("create"), "http_status": 200}
+
+    assert validate_command_result(result, expected_command="create") is result
+
+
+def test_validate_command_result_accepts_postgres_legacy_hybrid_shape_with_replay():
+    result = {**_legacy_result("create"), "http_status": 200, "request_replayed": True}
+
+    assert validate_command_result(result, expected_command="create") is result
+
+
 @pytest.mark.parametrize(
     ("result", "expected_command"),
     [
@@ -514,11 +529,6 @@ def test_validate_command_result_accepts_postgres_failure_strings(failure_code):
             {**_postgres_result("read"), "errors": []},
             "read",
             id="hybrid-postgres-plus-legacy-field",
-        ),
-        pytest.param(
-            {**_legacy_result("create"), "http_status": 200},
-            "create",
-            id="hybrid-legacy-plus-postgres-field",
         ),
         pytest.param(
             {**_postgres_result("read"), "unknown": None},
