@@ -302,6 +302,10 @@ Return enough information for the coordinator/reviewer to proceed without recons
 11. any known interaction with parallel unmerged work;
 12. whether any post-review or integration-relevant change is mechanical-only versus semantic.
 
+This numbered return contract is the durable agent-to-agent PR/task handoff, not a requirement to mirror those fields into Marco's terminal chat. After the durable handoff and required readback are complete, apply the root Work-chat terminal decision order. If this Worker can lawfully continue, continue rather than stopping for a relay/status dump. If Marco must manually transfer work, give one short outcome sentence plus one immediately usable fenced locator-first copy/paste block for the receiving agent; `Review PR #N.` is sufficient when the live PR lets that reviewer reconstruct the details. No-action/automatic progression gets one short status and no handoff block; a genuine Marco-only decision gets only the exact decision plus the minimum consequence needed to choose.
+
+For local completion or certification, keep the complete procedure, evidence, test inventory, hashes, file/scope inventory, environment diagnostics, and recovery detail on the PR. Surface only the limitation and receiver/action that change Marco's next step or completion truth. A focused re-review handoff includes exact head/blocked-head identity only when that identity materially binds the recheck.
+
 Do not describe work as merged, landed, deployed, or activated unless you actually have authoritative evidence of that state.
 
 If you are returning a fix requested by a reviewer, update the existing PR unless the coordinator explicitly requires a replacement PR, address the reviewer's exact blocker scope, identify any additional semantic changes, and return the new exact PR head SHA.
