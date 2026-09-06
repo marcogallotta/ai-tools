@@ -40,8 +40,8 @@ def _verified_repository_identity(monkeypatch) -> None:
     )
 
 
-def _stage_pr3(session: Session, ids: Iterator[uuid.UUID]):
-    seeded, expectation, source_rows = _fixture(session, ids)
+def _stage_pr3(session: Session, ids: Iterator[uuid.UUID], **fixture_kwargs):
+    seeded, expectation, source_rows = _fixture(session, ids, **fixture_kwargs)
     plan = build_carry_forward_plan(session, expectation=expectation)
     receipt = apply_carry_forward(
         session,
@@ -199,6 +199,40 @@ def test_materializes_when_current_content_predates_source_dish_version(core_db)
         assert state.current_content_version_id == successor_id
         assert state.dish_version == advanced_version + 1
         assert state.completion_version == advanced_version
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ("unknown_scheme", "stored_identity", "source_bytes"),
+)
+def test_historical_imported_identity_scheme_still_rejects_corruption(
+    core_db, corruption
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        fixture_kwargs = {"first_identity_scheme": "2"}
+        if corruption == "unknown_scheme":
+            fixture_kwargs["first_identity_scheme"] = "3"
+        elif corruption == "stored_identity":
+            fixture_kwargs["first_content_identity"] = "0" * 64
+        else:
+            fixture_kwargs["first_title_suffix_after_identity"] = " corrupted"
+        seeded, expectation, _, migration_event_id, occurrences = _stage_pr3(
+            session, ids, **fixture_kwargs
+        )
+        occurrence = occurrences[0]
+
+        with pytest.raises(
+            NativeSectionContentMaterializationError,
+            match="source occurrence no longer matches immutable source content",
+        ):
+            materialize_staged_native_section_content(
+                session,
+                generation_id=seeded["generation_id"],
+                migration_event_id=migration_event_id,
+                catalog_version_id=expectation.base_catalog_version_id,
+                materialized_at=NOW,
+            )
 
 
 def test_rejects_stale_current_content_pointer(core_db) -> None:

@@ -21,6 +21,7 @@ from . import models
 from .native_section_carry_forward import CARRY_FORWARD_REVISION
 
 _MATERIALIZED_CONTENT_NAME = "native-section-staged-content-materialization-v1"
+_HISTORICAL_IMPORTED_IDENTITY_SCHEME = "2"
 
 
 class NativeSectionContentMaterializationError(ValueError):
@@ -88,11 +89,21 @@ def _validate_source(
         raise NativeSectionContentMaterializationError(
             "staged carry-forward source ContentVersion is missing"
         )
+    historical_import_identity = (
+        source.identity_scheme == _HISTORICAL_IMPORTED_IDENTITY_SCHEME
+        and source.representation_kind == "document"
+        and source.creator_route == "import"
+        and source.import_run_id is not None
+        and source.command_execution_id is None
+    )
     if (
         source.generation_id != occurrence.generation_id
         or source.task_id != occurrence.task_id
         or source.content_version_id != occurrence.source_content_version_id
-        or source.identity_scheme != CONTENT_IDENTITY_SCHEME
+        or (
+            source.identity_scheme != CONTENT_IDENTITY_SCHEME
+            and not historical_import_identity
+        )
         or source.content_identity != occurrence.source_content_identity
         or content_identity(source.title, source.body) != occurrence.source_content_identity
     ):

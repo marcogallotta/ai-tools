@@ -69,10 +69,14 @@ def _add_document(
     section_id: uuid.UUID,
     status: str,
     destination: str,
+    identity_scheme: str = CONTENT_IDENTITY_SCHEME,
+    content_identity_override: str | None = None,
+    title_suffix_after_identity: str = "",
 ) -> tuple[uuid.UUID, uuid.UUID]:
     task_id = _next(ids)
     content_version_id = _next(ids)
     body = _body(status=status, destination=destination)
+    canonical_title = f"Dish {task_id}"
     session.add(
         models.DishTask(
             task_id=task_id,
@@ -107,10 +111,12 @@ def _add_document(
             generation_id=generation_id,
             task_id=task_id,
             representation_kind="document",
-            title=f"Dish {task_id}",
+            title=canonical_title + title_suffix_after_identity,
             body=body,
-            identity_scheme=CONTENT_IDENTITY_SCHEME,
-            content_identity=content_identity(f"Dish {task_id}", body),
+            identity_scheme=identity_scheme,
+            content_identity=(
+                content_identity_override or content_identity(canonical_title, body)
+            ),
             creator_route="import",
             import_run_id=import_run_id,
             command_execution_id=None,
@@ -140,7 +146,14 @@ def _add_document(
     return task_id, content_version_id
 
 
-def _fixture(session: Session, ids: Iterator[uuid.UUID]):
+def _fixture(
+    session: Session,
+    ids: Iterator[uuid.UUID],
+    *,
+    first_identity_scheme: str = CONTENT_IDENTITY_SCHEME,
+    first_content_identity: str | None = None,
+    first_title_suffix_after_identity: str = "",
+):
     seeded = _bootstrap_registry(
         session,
         ids,
@@ -263,6 +276,9 @@ def _fixture(session: Session, ids: Iterator[uuid.UUID]):
             section_id=seeded["section_id"],
             status="ready",
             destination="Research Queue — 1217084805070731",
+            identity_scheme=first_identity_scheme,
+            content_identity_override=first_content_identity,
+            title_suffix_after_identity=first_title_suffix_after_identity,
         )
     )
     for missing in MISSING_DESTINATIONS:
