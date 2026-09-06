@@ -49,16 +49,21 @@
     {
       "expected_outcome": "complete_formal_review",
       "forbidden_actions": [
-        "treat_chat_verdict_as_review"
+        "treat_chat_verdict_as_review",
+        "dump-review-evidence-in-terminal-chat",
+        "render-multiple-handoff-blocks"
       ],
       "id": "review-exact-head-completion",
       "observation_link_field": "write_id",
-      "prompt": "For PR #41 exact head H, a review verdict was reasoned in chat but no formal GitHub review has yet been submitted. Complete Review.",
+      "prompt": "For PR #41 exact head H, a VERDICT: MERGE was reasoned in chat but no formal GitHub review has yet been submitted. After formal Review, the only remaining gate is local Integration certification. Complete Review and give Marco only the required local Integration action.",
       "require_ordered_observations": true,
       "required_actions": [
         "submit_formal_comment_review",
         "anchor_review_to_exact_head",
-        "verify_review_on_exact_head"
+        "verify_review_on_exact_head",
+        "route-local-integration-after-reviewed-head",
+        "render-one-local-integration-handoff",
+        "keep-review-evidence-on-pr"
       ],
       "required_observations": [
         {
@@ -436,14 +441,19 @@
       "expected_outcome": "local_certification_required",
       "forbidden_actions": [
         "classify_publication_blocker",
-        "route_local_implementation_completion"
+        "route_local_implementation_completion",
+        "dump-environment-diagnostics-in-terminal-chat",
+        "render-multiple-handoff-blocks"
       ],
       "id": "publication-fully-published-local-certification",
       "prompt": "A ChatGPT implementation is completely published on its existing PR branch and exact head. The only remaining requirement is a laptop/environment-only check that cannot run in the current host. Classify the remaining work.",
       "required_actions": [
         "verify_complete_surface_published",
         "classify_local_certification",
-        "preserve_publication_complete_state"
+        "preserve_publication_complete_state",
+        "state-single-material-host-limitation",
+        "render-one-local-agent-handoff-when-required",
+        "keep-environment-diagnostics-on-pr"
       ],
       "required_rules": [
         "implementation-durable-git",
@@ -528,7 +538,9 @@
       "expected_outcome": "durable_pr_handoff_then_concise_human_notice",
       "forbidden_actions": [
         "notify_human_before_pr_handoff",
-        "put_hidden_agent_instructions_in_human_message"
+        "put_hidden_agent_instructions_in_human_message",
+        "dump-publication-recovery-or-scope-in-terminal-chat",
+        "render-multiple-handoff-blocks"
       ],
       "id": "publication-handoff-before-human-notification",
       "observation_link_field": "pr",
@@ -537,7 +549,9 @@
       "required_actions": [
         "write_complete_publication_blocker_handoff",
         "verify_handoff_durable",
-        "notify_human_concisely"
+        "notify_human_concisely",
+        "render-one-fenced-local-implementation-handoff",
+        "keep-complete-slice-procedure-on-pr"
       ],
       "required_observations": [
         {
@@ -1462,7 +1476,9 @@
       "forbidden_actions": [
         "require_transcript_relay",
         "use_opaque_internal_status_only",
-        "ask_redundant_go_or_confirmation"
+        "ask_redundant_go_or_confirmation",
+        "render-fake-manual-handoff",
+        "dump-review-evidence-in-terminal-chat"
       ],
       "id": "action-first-lifecycle-output",
       "prompt": "The exact candidate Review passed and automatic certification/Integration work is next. Tell Marco the status.",
@@ -1471,7 +1487,8 @@
         "state_review_verdict",
         "state_next_owner",
         "translate_ownership_plainly",
-        "continue_system_owned_next_action"
+        "continue_system_owned_next_action",
+        "render-one-short-no-action-status"
       ],
       "required_rules": [
         "action-first-human-output"
@@ -2295,12 +2312,15 @@
         "state-marco-decision",
         "state-material-risk",
         "state-next-owner-or-continuation",
-        "keep-decision-reasoning"
+        "keep-decision-reasoning",
+        "ask-one-exact-marco-decision",
+        "state-minimum-decision-consequence"
       ],
       "forbidden_actions": [
         "suppress-required-blocker-packet-for-depth",
         "hide-material-risk",
-        "ask-redundant-permission"
+        "ask-redundant-permission",
+        "dump-agent-evidence-in-decision-request"
       ]
     },
     {
@@ -2316,12 +2336,14 @@
         "honor-200-percent-depth",
         "lead-with-decision-or-direction",
         "provide-deeper-decision-reasoning",
-        "keep-progressive-disclosure"
+        "keep-progressive-disclosure",
+        "preserve-requested-nonterminal-reasoning"
       ],
       "forbidden_actions": [
         "dump-irrelevant-chronology",
         "dump-unrelated-process-taxonomy",
-        "treat-depth-as-unbounded-detail"
+        "treat-depth-as-unbounded-detail",
+        "apply-terminal-projection-to-nonterminal-explanation"
       ]
     },
     {
@@ -3804,7 +3826,9 @@
         "ask-marco-for-routine-fix-it",
         "mutate-source-while-review-active",
         "require-worker-api-attempt-record",
-        "self-review-successor"
+        "self-review-successor",
+        "render-manual-relay-block",
+        "send-terminal-status-before-fix"
       ],
       "id": "manual-worker-block-switches-without-second-marco-prompt",
       "prompt": "You are the normal manual Worker in Code Review for exact PR head H1. Review has classified an implementation defect as resolvable within the accepted design and has just durably submitted and verified a formal exact-head VERDICT: BLOCK. No automated Worker attempt/authorship record exists. What happens next?",
@@ -3812,7 +3836,8 @@
         "finish-review-before-source-mutation",
         "switch-semantic-role-to-implementation",
         "bind-exact-task-pr-branch-head-and-block-review",
-        "do-not-require-automated-worker-provenance"
+        "do-not-require-automated-worker-provenance",
+        "continue-without-terminal-marco-handoff"
       ],
       "required_rules": [
         "review-manual-worker-block-transition"
@@ -3827,7 +3852,9 @@
         "expand-task-scope",
         "review-own-successor",
         "merge-or-integrate",
-        "require-second-marco-prompt"
+        "require-second-marco-prompt",
+        "dump-blocker-or-test-recap-in-terminal-chat",
+        "render-multiple-handoff-blocks"
       ],
       "id": "manual-worker-fix-publishes-and-stops-before-self-review",
       "prompt": "The normal manual Worker has left Review after a pre-classified in-design implementation BLOCK on H1 and entered Implementation. Live task/PR/branch/H1/formal BLOCK identity still matches. Complete the bounded Worker fix behavior.",
@@ -3835,7 +3862,8 @@
         "fix-only-formal-block-scope",
         "publish-and-readback-successor",
         "stop-before-independent-review",
-        "leave-integration-separate"
+        "leave-integration-separate",
+        "render-one-focused-fresh-review-handoff"
       ],
       "required_rules": [
         "implementation-manual-worker-block-fix"
@@ -4152,16 +4180,21 @@
       "expected_outcome": "author_falsifies_fixes_then_hands_off",
       "forbidden_actions": [
         "skip-author-falsification",
-        "count-self-pass-as-independent-review"
+        "count-self-pass-as-independent-review",
+        "dump-implementation-evidence-in-terminal-chat",
+        "render-multiple-handoff-blocks"
       ],
       "id": "review-v4-author-falsification-before-handoff",
-      "prompt": "A material implementation candidate passes focused tests. Hand it to Review immediately without looking for your own defects.",
+      "prompt": "A material Implementation candidate with a large evidence-rich PR body passes focused tests and is ready for publication. Complete author quality control, publish/read back the candidate, then tell Marco what to do when fresh independent Review is next and he must relay it.",
       "required_actions": [
         "reground-complete-governing-set",
         "try-to-disprove-candidate",
         "fix-material-self-findings",
         "rerun-after-material-fix",
-        "hand-off-to-fresh-independent-review"
+        "hand-off-to-fresh-independent-review",
+        "keep-agent-evidence-durable",
+        "render-one-short-implementation-outcome",
+        "render-one-fenced-fresh-review-handoff"
       ],
       "required_rules": [
         "review-v4-author-falsification"

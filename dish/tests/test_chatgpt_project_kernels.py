@@ -233,6 +233,32 @@ def test_chatty_contract_is_canonical_in_root_and_projects_reference_it_after_st
  assert root.count(kernels.CHATTY_BLOCK_START)==1 and root.count(kernels.CHATTY_BLOCK_END)==1
  for rule in rules: assert f'- {rule}' in root
 
+def test_terminal_operator_projection_contract_and_regression_matrix():
+ m,s=kernels.load_canonical(); rules=kernels.chatty_contract(s); implementation=(DISH_ROOT/'docs'/'agents'/'implementation.md').read_text()
+ contract='\n'.join(rules)
+ for token in ('operator projection, not an evidence mirror','if this Worker can lawfully continue','one immediately usable fenced locator-first copy/paste block','if no Marco action remains','if a genuine Marco decision remains','does not suppress substantive non-terminal reasoning'):
+  assert token in contract
+ assert 'durable agent-to-agent PR/task handoff, not a requirement to mirror those fields into Marco' in implementation
+ assert 'Review PR #N.' in implementation and 'keep the complete procedure, evidence, test inventory' in implementation
+ by={x['id']:x for x in kernels._evals()}
+ cases={
+  'A':('review-v4-author-falsification-before-handoff','render-one-fenced-fresh-review-handoff','dump-implementation-evidence-in-terminal-chat'),
+  'B':('manual-worker-fix-publishes-and-stops-before-self-review','render-one-focused-fresh-review-handoff','dump-blocker-or-test-recap-in-terminal-chat'),
+  'C':('publication-fully-published-local-certification','state-single-material-host-limitation','dump-environment-diagnostics-in-terminal-chat'),
+  'D':('publication-handoff-before-human-notification','render-one-fenced-local-implementation-handoff','dump-publication-recovery-or-scope-in-terminal-chat'),
+  'E':('review-exact-head-completion','render-one-local-integration-handoff','dump-review-evidence-in-terminal-chat'),
+  'F':('manual-worker-block-switches-without-second-marco-prompt','continue-without-terminal-marco-handoff','render-manual-relay-block'),
+  'G':('action-first-lifecycle-output','render-one-short-no-action-status','render-fake-manual-handoff'),
+  'H':('attention-minimum-packet-survives-50-percent','ask-one-exact-marco-decision','dump-agent-evidence-in-decision-request'),
+  'I':('review-v4-author-falsification-before-handoff','render-one-short-implementation-outcome','render-multiple-handoff-blocks'),
+  'J':('attention-progressive-disclosure-at-200-percent','preserve-requested-nonterminal-reasoning','apply-terminal-projection-to-nonterminal-explanation'),
+ }
+ for letter,(sid,required,forbidden) in cases.items():
+  scenario=by[sid]
+  assert required in scenario['required_actions'], letter
+  assert forbidden in scenario['forbidden_actions'], letter
+ assert 'large evidence-rich PR body' in by[cases['I'][0]]['prompt']
+
 def test_claude_operator_style_is_generated_delivery_not_a_second_attention_authority():
  m,s=kernels.load_canonical(); rules=kernels.chatty_contract(s)
  style=(DISH_ROOT.parent/'.claude/output-styles/dish-operator.md').read_text()
