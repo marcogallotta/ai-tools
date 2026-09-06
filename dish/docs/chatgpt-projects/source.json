@@ -365,9 +365,6 @@
             "dish/docs/agents/development-workflow.md#Authority and live state",
             "dish/docs/agents/development-workflow.md#Publication fallback and durable local completion"
           ],
-          "Friction Inbox triage": [
-            "dish/docs/agents/development-workflow.md#Friction Inbox triage"
-          ],
           "manual Review / fix / Integration handoffs": [
             "dish/docs/agents/review.md#Review claims and manual routing",
             "dish/docs/agents/implementation.md#Manual Worker formal-BLOCK fix continuation",
@@ -376,9 +373,10 @@
           "durable review-state classification": [
             "dish/docs/agents/development-workflow.md#Durable review classification and verdicts"
           ],
-          "friction / code-debt finding": [
+          "friction / code-debt finding or Inbox triage": [
             "dish/docs/agents/contributor-base.md#Development Workflow Friction capture",
-            "dish/docs/agents/contributor-base.md#Code-smell / engineering-debt logging"
+            "dish/docs/agents/contributor-base.md#Code-smell / engineering-debt logging",
+            "dish/docs/agents/development-workflow.md#Friction Inbox triage"
           ],
           "native-PostgreSQL workflow mechanics": [
             "dish/docs/testing.md#Named lane commands",
@@ -431,57 +429,17 @@
         {
           "action_boundaries": [
             "role-critical-write",
-            "handoff"
-          ],
-          "delivery": {
-            "mode": "DIRECT_ALWAYS_ON"
-          },
-          "id": "development-workflow-context-preload",
-          "impact": "breaking",
-          "surface": "safety",
-          "text": "Use declared preload before governed decisions; context never composes authority."
-        },
-        {
-          "action_boundaries": [
-            "role-critical-write",
-            "handoff"
+            "handoff",
+            "status"
           ],
           "delivery": {
             "mode": "TRIGGERED_READ",
-            "trigger": "friction / code-debt finding"
+            "trigger": "friction / code-debt finding or Inbox triage"
           },
           "id": "repository-friction-capture",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "Notice friction/code debt, dedupe, then log/update unprioritized evidence and continue. Targets: Friction `1217443500915644`; Debt `1217443501022227`. Active blockers stay on task/PR; no urgency, competing authority, or scope creep."
-        },
-        {
-          "action_boundaries": [
-            "dispatch",
-            "handoff"
-          ],
-          "delivery": {
-            "mode": "TRIGGERED_READ",
-            "trigger": "durable review-state classification"
-          },
-          "id": "durable-review-state",
-          "impact": "breaking",
-          "surface": "lifecycle",
-          "text": "Distinguish IMPLEMENTATION READY, AGENT REVIEW/RE-REVIEW, and HUMAN REVIEW/APPROVAL. Required review records exact question/baseline/dependency + durable Asana verdict. Chat-only review is incomplete and grants no Implementation/Integration."
-        },
-        {
-          "action_boundaries": [
-            "status",
-            "handoff"
-          ],
-          "delivery": {
-            "mode": "TRIGGERED_READ",
-            "trigger": "Friction Inbox triage"
-          },
-          "id": "development-workflow-friction-triage",
-          "impact": "additive",
-          "surface": "lifecycle",
-          "text": "Include Friction `Inbox` in startup/re-ground/status sweeps; dedupe, keep active blockers on task/PR, otherwise triage evidence/owner/next action. Age/repetition creates no urgency; Friction is not a queue authority."
+          "text": "Notice friction/code debt, dedupe, then log/update unprioritized evidence (Friction `1217443500915644`; Debt `1217443501022227`), including Friction `Inbox` in startup/re-ground/status sweeps. Active blockers stay on task/PR; age/repetition never creates urgency or queue authority."
         },
         {
           "action_boundaries": [
@@ -527,44 +485,19 @@
           "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
         },
         {
-          "id": "development-workflow-design-review",
+          "id": "development-workflow-review-v4-boundary",
           "impact": "additive",
           "surface": "authority",
-          "action_boundaries": [
-            "review-write"
-          ],
-          "delivery": {
-            "mode": "TRIGGERED_READ",
-            "trigger": "durable review-state classification"
-          },
-          "text": "Assigned exact-candidate Design Review is read-only and requires cumulative authorship independence; formal Code Review still routes to Review and self-review stays closed."
-        },
-        {
           "action_boundaries": [
             "design",
             "handoff",
             "review-write"
           ],
           "delivery": {
-            "mode": "DIRECT_ALWAYS_ON"
+            "mode": "TRIGGERED_READ",
+            "trigger": "durable review-state classification"
           },
-          "id": "review-v4-author-falsification",
-          "impact": "additive",
-          "surface": "evidence",
-          "text": "Material design authors falsify/fix/rerun against the Review V4 contract; the author pass never counts as independent Design Review."
-        },
-        {
-          "action_boundaries": [
-            "design",
-            "handoff"
-          ],
-          "delivery": {
-            "mode": "DIRECT_ALWAYS_ON"
-          },
-          "id": "review-v4-verbatim-intent",
-          "impact": "additive",
-          "surface": "authority",
-          "text": "Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval."
+          "text": "Assigned exact-candidate Design Review is read-only, requires cumulative authorship independence, and never composes Code Review/Implementation/Integration authority. When this role authors material design content, falsify/fix/rerun against Review V4 before handoff — the author pass is not independent review. Marco's exact wording stays verbatim absent an approved delta. Distinguish IMPLEMENTATION READY from AGENT/HUMAN REVIEW; a required verdict needs a durable Asana record, not chat-only."
         }
       ]
     },
