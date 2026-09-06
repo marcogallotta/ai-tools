@@ -68,12 +68,14 @@ from dish_tool.task_document import (
     DESTINATION_RE,
     NATIVE_DESTINATION_RE,
     DocumentParseError,
+    document_shape,
     finding_payload,
     parse_canonical_planning_notes,
     parse_planning_brief,
     render_planning_brief_notes,
     validate_planning_brief,
 )
+from dish_tool.workflow_policy import RestingTaskSnapshot, required_resting_start_kind
 from .workflow import (
     ContentionLost,
     ExecutionSpec,
@@ -618,7 +620,17 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         ):
             raw_actions = ["start"]
         elif task is not None:
-            raw_actions = list(self.reads.task_view(task.task_id).legal_actions)
+            task_view = self.reads.task_view(task.task_id)
+            raw_actions = list(task_view.legal_actions)
+            if (
+                not raw_actions
+                and task_view.operation_id is None
+                and not task_view.completed
+            ):
+                required_kind = self._resting_task_required_start_kind(task_view)
+                if required_kind is not None:
+                    raw_actions = ["start"]
+                    result_data.setdefault("required_start_kind", required_kind)
         else:
             raw_actions = []
 
@@ -1546,6 +1558,46 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "change operation is missing its durable material-change intent",
             )
         return change_level, change_reason
+
+    def _resting_task_required_start_kind(self, task_view) -> str | None:
+        """Derive ordinary start authority for a task with no open operation.
+
+        Mirrors ``dish_tool.commands._resting_task_required_start_kind``: a
+        resting task's body may be a bare Planning brief, or the full
+        canonical process-record document produced once Research/Verification
+        has run. Only the Planning-brief shape is a plain-text parse; the
+        canonical shape is authoritative validated document state.
+        """
+        shape = document_shape(task_view.body)
+        canonical_status: str | None = None
+        structurally_valid = True
+        signed_baseline_bound = False
+        if shape == "canonical":
+            try:
+                canonical = parse_canonical_document(
+                    title=task_view.title, body=task_view.body
+                )
+            except CanonicalDocumentError:
+                structurally_valid = False
+            else:
+                canonical_status = canonical.document.state.values.get("Status")
+                if canonical_status == "ready":
+                    signed_baseline_bound = (
+                        self._signed_baseline_signoff(
+                            task_view.task_id, task_view.content_version_id
+                        )
+                        is not None
+                    )
+        return required_resting_start_kind(
+            RestingTaskSnapshot(
+                document_shape=shape,
+                structurally_valid=structurally_valid,
+                migration_required=False,
+                completed=task_view.completed,
+                canonical_status=canonical_status,
+                signed_baseline_bound=signed_baseline_bound,
+            )
+        )
 
     def _signed_baseline_signoff(
         self, task_id: uuid.UUID, content_version_id: uuid.UUID
