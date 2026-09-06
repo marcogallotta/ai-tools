@@ -236,10 +236,11 @@ def test_chatty_contract_is_canonical_in_root_and_projects_reference_it_after_st
 def test_terminal_operator_projection_contract_and_regression_matrix():
  m,s=kernels.load_canonical(); rules=kernels.chatty_contract(s); implementation=(DISH_ROOT/'docs'/'agents'/'implementation.md').read_text()
  contract='\n'.join(rules)
- for token in ('operator projection, not an evidence mirror','if this Worker can lawfully continue','one immediately usable fenced locator-first copy/paste block','if no Marco action remains','if a genuine Marco decision remains','does not suppress substantive non-terminal reasoning'):
+ for token in ('operator projection, not an evidence mirror','if this Worker can lawfully continue','one immediately usable fenced locator-first copy/paste block','if no Marco action remains','if a genuine Marco decision remains','does not suppress substantive non-terminal reasoning','Never imply a receiving agent already has or can trivially obtain code that has no real transport behind it'):
   assert token in contract
  assert 'durable agent-to-agent PR/task handoff, not a requirement to mirror those fields into Marco' in implementation
  assert 'Review PR #N.' in implementation and 'keep the complete procedure, evidence, test inventory' in implementation
+ assert 'no durable implementation artifact exists anywhere' in implementation and 'A handoff must never assume code transfer that has no real transport behind it' in implementation
  by={x['id']:x for x in kernels._evals()}
  cases={
   'A':('review-v4-author-falsification-before-handoff','render-one-fenced-fresh-review-handoff','dump-implementation-evidence-in-terminal-chat'),
@@ -252,6 +253,7 @@ def test_terminal_operator_projection_contract_and_regression_matrix():
   'H':('attention-minimum-packet-survives-50-percent','ask-one-exact-marco-decision','dump-agent-evidence-in-decision-request'),
   'I':('review-v4-author-falsification-before-handoff','render-one-short-implementation-outcome','render-multiple-handoff-blocks'),
   'J':('attention-progressive-disclosure-at-200-percent','preserve-requested-nonterminal-reasoning','apply-terminal-projection-to-nonterminal-explanation'),
+  'K':('publication-local-candidate-transport-honesty','produce_and_deliver_exact_byte_bundle_before_handoff','imply_receiver_can_trivially_obtain_local_only_code'),
  }
  for letter,(sid,required,forbidden) in cases.items():
   scenario=by[sid]

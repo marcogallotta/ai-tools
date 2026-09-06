@@ -162,6 +162,15 @@ For the current publication-friction containment path, the GitHub connector rema
 
 This is temporary containment, not a second publication architecture. Existing materializer recovery and remote-first routing remain authoritative dependencies and are not duplicated here.
 
+### Terminal honesty when only a local candidate exists
+
+When the only evidence of completed work is a local/session-only candidate tree — no pushed commit reachable by others, no PR, no prior bundle delivery — terminal chat must not emit a receiver-ready handoff implying the receiving agent already has or can trivially get the code. Two outcomes only:
+
+- if a local candidate tree is still available in this execution, first produce and deliver the exact-byte bundle through the transport above, and only then give Marco the one-block handoff naming the bundle location/basename and expected candidate tree;
+- if no local candidate tree is recoverable in this execution either, the terminal answer is that no durable implementation artifact exists anywhere, Marco's action is none/redo, and the work must be re-authored from the accepted design rather than handed to another agent as if it were retrievable.
+
+A handoff must never assume code transfer that has no real transport behind it.
+
 A local Implementation-completion agent accepting this ownership handoff must:
 
 - before claiming, verify that witness story already exists on the task for this exact branch/base/PR/head; if it is missing, do not fabricate it under Implementation authority — report the gap and either wait for it to be posted or post it yourself under a separate, explicitly logged Development Workflow action;
