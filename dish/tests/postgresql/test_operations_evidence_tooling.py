@@ -56,6 +56,15 @@ def test_bootstrap_default_tracks_current_release_head() -> None:
     assert DEFAULT_SCHEMA_HEAD == ALEMBIC_HEAD == "0050_native_catalog_runtime_authority_switch"
 
 
+def test_0050_schema_revision_does_not_implicitly_execute_runtime_finalizer() -> None:
+    migration = (
+        ROOT / "dish_pg/migrations/versions/0050_native_catalog_runtime_authority_switch.py"
+    ).read_text(encoding="utf-8")
+    upgrade_body = migration.split("def upgrade() -> None:", 1)[1].split("def downgrade() -> None:", 1)[0]
+    assert "finalize_native_catalog_runtime_authority(" not in upgrade_body
+    assert "CurrentNativeCatalogRuntime implicitly" in upgrade_body
+
+
 def test_database_fingerprint_comparison_is_machine_checkable(tmp_path: Path) -> None:
     source = tmp_path / "source.json"
     restored = tmp_path / "restored.json"
