@@ -37,7 +37,7 @@ The normal lifecycle above remains the default. [`trivial-fast-track.md`](../../
 
 - `TRIVIAL` uses the existing isolated worktree/claim/commit primitives, requires one bounded commit from the recorded current-main base, and may non-force fast-forward `main` directly after guarded readback. For that exact authorized change only, PR, formal Review, and separate Integration are omitted.
 - `FAST-TRACK` still publishes the owned branch and PR normally. Formal Review is omitted only when the exact durable grant says `skip_review=true`; final Integration remains separately authorized. The exact grant also records the risk-selected validation class: meaningful readback when executable tests add no evidence, or focused executable proof for product/runtime and comparable high-consequence behavior before landing.
-- Missing/stale authorization, base movement, primary-checkout use, path escape, protected/high-consequence scope, or ambiguity invalidates the shortcut and returns the work to the full normal lifecycle.
+- Missing/stale authorization, base movement, primary-checkout use, path escape, or ambiguity invalidates either shortcut and returns the work to the full normal lifecycle. `TRIVIAL` additionally rejects protected/high-consequence scope. `FAST-TRACK` may cover executable/high-consequence scope only when the exact grant selects focused `executable-proof` and that proof is obtained before landing.
 
 ## Invariants
 
