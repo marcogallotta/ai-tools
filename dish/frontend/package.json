@@ -11,7 +11,7 @@
     "lint": "node tools/lint.mjs",
     "schema:check": "node tools/check-openapi.mjs && node tools/generate-client.mjs --check",
     "test:unit": "node --test tests/unit/*.test.mjs",
-    "test:browser": "npm run build && ../.venv/bin/python tools/browser_harness.py test",
+    "test:browser": "../.venv/bin/python tools/browser_harness.py test",
     "screenshots": "npm run build && ../.venv/bin/python tools/browser_harness.py screenshots",
     "check": "npm run check:static && npm run test:acceptance:built",
     "review": "npm run build:review && DISH_FRONTEND_STATIC_ROOT=review-dist node tools/dev-server.mjs",
