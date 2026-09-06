@@ -1,4 +1,5 @@
 path,kind,primary_class,domain_class_for_tests,traits,direct_owner_tests,critical_contract_tests,shared_infrastructure_scope,consumer_lanes,default_lanes,conditional_escalations,escalation_predicates
+tests/postgresql/test_verification_caller_eligibility.py,test,1,4,authority; isolated-test; native-pg,,,none,,exact changed test/module; focused authority/identity; native PostgreSQL certification,,
 tests/postgresql/test_archive_terminalization_regressions.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module; focused authority/identity; native PostgreSQL certification,,
 tests/postgresql/test_archive_projection_terminalization.py,test,1,7,isolated-test; native-pg; projection-lifecycle; transaction-boundary,,,none,,exact changed test/module; focused postgresql runtime; native PostgreSQL certification,,
 tests/postgresql/native/test_archive_run_registration_concurrency.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,

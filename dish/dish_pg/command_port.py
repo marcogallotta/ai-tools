@@ -1383,8 +1383,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 .where(
                     wf.OperationActorFact.operation_id == operation.operation_id,
                     wf.OperationActorFact.actor_role != "verification",
-                    (wf.OperationActorFact.run_id == call.run_id)
-                    | (wf.OperationActorFact.agent == agent),
+                    wf.OperationActorFact.run_id == call.run_id,
                 )
                 .limit(1)
             )

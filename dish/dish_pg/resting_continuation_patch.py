@@ -25,16 +25,15 @@ def _verification_handoff(task_id: object) -> dict[str, Any]:
     }
 
 
-def _verification_conflict(port, *, operation, call, agent: str):
-    if operation is None or operation.phase != "await_verification" or not agent:
+def _verification_conflict(port, *, operation, call):
+    if operation is None or operation.phase != "await_verification":
         return None
     return port.session.scalar(
         select(wf.OperationActorFact)
         .where(
             wf.OperationActorFact.operation_id == operation.operation_id,
             wf.OperationActorFact.actor_role != "verification",
-            (wf.OperationActorFact.run_id == call.run_id)
-            | (wf.OperationActorFact.agent == agent),
+            wf.OperationActorFact.run_id == call.run_id,
         )
         .limit(1)
     )
@@ -82,12 +81,10 @@ def install(port_cls: type) -> None:
             and envelope.get("allowed_actions") == ["start"]
             and result_data.get("required_start_kind") == "verification"
         ):
-            agent = str(call.arguments.get("agent") or "").strip()
             conflicting = _verification_conflict(
                 self,
                 operation=operation,
                 call=call,
-                agent=agent,
             )
             if conflicting is not None:
                 result_data = dict(result_data)

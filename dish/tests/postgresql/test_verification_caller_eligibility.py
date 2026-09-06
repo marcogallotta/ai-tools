@@ -18,17 +18,9 @@ from tests.support.postgresql.workflow import _next, _register_run
 def test_ineligible_verification_caller_gets_handoff_and_replay(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     author_run = _next(ids)
-    same_agent_run = _next(ids)
     with session_scope(factory) as session:
         _add_verification_queue(session, ids, context)
         _register_run(session, generation_id=context["generation_id"], run_id=author_run)
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=same_agent_run,
-            owner="other-owner",
-            agent="claude",
-        )
         port = _port(session, ids)
         started = _start_initial(
             port, ids, task_id=task_id, run_id=author_run, agent="claude"
@@ -56,42 +48,27 @@ def test_ineligible_verification_caller_gets_handoff_and_replay(workflow_db) -> 
         )
         same_run = port.execute(same_run_call)
         replay = port.execute(same_run_call)
-        same_agent = port.execute(
-            _call(
-                "start",
-                run_id=same_agent_run,
-                request_id=_next(ids),
-                owner="other-owner",
-                arguments={
-                    "task_id": str(task_id),
-                    "kind": "verification",
-                    "agent": "claude",
-                    "independence_attestation": "independent",
-                },
-            )
-        )
 
-        for rejected in (same_run, same_agent):
-            assert rejected.code == "VERIFIER_NOT_INDEPENDENT"
-            assert rejected.allowed_actions == ()
-            assert rejected.data["verification_eligibility"] == {
-                "eligible": False,
-                "rule": "VERIFIER_NOT_INDEPENDENT",
-                "conflicting_actor_fact_id": rejected.data["conflicting_actor_fact_id"],
-            }
-            assert rejected.data["verification_handoff"] == {
-                "required": True,
-                "requirement": "independent_verifier",
-                "instruction": (
-                    "Hand this task to an independent caller. That caller must read the current "
-                    "task and follow its returned Verification continuation."
-                ),
-                "action_template": {
-                    "command": "read",
-                    "arguments": {"dish_id": str(task_id)},
-                    "required_caller_arguments": ["agent"],
-                },
-            }
+        assert same_run.code == "VERIFIER_NOT_INDEPENDENT"
+        assert same_run.allowed_actions == ()
+        assert same_run.data["verification_eligibility"] == {
+            "eligible": False,
+            "rule": "VERIFIER_NOT_INDEPENDENT",
+            "conflicting_actor_fact_id": same_run.data["conflicting_actor_fact_id"],
+        }
+        assert same_run.data["verification_handoff"] == {
+            "required": True,
+            "requirement": "independent_verifier",
+            "instruction": (
+                "Hand this task to an independent caller. That caller must read the current "
+                "task and follow its returned Verification continuation."
+            ),
+            "action_template": {
+                "command": "read",
+                "arguments": {"dish_id": str(task_id)},
+                "required_caller_arguments": ["agent"],
+            },
+        }
         assert replay.request_replayed is True
         assert replay.code == same_run.code
         assert replay.data == same_run.data
@@ -114,7 +91,7 @@ def test_verification_continuation_is_caller_aware_without_changing_raw_legality
             generation_id=context["generation_id"],
             run_id=verifier_run,
             owner="verifier-owner",
-            agent="codex",
+            agent="claude",
         )
         port = _port(session, ids)
         started = _start_initial(
@@ -153,7 +130,7 @@ def test_verification_continuation_is_caller_aware_without_changing_raw_legality
                 "read",
                 run_id=verifier_run,
                 owner="verifier-owner",
-                arguments={"dish_id": str(task_id), "agent": "codex"},
+                arguments={"dish_id": str(task_id), "agent": "claude"},
             )
         )
         assert verifier_read.allowed_actions == ("start",)
@@ -173,6 +150,6 @@ def test_verification_continuation_is_caller_aware_without_changing_raw_legality
             operation_id=started.data["operation_id"],
             run_id=verifier_run,
             owner="verifier-owner",
-            agent="codex",
+            agent="claude",
         )
         assert verification.ok
