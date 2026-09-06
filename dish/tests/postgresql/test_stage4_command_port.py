@@ -523,6 +523,35 @@ def _signed_ready_baseline(session, ids, context, task_id):
     return port, signed
 
 
+def test_read_resting_checked_in_task_offers_change_continuation(workflow_db) -> None:
+    """A signed-off, checked-in task has no open operation but is not a bare
+
+    Planning brief either: its body is the full canonical process-record
+    document. The resting-task continuation heuristic must recognize this
+    shape and offer a "start" continuation with kind "change" (backed by
+    the signed baseline), not silently return no continuation at all.
+    """
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        operation_id = session.scalar(
+            select(wf.WorkflowOperation.operation_id).where(
+                wf.WorkflowOperation.task_id == task_id
+            )
+        )
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        assert operation.lifecycle == "completed"
+
+        result = port.execute(
+            _call("read", run_id=_next(ids), arguments={"dish_id": str(task_id)})
+        )
+
+    assert result.ok, (result.code, result.http_status, result.data)
+    assert result.data["operation_id"] is None
+    assert result.allowed_actions == ("start",)
+    assert result.data["required_start_kind"] == "change"
+
+
 def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) -> None:
     """PG must own tool-owned process fields on initial prepare, like legacy.
 
