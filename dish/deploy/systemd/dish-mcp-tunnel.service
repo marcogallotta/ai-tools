@@ -1,7 +1,8 @@
 [Unit]
 Description=Dish Secure MCP Tunnel
-After=network-online.target dish-service-prod.service
+After=network-online.target dish-service-prod.service dish-mcp.service
 Wants=network-online.target
+Requires=dish-mcp.service
 
 [Service]
 Type=simple
