@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -18,11 +21,13 @@ SPEC.loader.exec_module(pr_gate)
 
 HEAD = "a" * 40
 NEW_HEAD = "b" * 40
+BASE = "d" * 40
+COMPARISON = "c" * 40
 REVIEWED_AT = "2026-08-14T08:00:00Z"
 
 
-def pr(*, draft: bool = False, head: str = HEAD, number: int = 31):
-    return {"number": number, "state": "open", "draft": draft, "head": {"sha": head}}
+def pr(*, draft: bool = False, head: str = HEAD, number: int = 31, base: str = BASE):
+    return {"number": number, "state": "open", "draft": draft, "head": {"sha": head}, "base": {"sha": base}}
 
 
 def statuses(
@@ -89,6 +94,101 @@ def test_review_discovery_contract_unchanged():
     assert pr_gate.is_review_discoverable(pr(draft=False)) is True
     assert pr_gate.is_review_discoverable(pr(draft=True)) is False
     assert pr_gate.is_review_discoverable(pr(draft=True), allow_draft=True) is True
+
+
+
+def _quality_comment(*, head: str = HEAD, base: str = BASE, comparison: str = COMPARISON, permission: str = "admin", outcome: str = "PASS"):
+    import code_quality_gate as cq
+    policy_text = 'version = 1\nenabled = true\n'
+    result = {
+        "schema": cq.SCHEMA,
+        "pr_number": 31,
+        "target_base_sha": base,
+        "head_sha": head,
+        "comparison_base_sha": comparison,
+        "policy_source_sha": comparison,
+        "policy_digest": hashlib.sha256(policy_text.encode()).hexdigest(),
+        "bootstrap": False,
+        "outcome": outcome,
+    }
+    result["result_digest"] = cq._digest(result)
+    comment = {
+        "body": cq.render_comment(result),
+        "user": {"login": "writer"},
+        "updated_at": "2026-09-06T20:00:00Z",
+    }
+    evidence = {
+        "comparison_base_sha": comparison,
+        "compared_target_base_sha": base,
+        "compared_head_sha": head,
+        "policy_text": policy_text,
+        "policy_source_sha": comparison,
+        "bootstrap": False,
+        "comments": [comment],
+        "permissions": {"writer": permission},
+    }
+    return comment, evidence
+
+
+def test_connector_quality_admission_disabled_policy_is_nonblocking():
+    evidence = {
+        "comparison_base_sha": COMPARISON,
+        "compared_target_base_sha": BASE,
+        "compared_head_sha": HEAD,
+        "policy_text": 'version = 1\nenabled = false\n',
+        "policy_source_sha": COMPARISON,
+        "bootstrap": False,
+        "comments": [],
+        "permissions": {},
+    }
+    result = pr_gate.connector_code_quality_admission(pr(), evidence)
+    assert result["admissible"] is True
+
+
+def test_connector_quality_admission_requires_authorized_exact_head_pass():
+    _comment, evidence = _quality_comment()
+    assert pr_gate.connector_code_quality_admission(pr(), evidence)["admissible"] is True
+    evidence["permissions"] = {"writer": "read"}
+    rejected = pr_gate.connector_code_quality_admission(pr(), evidence)
+    assert rejected["admissible"] is False
+    assert "write permission" in rejected["reason"]
+
+
+def test_connector_quality_admission_rejects_stale_result():
+    _comment, evidence = _quality_comment(head=NEW_HEAD)
+    evidence["compared_head_sha"] = HEAD
+    rejected = pr_gate.connector_code_quality_admission(pr(), evidence)
+    assert rejected["admissible"] is False
+
+
+def test_local_and_connector_adapters_agree_on_authorized_and_unauthorized_result(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "ci").mkdir()
+    policy_text = 'version = 1\nenabled = true\n'
+    (repo / "ci/code-quality.toml").write_text(policy_text, encoding="utf-8")
+    (repo / "seed.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    (repo / "seed.txt").write_text("head\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "head"], cwd=repo, check=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    candidate = pr(head=head, base=base)
+    comment, evidence = _quality_comment(head=head, base=base, comparison=base)
+    evidence["policy_text"] = policy_text
+    evidence["policy_source_sha"] = base
+    local = pr_gate.local_code_quality_admission(repo, candidate, [comment], lambda _login: "admin")
+    connector = pr_gate.connector_code_quality_admission(candidate, evidence)
+    assert (local["admissible"], local["reason"]) == (connector["admissible"], connector["reason"])
+    local_bad = pr_gate.local_code_quality_admission(repo, candidate, [comment], lambda _login: "read")
+    evidence["permissions"] = {"writer": "read"}
+    connector_bad = pr_gate.connector_code_quality_admission(candidate, evidence)
+    assert (local_bad["admissible"], local_bad["reason"]) == (connector_bad["admissible"], connector_bad["reason"])
 
 
 def test_workflow_is_review_planner_first_and_synchronize_only_cancels():

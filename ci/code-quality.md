@@ -17,7 +17,7 @@ python scripts/code_quality_gate.py render-comment \
   --result .test-artifacts/code-quality/result.json
 ```
 
-Persist the rendered result as a PR conversation comment before marking the PR ready for Review. A successor head requires a new result. The first PR that introduces this policy reports `BOOTSTRAP`: there is no predecessor policy to enforce against that same candidate.
+Persist the rendered result as a PR conversation comment before marking the PR ready for Review. When the comparison-base policy is enabled, the shared pre-Review admission accepts only an exact-head `PASS` comment authored by a repository collaborator with `write`, `maintain`, or `admin` permission; missing, stale, malformed, non-PASS, or unauthorized comments keep both author finalization and ordinary Review discovery closed. Local author finalization and connector-native ChatGPT Review acquire evidence differently but call the same semantic admission core. CI verifies the persisted result afterward and never substitutes for it. A successor head requires a new result. The first PR that introduces this policy reports `BOOTSTRAP`: there is no predecessor policy to enforce against that same candidate.
 
 After bootstrap, the effective blocking policy and generated-file registry are read from the exact comparison-base SHA, never from candidate head. Ruff checks changed Python paths; Pyright checks the configured Python project; jscpd compares whole-source clone occurrences and blocks only positive occurrence growth intersecting changed paths. Runtime timing is reported separately from the canonical result digest.
 

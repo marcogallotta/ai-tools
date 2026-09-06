@@ -34,7 +34,7 @@ def _fake_repo(tmp_path: Path) -> Path:
     target = {
         "schema_version": 1,
         "python_implementation": "CPython",
-        "python_version": "3.13.5",
+        "python_version": "3.12",
         "platform_system": "Linux",
         "platform_architecture": "x86_64",
         "sysconfig_platform": "linux-x86_64",
@@ -155,3 +155,50 @@ def test_bundle_runtime_allows_newer_libc(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.delenv("AI_TOOLS_GITHUB_RUNNER", raising=False)
     monkeypatch.setattr(module, "_runtime_facts", lambda: facts)
     module._verify_runtime(target)
+
+
+def test_bundle_runtime_accepts_patch_variation_within_target_minor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module()
+    root = _fake_repo(tmp_path)
+    target = module.expected_metadata(root)["target"]
+    facts = {
+        "python_implementation": target["python_implementation"],
+        "python_version": "3.12.13",
+        "platform_system": target["platform_system"],
+        "platform_architecture": target["platform_architecture"],
+        "sysconfig_platform": target["sysconfig_platform"],
+        "libc_name": target["libc_name"],
+        "libc_version": target["libc_version"],
+    }
+    monkeypatch.delenv("AI_TOOLS_GITHUB_RUNNER", raising=False)
+    monkeypatch.setattr(module, "_runtime_facts", lambda: facts)
+    module._verify_runtime(target)
+    assert module.expected_metadata(root)["bundle_id"].startswith("ai-tools-python-deps-v1-cp312-")
+
+
+def test_bundle_runtime_rejects_cross_minor_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module()
+    target = module.expected_metadata(_fake_repo(tmp_path))["target"]
+    facts = {
+        "python_implementation": target["python_implementation"],
+        "python_version": "3.13.5",
+        "platform_system": target["platform_system"],
+        "platform_architecture": target["platform_architecture"],
+        "sysconfig_platform": target["sysconfig_platform"],
+        "libc_name": target["libc_name"],
+        "libc_version": target["libc_version"],
+    }
+    monkeypatch.delenv("AI_TOOLS_GITHUB_RUNNER", raising=False)
+    monkeypatch.setattr(module, "_runtime_facts", lambda: facts)
+    with pytest.raises(module.BundleError, match="python_version"):
+        module._verify_runtime(target)
+
+
+def test_dependency_mirror_publishes_exact_main_locator() -> None:
+    workflow = (REPO_ROOT / ".github/workflows/dependency-bundle-mirror.yml").read_text(encoding="utf-8")
+    assert "branches: [main]" in workflow
+    assert "statuses: write" in workflow
+    assert "Dish / dependency bundle" in workflow
+    assert "Resolve expected bundle from exact source" in workflow
+    assert "Publish pending exact-SHA locator" in workflow
+    assert "Publish terminal exact-SHA locator" in workflow
