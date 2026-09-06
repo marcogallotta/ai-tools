@@ -6,6 +6,11 @@ import hashlib
 import re
 from typing import Any, Mapping, Protocol
 
+from assigned_task_dependency_reconciliation import (
+    DependencyEvidence,
+    EvidenceState,
+    reconcile_assigned_task_dependencies,
+)
 from pr_lifecycle_owner import owning_task_identity_from_references
 from pr_lifecycle_support import FULL_SHA_RE, LifecycleError, PRLifecycle
 
@@ -135,18 +140,47 @@ def reconcile_after_merge(
         )
         if not pattern.search(str(dependent.get("notes") or "")):
             continue
-        # Only remove the exact source dependency; never mark the dependent complete or
-        # infer unrelated readiness. Readback must show that upstream is no longer a dependency.
-        asana.remove_dependency(dependent_gid, owner)
-        reread = asana.get_task(dependent_gid)
-        remaining = {
-            str(item.get("gid"))
-            for item in (reread.get("dependencies") or [])
-            if isinstance(item, Mapping)
-        }
-        if owner in remaining:
-            raise LifecycleError(f"dependent task {dependent_gid} source dependency removal readback failed")
-        advanced.append(dependent_gid)
+        # Reuse the same exact-task dependency mutation/readback primitive used by explicit-assignment
+        # admission. Post-merge reconciliation proves only this exact source edge satisfied; all other
+        # dependencies remain unresolved here and lifecycle readiness remains a separate classification.
+        def resolve_dependency_evidence(current: Mapping[str, Any]) -> dict[str, DependencyEvidence]:
+            current_marker = pattern.search(str(current.get("notes") or "")) is not None
+            evidence: dict[str, DependencyEvidence] = {}
+            for dependency in current.get("dependencies") or []:
+                if not isinstance(dependency, Mapping) or not dependency.get("gid"):
+                    continue
+                dependency_gid = str(dependency["gid"])
+                if dependency_gid == owner and current_marker:
+                    evidence[dependency_gid] = DependencyEvidence(
+                        dependency_gid=dependency_gid,
+                        state=EvidenceState.SATISFIED,
+                        authority="github",
+                        evidence_ref=(
+                            f"PR #{lifecycle.number} exact head {lifecycle.head} merged as {merge_sha}"
+                        ),
+                    )
+                else:
+                    evidence[dependency_gid] = DependencyEvidence(
+                        dependency_gid=dependency_gid,
+                        state=EvidenceState.UNRESOLVED,
+                        authority="outside-post-merge-writeback",
+                        evidence_ref="not established by this exact source-landing reconciliation",
+                    )
+            return evidence
+
+        reconciliation = reconcile_assigned_task_dependencies(
+            asana=asana,
+            task_gid=dependent_gid,
+            resolve_evidence=resolve_dependency_evidence,
+        )
+        if owner in reconciliation.residual_dependencies and pattern.search(
+            str(asana.get_task(dependent_gid).get("notes") or "")
+        ):
+            raise LifecycleError(
+                f"dependent task {dependent_gid} source dependency removal readback failed"
+            )
+        if owner in reconciliation.removed_dependencies:
+            advanced.append(dependent_gid)
 
     return WritebackResult(
         task_gid=owner,

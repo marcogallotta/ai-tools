@@ -101,6 +101,23 @@ If a write response is ambiguous, reconcile current state before any retry that 
 compound the effect. Never represent a prepared comment, handoff, or intended move as a completed
 structured mutation.
 
+### Exact assigned-task stale-dependency exception
+
+The semantic reconciliation/routing ownership below has one narrow cross-role exception: when a
+standing role or Worker is explicitly assigned one exact task, start/resume admission may repair a
+mechanically stale structured dependency edge on that same task. Immediately before mutation, reread
+the exact task and recompute the current dependency set. Remove all and only edges whose named
+completion condition is mechanically proved by that blocker's owning current authority (GitHub for
+PR/merge facts, Asana only when Asana state is itself the named condition, runtime evidence only for
+runtime-owned conditions), then authoritatively reread the task. Missing/conflicting/non-exact
+mapping, changed authority, or unproved write/readback is `RECONCILIATION_REQUIRED`; no continuation
+claim. Partial multi-edge success is reconciled from final observed state rather than assumed atomic.
+Residual dependencies remain blockers. Only after dependency readback may existing V2 rules classify
+any lifecycle projection; `dependencies == []` never implies `Ready` and never erases independent
+research, agentic/human review, hold, supersession, runtime, active-development, rollout, or completion
+evidence. This exception grants no sibling/successor mutation, queue pickup, cross-workstream triage,
+semantic routing, lifecycle invention, or general reconciliation authority.
+
 ## Custom fields and role boundaries
 
 - **Priority** comes only from explicit Marco/durable priority authority or an approved
