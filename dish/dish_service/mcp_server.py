@@ -24,7 +24,6 @@ from mcp.types import (
     TextContent,
     Tool,
 )
-from pydantic import AnyHttpUrl
 import uvicorn
 
 from dish_pg.command_contract import ACTION_COMMANDS, COMMAND_DEFINITIONS
@@ -486,10 +485,12 @@ def create_app(
     """Build the private OAuth-protected Streamable HTTP ASGI app."""
     server = build_server(adapter)
     verifier = token_verifier or OIDCJWTVerifier(config)
-    auth = AuthSettings(
-        issuer_url=AnyHttpUrl(config.issuer_url),
-        resource_server_url=AnyHttpUrl(config.resource_url),
-        required_scopes=[REQUIRED_SCOPE],
+    auth = AuthSettings.model_validate(
+        {
+            "issuer_url": config.issuer_url,
+            "resource_server_url": config.resource_url,
+            "required_scopes": [REQUIRED_SCOPE],
+        }
     )
     return server.streamable_http_app(
         streamable_http_path="/mcp",
