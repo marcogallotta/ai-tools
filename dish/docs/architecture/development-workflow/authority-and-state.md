@@ -22,6 +22,14 @@ This document identifies authoritative facts and derived state. Detailed transit
 
 The acting role reconstructs the current lifecycle view from durable GitHub and linked Asana facts immediately before acting. Conversation memory, local process state, and rendered status are projections, not authoritative lifecycle storage.
 
+Explicit-assignment admission is also a bounded reconciliation boundary for structured Asana
+dependencies. An assigned role may repair only an exact stale dependency edge on its exact task after
+the blocker's owning authority mechanically proves the named condition satisfied. The shared
+primitive owns fresh pre-write task/dependency reread, exact-edge mutation, and authoritative final
+readback; the acting role still owns evidence interpretation under its standing contract. Dependency
+truth and lifecycle truth remain separate, so an empty dependency set does not itself establish
+`Ready` or erase another gate.
+
 ## Invariants
 
 - A projection never silently overrides its owning authority.

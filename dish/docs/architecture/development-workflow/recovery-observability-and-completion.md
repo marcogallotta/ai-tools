@@ -16,6 +16,13 @@ A current execution may represent a role result as terminal only after the activ
 
 Ambiguous state-changing outcomes are reconciled before replay. A proven present effect is not repeated; a proven absent safe/idempotent effect may receive a bounded retry; unresolved ambiguity fails closed. Advisory activity signals help avoid duplicate work without becoming ownership or liveness proof.
 
+For assigned-task dependency repair, recovery follows the same rule at edge granularity: reread the
+exact task immediately before mutation, discard and recompute a stale dependency plan if the set
+moved, remove only still-present mechanically satisfied edges, and reconcile partial/ambiguous writes
+from authoritative final readback. A remaining unresolved edge stays a blocker; an ambiguous edge or
+unproved intended removal yields `RECONCILIATION_REQUIRED`. Post-merge cleanup may reuse this same
+primitive, but it is an optimization rather than the correctness boundary.
+
 Source landing closes only the repository phase. Required rollout, activation, deployment, migration, runtime evidence, or operator acceptance remains owned by its actual post-merge gate. Terminal cleanup follows authoritative merged/closed/abandoned disposition and preserves the only recovery pointer when lineage is dirty or ambiguous.
 
 ## Invariants

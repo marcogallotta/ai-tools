@@ -1056,3 +1056,12 @@ def test_autonomy_behavior_matrix_covers_required_decision_rules():
         "mutate-source-while-still-in-review",
         "widen-correction-beyond-exact-block-task-candidate-scope",
     } <= set(r3["forbidden_actions"])
+
+def test_assigned_task_dependency_admission_is_shared_by_every_standing_role():
+ m,s=kernels.load_canonical()
+ for role in s['roles']:
+  rules={r['id']:r for r in kernels.effective_rules(s,role)}
+  assert 'assigned-task-dependency-admission' in rules
+  text=rules['assigned-task-dependency-admission']['text']
+  assert 'RECONCILIATION_REQUIRED' in text
+  assert 'no sibling/queue/Ready inference' in text
