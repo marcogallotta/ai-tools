@@ -154,6 +154,32 @@ def _push_targets_explicit_branches(args):
     return True
 
 
+def _branch_delete_targets_safe(args):
+    """True when a ``git branch`` invocation is a plain delete (-d/-D/
+    --delete, optionally forced) naming explicit local branches, none of
+    which is ``main``.
+
+    Deleting a branch by name cannot touch ``main`` and git itself refuses
+    to delete whichever branch is currently checked out, so the
+    current-branch fallback below is irrelevant to it: deleting an
+    unrelated local branch from the primary checkout is routine cleanup,
+    not a destructive operation needing approval."""
+    has_delete = False
+    targets = []
+    for arg in args:
+        if any(arg.startswith(flag) for flag in ("-d", "-D", "--delete")):
+            has_delete = True
+            continue
+        if arg in ("-f", "--force", "-r", "--remotes"):
+            continue
+        if arg.startswith("-"):
+            return False
+        targets.append(arg)
+    if not has_delete or not targets:
+        return False
+    return not any(re.search(r"(^|[/:])main($|:)", t.lstrip("+")) for t in targets)
+
+
 def prompt_free_workflow(command, cwd=None):
     segments = [part for part in split_segments(command) if part.strip()]
     if not segments:
@@ -198,6 +224,8 @@ def prompt_free_git(command, cwd):
         return False
     if subcommand == "push" and any(arg in ("--all", "--mirror") for arg in args):
         return False
+    if subcommand == "branch" and _branch_delete_targets_safe(args):
+        return True
     if subcommand in {"branch", "checkout", "push", "switch"} and _targets_main(subcommand, args):
         return False
     if subcommand == "push" and _push_targets_explicit_branches(args):
