@@ -48,12 +48,15 @@ def test_finalizer_rejects_missing_intervening_receipt(core_db) -> None:
 
     with session_scope(factory) as session:
         assert _complete_after_staging(session, ids, seeded, task_id) == 2
-        missing = session.get(
-            models.DishMutationReceipt,
-            (seeded["generation_id"], task_id, 2),
+    with factory.kw["bind"].connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        connection.exec_driver_sql("DROP TRIGGER dish_mutation_receipts_immutable_delete")
+        connection.exec_driver_sql(
+            "DELETE FROM dish_mutation_receipts WHERE generation_id = ? AND task_id = ? AND dish_version = 2",
+            (seeded["generation_id"].hex, task_id.hex),
         )
-        assert missing is not None
-        session.delete(missing)
+        connection.commit()
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
 
     with pytest.raises(
         NativeCatalogRuntimeFinalizerError,
