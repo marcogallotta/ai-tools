@@ -38,7 +38,7 @@ Concurrency is chosen from concrete landing relationships:
   that authority at every material writer boundary.
 - Unrelated movement of the target branch does not silently replace an established authoring base.
 - Stack propagation preserves later completed work when an earlier accepted correction must be down-merged.
-- Fast-track capability never authorizes the shared primary checkout; protected/high-consequence paths fail closed to the normal lifecycle.
+- Fast-track capability never authorizes the shared primary checkout. `TRIVIAL` rejects protected/high-consequence scope; `FAST-TRACK` follows the task's risk-selected validation rule and may cover executable/high-consequence scope only when the exact grant selects focused `executable-proof` and the required proof is obtained before landing.
 
 ## Current anchors
 
