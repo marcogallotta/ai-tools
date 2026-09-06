@@ -1,40 +1,88 @@
 name: Dependency bundle artifact mirror
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing dependency-bundle Release tag to mirror
-        required: true
+        description: Existing dependency-bundle Release tag to mirror (must match exact main source)
+        required: false
         type: string
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   mirror:
     name: Mirror authoritative dependency bundle
     if: >-
+      (github.event_name == 'push') ||
       (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'dependency-bundle-')) ||
-      (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'dependency-bundle-'))
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     steps:
+      - name: Check out exact locator source
+        if: github.event_name != 'release'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Resolve expected bundle from exact source
+        if: github.event_name != 'release'
+        id: expected
+        shell: bash
+        run: python3 scripts/dependency_bundle.py expected --repo-root . --github-output "$GITHUB_OUTPUT"
+
       - name: Resolve immutable asset names
         id: meta
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          EXPECTED_TAG: ${{ steps.expected.outputs.release_tag }}
+          EXPECTED_BUNDLE_ID: ${{ steps.expected.outputs.bundle_id }}
         run: |
           set -euo pipefail
-          bundle_id="${RELEASE_TAG#dependency-bundle-}"
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            release_tag="$RELEASE_EVENT_TAG"
+            bundle_id="${release_tag#dependency-bundle-}"
+            locator_sha=""
+          else
+            release_tag="$EXPECTED_TAG"
+            bundle_id="$EXPECTED_BUNDLE_ID"
+            locator_sha="$GITHUB_SHA"
+            if [[ -n "$REQUESTED_TAG" && "$REQUESTED_TAG" != "$release_tag" ]]; then
+              echo "requested tag does not match exact-source expected bundle: $REQUESTED_TAG != $release_tag" >&2
+              exit 2
+            fi
+          fi
           test -n "$bundle_id"
-          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "bundle_id=$bundle_id" >> "$GITHUB_OUTPUT"
+          echo "locator_sha=$locator_sha" >> "$GITHUB_OUTPUT"
           echo "archive_name=$bundle_id.tar.gz" >> "$GITHUB_OUTPUT"
           echo "checksum_name=$bundle_id.tar.gz.sha256" >> "$GITHUB_OUTPUT"
           echo "manifest_name=$bundle_id.manifest.json" >> "$GITHUB_OUTPUT"
+
+      - name: Publish pending exact-SHA locator
+        if: github.event_name != 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCATOR_SHA: ${{ steps.meta.outputs.locator_sha }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/statuses/$LOCATOR_SHA" \
+            -f state=pending \
+            -f context='Dish / dependency bundle' \
+            -f description='Exact dependency bundle mirror in progress' \
+            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Download Release authority
         shell: bash
@@ -88,3 +136,25 @@ jobs:
           path: dependency-bundle-mirror
           if-no-files-found: error
           retention-days: 90
+          overwrite: true
+
+      - name: Publish terminal exact-SHA locator
+        if: always() && github.event_name != 'release' && steps.meta.outputs.locator_sha != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCATOR_SHA: ${{ steps.meta.outputs.locator_sha }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          state=failure
+          description='Exact dependency bundle mirror failed'
+          if [[ "$JOB_STATUS" == "success" ]]; then
+            state=success
+            description='Exact dependency bundle mirror published'
+          fi
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/statuses/$LOCATOR_SHA" \
+            -f state="$state" \
+            -f context='Dish / dependency bundle' \
+            -f description="$description" \
+            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
