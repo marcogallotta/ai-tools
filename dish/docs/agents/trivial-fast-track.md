@@ -52,31 +52,78 @@ authorization.
 
 ## Procedure
 
-1. Marco explicitly names `TRIVIAL` or `FAST-TRACK` for the specific change, in the current
-   chat. This is a one-time, exact-change authorization; it does not carry forward to later
-   changes.
-2. Record the authorization durably on the owning task (or, absent a task, in the PR/commit)
-   before mutating: exact authorization class, Marco's exact words, and the exact bounded
-   path set.
-3. Use `tools/agent-worktree` to create or resume the task-owned isolated worktree/branch.
-   Never mutate the primary checkout under this path.
-4. Make only the declared bounded change. If the diff would touch a path outside the
-   declared set, or a path matching a high-consequence area (production, database
-   migrations, runtime/security boundaries, CI/deploy control plane), stop and fall back to
-   the normal lifecycle instead of expanding the authorization.
-5. Run the cheapest deterministic check that directly proves the edit (for example the
-   specific validator/test the change targets), not a broad/full suite.
-6. Publish and authoritatively read back the result:
-   - `TRIVIAL`: commit on the owned branch, then fast-forward `origin/main` to that exact
-     commit (no PR); read back that `origin/main` now matches the exact intended SHA.
-   - `FAST-TRACK`: commit, publish the owned branch, and open the PR as usual; only skip the
-     Review step itself, and only when Marco explicitly said to skip Review for that PR.
+1. Marco explicitly names `TRIVIAL` or `FAST-TRACK` for the specific change. This is a
+   one-time exact-change authorization; agents never infer or mint it themselves.
+2. Before shortcut mutation, an authorized orchestration surface records that exact grant as
+   one durable Asana story on the owning task using this marker (compact JSON is canonical):
 
-## Status
+   ```text
+   <!-- dish-fast-track-authorization:v1 {"base_head":"<40-char current main SHA>","base_ref":"refs/heads/main","branch":"agent/<owned-branch>","marco_words":"<Marco's exact words>","mode":"TRIVIAL|FAST-TRACK","paths":["<exact/repository-relative/path>"],"skip_review":true|false,"task":"<gid>","validation":"meaningful-readback|executable-proof"} -->
+   ```
 
-The per-change authorization/recording and bounded-path/high-consequence-path checks above
-are current standing policy. Repository-owned tooling to mechanically enforce the bounded-
-path and protected-primary checks (beyond the structural protection already provided by
-`tools/agent-worktree`'s isolated-worktree model) is tracked as follow-up implementation
-work; until it lands, apply this procedure manually and fail closed to the normal lifecycle
-on any doubt.
+   `skip_review=true` is mandatory for `TRIVIAL`; for `FAST-TRACK` it is true only when
+   Marco explicitly authorized skipping Review for that exact change. `validation` records the
+   risk-selected proving boundary: `meaningful-readback` for docs/wording/comments/formatting/
+   non-executable policy/metadata/mechanical edits when tests add no meaningful evidence, or
+   `executable-proof` when product/runtime/infrastructure/migration/persistence/service/config/
+   deployment behavior can materially break and a focused test genuinely proves the invariant. The marker is the
+   executable capability record. `tools/agent-worktree` can consume an existing marker but
+   has no command that creates one, so local agents cannot self-authorize the shortcut.
+3. Create or resume the normal task-owned isolated `agent/*` worktree/branch. The shortcut
+   never permits mutation from the shared primary checkout.
+4. Commit through the guarded command, naming the pre-existing authorization story:
+
+   ```sh
+   tools/agent-worktree fast-track-commit \
+     --task <gid> --authorization-story <story-gid> -m '<message>'
+   ```
+
+   The command rereads the live story and current `refs/heads/main`, requires task/branch/base
+   identity to match, stages only the actual changed paths, and refuses any path outside the
+   authorized set. Path escape, stale base, protected/high-consequence paths, or ambiguity
+   returns `FAST_TRACK_FALLBACK_REQUIRED`; stop the shortcut and continue through the normal
+   lifecycle rather than widening the grant.
+5. Run the cheapest meaningful proving boundary selected by the durable grant. `TRIVIAL` remains
+   non-product/non-runtime and uses `meaningful-readback`. `FAST-TRACK` does **not** impose a
+   universal test gate: docs, wording, comments, formatting, non-executable policy, metadata-only,
+   and comparable mechanical edits may use meaningful readback when executable tests add no
+   evidence. Product/runtime/infrastructure/migration/persistence/service/config/deployment and
+   similar executable or high-consequence changes use `executable-proof`: the narrowest focused
+   unit/contract/integration test that exercises the accepted invariant, or isolated/TEST
+   real-transport proof when connected runtime identity/state is material. “Tests exist” is not
+   proof; the selected evidence must exercise the intended behavior. Failed evidence stays failed.
+6. Publish through the guarded command and authoritatively read back the resulting ref:
+
+   ```sh
+   tools/agent-worktree fast-track-publish \
+     --task <gid> --authorization-story <story-gid>
+   ```
+
+   - `TRIVIAL`: requires exactly one commit from the authorized current-main base and a clean
+     bounded worktree, then non-force fast-forwards `refs/heads/main` to that exact commit and
+     verifies the remote ref. No PR, formal Review, or separate Integration step exists for
+     that exact authorized change.
+   - `FAST-TRACK`: publishes the owned branch through the normal `agent-worktree publish`
+     safety path. A PR remains the durable publication surface. Formal Review is omitted only
+     when the exact marker records `skip_review=true`; final Integration remains the normal
+     separately authorized action. Before landing, Integration requires the exact risk-selected
+     validation: meaningful readback where tests add no evidence, or focused executable proof for
+     product/runtime and comparable high-consequence behavior.
+
+## Mechanical enforcement
+
+The repository-owned bridge lives inside `tools/agent-worktree`; it reuses the existing
+worktree identity, claim, commit, publish, and remote-ref primitives rather than creating a
+second ownership system. It enforces:
+
+- pre-existing explicit authorization only; no local/self authorization;
+- exact task + owned branch + `refs/heads/main` base identity;
+- exact bounded changed paths and canonical path syntax;
+- refusal of the shared primary checkout and protected/high-consequence control paths;
+- stale-base/concurrent-movement refusal;
+- fail-closed return to the normal lifecycle on any scope or identity escape; and
+- authoritative remote readback after publication.
+
+The procedure remains deliberately narrow. Expanding eligibility or weakening these guards
+is a standing lifecycle change and goes through the normal Implementation -> independent
+Review -> Integration path.

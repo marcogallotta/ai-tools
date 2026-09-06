@@ -31,6 +31,14 @@ Research/design becomes Implementation-ready only when its required decisions an
 
 Integration uses the exact reviewed candidate and performs only authorized mechanical reconciliation. A changed head returns to fresh Review. Source landing is distinct from deployment, migration, activation, or operator acceptance; a task becomes complete only after its actual residual obligations are done.
 
+### Explicit per-change lifecycle shortcuts
+
+The normal lifecycle above remains the default. [`trivial-fast-track.md`](../../agents/trivial-fast-track.md) defines one narrow capability-based exception when Marco explicitly authorizes the exact change and that grant has been durably bound to task, owned branch, current-main base, exact path set, and Marco's exact words. This is not another lifecycle state machine or ownership system.
+
+- `TRIVIAL` uses the existing isolated worktree/claim/commit primitives, requires one bounded commit from the recorded current-main base, and may non-force fast-forward `main` directly after guarded readback. For that exact authorized change only, PR, formal Review, and separate Integration are omitted.
+- `FAST-TRACK` still publishes the owned branch and PR normally. Formal Review is omitted only when the exact durable grant says `skip_review=true`; final Integration remains separately authorized. The exact grant also records the risk-selected validation class: meaningful readback when executable tests add no evidence, or focused executable proof for product/runtime and comparable high-consequence behavior before landing.
+- Missing/stale authorization, base movement, primary-checkout use, path escape, protected/high-consequence scope, or ambiguity invalidates the shortcut and returns the work to the full normal lifecycle.
+
 ## Invariants
 
 - Each semantic task retains its own commit/PR/task lineage even in an ordered stack.
@@ -39,6 +47,7 @@ Integration uses the exact reviewed candidate and performs only authorized mecha
 - CI ownership is classified before a failing candidate is modified.
 - Post-merge gates remain in their real phase and do not become source-merge blockers by proximity.
 - Detailed GitHub substates are not duplicated as an Asana lifecycle system.
+- Per-change shortcut capability is exact and fail-closed; it never becomes a standing agent-owned waiver.
 
 ## Current anchors
 

@@ -12,6 +12,8 @@ This document records identity and serialization boundaries. It does not impose 
 
 A repository assignment is bound to repository, owning task, authorized branch, exact authoring base, and existing PR/head when present. A worktree lineage adds an immutable branch-incarnation identity and an exclusive local claim. A PR's current head is the semantic Review and certification identity. These identities overlap but are not interchangeable.
 
+An explicit `TRIVIAL`/`FAST-TRACK` shortcut adds a capability record; it does not replace assignment or claim identity. The durable record is bound to the owning task, owned `agent/*` branch, exact `refs/heads/main` base SHA, exact repository-relative path set, Marco's exact authorization words, whether Review may be skipped, and the risk-selected validation class (`meaningful-readback` or `executable-proof`). Local tooling may consume that pre-existing record but cannot create it. A moved base or mismatched task/branch/path set invalidates shortcut use and returns the work to the normal lifecycle.
+
 Concurrency is chosen from concrete landing relationships:
 
 - independent work can proceed concurrently;
@@ -36,6 +38,7 @@ Concurrency is chosen from concrete landing relationships:
   that authority at every material writer boundary.
 - Unrelated movement of the target branch does not silently replace an established authoring base.
 - Stack propagation preserves later completed work when an earlier accepted correction must be down-merged.
+- Fast-track capability never authorizes the shared primary checkout; protected/high-consequence paths fail closed to the normal lifecycle.
 
 ## Current anchors
 
