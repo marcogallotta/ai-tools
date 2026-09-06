@@ -15,6 +15,16 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg import models
 from dish_pg.database import session_scope
+from dish_pg.native_catalog_runtime_finalizer import (
+    FINALIZER_REVISION,
+    NativeCatalogRuntimeFinalizerError,
+    finalize_native_catalog_runtime_authority,
+)
+from dish_pg.native_section_carry_forward import RepositoryIdentity
+from dish_pg.native_section_content_materializer import (
+    NativeSectionContentMaterializationError,
+    materialize_staged_native_section_content,
+)
 from dish_pg.release import ALEMBIC_HEAD
 from dish_pg.repositories import (
     AuthorityRepository,
@@ -23,6 +33,7 @@ from dish_pg.repositories import (
     CoreAuthorityError,
     RegistryRepository,
 )
+from tests.postgresql.test_native_section_content_materializer import _stage_pr3
 from tests.support.postgresql.core import _bootstrap_registry, _next
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -350,7 +361,10 @@ def test_populated_upgrade_backfills_definition_authority_only(tmp_path: Path) -
     finally:
         engine.dispose()
 
-    command.upgrade(config, ALEMBIC_HEAD)
+    # PR2a remains the schema-only migration boundary. 0050 is the online
+    # authority finalizer and deliberately refuses an active generation that has
+    # not satisfied the reviewed 0048 inventory/materialization prerequisite.
+    command.upgrade(config, "0049_native_catalog_runtime_authority_root")
     engine = create_engine(database_url, future=True)
     try:
         assert "native_catalog_runtime_attestations" in inspect(engine).get_table_names()
@@ -648,3 +662,175 @@ def test_pr2a_absent_pointer_preserves_legacy_authority(core_db) -> None:
             contract.registry_version.registry_version_id
             == legacy["registry_version_id"]
         )
+
+
+def _stage_runtime_switch_fixture(session, ids, monkeypatch):
+    monkeypatch.setattr(
+        "dish_pg.native_section_carry_forward._verified_repository_identity",
+        lambda: RepositoryIdentity(commit_sha="a" * 40, tree_sha="b" * 40),
+    )
+    return _stage_pr3(session, ids)
+
+
+def test_pr2f_atomically_materializes_and_establishes_revision_one_root(
+    core_db, monkeypatch
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        seeded, expectation, _, carry_event_id, occurrences = _stage_runtime_switch_fixture(
+            session, ids, monkeypatch
+        )
+        result = finalize_native_catalog_runtime_authority(
+            session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
+        )
+        assert result.inserted is True
+        assert result.materialization.materialized_count == len(occurrences) == 23
+        assert result.materialization.already_materialized_count == 0
+
+        event = session.get(models.AppliedMigrationEvent, result.migration_event_id)
+        assert event is not None and event.revision == FINALIZER_REVISION
+        assert event.predecessor_revision == "0049_native_catalog_runtime_authority_root"
+        assert event.details["authority_transition"] == "native_section_runtime_root_v1"
+        assert event.details["source_commit_sha"] == "f" * 40
+        assert event.details["catalog_version_id"] == str(expectation.base_catalog_version_id)
+        gate = event.details["inventory_gate"]
+        assert gate["decision"] == "carry_forward_completed"
+        assert gate["generation_id"] == str(seeded["generation_id"])
+        assert gate["prerequisite_migration_event_id"] == str(carry_event_id)
+        assert gate["prerequisite_migration_revision"] == "0048_native_section_content_carry_forward"
+        assert gate["counts"]["legacy_destination_documents"] == 23
+
+        resolved = models.resolve_current_native_catalog_runtime(
+            session, seeded["generation_id"]
+        )
+        assert resolved is not None
+        pointer, attestation = resolved
+        assert pointer.attestation_id == result.attestation_id
+        assert pointer.catalog_version_id == expectation.base_catalog_version_id
+        assert pointer.attestation_revision == 1
+        assert attestation.predecessor_attestation_id is None
+        assert attestation.baseline_migration_event_id == event.migration_event_id
+        assert attestation.attestation_sha256 == models.compute_attestation_sha256(
+            generation_id=seeded["generation_id"],
+            catalog_version_id=expectation.base_catalog_version_id,
+            catalog_activation_id=result.catalog_activation_id,
+            contract_binding_id=session.get(
+                models.SectionCatalogVersion, expectation.base_catalog_version_id
+            ).contract_binding_id,
+            attestation_revision=1,
+            predecessor_attestation_id=None,
+            baseline_migration_event_id=event.migration_event_id,
+            baseline_revision=event.revision,
+            baseline_migration_code_sha256=event.migration_code_sha256,
+            baseline_dish_release=event.dish_release,
+            baseline_source_commit_sha="f" * 40,
+        )
+        for occurrence in occurrences:
+            state = session.get(
+                models.DishState, (seeded["generation_id"], occurrence.task_id)
+            )
+            assert state is not None
+            assert state.catalog_version_id == expectation.base_catalog_version_id
+
+    # A new session observes only the durable root and an exact retry is a no-op.
+    with session_scope(factory) as session:
+        retry = finalize_native_catalog_runtime_authority(
+            session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=2)
+        )
+        assert retry.inserted is False
+        assert retry.migration_event_id == result.migration_event_id
+        assert retry.attestation_id == result.attestation_id
+        assert retry.materialization.materialized_count == 0
+        assert retry.materialization.already_materialized_count == 23
+        assert CatalogRepository(session).active_runtime_catalog_contract(
+            seeded["generation_id"]
+        ) is not None
+
+
+def test_pr2f_failure_rolls_back_finalizer_event_root_and_pointer(
+    core_db, monkeypatch
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        seeded, _expectation, _, _carry_event_id, occurrences = _stage_runtime_switch_fixture(
+            session, ids, monkeypatch
+        )
+        source_content_ids = {
+            occurrence.task_id: occurrence.source_content_version_id
+            for occurrence in occurrences
+        }
+
+    def _fail_after_materialization(*args, **kwargs):
+        materialize_staged_native_section_content(*args, **kwargs)
+        raise NativeSectionContentMaterializationError(
+            "injected failure after staged materialization"
+        )
+
+    monkeypatch.setattr(
+        "dish_pg.native_catalog_runtime_finalizer.materialize_staged_native_section_content",
+        _fail_after_materialization,
+    )
+    with pytest.raises(
+        NativeCatalogRuntimeFinalizerError,
+        match="injected failure after staged materialization",
+    ):
+        with session_scope(factory) as session:
+            finalize_native_catalog_runtime_authority(
+                session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
+            )
+
+    with session_scope(factory) as session:
+        assert session.scalar(
+            select(func.count()).select_from(models.AppliedMigrationEvent).where(
+                models.AppliedMigrationEvent.generation_id == seeded["generation_id"],
+                models.AppliedMigrationEvent.revision == FINALIZER_REVISION,
+            )
+        ) == 0
+        assert session.scalar(
+            select(func.count()).select_from(models.NativeCatalogRuntimeAttestation).where(
+                models.NativeCatalogRuntimeAttestation.generation_id == seeded["generation_id"]
+            )
+        ) == 0
+        assert session.get(
+            models.CurrentNativeCatalogRuntime, seeded["generation_id"]
+        ) is None
+        for occurrence in occurrences:
+            state = session.get(
+                models.DishState, (seeded["generation_id"], occurrence.task_id)
+            )
+            assert state is not None
+            assert state.current_content_version_id == source_content_ids[occurrence.task_id]
+            assert state.catalog_version_id is None
+
+
+def test_pr2f_refuses_active_generation_without_same_generation_0048(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        generation_id, binding_id = _add_native_generation(session, ids)
+        section_id = _next(ids)
+        CatalogRepository(session).add_section(
+            models.Section(
+                section_id=section_id,
+                logical_name="PR2f Section",
+                lifecycle="active",
+                created_at=NOW,
+                retired_at=None,
+            )
+        )
+        _install_recovery_catalog(
+            session,
+            ids,
+            generation_id=generation_id,
+            binding_id=binding_id,
+            section_ids=(section_id,),
+            revision=1,
+            expected=(None, None, None),
+        )
+        with pytest.raises(
+            NativeCatalogRuntimeFinalizerError,
+            match="same-generation applied 0048",
+        ):
+            finalize_native_catalog_runtime_authority(
+                session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
+            )
+        assert session.get(models.CurrentNativeCatalogRuntime, generation_id) is None
