@@ -1,15 +1,14 @@
 [Unit]
-Description=Dish Secure MCP Tunnel
-After=network-online.target dish-service-prod.service dish-mcp.service
+Description=Dish authenticated MCP resource server
+After=network-online.target dish-service-prod.service
 Wants=network-online.target
-Requires=dish-mcp.service
 
 [Service]
 Type=simple
 User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
 EnvironmentFile=/home/marco/.config/dish-service/mcp-tunnel.env
-ExecStart=/home/marco/.local/bin/tunnel-client run --profile dish-mcp
+ExecStart=/home/marco/ai-tools/dish/.venv/bin/python -m dish_service.mcp_server
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
