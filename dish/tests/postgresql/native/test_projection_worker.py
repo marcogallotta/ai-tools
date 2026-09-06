@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import select
 
 from dish_pg import models
+from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
 from dish_pg.projection_worker import ExternalAttempt, ExternalObservation, ProjectionWorker
@@ -326,4 +327,7 @@ def test_shadow_create_alias_resolves_follow_on_start_against_real_postgresql(co
 
         assert start_result["ok"] is True
         assert start_result["command"] == "start"
-        assert start_result["data"]["task_id"] == str(alias.task_id)
+        started_operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(start_result["data"]["operation_id"])
+        )
+        assert started_operation.task_id == alias.task_id
