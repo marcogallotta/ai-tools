@@ -45,10 +45,12 @@ Use only when Marco explicitly authorizes `FAST-TRACK` for that exact change.
 
 ### Fail closed
 
-If scope grows, changed paths escape the declared boundary, validation reveals a
-semantic/high-consequence effect, or the classification becomes ambiguous, stop the fast
-path and route the remainder to the normal lifecycle. Do not silently widen the
-authorization.
+If scope grows, changed paths escape the declared boundary, or the classification becomes
+ambiguous, stop the fast path and route the remainder to the normal lifecycle. `TRIVIAL`
+also stops if the change reveals semantic/high-consequence behavior. `FAST-TRACK` may cover
+such executable/high-consequence behavior only when the exact grant selects
+`executable-proof` and the required focused proof is obtained before landing; otherwise it
+falls back to the normal lifecycle. Do not silently widen the authorization.
 
 ## Procedure
 
@@ -80,9 +82,11 @@ authorization.
 
    The command rereads the live story and current `refs/heads/main`, requires task/branch/base
    identity to match, stages only the actual changed paths, and refuses any path outside the
-   authorized set. Path escape, stale base, protected/high-consequence paths, or ambiguity
-   returns `FAST_TRACK_FALLBACK_REQUIRED`; stop the shortcut and continue through the normal
-   lifecycle rather than widening the grant.
+   authorized set. Path escape, stale base, or ambiguity returns
+   `FAST_TRACK_FALLBACK_REQUIRED` for either mode. `TRIVIAL` additionally falls back for
+   protected/high-consequence paths; `FAST-TRACK` may cover executable/high-consequence
+   surfaces only under the risk-selected `executable-proof` rule in step 5. Stop the shortcut
+   on any fallback rather than widening the grant.
 5. Run the cheapest meaningful proving boundary selected by the durable grant. `TRIVIAL` remains
    non-product/non-runtime and uses `meaningful-readback`. `FAST-TRACK` does **not** impose a
    universal test gate: docs, wording, comments, formatting, non-executable policy, metadata-only,
@@ -119,7 +123,9 @@ second ownership system. It enforces:
 - pre-existing explicit authorization only; no local/self authorization;
 - exact task + owned branch + `refs/heads/main` base identity;
 - exact bounded changed paths and canonical path syntax;
-- refusal of the shared primary checkout and protected/high-consequence control paths;
+- refusal of the shared primary checkout for both modes and protected/high-consequence paths
+  for `TRIVIAL`; `FAST-TRACK` high-consequence eligibility is governed by the exact grant's
+  `executable-proof` requirement before landing;
 - stale-base/concurrent-movement refusal;
 - fail-closed return to the normal lifecycle on any scope or identity escape; and
 - authoritative remote readback after publication.
