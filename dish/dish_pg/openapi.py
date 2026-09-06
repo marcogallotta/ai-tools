@@ -10,6 +10,7 @@ from .command_contract import (
     POSTGRES_CLIENT_REQUEST_ID_SCHEMA,
     POSTGRES_CLIENT_RUN_ID_SCHEMA,
     POSTGRES_DISH_ID_SCHEMA,
+    COOKED_UPDATES_COMMAND,
     SEARCH_COMMAND,
     postgres_action_argument_schema,
 )
@@ -30,6 +31,13 @@ def postgres_action_openapi(*, server_url: str = "https://dish-postgresql.exampl
                 "Read-only active-title discovery. Use Search when discovering a Dish by title or "
                 "partial title. If Marco supplies a canonical Dish UUID, call read(dish_id=...) "
                 "directly instead of searching or browsing sections. request_id is not accepted."
+            )
+        elif command == COOKED_UPDATES_COMMAND:
+            description = (
+                "Read-only incremental cooked-evidence discovery. The first page captures a server "
+                "through watermark; continuation cursors stay bound to the same generation and "
+                "since/through window. A Dish can reappear when a later cook log is recorded. "
+                "request_id is not accepted."
             )
         else:
             description = (
