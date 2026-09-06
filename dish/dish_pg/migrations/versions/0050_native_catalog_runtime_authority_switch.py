@@ -20,7 +20,7 @@ def upgrade() -> None:
     #
     # The finalizer records its own generation-bound AppliedMigrationEvent with this
     # exact revision/code identity when the authorized switch is actually executed.
-    return
+    pass
 
 
 def downgrade() -> None:
