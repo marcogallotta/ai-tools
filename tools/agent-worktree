@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import sys
 
+from agent_worktree_lib.argv_normalization import propagate_takeover_to_wrapped_resume
 from agent_worktree_lib.cli import main
 from agent_worktree_lib.common import AgentWorktreeError
 
 if __name__ == "__main__":
     try:
+        sys.argv[:] = propagate_takeover_to_wrapped_resume(sys.argv)
         raise SystemExit(main())
     except AgentWorktreeError as exc:
         print(f"ERROR {exc.code}: {exc.message}", file=sys.stderr)
