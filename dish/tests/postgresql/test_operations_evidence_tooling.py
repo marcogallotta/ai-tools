@@ -60,7 +60,9 @@ def test_0050_schema_revision_does_not_implicitly_execute_runtime_finalizer() ->
     migration = (
         ROOT / "dish_pg/migrations/versions/0050_native_catalog_runtime_authority_switch.py"
     ).read_text(encoding="utf-8")
-    upgrade_body = migration.split("def upgrade() -> None:", 1)[1].split("def downgrade() -> None:", 1)[0]
+    upgrade_body = migration.split("def upgrade() -> None:", 1)[1].split(
+        "def downgrade() -> None:", 1
+    )[0]
     assert "finalize_native_catalog_runtime_authority(" not in upgrade_body
     assert "CurrentNativeCatalogRuntime implicitly" in upgrade_body
 
