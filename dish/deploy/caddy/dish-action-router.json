@@ -20,6 +20,22 @@
         "terminal": true
       },
       {
+        "match": [{"path": ["/dish/authorize", "/dish/token", "/dish/register", "/dish/auth/callback", "/dish/consent"]}],
+        "handle": [
+          {"handler": "rewrite", "strip_path_prefix": "/dish"},
+          {"@id": "dish_mcp_oauth_proxy", "handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8787"}]}
+        ],
+        "terminal": true
+      },
+      {
+        "match": [{"path": ["/.well-known/oauth-authorization-server/dish"]}],
+        "handle": [
+          {"handler": "rewrite", "uri": "/.well-known/oauth-authorization-server"},
+          {"@id": "dish_mcp_oauth_metadata_proxy", "handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8787"}]}
+        ],
+        "terminal": true
+      },
+      {
         "match": [{"path": ["/test-legacy/openapi/action.json", "/test-legacy/v1/action/*"]}],
         "handle": [
           {"handler": "rewrite", "strip_path_prefix": "/test-legacy"},

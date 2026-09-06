@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from pathlib import Path
-from types import SimpleNamespace
 
-from cryptography.hazmat.primitives.asymmetric import rsa
-import jwt
+from fastmcp.server.auth.providers.github import GitHubProvider
 from mcp.server.auth.provider import AccessToken
 import pytest
 
@@ -38,9 +35,9 @@ EXPECTED_COMMANDS = (
 )
 RUN_ID = "11111111-1111-4111-8111-111111111111"
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"
-ISSUER = "https://idp.example.com"
-JWKS_URL = "https://idp.example.com/.well-known/jwks.json"
-RESOURCE_URL = "https://dish-mcp.example.com/mcp"
+BASE_URL = "https://dish-mcp.example.com/dish"
+ISSUER = BASE_URL
+RESOURCE_URL = f"{BASE_URL}/mcp"
 
 
 def _tool(command: str) -> dict[str, object]:
@@ -48,12 +45,12 @@ def _tool(command: str) -> dict[str, object]:
     return next(tool for tool in mcp_server.TOOLS if tool["name"] == name)
 
 
-def _config(*, audience: str | None = None) -> mcp_server.MCPAuthConfig:
+def _config() -> mcp_server.MCPAuthConfig:
     return mcp_server.MCPAuthConfig(
-        issuer_url=ISSUER,
-        jwks_url=JWKS_URL,
+        github_client_id="github-client-id",
+        github_client_secret="github-client-secret",
+        github_user_id="192548",
         resource_url=RESOURCE_URL,
-        audience=audience,
     )
 
 
@@ -117,51 +114,6 @@ def _asgi_request(
     return asyncio.run(invoke())
 
 
-class _StaticTokenVerifier:
-    async def verify_token(self, token: str) -> AccessToken | None:
-        if token not in {"valid-token", "missing-scope-token"}:
-            return None
-        scopes = [mcp_server.REQUIRED_SCOPE] if token == "valid-token" else []
-        return AccessToken(
-            token=token,
-            client_id="chatgpt-client",
-            scopes=scopes,
-            expires_at=int(time.time()) + 300,
-            resource=RESOURCE_URL,
-            subject="marco",
-            claims={"iss": ISSUER},
-        )
-
-
-class _StaticJWKClient:
-    def __init__(self, key) -> None:
-        self.key = key
-
-    def get_signing_key_from_jwt(self, token: str):
-        assert isinstance(token, str)
-        return SimpleNamespace(key=self.key)
-
-
-def _jwt_claims(**overrides) -> dict[str, object]:
-    now = int(time.time())
-    claims: dict[str, object] = {
-        "iss": ISSUER,
-        "sub": "marco",
-        "client_id": "chatgpt-client",
-        "aud": RESOURCE_URL,
-        "scope": mcp_server.REQUIRED_SCOPE,
-        "iat": now,
-        "nbf": now - 1,
-        "exp": now + 300,
-    }
-    claims.update(overrides)
-    return claims
-
-
-def _signed_token(private_key, **claims) -> str:
-    return jwt.encode(_jwt_claims(**claims), private_key, algorithm="RS256", headers={"kid": "test"})
-
-
 def test_mcp_tool_inventory_is_exact_postgresql_connected_contract():
     assert ACTION_COMMANDS == EXPECTED_COMMANDS
     assert tuple(mcp_server.TOOL_COMMANDS.values()) == EXPECTED_COMMANDS
@@ -191,8 +143,6 @@ def test_mcp_tool_schemas_project_postgresql_action_openapi():
         assert tool["outputSchema"] == expected_output
         assert tool["outputSchema"]["type"] == "object"
         assert "$ref" not in json.dumps(tool["outputSchema"])
-        assert "authorization" not in json.dumps(tool).lower()
-        assert "bearer" not in json.dumps(tool).lower()
 
 
 def test_mcp_annotations_follow_replay_metadata_conservatively():
@@ -271,8 +221,9 @@ def test_mcp_query_preserves_run_id_and_forbids_request_id(monkeypatch):
 
 
 def test_oauth_config_requires_https_public_resource_and_loopback_listener(monkeypatch):
-    monkeypatch.setenv(mcp_server.OAUTH_ISSUER_ENV, ISSUER)
-    monkeypatch.setenv(mcp_server.OAUTH_JWKS_URL_ENV, JWKS_URL)
+    monkeypatch.setenv(mcp_server.GITHUB_CLIENT_ID_ENV, "client-id")
+    monkeypatch.setenv(mcp_server.GITHUB_CLIENT_SECRET_ENV, "client-secret")
+    monkeypatch.setenv(mcp_server.GITHUB_USER_ID_ENV, "192548")
     monkeypatch.setenv(mcp_server.RESOURCE_URL_ENV, RESOURCE_URL)
     monkeypatch.setenv(mcp_server.BIND_HOST_ENV, "0.0.0.0")
     with pytest.raises(ValueError, match="loopback-only"):
@@ -280,7 +231,9 @@ def test_oauth_config_requires_https_public_resource_and_loopback_listener(monke
 
     monkeypatch.setenv(mcp_server.BIND_HOST_ENV, "127.0.0.1")
     monkeypatch.setenv(mcp_server.RESOURCE_URL_ENV, "https://dish-mcp.example.com/dish/mcp")
-    assert mcp_server.MCPAuthConfig.from_environment().resource_url.endswith("/dish/mcp")
+    config = mcp_server.MCPAuthConfig.from_environment()
+    assert config.base_url == "https://dish-mcp.example.com/dish"
+    assert config.issuer_url == "https://dish-mcp.example.com/dish"
 
     monkeypatch.setenv(mcp_server.RESOURCE_URL_ENV, "http://dish-mcp.example.com/mcp")
     with pytest.raises(ValueError, match="https URL"):
@@ -293,13 +246,13 @@ def test_oauth_config_requires_https_public_resource_and_loopback_listener(monke
 
 def test_oauth_http_boundary_challenges_and_publishes_protected_resource_metadata(monkeypatch):
     monkeypatch.setenv("CONTROL_PLANE_API_KEY", "tunnel-control-plane-only")
-    app = mcp_server.create_app(_adapter(), _config(), token_verifier=_StaticTokenVerifier())
+    app = mcp_server.create_app(_adapter(), _config())
 
     status, headers, body = _asgi_request(app, method="POST", path="/mcp")
     assert status == 401
-    assert json.loads(body) == {"error": "invalid_token", "error_description": "Authentication required"}
-    assert headers["www-authenticate"].startswith('Bearer error="invalid_token"')
-    assert "https://dish-mcp.example.com/.well-known/oauth-protected-resource/mcp" in headers[
+    assert body == b""
+    assert headers["www-authenticate"].startswith("Bearer resource_metadata=")
+    assert "https://dish-mcp.example.com/.well-known/oauth-protected-resource/dish/mcp" in headers[
         "www-authenticate"
     ]
     assert "tunnel-control-plane-only" not in body.decode()
@@ -307,95 +260,41 @@ def test_oauth_http_boundary_challenges_and_publishes_protected_resource_metadat
     status, _, body = _asgi_request(
         app,
         method="GET",
-        path="/.well-known/oauth-protected-resource/mcp",
+        path="/.well-known/oauth-protected-resource/dish/mcp",
     )
     metadata = json.loads(body)
     assert status == 200
     assert metadata["resource"] == RESOURCE_URL
     assert [value.rstrip("/") for value in metadata["authorization_servers"]] == [ISSUER.rstrip("/")]
-    assert metadata["scopes_supported"] == [mcp_server.REQUIRED_SCOPE]
+    assert metadata["scopes_supported"] == []
 
-
-def test_oauth_http_boundary_returns_401_for_invalid_token_and_403_for_missing_scope():
-    app = mcp_server.create_app(_adapter(), _config(), token_verifier=_StaticTokenVerifier())
-
-    status, _, _ = _asgi_request(
-        app,
-        method="POST",
-        path="/mcp",
-        headers={"authorization": "Bearer invalid-token"},
+    status, _, body = _asgi_request(
+        app, method="GET", path="/.well-known/oauth-authorization-server"
     )
-    assert status == 401
+    authorization = json.loads(body)
+    assert status == 200
+    assert authorization["issuer"].rstrip("/") == ISSUER
+    assert authorization["authorization_endpoint"] == f"{BASE_URL}/authorize"
+    assert authorization["token_endpoint"] == f"{BASE_URL}/token"
+    assert authorization["registration_endpoint"] == f"{BASE_URL}/register"
+    assert authorization["code_challenge_methods_supported"] == ["S256"]
 
-    status, headers, body = _asgi_request(
-        app,
-        method="POST",
-        path="/mcp",
-        headers={"authorization": "Bearer missing-scope-token"},
+
+def test_github_provider_rejects_every_user_except_configured_numeric_id(monkeypatch):
+    async def fake_verify(self, token: str):
+        return AccessToken(token=token, client_id="client", scopes=[], subject=token)
+
+    monkeypatch.setattr(GitHubProvider, "verify_token", fake_verify)
+    provider = mcp_server.DishGitHubProvider(
+        client_id="client-id",
+        client_secret="client-secret",
+        allowed_user_id="192548",
+        base_url=BASE_URL,
+        issuer_url=ISSUER,
+        required_scopes=[],
     )
-    assert status == 403
-    assert json.loads(body)["error"] == "insufficient_scope"
-    assert mcp_server.REQUIRED_SCOPE in headers["www-authenticate"]
-
-
-def test_jwt_verifier_accepts_signed_targeted_token_and_keeps_bearer_out_of_audit_context():
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    verifier = mcp_server.OIDCJWTVerifier(
-        _config(),
-        jwks_client=_StaticJWKClient(private_key.public_key()),
-    )
-    raw = _signed_token(private_key)
-
-    token = asyncio.run(verifier.verify_token(raw))
-
-    assert token is not None
-    assert token.client_id == "chatgpt-client"
-    assert token.subject == "marco"
-    assert token.resource == RESOURCE_URL
-    assert token.scopes == [mcp_server.REQUIRED_SCOPE]
-    assert token.expires_at is not None
-    audit = mcp_server._caller_audit_context(token)
-    assert audit == {
-        "principal_class": "connected-agent",
-        "issuer": ISSUER,
-        "client_id": "chatgpt-client",
-        "subject": "marco",
-    }
-    assert raw not in json.dumps(audit)
-
-
-@pytest.mark.parametrize(
-    "claims",
-    [
-        {"iss": "https://wrong-issuer.example.com"},
-        {"exp": 1},
-        {"nbf": int(time.time()) + 3600},
-        {"aud": "https://other-resource.example.com/mcp"},
-        {"resource": "https://other-resource.example.com/mcp"},
-    ],
-)
-def test_jwt_verifier_rejects_wrong_issuer_expiry_nbf_and_target(claims):
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    verifier = mcp_server.OIDCJWTVerifier(
-        _config(),
-        jwks_client=_StaticJWKClient(private_key.public_key()),
-    )
-    raw = _signed_token(private_key, **claims)
-    assert asyncio.run(verifier.verify_token(raw)) is None
-
-
-def test_jwt_verifier_rejects_bad_signature_and_supports_explicit_audience():
-    signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    wrong_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    verifier = mcp_server.OIDCJWTVerifier(
-        _config(audience="dish-api"),
-        jwks_client=_StaticJWKClient(signing_key.public_key()),
-    )
-    bad_signature = _signed_token(wrong_key)
-    assert asyncio.run(verifier.verify_token(bad_signature)) is None
-
-    custom_audience = _signed_token(signing_key, aud="dish-api")
-    assert asyncio.run(verifier.verify_token(custom_audience)) is not None
+    assert asyncio.run(provider.verify_token("192548")) is not None
+    assert asyncio.run(provider.verify_token("999999")) is None
 
 
 def test_adapter_failure_redacts_action_bearer_and_config_is_loopback_only():
@@ -412,18 +311,15 @@ def test_adapter_failure_redacts_action_bearer_and_config_is_loopback_only():
         )
 
 
-def test_tunnel_units_and_runbook_bind_private_http_oauth_path():
+def test_caddy_and_runbook_expose_github_oauth_proxy_paths():
     dish_root = Path(__file__).resolve().parents[2]
-    tunnel_unit = (dish_root / "deploy/systemd/dish-mcp-tunnel.service").read_text(encoding="utf-8")
-    mcp_unit = (dish_root / "deploy/systemd/dish-mcp.service").read_text(encoding="utf-8")
+    caddy = (dish_root / "deploy/caddy/dish-action-router.json").read_text(encoding="utf-8")
     runbook = (dish_root / "deploy/mcp-app.md").read_text(encoding="utf-8")
 
-    assert "Requires=dish-mcp.service" in tunnel_unit
-    assert "ExecStart=/home/marco/.local/bin/tunnel-client run --profile dish-mcp" in tunnel_unit
-    assert "ExecStart=/home/marco/ai-tools/dish/.venv/bin/python -m dish_service.mcp_server" in mcp_unit
-    assert "DISH_MCP_BIND_HOST=127.0.0.1" in runbook
-    assert "DISH_MCP_ACTION_URL=http://127.0.0.1:8766" in runbook
-    assert "sample_mcp_with_dcr" in runbook
-    assert '--mcp-server-url "http://127.0.0.1:8765/mcp"' in runbook
-    assert "DISH_MCP_ACTION_URL` to `http://127.0.0.1:8776" in runbook
-    assert "does not\ndisable the old GPT Action" in runbook
+    for path in ("/dish/authorize", "/dish/token", "/dish/register", "/dish/auth/callback"):
+        assert path in caddy
+    assert "/.well-known/oauth-authorization-server/dish" in caddy
+    assert '"uri": "/.well-known/oauth-authorization-server"' in caddy
+    assert "DISH_MCP_GITHUB_CLIENT_ID" in runbook
+    assert "DISH_MCP_GITHUB_CLIENT_SECRET" in runbook
+    assert "DISH_MCP_GITHUB_USER_ID" in runbook

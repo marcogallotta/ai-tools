@@ -38,9 +38,9 @@ python3 -m venv .venv
 ### ChatGPT MCP app
 
 Dish reaches ChatGPT at `https://laptop.tail46f0b9.ts.net/dish/mcp` through the existing Tailscale
-Funnel and Caddy router. The MCP server stays on loopback and requires OAuth scope
-`dish:connected`; Caddy exposes only the MCP and protected-resource metadata paths. Configure the
-external OAuth issuer and supervise the service using [the MCP app runbook](deploy/mcp-app.md).
+Funnel and Caddy router. The MCP server stays on loopback; FastMCP supplies the OAuth server and
+uses GitHub only for login. Access is restricted to Marco's immutable GitHub user ID. Configure the
+GitHub OAuth app and supervise the service using [the MCP app runbook](deploy/mcp-app.md).
 
 ### PostgreSQL development target
 
