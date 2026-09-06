@@ -389,8 +389,9 @@ def check_git(segments, cwd=None):
         sub = git_subcommand(tokenize(seg))
         if sub in protected_checkout.BRANCH_MUTATIONS and not protected_checkout.prompt_free_git(seg, current_cwd):
             return ask(
-                "[destructive-op-guard] Destructive git operation on main or an unresolved target "
-                "requires explicit approval."
+                f"[destructive-op-guard] Destructive git operation ('{sub}') requires explicit "
+                f"approval: it targets main, or its branch scope couldn't be confirmed as the "
+                f"current non-main branch — command: {seg.strip()!r}"
             )
 
     return None
