@@ -1,10 +1,9 @@
-"""Establish native Section runtime authority only on an already-populated active generation."""
+"""Reserve the PR2f revision without treating routine schema migration as authority switch."""
 
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import context, op
-from sqlalchemy.orm import Session
 
 revision = "0050_native_catalog_runtime_authority_switch"
 down_revision = "0049_native_catalog_runtime_authority_root"
@@ -13,23 +12,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    if context.is_offline_mode():
-        # Offline SQL may advance schema bookkeeping but never creates the runtime root.
-        return
-    bind = op.get_bind()
-    active = bind.execute(
-        sa.text("SELECT generation_id FROM authority_generations WHERE status='active'")
-    ).all()
-    if not active:
-        # Fresh/empty databases acquire the schema head without claiming runtime authority.
-        return
-    from dish_pg.native_catalog_runtime_finalizer import (
-        finalize_native_catalog_runtime_authority,
-    )
-
-    session = Session(bind=bind, autoflush=False, expire_on_commit=False, future=True)
-    finalize_native_catalog_runtime_authority(session)
-    session.flush()
+    # Reaching the Alembic schema head is deployment bookkeeping only. The accepted
+    # PR2f boundary requires the authority switch to be an explicit caller-owned
+    # transaction through finalize_native_catalog_runtime_authority(); routine schema
+    # migration, offline SQL rendering, startup migration, reset/rehearsal migration,
+    # or a test fixture must never establish CurrentNativeCatalogRuntime implicitly.
+    #
+    # The finalizer records its own generation-bound AppliedMigrationEvent with this
+    # exact revision/code identity when the authorized switch is actually executed.
+    return
 
 
 def downgrade() -> None:
