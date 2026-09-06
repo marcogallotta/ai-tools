@@ -14,6 +14,7 @@ from .services import CoreAuthorityService, ImportedTaskResult, ImportedTaskSpec
 from .command_port import CommandCall, CommandResult, PostgresCommandPort
 from .read_model import PostgresReadModel
 from .resting_continuation_patch import install as _install_resting_continuation_patch
+from .verifier_independence_patch import install as _install_verifier_independence_patch
 from .transition import ProjectionService, ShadowService, SourceImportService
 from .release import CandidateEvaluation, ReleaseCandidateService
 from .workflow import (
@@ -25,6 +26,7 @@ from .workflow import (
 )
 
 _install_resting_continuation_patch(PostgresCommandPort)
+_install_verifier_independence_patch(PostgresCommandPort)
 
 __all__ = [
     "CommandCall",

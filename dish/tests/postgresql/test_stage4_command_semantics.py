@@ -51,7 +51,7 @@ from tests.support.postgresql.stage4_command_semantics import _case_test_verifie
 
 
 
-def test_inspection_rejects_author_or_same_agent_as_verifier(workflow_db) -> None:
+def test_verification_rejects_author_run_but_allows_fresh_same_agent(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     author_run = _next(ids)
     other_run = _next(ids)
@@ -102,7 +102,7 @@ def test_inspection_rejects_author_or_same_agent_as_verifier(workflow_db) -> Non
             )
         )
         assert same_run.code == "VERIFIER_NOT_INDEPENDENT"
-        assert same_agent.code == "VERIFIER_NOT_INDEPENDENT"
+        assert same_agent.ok, (same_agent.code, same_agent.http_status, same_agent.data)
         assert session.scalar(select(func.count()).select_from(wf.VerificationInspectionOccurrence)) == 0
 
 
