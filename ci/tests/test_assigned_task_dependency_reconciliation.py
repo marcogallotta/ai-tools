@@ -173,6 +173,51 @@ def test_dependency_set_race_recomputes_and_never_applies_stale_plan():
     assert result.continuation is Continuation.BLOCKED
 
 
+def test_dependency_change_during_evidence_resolution_is_rechecked_before_mutation():
+    class StaleAttemptGuard(FakeAsana):
+        def __init__(self):
+            super().__init__([A])
+            self.stale_attempts = []
+
+        def remove_dependency(self, task_gid, dependency_gid):
+            current = {item["gid"] for item in self.task["dependencies"]}
+            if dependency_gid not in current:
+                self.stale_attempts.append(dependency_gid)
+            super().remove_dependency(task_gid, dependency_gid)
+
+    asana = StaleAttemptGuard()
+    calls = 0
+
+    def moving_resolver(task):
+        nonlocal calls
+        calls += 1
+        evidence = {
+            item["gid"]: DependencyEvidence(
+                dependency_gid=item["gid"],
+                state=EvidenceState.SATISFIED if item["gid"] == A else EvidenceState.UNRESOLVED,
+                authority="github",
+                evidence_ref=f"exact:{item['gid']}",
+            )
+            for item in task.get("dependencies", [])
+        }
+        # The blocked implementation performed a second evidence resolution after its pre-write
+        # reread. Move the live dependency set only if that second resolution still happens before
+        # mutation; the corrected implementation must not reopen that stale-plan window.
+        if calls == 2 and not asana.removals:
+            asana.task["dependencies"] = [{"gid": B}]
+        return evidence
+
+    result = reconcile_assigned_task_dependencies(
+        asana=asana,
+        task_gid=TASK,
+        resolve_evidence=moving_resolver,
+    )
+    assert asana.stale_attempts == []
+    assert asana.removals == [A]
+    assert result.residual_dependencies == ()
+    assert result.continuation is Continuation.CONTINUE
+
+
 def test_dependency_set_race_can_remove_new_exact_satisfied_edge():
     asana = FakeAsana([A], before_write=[B])
     result = run(asana, {A: EvidenceState.UNRESOLVED, B: EvidenceState.SATISFIED})

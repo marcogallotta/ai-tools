@@ -138,7 +138,7 @@ def reconcile_assigned_task_dependencies(
         if prewrite_deps != deps:
             continue
         stable_task = prewrite
-        stable_evidence = resolve_evidence(prewrite)
+        stable_evidence = evidence
         break
 
     if stable_task is None:
