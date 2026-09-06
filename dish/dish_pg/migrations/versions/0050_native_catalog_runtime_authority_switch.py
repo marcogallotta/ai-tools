@@ -1,4 +1,4 @@
-"""Reserve the PR2f revision without treating routine schema migration as authority switch."""
+"""Reserve PR2f's migration identity without making schema migration the authority switch."""
 
 from __future__ import annotations
 
@@ -28,9 +28,7 @@ def downgrade() -> None:
         return
     bind = op.get_bind()
     switched = bind.execute(
-        sa.text(
-            "SELECT 1 FROM current_native_catalog_runtimes LIMIT 1"
-        )
+        sa.text("SELECT 1 FROM current_native_catalog_runtimes LIMIT 1")
     ).first()
     witnessed = bind.execute(
         sa.text(
