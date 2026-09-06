@@ -279,6 +279,9 @@ def test_oauth_config_requires_https_public_resource_and_loopback_listener(monke
         mcp_server.MCPAuthConfig.from_environment()
 
     monkeypatch.setenv(mcp_server.BIND_HOST_ENV, "127.0.0.1")
+    monkeypatch.setenv(mcp_server.RESOURCE_URL_ENV, "https://dish-mcp.example.com/dish/mcp")
+    assert mcp_server.MCPAuthConfig.from_environment().resource_url.endswith("/dish/mcp")
+
     monkeypatch.setenv(mcp_server.RESOURCE_URL_ENV, "http://dish-mcp.example.com/mcp")
     with pytest.raises(ValueError, match="https URL"):
         mcp_server.MCPAuthConfig.from_environment()

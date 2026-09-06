@@ -174,7 +174,7 @@ def _https_url(raw_value: str, *, label: str, resource: bool = False) -> str:
     if parsed.fragment:
         raise ValueError(f"{label} must not contain a fragment")
     if resource:
-        if parsed.path != "/mcp" or parsed.params or parsed.query:
+        if not parsed.path.endswith("/mcp") or parsed.params or parsed.query:
             raise ValueError(f"{label} must be the public MCP resource URL ending exactly in /mcp")
     elif label == OAUTH_ISSUER_ENV and (parsed.params or parsed.query):
         raise ValueError(f"{label} must be an issuer URL without parameters or query")
