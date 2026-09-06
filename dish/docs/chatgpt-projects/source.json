@@ -357,8 +357,7 @@
         "preload": {
           "additional": [
             "dish/docs/agents/contributor-base.md"
-          ],
-          "role_index_contracts": true
+          ]
         },
         "triggered_reads": {
           "Development Workflow gate / fixture / publication classification": [
@@ -437,9 +436,9 @@
             "mode": "DIRECT_ALWAYS_ON"
           },
           "id": "development-workflow-context-preload",
-          "impact": "breaking",
+          "impact": "additive",
           "surface": "safety",
-          "text": "Use declared preload before governed decisions; context never composes authority."
+          "text": "Startup: current-role + contributor-base + triggered reads, not blanket all-role preload."
         },
         {
           "action_boundaries": [

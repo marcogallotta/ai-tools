@@ -272,13 +272,13 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  m,s=kernels.load_canonical(); deps=kernels.context_dependencies(s,'development-workflow'); assert deps is not None
  expected={'coordinator.md','development-workflow.md','audit.md','implementation.md','integration.md','review.md','workflow.md','postgresql-dark-launch.md'}
  assert kernels.role_index_contracts()==expected
- assert deps['preload']=={'role_index_contracts':True,'additional':['dish/docs/agents/contributor-base.md']}
+ assert deps['preload']=={'role_index_contracts':False,'additional':['dish/docs/agents/contributor-base.md']}
  assert deps['triggered_reads']['test-scope decisions']==['dish/docs/testing.md#Autonomous changed-path selection','dish/docs/architecture/testing-boundaries.md#Proving tests']
  assert deps['triggered_reads']['manual Review / fix / Integration handoffs']==['dish/docs/agents/review.md#Review claims and manual routing','dish/docs/agents/implementation.md#Manual Worker formal-BLOCK fix continuation','dish/docs/agents/integration.md#Manual Integration handoff']
  assert deps['triggered_reads']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md#Named lane commands','dish/docs/architecture/postgresql-runtime.md#Proving tests']
  text=kernels.render_role(m,s,'development-workflow')
- assert text.index('Startup:')<text.index('Startup/re-ground context:')
- assert 'role-index standing contracts' in text
+ assert 'current role contract' in text
+ assert 'role-index standing contracts' not in text
  assert '`dish/docs/agents/contributor-base.md`' in text
  assert 'Read-only; grants no role/mutation/Review/Integration/merge/production authority' in text
  comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==2 and any('implementation.md' in c for c in comps) and any('Design Review: read-only' in c for c in comps)

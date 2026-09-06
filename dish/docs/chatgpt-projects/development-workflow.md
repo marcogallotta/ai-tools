@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-59d2b32e1a85
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-f73ef0b4c371
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -9,7 +9,7 @@ PROJECT_REPOSITORY: marcogallotta/ai-tools
 PROJECT_DEFAULT_BRANCH: main
 
 Startup: resolve GitHub `marcogallotta/ai-tools` `main`; fetch this role's current generated Project kernel, then read `CLAUDE.md`, role index, `dish/docs/agents/development-workflow.md`, and manifest from that same current Git. Installed Project text is bootstrap/version witness after grounding. Drift alone never blocks; see `canonical-version-gate`.
-Startup/re-ground context: role-index standing contracts + `dish/docs/agents/contributor-base.md`. Read-only; grants no role/mutation/Review/Integration/merge/production authority.
+Startup/re-ground context: current role contract + `dish/docs/agents/contributor-base.md`. Read-only; grants no role/mutation/Review/Integration/merge/production authority.
 Triggered policy reads (before the governed action):
 - Five Whys / 5 whys / blameless RCA -> `dish/docs/agents/five-whys.md#Procedure` + `#Required output`
 - Worker dispatch / phase cutover -> `dish/docs/agents/review.md#Worker BLOCK`
@@ -55,6 +55,6 @@ High-consequence rules:
 - Fast-track: read triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Own dev mechanics; acting roles classify PRs and hand off work; landing is local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.
-- Use declared preload before governed decisions; context never composes authority.
+- Startup: current-role + contributor-base + triggered reads, not blanket all-role preload.
 - Material design authors falsify/fix/rerun against the Review V4 contract; the author pass never counts as independent Design Review.
 - Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval.

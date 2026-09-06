@@ -205,10 +205,12 @@ def context_dependencies(s,role):
  preload=raw.get('preload')
  normalized_preload=None
  if preload is not None:
-  if not isinstance(preload,dict) or preload.get('role_index_contracts') is not True: raise KernelError(f'roles.{role}.context_dependencies.preload must require role_index_contracts')
+  if not isinstance(preload,dict): raise KernelError(f'roles.{role}.context_dependencies.preload must be an object')
+  role_index=preload.get('role_index_contracts',False)
+  if role_index is not False and role_index is not True: raise KernelError(f'roles.{role}.context_dependencies.preload.role_index_contracts must be true or false')
   additional=preload.get('additional')
   if not isinstance(additional,list) or not additional: raise KernelError(f'roles.{role}.context_dependencies.preload.additional must be a non-empty list')
-  normalized_preload={'role_index_contracts':True,'additional':[_dependency_path(x,f'roles.{role}.context_dependencies.preload.additional') for x in additional]}
+  normalized_preload={'role_index_contracts':role_index,'additional':[_dependency_path(x,f'roles.{role}.context_dependencies.preload.additional') for x in additional]}
  legacy=raw.get('action_specific')
  if legacy is not None:
   if not isinstance(legacy,dict): raise KernelError(f'roles.{role}.context_dependencies.action_specific must be an object')
@@ -367,7 +369,8 @@ def _render_context_dependencies(s,role):
  preload=deps.get('preload')
  if preload:
   extra=' + '.join(f'`{x}`' for x in preload['additional'])
-  lines.append(f'Startup/re-ground context: role-index standing contracts + {extra}. Read-only; grants no role/mutation/Review/Integration/merge/production authority.')
+  base='role-index standing contracts' if preload['role_index_contracts'] else 'current role contract'
+  lines.append(f'Startup/re-ground context: {base} + {extra}. Read-only; grants no role/mutation/Review/Integration/merge/production authority.')
  triggers=deps.get('triggered_reads',{})
  used={}
  for rule in effective_rules(s,role):
