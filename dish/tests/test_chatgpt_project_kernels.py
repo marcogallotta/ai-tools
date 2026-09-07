@@ -73,8 +73,11 @@ def test_every_kernel_disambiguates_github_connector_from_dish_mcp():
  m,s=kernels.load_canonical()
  for role in s['roles']:
   text=kernels.render_role_with_version(s,role,m['canonical_version'])
-  assert 'Use the GitHub connector—not the Dish MCP app—for every GitHub' in text
-  assert "Dish MCP's GitHub OAuth is login only" in text
+  assert 'For every GitHub read/write, use the GitHub Connector.' in text
+  assert 'Never use the GitHub MCP app.' in text
+ worker=kernels.generated_profile_paths(m,s)['worker'].read_text()
+ assert 'For every GitHub read/write, use the GitHub Connector.' in worker
+ assert 'Never use the GitHub MCP app.' in worker
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
