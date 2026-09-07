@@ -29,6 +29,7 @@ from dish_pg.repositories import CatalogRepository
 from dish_pg.workflow import WorkflowAuthorityService
 from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
 from sqlalchemy import create_engine, func, inspect, select, update
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from tests.postgresql.test_native_section_content_carry_forward import (
@@ -504,23 +505,32 @@ def test_migrations_repair_historical_null_then_enforce_native_not_null(
         connection.exec_driver_sql(update_trigger)
     engine.dispose()
 
-    command.upgrade(config, "0051_native_dish_state_placement")
-    engine = create_engine(database_url, future=True)
-    factory = sessionmaker(bind=engine, class_=Session, future=True)
-    with session_scope(factory) as session:
-        finalize_native_catalog_runtime_authority(
-            session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
-        )
-        repaired = session.get(
-            models.DishState, (seeded["generation_id"], historical_task_id)
-        )
-        assert repaired is not None
-        assert repaired.section_id == historical_target_section_id
-    engine.dispose()
+    from dish_pg import migrate
 
-    command.upgrade(config, "0052_dish_state_section_not_null")
+    evidence = {"phases": [], "recorded_at": None}
+    journal = type("Journal", (), {"write": lambda self, payload: None})()
+    migrate._run_native_placement_sequence(
+        type(
+            "Args",
+            (),
+            {
+                "database_url": database_url,
+                "expected_database_name": str(make_url(database_url).database),
+            },
+        )(),
+        evidence,
+        journal,
+        "f" * 40,
+    )
+
     engine = create_engine(database_url, future=True)
     try:
+        with Session(engine) as session:
+            repaired = session.get(
+                models.DishState, (seeded["generation_id"], historical_task_id)
+            )
+            assert repaired is not None
+            assert repaired.section_id == historical_target_section_id
         columns = {column["name"]: column for column in inspect(engine).get_columns("dish_states")}
         assert columns["section_id"]["nullable"] is False
         assert any(

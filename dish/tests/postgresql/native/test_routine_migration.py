@@ -111,19 +111,19 @@ def _shadow_args(dsn: str, expected: str, tmp_path: Path) -> list[str]:
     ]
 
 
-def test_one_revision_behind_applies_exact_expected_head(core_db, tmp_path) -> None:
+def test_plain_apply_refuses_release_requiring_native_placement_sequence(core_db, tmp_path) -> None:
     dsn = postgresql_dsn()
     assert dsn is not None
     _reset_to_revision(dsn, PREVIOUS_HEAD)
     status, evidence = _invoke(tmp_path, dsn, mode="apply")
-    assert status == 0
-    assert _heads(dsn) == (ALEMBIC_HEAD,)
+    assert status == 1
+    assert _heads(dsn) == (PREVIOUS_HEAD,)
     assert evidence["before_revisions"] == [PREVIOUS_HEAD]
     assert evidence["expected_revision"] == ALEMBIC_HEAD
-    assert evidence["final_revisions"] == [ALEMBIC_HEAD]
-    assert evidence["mutation_attempted"] is True
-    assert evidence["mutation_occurred"] is True
-    assert evidence["result"] == "applied"
+    assert evidence["final_revisions"] == [PREVIOUS_HEAD]
+    assert evidence["mutation_attempted"] is False
+    assert evidence["mutation_occurred"] is False
+    assert evidence["error"]["rule"] == "native_placement_sequence_required"
 
 
 def test_already_current_is_deterministic_noop(core_db, tmp_path) -> None:
@@ -239,7 +239,9 @@ def test_migration_execution_failure_and_post_apply_mismatch_block_promotion(cor
         raise RuntimeError("injected migration failure password=must-not-leak")
 
     monkeypatch.setattr(migrate.command, "upgrade", fail_upgrade)
-    status, evidence = _invoke(tmp_path, dsn, mode="apply", evidence_name="execution-failure.json")
+    status, evidence = _invoke(
+        tmp_path, dsn, mode="apply-native-placement", evidence_name="execution-failure.json"
+    )
     assert status == 1
     assert evidence["error"]["rule"] == "migration_execution_failed"
     assert evidence["final_revisions"] == [PREVIOUS_HEAD]
@@ -249,9 +251,11 @@ def test_migration_execution_failure_and_post_apply_mismatch_block_promotion(cor
     assert "Do not restart/promote" in evidence["next_action"]
 
     monkeypatch.setattr(migrate.command, "upgrade", lambda *_args, **_kwargs: None)
-    status, evidence = _invoke(tmp_path, dsn, mode="apply", evidence_name="post-mismatch.json")
+    status, evidence = _invoke(
+        tmp_path, dsn, mode="apply-native-placement", evidence_name="post-mismatch.json"
+    )
     assert status == 1
-    assert evidence["error"]["rule"] == "post_apply_revision_mismatch"
+    assert evidence["error"]["rule"] == "phase_revision_mismatch"
     assert evidence["final_revisions"] == [PREVIOUS_HEAD]
     assert evidence["mutation_attempted"] is True
     assert evidence["mutation_occurred"] is None
