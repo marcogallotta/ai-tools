@@ -19,12 +19,15 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
+from .native_catalog_runtime_finalizer import finalize_native_catalog_runtime_authority
 from .release import ALEMBIC_HEAD
 
 DISH_ROOT = Path(__file__).resolve().parents[1]
 _SYSTEM_DATABASES = frozenset({"postgres", "template0", "template1"})
 _MAX_DETAIL = 400
+_NATIVE_PLACEMENT_STAGING_REVISION = "0051_native_dish_state_placement"
 
 
 class RoutineMigrationError(RuntimeError):
@@ -83,6 +86,11 @@ def _parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="preflight only; never mutate")
     mode.add_argument("--apply", action="store_true", help="apply to exact ALEMBIC_HEAD")
+    mode.add_argument(
+        "--apply-native-placement",
+        action="store_true",
+        help="apply 0051, establish and verify the native runtime root, then apply 0052",
+    )
     parser.add_argument(
         "--confirm-database-name",
         help="production apply only: must exactly equal --expected-database-name",
@@ -198,7 +206,10 @@ def _read_database_state(database_url: str) -> tuple[str, tuple[str, ...]]:
     engine = create_engine(database_url, future=True)
     try:
         with engine.connect() as connection:
-            database_name = str(connection.scalar(text("SELECT current_database()")))
+            if connection.dialect.name == "postgresql":
+                database_name = str(connection.scalar(text("SELECT current_database()")))
+            else:
+                database_name = str(make_url(database_url).database or "")
             heads = tuple(sorted(MigrationContext.configure(connection).get_current_heads()))
         return database_name, heads
     finally:
@@ -257,6 +268,7 @@ def _redacted_detail(exc: BaseException, database_url: str) -> str:
 
 
 def _base_evidence(args: argparse.Namespace) -> dict[str, Any]:
+    native_placement = bool(getattr(args, "apply_native_placement", False))
     return {
         "schema": "dish-pg-routine-migration-evidence-v1",
         "recorded_at": _now(),
@@ -269,13 +281,125 @@ def _base_evidence(args: argparse.Namespace) -> dict[str, Any]:
         "before_revisions": None,
         "expected_revision": ALEMBIC_HEAD,
         "final_revisions": None,
-        "mode": "apply" if args.apply else "check",
+        "mode": (
+            "apply_native_placement"
+            if native_placement
+            else ("apply" if args.apply else "check")
+        ),
+        "phases": [],
         "mutation_attempted": False,
         "mutation_occurred": False,
         "result": "preflight_started",
         "error": None,
         "next_action": None,
     }
+
+
+def _finalize_native_placement(database_url: str, source_commit: str) -> None:
+    engine = create_engine(database_url, future=True)
+    try:
+        with Session(engine) as session, session.begin():
+            finalize_native_catalog_runtime_authority(
+                session,
+                source_commit_sha=source_commit,
+            )
+    finally:
+        engine.dispose()
+
+
+def _read_native_placement_state(database_url: str) -> dict[str, int]:
+    engine = create_engine(database_url, future=True)
+    try:
+        with engine.connect() as connection:
+            root_count = int(
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM current_native_catalog_runtimes r "
+                        "JOIN authority_generations g USING (generation_id) "
+                        "WHERE g.status='active'"
+                    )
+                )
+            )
+            null_count = int(
+                connection.scalar(
+                    text("SELECT count(*) FROM dish_states WHERE section_id IS NULL")
+                )
+            )
+        return {"runtime_root_count": root_count, "null_section_count": null_count}
+    finally:
+        engine.dispose()
+
+
+def _require_database_revision(
+    database_url: str,
+    *,
+    expected_database_name: str,
+    expected_revision: str,
+) -> None:
+    observed, revisions = _read_database_state(database_url)
+    if observed != expected_database_name or revisions != (expected_revision,):
+        raise RoutineMigrationError(
+            "phase_revision_mismatch",
+            f"migration phase did not verify exact revision {expected_revision}",
+            next_action=(
+                "Do not restart/promote. Preserve the evidence and diagnose the "
+                "recorded phase before retrying."
+            ),
+        )
+
+
+def _run_native_placement_sequence(
+    args: argparse.Namespace,
+    evidence: dict[str, Any],
+    journal: EvidenceJournal,
+    source_commit: str,
+) -> None:
+    cfg = _alembic_config(args.database_url)
+    phases = evidence["phases"]
+
+    command.upgrade(cfg, _NATIVE_PLACEMENT_STAGING_REVISION)
+    _require_database_revision(
+        args.database_url,
+        expected_database_name=args.expected_database_name,
+        expected_revision=_NATIVE_PLACEMENT_STAGING_REVISION,
+    )
+    phases.append(
+        {
+            "phase": "staging_revision",
+            "result": "verified",
+            "revision": _NATIVE_PLACEMENT_STAGING_REVISION,
+        }
+    )
+    evidence["recorded_at"] = _now()
+    journal.write(evidence)
+
+    _finalize_native_placement(args.database_url, source_commit)
+    placement = _read_native_placement_state(args.database_url)
+    if placement != {"runtime_root_count": 1, "null_section_count": 0}:
+        raise RoutineMigrationError(
+            "native_placement_readback_failed",
+            "native placement finalizer did not establish exactly one runtime root "
+            "with zero NULL placements",
+            next_action=(
+                "Do not apply 0052 or restart/promote. Preserve the evidence and "
+                "diagnose native placement state."
+            ),
+        )
+    phases.append(
+        {"phase": "native_runtime_finalizer", "result": "verified", **placement}
+    )
+    evidence["recorded_at"] = _now()
+    journal.write(evidence)
+
+    command.upgrade(cfg, ALEMBIC_HEAD)
+    _require_database_revision(
+        args.database_url,
+        expected_database_name=args.expected_database_name,
+        expected_revision=ALEMBIC_HEAD,
+    )
+    phases.append(
+        {"phase": "final_revision", "result": "verified", "revision": ALEMBIC_HEAD}
+    )
 
 
 def run(args: argparse.Namespace, journal: EvidenceJournal) -> tuple[dict[str, Any], int]:
@@ -285,11 +409,13 @@ def run(args: argparse.Namespace, journal: EvidenceJournal) -> tuple[dict[str, A
         source_commit = _resolve_source_commit(args.source_commit)
         evidence["source_commit"] = source_commit
         script = _repository_script()
+        native_placement = bool(getattr(args, "apply_native_placement", False))
+        apply_requested = bool(args.apply or native_placement)
         _validate_target(
             environment=args.environment,
             database_url=args.database_url,
             expected_database_name=args.expected_database_name,
-            apply=args.apply,
+            apply=apply_requested,
             confirmation=args.confirm_database_name,
         )
         try:
@@ -318,10 +444,21 @@ def run(args: argparse.Namespace, journal: EvidenceJournal) -> tuple[dict[str, A
             return evidence, 0
         if args.check:
             evidence["result"] = "pending"
-            evidence["next_action"] = "Run the reviewed/authorized --apply command for this exact release, then rerun --check before any service restart."
+            evidence["next_action"] = "Run the reviewed/authorized --apply-native-placement command for this exact release, then rerun --check before any service restart."
             evidence["recorded_at"] = _now()
             journal.write(evidence)
             return evidence, 0
+
+        if args.apply and not native_placement:
+            raise RoutineMigrationError(
+                "native_placement_sequence_required",
+                "this release requires the governed native-placement sequence before "
+                "the final schema revision",
+                next_action=(
+                    "Run the reviewed/authorized --apply-native-placement command for "
+                    "this exact release, then rerun --check before any service restart."
+                ),
+            )
 
         evidence["mutation_attempted"] = True
         evidence["mutation_occurred"] = None
@@ -329,8 +466,7 @@ def run(args: argparse.Namespace, journal: EvidenceJournal) -> tuple[dict[str, A
         evidence["recorded_at"] = _now()
         journal.write(evidence)
         try:
-            cfg = _alembic_config(args.database_url)
-            command.upgrade(cfg, ALEMBIC_HEAD)
+            _run_native_placement_sequence(args, evidence, journal, source_commit)
         except BaseException as exc:
             final: tuple[str, ...] | None = None
             try:
@@ -341,6 +477,8 @@ def run(args: argparse.Namespace, journal: EvidenceJournal) -> tuple[dict[str, A
             except BaseException:
                 evidence["final_revisions"] = None
                 evidence["mutation_occurred"] = None
+            if isinstance(exc, RoutineMigrationError):
+                raise
             raise RoutineMigrationError(
                 "migration_execution_failed",
                 f"Alembic upgrade failed ({type(exc).__name__})",

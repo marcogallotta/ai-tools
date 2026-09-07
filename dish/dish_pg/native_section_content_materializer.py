@@ -50,7 +50,7 @@ def _event_contract(
     generation_id: uuid.UUID,
     migration_event_id: uuid.UUID,
     catalog_version_id: uuid.UUID,
-) -> tuple[models.AppliedMigrationEvent, int]:
+) -> tuple[models.AppliedMigrationEvent, int, uuid.UUID]:
     event = session.get(models.AppliedMigrationEvent, migration_event_id)
     if event is None:
         raise NativeSectionContentMaterializationError(
@@ -65,10 +65,15 @@ def _event_contract(
             "AppliedMigrationEvent is not the exact same-generation applied 0048 event"
         )
     details = event.details if isinstance(event.details, dict) else {}
+    staged_catalog_value = details.get("target_catalog_version_id")
+    try:
+        staged_catalog_version_id = uuid.UUID(str(staged_catalog_value))
+    except (TypeError, ValueError):
+        staged_catalog_version_id = None
     if (
         details.get("decision") != "carry_forward_completed"
         or details.get("generation_id") != str(generation_id)
-        or details.get("target_catalog_version_id") != str(catalog_version_id)
+        or staged_catalog_version_id is None
     ):
         raise NativeSectionContentMaterializationError(
             "0048 AppliedMigrationEvent details do not match the requested materialization"
@@ -78,7 +83,7 @@ def _event_contract(
         raise NativeSectionContentMaterializationError(
             "0048 AppliedMigrationEvent has no valid staged occurrence count"
         )
-    return event, expected_count
+    return event, expected_count, staged_catalog_version_id
 
 
 def _validate_source(
@@ -180,7 +185,7 @@ def materialize_staged_native_section_content(
     content fails before this function writes a new successor row.
     """
 
-    _event, expected_count = _event_contract(
+    _event, expected_count, staged_catalog_version_id = _event_contract(
         session,
         generation_id=generation_id,
         migration_event_id=migration_event_id,
@@ -264,9 +269,9 @@ def materialize_staged_native_section_content(
 
     # Validate the full batch before introducing any new successor artifacts.
     for occurrence in occurrences:
-        if occurrence.target_catalog_version_id != catalog_version_id:
+        if occurrence.target_catalog_version_id != staged_catalog_version_id:
             raise NativeSectionContentMaterializationError(
-                "staged carry-forward occurrence targets a different catalog version"
+                "staged carry-forward occurrence targets a different historical catalog version"
             )
         target_entry = session.get(
             models.SectionCatalogEntry,
@@ -289,9 +294,12 @@ def materialize_staged_native_section_content(
             occurrence,
         )
         state = states[occurrence.task_id]
-        if state.section_id is None or state.section_id not in target_entries:
+        repaired_section_id = (
+            occurrence.target_section_id if state.section_id is None else state.section_id
+        )
+        if repaired_section_id not in target_entries:
             raise NativeSectionContentMaterializationError(
-                "current DishState placement is not representable in the staged target catalog"
+                "current DishState placement is not representable in the current target catalog"
             )
 
         successor_id = materialized_content_version_id(occurrence.carry_forward_id)
@@ -411,6 +419,11 @@ def materialize_staged_native_section_content(
             )
             .values(
                 current_content_version_id=successor_id,
+                section_id=(
+                    occurrence.target_section_id
+                    if state.section_id is None
+                    else state.section_id
+                ),
                 catalog_version_id=catalog_version_id,
                 dish_version=next_version,
                 placement_version=next_version,

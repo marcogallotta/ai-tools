@@ -61,6 +61,15 @@ def _add_verification_queue(session, ids, context) -> uuid.UUID:
         )
     )
     session.add(
+        models.Section(
+            section_id=section_id,
+            logical_name=f"legacy-verification-{section_id}",
+            lifecycle="active",
+            created_at=NOW,
+            retired_at=None,
+        )
+    )
+    session.add(
         models.SectionExternalAlias(
             alias_id=_next(ids),
             section_id=section_id,
@@ -97,6 +106,15 @@ def _add_destination_section(session, ids, context, *, external_id="12345") -> u
             logical_name="Sichuan",
             lifecycle="active",
             import_run_id=context["import_run_id"],
+            created_at=NOW,
+            retired_at=None,
+        )
+    )
+    session.add(
+        models.Section(
+            section_id=section_id,
+            logical_name=f"legacy-destination-{section_id}",
+            lifecycle="active",
             created_at=NOW,
             retired_at=None,
         )

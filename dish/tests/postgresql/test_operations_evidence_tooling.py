@@ -53,7 +53,7 @@ def _fingerprint(path: Path, *, digest: str, row_count: int = 1) -> None:
 
 
 def test_bootstrap_default_tracks_current_release_head() -> None:
-    assert DEFAULT_SCHEMA_HEAD == ALEMBIC_HEAD == "0050_native_catalog_runtime_authority_switch"
+    assert DEFAULT_SCHEMA_HEAD == ALEMBIC_HEAD == "0052_dish_state_section_not_null"
 
 
 def test_0050_schema_revision_does_not_implicitly_execute_runtime_finalizer() -> None:

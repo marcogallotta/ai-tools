@@ -163,15 +163,16 @@ def _fixture(
     catalog_v1_id = _next(ids)
     catalog_v1_activation_id = _next(ids)
     catalog = CatalogRepository(session)
-    catalog.add_section(
-        models.Section(
-            section_id=seeded["section_id"],
-            logical_name="Research Queue",
-            lifecycle="active",
-            created_at=NOW,
-            retired_at=None,
+    if session.get(models.Section, seeded["section_id"]) is None:
+        catalog.add_section(
+            models.Section(
+                section_id=seeded["section_id"],
+                logical_name="Research Queue",
+                lifecycle="active",
+                created_at=NOW,
+                retired_at=None,
+            )
         )
-    )
     catalog.install_catalog_revision(
         version=models.SectionCatalogVersion(
             catalog_version_id=catalog_v1_id,

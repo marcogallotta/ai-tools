@@ -1123,8 +1123,10 @@ class DishState(Base):
         Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT"), primary_key=True
     )
     current_content_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    section_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("governed_sections.section_id", ondelete="RESTRICT")
+    section_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("sections.section_id", ondelete="RESTRICT"),
+        nullable=False,
     )
     registry_version_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT"), nullable=False
@@ -1620,8 +1622,12 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "r.placement_changed <> (r.dish_version=NEW.placement_version) OR "
             "r.completion_changed <> (r.dish_version=NEW.completion_version) OR "
             "r.archive_changed)) OR "
-            "NOT EXISTS (SELECT 1 FROM section_registry_entries e WHERE e.registry_version_id=NEW.registry_version_id "
-            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)) OR "
+            "NOT ((NEW.catalog_version_id IS NULL AND EXISTS (SELECT 1 FROM section_registry_entries e "
+            "WHERE e.registry_version_id=NEW.registry_version_id "
+            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id))) OR "
+            "(NEW.catalog_version_id IS NOT NULL AND NEW.section_id IS NOT NULL AND EXISTS "
+            "(SELECT 1 FROM section_catalog_entries e WHERE e.catalog_version_id=NEW.catalog_version_id "
+            "AND e.section_id=NEW.section_id))) OR "
             "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
             "AND r.task_id=NEW.task_id AND r.dish_version=NEW.completion_version "
             "AND ((r.source_route='import' AND NEW.completion_reason='imported') OR "
@@ -1660,7 +1666,8 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "AND r.archive_changed = (NEW.archived_at IS NOT OLD.archived_at) "
             "AND (r.archive_changed=0 OR r.source_route='command_execution')) OR "
             "((NEW.placement_version = OLD.placement_version) AND "
-            "(NEW.section_id IS NOT OLD.section_id OR NEW.registry_version_id <> OLD.registry_version_id)) OR "
+            "(NEW.section_id IS NOT OLD.section_id OR NEW.registry_version_id <> OLD.registry_version_id "
+            "OR NEW.catalog_version_id IS NOT OLD.catalog_version_id)) OR "
             "((NEW.placement_version <> OLD.placement_version) AND NEW.placement_version <> NEW.dish_version) OR "
             "((NEW.completion_version = OLD.completion_version) AND "
             "(NEW.completed <> OLD.completed OR NEW.completion_reason <> OLD.completion_reason)) OR "
@@ -1671,8 +1678,12 @@ def _install_sqlite_scalar_authority_triggers() -> None:
             "AND cv.content_version_id=NEW.current_content_version_id "
             "AND ((NEW.current_content_version_id=OLD.current_content_version_id) OR cv.created_dish_version=NEW.dish_version) "
             "AND " + source_match + ") OR "
-            "NOT EXISTS (SELECT 1 FROM section_registry_entries e WHERE e.registry_version_id=NEW.registry_version_id "
-            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id)) OR "
+            "NOT ((NEW.catalog_version_id IS NULL AND EXISTS (SELECT 1 FROM section_registry_entries e "
+            "WHERE e.registry_version_id=NEW.registry_version_id "
+            "AND (NEW.section_id IS NULL OR e.section_id=NEW.section_id))) OR "
+            "(NEW.catalog_version_id IS NOT NULL AND NEW.section_id IS NOT NULL AND EXISTS "
+            "(SELECT 1 FROM section_catalog_entries e WHERE e.catalog_version_id=NEW.catalog_version_id "
+            "AND e.section_id=NEW.section_id))) OR "
             "NOT EXISTS (SELECT 1 FROM dish_mutation_receipts r WHERE r.generation_id=NEW.generation_id "
             "AND r.task_id=NEW.task_id AND r.dish_version=NEW.completion_version "
             "AND ((r.source_route='import' AND NEW.completion_reason='imported') OR "
@@ -1697,19 +1708,27 @@ def _validate_sqlite_active_registry_bindings(session: Session) -> None:
         row[0]
         for row in connection.exec_driver_sql(
             "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name IN ('dish_states','active_section_registries','section_registry_entries')"
+            "AND name IN ('dish_states','active_section_registries','section_registry_entries','section_catalog_entries')"
         )
     }
-    if tables != {"dish_states", "active_section_registries", "section_registry_entries"}:
+    if tables != {
+        "dish_states",
+        "active_section_registries",
+        "section_registry_entries",
+        "section_catalog_entries",
+    }:
         return
     session.flush()
     mismatch = connection.exec_driver_sql(
         "SELECT 1 FROM dish_states s "
         "LEFT JOIN active_section_registries a ON a.generation_id=s.generation_id "
-        "WHERE a.generation_id IS NULL OR a.registry_version_id<>s.registry_version_id "
-        "OR (s.section_id IS NOT NULL AND NOT EXISTS ("
-        "SELECT 1 FROM section_registry_entries e "
-        "WHERE e.registry_version_id=s.registry_version_id AND e.section_id=s.section_id)) "
+        "WHERE (s.catalog_version_id IS NULL AND (a.generation_id IS NULL "
+        "OR a.registry_version_id<>s.registry_version_id "
+        "OR (s.section_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM section_registry_entries e "
+        "WHERE e.registry_version_id=s.registry_version_id AND e.section_id=s.section_id)))) "
+        "OR (s.catalog_version_id IS NOT NULL AND (s.section_id IS NULL OR NOT EXISTS ("
+        "SELECT 1 FROM section_catalog_entries e WHERE e.catalog_version_id=s.catalog_version_id "
+        "AND e.section_id=s.section_id))) "
         "LIMIT 1"
     ).first()
     if mismatch is not None:

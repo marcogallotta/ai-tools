@@ -5,10 +5,12 @@ from __future__ import annotations
 import re
 import subprocess
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import pairwise
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -194,6 +196,23 @@ def _require_0048_event(
     details = event.details if isinstance(event.details, dict) else {}
     counts = _require_inventory_counts(details.get("inventory_counts"))
     staged_count = details.get("staged_occurrence_count")
+    staged_catalog_id = details.get("target_catalog_version_id")
+    staged_activation_id = details.get("target_catalog_activation_id")
+    staged_revision = details.get("target_catalog_revision")
+    try:
+        staged_catalog_uuid = uuid.UUID(str(staged_catalog_id))
+        staged_activation_uuid = uuid.UUID(str(staged_activation_id))
+    except (TypeError, ValueError) as exc:
+        raise NativeCatalogRuntimeFinalizerError(
+            "0048 migration event has invalid staged catalog identity"
+        ) from exc
+    staged_catalog = session.get(models.SectionCatalogVersion, staged_catalog_uuid)
+    staged_activation = session.get(
+        models.SectionCatalogActivation, staged_activation_uuid
+    )
+    current_catalog = session.get(
+        models.SectionCatalogVersion, catalog.catalog_version_id
+    )
     if (
         event.predecessor_revision != CARRY_FORWARD_PREDECESSOR
         or event.migration_code_sha256 != migration_revision_sha256(CARRY_FORWARD_REVISION)
@@ -202,10 +221,6 @@ def _require_0048_event(
         or details.get("decision") != "carry_forward_completed"
         or details.get("repository") != REPOSITORY
         or details.get("generation_id") != str(generation_id)
-        or details.get("target_catalog_version_id") != str(catalog.catalog_version_id)
-        or details.get("target_catalog_activation_id")
-        != str(catalog.catalog_activation_id)
-        or details.get("target_catalog_revision") != catalog.catalog_revision
         or details.get("honest_contract_binding_id") != str(contract_binding_id)
         or details.get("runtime_switched") is not False
         or details.get("current_dish_state_mutated") is not False
@@ -215,6 +230,64 @@ def _require_0048_event(
     ):
         raise NativeCatalogRuntimeFinalizerError(
             "0048 migration event does not match the reviewed active-generation inventory/catalog gate"
+        )
+
+    if (
+        not isinstance(staged_revision, int)
+        or isinstance(staged_revision, bool)
+        or staged_catalog is None
+        or staged_catalog.generation_id != generation_id
+        or staged_catalog.contract_binding_id != contract_binding_id
+        or staged_activation is None
+        or staged_activation.generation_id != generation_id
+        or staged_activation.catalog_version_id != staged_catalog_uuid
+        or staged_activation.catalog_revision != staged_revision
+        or current_catalog is None
+        or current_catalog.generation_id != generation_id
+        or current_catalog.contract_binding_id != contract_binding_id
+        or catalog.catalog_revision < staged_revision
+    ):
+        raise NativeCatalogRuntimeFinalizerError(
+            "0048 staged catalog is not compatible with the current active catalog"
+        )
+
+    lineage = tuple(
+        session.scalars(
+            select(models.SectionCatalogActivation)
+            .where(
+                models.SectionCatalogActivation.generation_id == generation_id,
+                models.SectionCatalogActivation.catalog_revision >= staged_revision,
+                models.SectionCatalogActivation.catalog_revision
+                <= catalog.catalog_revision,
+            )
+            .order_by(models.SectionCatalogActivation.catalog_revision)
+        )
+    )
+    if (
+        tuple(item.catalog_revision for item in lineage)
+        != tuple(range(staged_revision, catalog.catalog_revision + 1))
+        or not lineage
+        or lineage[0].catalog_activation_id != staged_activation_uuid
+        or lineage[-1].catalog_activation_id != catalog.catalog_activation_id
+    ):
+        raise NativeCatalogRuntimeFinalizerError(
+            "0048 staged catalog does not have contiguous lineage to the current active catalog"
+        )
+    lineage_versions = tuple(
+        session.get(models.SectionCatalogVersion, item.catalog_version_id)
+        for item in lineage
+    )
+    if any(
+        version is None
+        or version.generation_id != generation_id
+        or version.contract_binding_id != contract_binding_id
+        for version in lineage_versions
+    ) or any(
+        later.version_number != earlier.version_number + 1
+        for earlier, later in pairwise(lineage_versions)
+    ):
+        raise NativeCatalogRuntimeFinalizerError(
+            "0048 staged catalog lineage changed generation, Honest binding, or version continuity"
         )
     return event, counts
 
@@ -323,6 +396,20 @@ def _validate_root(
     return attestation
 
 
+def _require_complete_section_placement(
+    session: Session, generation_id: uuid.UUID
+) -> None:
+    if session.scalar(
+        select(models.DishState.task_id).where(
+            models.DishState.generation_id == generation_id,
+            models.DishState.section_id.is_(None),
+        ).limit(1)
+    ) is not None:
+        raise NativeCatalogRuntimeFinalizerError(
+            "native runtime finalizer readback found a DishState without canonical Section placement"
+        )
+
+
 def finalize_native_catalog_runtime_authority(
     session: Session,
     *,
@@ -414,6 +501,7 @@ def finalize_native_catalog_runtime_authority(
             contract_binding_id=contract.honest_binding.binding_id,
             event=existing_event,
         )
+        _require_complete_section_placement(session, generation.generation_id)
         return NativeCatalogRuntimeFinalizerResult(
             generation_id=generation.generation_id,
             migration_event_id=existing_event.migration_event_id,
@@ -506,6 +594,7 @@ def finalize_native_catalog_runtime_authority(
         contract_binding_id=contract.honest_binding.binding_id,
         event=event,
     )
+    _require_complete_section_placement(session, generation.generation_id)
     return NativeCatalogRuntimeFinalizerResult(
         generation_id=generation.generation_id,
         migration_event_id=event.migration_event_id,

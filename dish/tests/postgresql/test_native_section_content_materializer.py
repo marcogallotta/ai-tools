@@ -3,11 +3,11 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select, update
-from sqlalchemy.orm import Session
-
+from alembic import command
+from alembic.config import Config
 from dish_pg import models
 from dish_pg.database import session_scope
 from dish_pg.native_catalog_runtime_finalizer import (
@@ -25,8 +25,13 @@ from dish_pg.native_section_content_materializer import (
     materialize_staged_native_section_content,
     materialized_content_version_id,
 )
+from dish_pg.repositories import CatalogRepository
 from dish_pg.workflow import WorkflowAuthorityService
 from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
+from sqlalchemy import create_engine, func, inspect, select, update
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session, sessionmaker
+
 from tests.postgresql.test_native_section_content_carry_forward import (
     NOW,
     SOURCE_COMMIT,
@@ -38,6 +43,8 @@ from tests.support.postgresql.workflow import _admit, _execution, _register_run
 
 pytestmark = pytest.mark.database_boundary
 pytest_plugins = ("tests.support.postgresql.core",)
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +136,95 @@ def _complete_after_staging(
     assert changed.rowcount == 1
     session.flush()
     return next_version
+
+
+def _install_successor_catalog(
+    session: Session,
+    ids: Iterator[uuid.UUID],
+    *,
+    seeded,
+    expectation,
+    rename_target: uuid.UUID | None = None,
+    omit_target: uuid.UUID | None = None,
+) -> uuid.UUID:
+    current = session.get(
+        models.ActiveSectionCatalog, seeded["generation_id"]
+    )
+    base = session.get(
+        models.SectionCatalogVersion, expectation.base_catalog_version_id
+    )
+    assert current is not None and base is not None
+    version_id, activation_id, added_section_id = _next(ids), _next(ids), _next(ids)
+    session.add(
+        models.Section(
+            section_id=added_section_id,
+            logical_name=f"additive-{added_section_id}",
+            lifecycle="active",
+            created_at=NOW,
+            retired_at=None,
+        )
+    )
+    session.flush()
+    entries = []
+    for entry in session.scalars(
+        select(models.SectionCatalogEntry)
+        .where(
+            models.SectionCatalogEntry.catalog_version_id
+            == expectation.base_catalog_version_id
+        )
+        .order_by(models.SectionCatalogEntry.ordinal)
+    ):
+        if entry.section_id == omit_target:
+            continue
+        entries.append(
+            models.SectionCatalogEntry(
+                catalog_version_id=version_id,
+                section_id=entry.section_id,
+                ordinal=len(entries),
+                display_name=(
+                    f"{entry.display_name} renamed"
+                    if entry.section_id == rename_target
+                    else entry.display_name
+                ),
+                workflow_role=entry.workflow_role,
+            )
+        )
+    entries.append(
+        models.SectionCatalogEntry(
+            catalog_version_id=version_id,
+            section_id=added_section_id,
+            ordinal=len(entries),
+            display_name="Additive Section",
+            workflow_role="additive_role",
+        )
+    )
+    CatalogRepository(session).install_catalog_revision(
+        version=models.SectionCatalogVersion(
+            catalog_version_id=version_id,
+            generation_id=seeded["generation_id"],
+            version_number=base.version_number + 1,
+            contract_binding_id=base.contract_binding_id,
+            catalog_sha256="e" * 64,
+            source_registry_version_id=None,
+            transform_sha256=None,
+            created_at=NOW + timedelta(minutes=2),
+        ),
+        entries=entries,
+        activation=models.SectionCatalogActivation(
+            catalog_activation_id=activation_id,
+            generation_id=seeded["generation_id"],
+            catalog_version_id=version_id,
+            activation_route="recovery",
+            import_run_id=None,
+            command_execution_id=None,
+            catalog_revision=current.catalog_revision + 1,
+            activated_at=NOW + timedelta(minutes=2),
+        ),
+        expected_catalog_version_id=current.catalog_version_id,
+        expected_catalog_activation_id=current.catalog_activation_id,
+        expected_catalog_revision=current.catalog_revision,
+    )
+    return version_id
 
 
 def test_materializes_staged_successors_inside_caller_transaction(core_db) -> None:
@@ -350,6 +446,127 @@ def test_finalizer_rebases_after_committed_completion_only_command(core_db) -> N
         assert retry.materialization.already_materialized_count == 23
 
 
+def test_finalizer_roots_compatible_additive_successor_catalog(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        seeded, expectation, _, _event_id, occurrences = _stage_pr3(session, ids)
+        successor_id = _install_successor_catalog(
+            session,
+            ids,
+            seeded=seeded,
+            expectation=expectation,
+        )
+        result = finalize_native_catalog_runtime_authority(
+            session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
+        )
+        assert result.catalog_version_id == successor_id
+        assert result.materialization.materialized_count == len(occurrences)
+        assert all(
+            session.get(
+                models.DishState,
+                (seeded["generation_id"], occurrence.task_id),
+            ).catalog_version_id
+            == successor_id
+            for occurrence in occurrences
+        )
+
+
+def test_migrations_repair_historical_null_then_enforce_native_not_null(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'native-placement.sqlite3'}"
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0050_native_catalog_runtime_authority_switch")
+
+    engine = create_engine(database_url, future=True)
+    factory = sessionmaker(bind=engine, class_=Session, future=True)
+    ids = (uuid.UUID(int=value) for value in range(1, 1000))
+    with session_scope(factory) as session:
+        seeded, _expectation, _, _event_id, occurrences = _stage_pr3(session, ids)
+        historical = occurrences[0]
+        historical_task_id = historical.task_id
+        historical_target_section_id = historical.target_section_id
+        connection = session.connection()
+        update_trigger = connection.exec_driver_sql(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='dish_states_validate_update'"
+        ).scalar_one()
+        connection.exec_driver_sql("DROP TRIGGER dish_states_validate_update")
+        session.execute(
+            update(models.DishState)
+            .where(
+                models.DishState.generation_id == seeded["generation_id"],
+                models.DishState.task_id == historical.task_id,
+            )
+            .values(section_id=None)
+            .execution_options(synchronize_session=False)
+        )
+        connection.exec_driver_sql(update_trigger)
+    engine.dispose()
+
+    from dish_pg import migrate
+
+    evidence = {"phases": [], "recorded_at": None}
+    journal = type("Journal", (), {"write": lambda self, payload: None})()
+    migrate._run_native_placement_sequence(
+        type(
+            "Args",
+            (),
+            {
+                "database_url": database_url,
+                "expected_database_name": str(make_url(database_url).database),
+            },
+        )(),
+        evidence,
+        journal,
+        "f" * 40,
+    )
+
+    engine = create_engine(database_url, future=True)
+    try:
+        with Session(engine) as session:
+            repaired = session.get(
+                models.DishState, (seeded["generation_id"], historical_task_id)
+            )
+            assert repaired is not None
+            assert repaired.section_id == historical_target_section_id
+        columns = {column["name"]: column for column in inspect(engine).get_columns("dish_states")}
+        assert columns["section_id"]["nullable"] is False
+        assert any(
+            foreign_key["constrained_columns"] == ["section_id"]
+            and foreign_key["referred_table"] == "sections"
+            for foreign_key in inspect(engine).get_foreign_keys("dish_states")
+        )
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("change", ("rename", "remove"))
+def test_finalizer_rejects_incompatible_staged_destination_successor(
+    core_db, change
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        seeded, expectation, _, _event_id, occurrences = _stage_pr3(session, ids)
+        target = occurrences[0].target_section_id
+        _install_successor_catalog(
+            session,
+            ids,
+            seeded=seeded,
+            expectation=expectation,
+            rename_target=target if change == "rename" else None,
+            omit_target=target if change == "remove" else None,
+        )
+        with pytest.raises(
+            NativeCatalogRuntimeFinalizerError,
+            match="destination is not the exact target catalog entry",
+        ):
+            finalize_native_catalog_runtime_authority(
+                session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
+            )
+
+
 def test_rebased_finalizer_failure_rolls_back_all_new_authority(
     core_db, monkeypatch
 ) -> None:
@@ -380,11 +597,10 @@ def test_rebased_finalizer_failure_rolls_back_all_new_authority(
     with pytest.raises(
         NativeCatalogRuntimeFinalizerError,
         match="injected failure after rebased staged materialization",
-    ):
-        with session_scope(factory) as session:
-            finalize_native_catalog_runtime_authority(
-                session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
-            )
+    ), session_scope(factory) as session:
+        finalize_native_catalog_runtime_authority(
+            session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
+        )
 
     with session_scope(factory) as session:
         assert session.scalar(
