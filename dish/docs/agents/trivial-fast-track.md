@@ -113,6 +113,12 @@ falls back to the normal lifecycle. Do not silently widen the authorization.
      separately authorized action. Before landing, Integration requires the exact risk-selected
      validation: meaningful readback where tests add no evidence, or focused executable proof for
      product/runtime and comparable high-consequence behavior.
+     On local Claude Code/Codex, when Review is not skipped and subagents are available, dispatch
+     the fresh independent Reviewer immediately after publication and carry a `MERGE` verdict
+     straight through the authorized local Integration path. Do not stop for Marco to relay the
+     Review or Integration handoff. Observe CI in parallel and apply the Integration contract's
+     candidate-failure/baseline-debt distinction; log disproportionate CI work as Development
+     Workflow Friction without turning that capture into a landing gate.
 
 ## Mechanical enforcement
 

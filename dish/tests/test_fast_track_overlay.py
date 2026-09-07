@@ -35,7 +35,11 @@ def test_fast_track_policy_routes_to_the_current_trivial_procedure():
     manifest,source=kernels.load_canonical()
     for role in source['roles']:
         rendered=kernels.render_role(manifest,source,role)
-        assert 'Fast-track: read triggered Procedure.' in rendered
+        assert 'Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`.' in rendered
+
+    assert 'fresh independent Reviewer immediately after publication' in procedure
+    assert 'disproportionate CI work' in procedure
+    assert 'Workflow Friction without turning that capture into a landing gate' in procedure
 
 
 def _worker_profile():
