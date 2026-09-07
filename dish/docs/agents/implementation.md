@@ -48,7 +48,7 @@ Day-one branch rules:
 - Claude Code/Codex local implementation uses the shared `tools/agent-worktree` lifecycle so one task attempt has one durable external linked worktree, one owned branch, and task-keyed recoverability state under `~/.local/state/dish/worktrees/`; do not create a competing host-specific lifecycle;
 - replacement local agents resume the same task record/branch/worktree after explicit orchestration handoff; takeover changes local provenance only and does not infer agent liveness;
 - ChatGPT uses only the authorized GitHub connector defined in
-  [`repository-routing.md`](repository-routing.md#github-integration-identity) as repository
+  [`repository-routing.md`](repository-routing.md#github-connector-routing) as repository
   source/history authority and may perform the branch/commit/PR flow through it;
 - do not reuse a branch whose PR was merged, closed, abandoned, or superseded for unrelated work;
 - local worktree cleanup goes through the shared lifecycle only after disposition is established by GitHub/Asana authority; it must refuse dirty, ambiguous, or unrecoverable state and must not remove the only recovery pointer.
@@ -119,7 +119,7 @@ If the task has moved projects or its live Asana URL is available, prefer the cu
 Host tooling differs, but the artifact contract does not:
 
 - **ChatGPT:** use only the authorized GitHub connector defined in
-  [`repository-routing.md`](repository-routing.md#github-integration-identity) for source/history
+  [`repository-routing.md`](repository-routing.md#github-connector-routing) for source/history
   and branch/commit/PR operations;
 - **Claude Code/Codex:** use the live checkout plus the repository-owned `tools/agent-worktree` lifecycle for local branch/worktree freshness, ownership, publication, and handoff verification, then open/update the GitHub PR.
 
