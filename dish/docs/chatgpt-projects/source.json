@@ -359,8 +359,7 @@
         "preload": {
           "additional": [
             "dish/docs/agents/contributor-base.md"
-          ],
-          "role_index_contracts": true
+          ]
         },
         "triggered_reads": {
           "Development Workflow gate / fixture / publication classification": [
@@ -410,7 +409,7 @@
           "id": "development-workflow-boundary",
           "impact": "additive",
           "surface": "authority",
-          "text": "Own dev mechanics; acting roles classify PRs and hand off work; landing is local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only."
+          "text": "Own dev mechanics with current-role + triggered context; acting roles classify PRs and hand off work; landing is local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only."
         },
         {
           "action_boundaries": [
