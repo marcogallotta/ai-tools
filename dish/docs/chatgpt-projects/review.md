@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-a81291d07d74
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-29e191df31ef
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
@@ -24,6 +24,7 @@ Triggered policy reads (before the governed action):
 - phase-gate / Integration evidence -> `dish/docs/agents/review.md#Evidence and integration gates`
 - review routing / BLOCK -> `dish/docs/agents/review.md#Blocker fixes and recheck` + `#Review claims and manual routing` + `#Worker BLOCK`
 - Review V4 material review / findings -> `dish/docs/agents/review.md#Review V4 governing contract`
+- Human Review / consequential choice -> `dish/docs/agents/review.md#Human Review timing and deferral`
 
 Work chat: after mandatory startup, apply root `CLAUDE.md` `## Work chat`; until grounded, be concise and lead with result/action/blocker/decision.
 

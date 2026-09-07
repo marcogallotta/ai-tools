@@ -66,6 +66,8 @@ def decision_identity(*, task_gid: str, revision: str, question: str) -> str:
 
 
 def parse_decision_packet(task: Mapping[str, Any]) -> DecisionPacket | None:
+    if task.get("completed") is True:
+        return None
     name = str(task.get("name") or "")
     notes = str(task.get("notes") or "")
     memberships = task.get("memberships") or []
@@ -109,6 +111,13 @@ def decision_surface_due(
     stories: Iterable[Mapping[str, Any]],
     now: datetime,
 ) -> str | None:
+    stories = list(stories)
+    if any(
+        (match := _RESOLUTION_RE.search(str(story.get("text") or "")))
+        and match.group("id") == packet.decision_id
+        for story in stories
+    ):
+        return None
     surfaces = _surface_times(stories, packet.decision_id)
     if "initial" not in surfaces:
         return "initial"
