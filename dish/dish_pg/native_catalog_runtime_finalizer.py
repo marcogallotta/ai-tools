@@ -16,6 +16,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import models
+from .native_history_placement_repair import (
+    LEGACY_0048_LABEL_CORRECTIONS,
+    NativeHistoryPlacementRepairError,
+    NativeHistoryPlacementRepairResult,
+    apply_native_history_placement_repair,
+    prepare_native_history_placement_repair,
+)
 from .native_section_carry_forward import (
     CARRY_FORWARD_PREDECESSOR,
     CARRY_FORWARD_REVISION,
@@ -124,7 +131,9 @@ def _lock_active_generation(session: Session) -> models.AuthorityGeneration:
     )
     if session.get_bind().dialect.name == "postgresql":
         statement = statement.with_for_update()
-    generations = tuple(session.scalars(statement.execution_options(populate_existing=True)))
+    generations = tuple(
+        session.scalars(statement.execution_options(populate_existing=True))
+    )
     if len(generations) != 1:
         raise NativeCatalogRuntimeFinalizerError(
             "native runtime finalizer requires exactly one active authority generation"
@@ -215,7 +224,8 @@ def _require_0048_event(
     )
     if (
         event.predecessor_revision != CARRY_FORWARD_PREDECESSOR
-        or event.migration_code_sha256 != migration_revision_sha256(CARRY_FORWARD_REVISION)
+        or event.migration_code_sha256
+        != migration_revision_sha256(CARRY_FORWARD_REVISION)
         or details.get("authority_transition")
         != "native_section_content_carry_forward_v1"
         or details.get("decision") != "carry_forward_completed"
@@ -328,6 +338,7 @@ def _event_details_match(
     contract_binding_id: uuid.UUID,
     source_commit_sha: str,
     inventory_gate: Mapping[str, Any],
+    placement_repair_gate: Mapping[str, Any] | None,
     migration_code_sha256: str,
 ) -> bool:
     details = event.details if isinstance(event.details, dict) else {}
@@ -345,6 +356,8 @@ def _event_details_match(
         and details.get("catalog_version_id") == str(catalog.catalog_version_id)
         and details.get("honest_contract_binding_id") == str(contract_binding_id)
         and details.get("inventory_gate") == dict(inventory_gate)
+        and details.get("placement_repair_gate")
+        == (None if placement_repair_gate is None else dict(placement_repair_gate))
     )
 
 
@@ -399,12 +412,17 @@ def _validate_root(
 def _require_complete_section_placement(
     session: Session, generation_id: uuid.UUID
 ) -> None:
-    if session.scalar(
-        select(models.DishState.task_id).where(
-            models.DishState.generation_id == generation_id,
-            models.DishState.section_id.is_(None),
-        ).limit(1)
-    ) is not None:
+    if (
+        session.scalar(
+            select(models.DishState.task_id)
+            .where(
+                models.DishState.generation_id == generation_id,
+                models.DishState.section_id.is_(None),
+            )
+            .limit(1)
+        )
+        is not None
+    ):
         raise NativeCatalogRuntimeFinalizerError(
             "native runtime finalizer readback found a DishState without canonical Section placement"
         )
@@ -428,7 +446,9 @@ def finalize_native_catalog_runtime_authority(
         )
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None or now.utcoffset() is None:
-        raise NativeCatalogRuntimeFinalizerError("finalizer timestamp must be timezone-aware")
+        raise NativeCatalogRuntimeFinalizerError(
+            "finalizer timestamp must be timezone-aware"
+        )
 
     generation = _lock_active_generation(session)
     locked_catalog = _lock_active_catalog(session, generation.generation_id)
@@ -467,22 +487,43 @@ def finalize_native_catalog_runtime_authority(
         )
     )
 
+    try:
+        repair_plan = prepare_native_history_placement_repair(
+            session,
+            generation=generation,
+            catalog=locked_catalog,
+            contract_binding_id=contract.honest_binding.binding_id,
+            now=now,
+        )
+    except NativeHistoryPlacementRepairError as exc:
+        raise NativeCatalogRuntimeFinalizerError(str(exc)) from exc
+    if (
+        repair_plan is not None
+        and repair_plan.catalog_version_id != locked_catalog.catalog_version_id
+    ):
+        locked_catalog = _lock_active_catalog(session, generation.generation_id)
+        try:
+            contract = CatalogRepository(session).active_catalog_contract(
+                generation.generation_id
+            )
+        except CoreAuthorityError as exc:
+            raise NativeCatalogRuntimeFinalizerError(str(exc)) from exc
+        carry_event, counts = _require_0048_event(
+            session,
+            generation_id=generation.generation_id,
+            catalog=locked_catalog,
+            contract_binding_id=contract.honest_binding.binding_id,
+        )
+        gate = _inventory_gate(carry_event, counts)
+
+    label_corrections = (
+        LEGACY_0048_LABEL_CORRECTIONS if repair_plan is not None else None
+    )
+
     if existing_event is not None or pointer is not None or existing_attestations:
         if existing_event is None or pointer is None:
             raise NativeCatalogRuntimeFinalizerError(
                 "partial native runtime authority state exists; finalizer refuses repair"
-            )
-        if not _event_details_match(
-            existing_event,
-            generation=generation,
-            catalog=locked_catalog,
-            contract_binding_id=contract.honest_binding.binding_id,
-            source_commit_sha=source_commit_sha,
-            inventory_gate=gate,
-            migration_code_sha256=code_sha,
-        ):
-            raise NativeCatalogRuntimeFinalizerError(
-                "existing native runtime finalizer event conflicts with this exact run"
             )
         try:
             materialization = materialize_staged_native_section_content(
@@ -491,9 +532,36 @@ def finalize_native_catalog_runtime_authority(
                 migration_event_id=carry_event.migration_event_id,
                 catalog_version_id=locked_catalog.catalog_version_id,
                 materialized_at=existing_event.terminal_at,
+                destination_label_corrections=label_corrections,
             )
         except NativeSectionContentMaterializationError as exc:
             raise NativeCatalogRuntimeFinalizerError(str(exc)) from exc
+        repair_result: NativeHistoryPlacementRepairResult | None = None
+        if repair_plan is not None:
+            try:
+                repair_result = apply_native_history_placement_repair(
+                    session,
+                    plan=repair_plan,
+                    generation=generation,
+                    repaired_at=existing_event.terminal_at,
+                )
+            except NativeHistoryPlacementRepairError as exc:
+                raise NativeCatalogRuntimeFinalizerError(str(exc)) from exc
+        if not _event_details_match(
+            existing_event,
+            generation=generation,
+            catalog=locked_catalog,
+            contract_binding_id=contract.honest_binding.binding_id,
+            source_commit_sha=source_commit_sha,
+            inventory_gate=gate,
+            placement_repair_gate=(
+                None if repair_result is None else repair_result.gate
+            ),
+            migration_code_sha256=code_sha,
+        ):
+            raise NativeCatalogRuntimeFinalizerError(
+                "existing native runtime finalizer event conflicts with this exact run"
+            )
         attestation = _validate_root(
             session,
             generation=generation,
@@ -512,8 +580,34 @@ def finalize_native_catalog_runtime_authority(
             inserted=False,
         )
 
+    try:
+        materialization = materialize_staged_native_section_content(
+            session,
+            generation_id=generation.generation_id,
+            migration_event_id=carry_event.migration_event_id,
+            catalog_version_id=locked_catalog.catalog_version_id,
+            materialized_at=now,
+            destination_label_corrections=label_corrections,
+        )
+    except NativeSectionContentMaterializationError as exc:
+        raise NativeCatalogRuntimeFinalizerError(str(exc)) from exc
+
+    repair_result = None
+    if repair_plan is not None:
+        try:
+            repair_result = apply_native_history_placement_repair(
+                session,
+                plan=repair_plan,
+                generation=generation,
+                repaired_at=now,
+            )
+        except NativeHistoryPlacementRepairError as exc:
+            raise NativeCatalogRuntimeFinalizerError(str(exc)) from exc
+
     event = models.AppliedMigrationEvent(
-        migration_event_id=_deterministic_id(generation.generation_id, "migration-event"),
+        migration_event_id=_deterministic_id(
+            generation.generation_id, "migration-event"
+        ),
         generation_id=generation.generation_id,
         revision=FINALIZER_REVISION,
         predecessor_revision=FINALIZER_PREDECESSOR,
@@ -533,23 +627,17 @@ def finalize_native_catalog_runtime_authority(
             "catalog_version_id": str(locked_catalog.catalog_version_id),
             "honest_contract_binding_id": str(contract.honest_binding.binding_id),
             "inventory_gate": gate,
+            "placement_repair_gate": (
+                None if repair_result is None else repair_result.gate
+            ),
         },
     )
     session.add(event)
     session.flush()
 
-    try:
-        materialization = materialize_staged_native_section_content(
-            session,
-            generation_id=generation.generation_id,
-            migration_event_id=carry_event.migration_event_id,
-            catalog_version_id=locked_catalog.catalog_version_id,
-            materialized_at=now,
-        )
-    except NativeSectionContentMaterializationError as exc:
-        raise NativeCatalogRuntimeFinalizerError(str(exc)) from exc
-
-    attestation_id = _deterministic_id(generation.generation_id, "attestation-revision-1")
+    attestation_id = _deterministic_id(
+        generation.generation_id, "attestation-revision-1"
+    )
     attestation = models.NativeCatalogRuntimeAttestation(
         attestation_id=attestation_id,
         generation_id=generation.generation_id,
