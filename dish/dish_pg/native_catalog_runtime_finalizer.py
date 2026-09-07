@@ -72,7 +72,7 @@ _POST_0048_CONTENT_CORRECTIONS = {
         current_contract_binding_id=uuid.UUID("0e90755b-ad96-48e8-8910-d9e12dd0ef86"),
         current_section_id=uuid.UUID("1b9e67c5-09c7-5625-b8f7-f42e0a7ed144"),
         legacy_destination_line="Destination section: Mediterranean — 1217084499231803",
-        destination_display_name="Verification Queue",
+        destination_display_name="Mediterranean",
     ),
     uuid.UUID("4b6a40bc-b552-59d6-8ed6-47cba29135e2"): PostStagingContentCorrection(
         task_id=uuid.UUID("8087403e-a7b0-5087-b8bd-e6aea22dd67e"),
@@ -83,7 +83,7 @@ _POST_0048_CONTENT_CORRECTIONS = {
         current_contract_binding_id=uuid.UUID("0e90755b-ad96-48e8-8910-d9e12dd0ef86"),
         current_section_id=uuid.UUID("1b9e67c5-09c7-5625-b8f7-f42e0a7ed144"),
         legacy_destination_line="Destination section: Mediterranean — 1217084499231803",
-        destination_display_name="Verification Queue",
+        destination_display_name="Mediterranean",
     ),
     uuid.UUID("3fb7fa2b-d602-555f-bb2b-ba1c2fc13f5d"): PostStagingContentCorrection(
         task_id=uuid.UUID("87368311-6d58-5de8-a9d1-79c49b896aa5"),
@@ -94,7 +94,7 @@ _POST_0048_CONTENT_CORRECTIONS = {
         current_contract_binding_id=uuid.UUID("0e90755b-ad96-48e8-8910-d9e12dd0ef86"),
         current_section_id=uuid.UUID("1b9e67c5-09c7-5625-b8f7-f42e0a7ed144"),
         legacy_destination_line="Destination section: Mediterranean — 1217084499231803",
-        destination_display_name="Verification Queue",
+        destination_display_name="Mediterranean",
     ),
 }
 

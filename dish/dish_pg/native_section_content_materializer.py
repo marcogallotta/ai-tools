@@ -269,7 +269,7 @@ def _validated_post_staging_source(
         current.body,
         legacy_line=correction.legacy_destination_line,
         display_name=correction.destination_display_name,
-        section_id=correction.current_section_id,
+        section_id=occurrence.target_section_id,
     )
     return current, current.title, body, content_identity(current.title, body)
 
@@ -461,7 +461,7 @@ def materialize_staged_native_section_content(
                 occurrence=occurrence,
                 source=source,
                 correction=post_staging,
-                target_display_name=current_target_entry.display_name,
+                target_display_name=target_entry.display_name,
             )
             used_post_staging_corrections.add(occurrence.carry_forward_id)
 
