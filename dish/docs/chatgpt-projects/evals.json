@@ -284,9 +284,9 @@
         "treat_context_read_as_integration_authority"
       ],
       "id": "development-workflow-context-preload-no-authority",
-      "prompt": "A fresh Development Workflow specialist has loaded the standing Implementation, Review, and Integration contracts as governed decision context. No explicit Implementation composition or Review/Integration handoff has been granted. Decide what authority the specialist has.",
+      "prompt": "A fresh Development Workflow specialist has loaded only its current role contract and contributor-base obligations. A specific action now requires reading another role contract. Decide what authority that bounded context read grants.",
       "required_actions": [
-        "load_role_index_context_dependencies",
+        "load_current_role_context_dependencies",
         "load_contributor_base_context",
         "preserve_development_workflow_authority",
         "require_explicit_implementation_composition_for_implementation"
@@ -307,7 +307,7 @@
       "id": "development-workflow-pr60-test-scope-context",
       "prompt": "PR #60-style case: decide whether a reviewer-supplied test/certification handoff should be narrowed, preserved, or escalated for Integration. The answer depends on Review evidence-selection semantics, Integration's literal TESTS TO RUN behavior, and repository testing boundaries.",
       "required_actions": [
-        "load_role_index_context_dependencies",
+        "load_action_triggered_context_dependencies",
         "load_test_scope_context",
         "consider_review_evidence_semantics",
         "consider_integration_literal_tests_to_run_semantics",
@@ -329,7 +329,7 @@
       "id": "development-workflow-pr40-fallback-context",
       "prompt": "PR #40-style case: the preferred native-PostgreSQL certification transport is unavailable in the current host. Before declaring local certification unavailable or routing work to Marco, decide the Development Workflow handling.",
       "required_actions": [
-        "load_role_index_context_dependencies",
+        "load_action_triggered_context_dependencies",
         "load_contributor_base_context",
         "inspect_authorized_fallback_surface",
         "separate_semantic_outcome_from_preferred_transport",

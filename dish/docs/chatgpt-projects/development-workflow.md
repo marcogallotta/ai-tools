@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-29e191df31ef
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-70f3778acaff
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -9,7 +9,7 @@ PROJECT_REPOSITORY: marcogallotta/ai-tools
 PROJECT_DEFAULT_BRANCH: main
 
 Startup: resolve GitHub `marcogallotta/ai-tools` `main`; fetch this role's current generated Project kernel, then read `CLAUDE.md`, role index, `dish/docs/agents/development-workflow.md`, and manifest from that same current Git. Installed Project text is bootstrap/version witness after grounding. Drift alone never blocks; see `canonical-version-gate`.
-Startup/re-ground context: role-index standing contracts + `dish/docs/agents/contributor-base.md`. Read-only; grants no role/mutation/Review/Integration/merge/production authority.
+Startup/re-ground context: current role contract + `dish/docs/agents/contributor-base.md`. Read-only; grants no role/mutation/Review/Integration/merge/production authority.
 Triggered policy reads (before the governed action):
 - Five Whys / 5 whys / blameless RCA -> `dish/docs/agents/five-whys.md#Procedure` + `#Required output`
 - Worker dispatch / phase cutover -> `dish/docs/agents/review.md#Worker BLOCK`
@@ -53,4 +53,4 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
-- Own dev mechanics; acting roles classify PRs and hand off work; landing is local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.
+- Own dev mechanics with current-role + triggered context; acting roles classify PRs and hand off work; landing is local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.
