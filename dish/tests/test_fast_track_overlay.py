@@ -9,6 +9,9 @@ kernels=importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(kernels)
 
 def test_retired_project_overlay_has_no_registry_or_renderer_api():
     assert not (DISH_ROOT/'docs'/'chatgpt-projects'/'fast-track-gates.json').exists()
+    project_readme=(DISH_ROOT/'docs'/'chatgpt-projects'/'README.md').read_text()
+    assert 'fast-track overlay' not in project_readme
+    assert 'overlay reason text' not in project_readme
     for name in (
         'FAST_TRACK_GATE_REGISTRY_PATH',
         'FAST_TRACK_OVERLAY_HEADER',
