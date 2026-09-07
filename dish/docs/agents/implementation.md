@@ -162,6 +162,15 @@ For the current publication-friction containment path, the GitHub connector rema
 
 This is temporary containment, not a second publication architecture. Existing materializer recovery and remote-first routing remain authoritative dependencies and are not duplicated here.
 
+### Terminal honesty when only a local candidate exists
+
+When the only evidence of completed work is a local/session-only candidate tree — no pushed commit reachable by others, no PR, no prior bundle delivery — terminal chat must not emit a receiver-ready handoff implying the receiving agent already has or can trivially get the code. Two outcomes only:
+
+- if a local candidate tree is still available in this execution, first produce and deliver the exact-byte bundle through the transport above, and only then give Marco the one-block handoff naming the bundle location/basename and expected candidate tree;
+- if no local candidate tree is recoverable in this execution either, the terminal answer is that no durable implementation artifact exists anywhere, Marco's action is none/redo, and the work must be re-authored from the accepted design rather than handed to another agent as if it were retrievable.
+
+A handoff must never assume code transfer that has no real transport behind it.
+
 A local Implementation-completion agent accepting this ownership handoff must:
 
 - before claiming, verify that witness story already exists on the task for this exact branch/base/PR/head; if it is missing, do not fabricate it under Implementation authority — report the gap and either wait for it to be posted or post it yourself under a separate, explicitly logged Development Workflow action;
@@ -301,6 +310,10 @@ Return enough information for the coordinator/reviewer to proceed without recons
 10. environment limitations and exact missing certification;
 11. any known interaction with parallel unmerged work;
 12. whether any post-review or integration-relevant change is mechanical-only versus semantic.
+
+This numbered return contract is the durable agent-to-agent PR/task handoff, not a requirement to mirror those fields into Marco's terminal chat. After the durable handoff and required readback are complete, apply the root Work-chat terminal decision order. If this Worker can lawfully continue, continue rather than stopping for a relay/status dump. If Marco must manually transfer work, give one short outcome sentence plus one immediately usable fenced locator-first copy/paste block for the receiving agent; `Review PR #N.` is sufficient when the live PR lets that reviewer reconstruct the details. No-action/automatic progression gets one short status and no handoff block; a genuine Marco-only decision gets only the exact decision plus the minimum consequence needed to choose.
+
+For local completion or certification, keep the complete procedure, evidence, test inventory, hashes, file/scope inventory, environment diagnostics, and recovery detail on the PR. Surface only the limitation and receiver/action that change Marco's next step or completion truth. A focused re-review handoff includes exact head/blocked-head identity only when that identity materially binds the recheck.
 
 Do not describe work as merged, landed, deployed, or activated unless you actually have authoritative evidence of that state.
 

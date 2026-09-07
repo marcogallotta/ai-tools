@@ -99,7 +99,7 @@ dish_tool/transactions.py,production,5,5,sqlite-boundary,tests/test_dish_transac
 dish_tool/workflow_snapshot.py,production,4,4,authority; read-model,tests/test_application_service.py,tests/test_access_contract.py; tests/test_semantic_proposal_bundle_workflow.py; tests/test_service_runtime_boundary.py,none,,focused authority/identity; smoke,Add database-boundary when durable SQLite fact selection changes. | Add mutation evidence when authoritative live-task reread or canonical identity semantics change.,critical authority or canonical-identity invariant changes; durable SQLite state or recovery semantics change
 docs/agents/audit.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/agents/design-principles.md,documentation,1,1,agent-policy; documentation; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
-docs/agents/fast-track-process.md,documentation,1,1,agent-policy; documentation,tests/test_fast_track_overlay.py,tests/test_fast_track_overlay.py,none,,exact changed test/module,,
+docs/agents/fast-track-process.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/agents/implementation.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/agents/operator-provenance.md,documentation,1,1,agent-policy; documentation; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
 docs/agents/repository-routing.md,documentation,1,1,agent-policy; documentation; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authenticated Streamable HTTP MCP projection of the PostgreSQL Dish Action contract."""
+"""Authenticated Streamable HTTP MCP shell for Dish connected-agent backends."""
 from __future__ import annotations
 
 import asyncio
@@ -11,50 +11,37 @@ import os
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
-import jwt
-from mcp.server import Server, ServerRequestContext
+from fastmcp import FastMCP
+from fastmcp.server.auth.providers.github import GitHubProvider
+from fastmcp.tools import Tool as FastMCPTool
+from fastmcp.tools.base import ToolResult
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.auth.provider import AccessToken, TokenVerifier
-from mcp.server.auth.settings import AuthSettings
-from mcp.types import (
-    CallToolRequestParams,
-    CallToolResult,
-    ListToolsResult,
-    PaginatedRequestParams,
-    TextContent,
-    Tool,
-)
+from mcp.server.auth.provider import AccessToken
+from mcp.types import TextContent, Tool, ToolAnnotations
+from pydantic import PrivateAttr
 import uvicorn
 
-from dish_pg.command_contract import ACTION_COMMANDS, COMMAND_DEFINITIONS
-from dish_pg.openapi import postgres_action_openapi
+from dish_pg.connected_command_spec import (
+    CONNECTED_COMMAND_SPECS,
+    TOOL_COMMANDS,
+    definition_for,
+    result_envelope_schema,
+)
 from dish_service.client import DishActionClient
 
 SERVER_NAME = "dish-postgresql-mcp"
-SERVER_VERSION = "2"
+SERVER_VERSION = "3"
 ACTION_URL_ENV = "DISH_MCP_ACTION_URL"
 ACTION_TOKEN_ENV = "DISH_MCP_ACTION_TOKEN"
-OAUTH_ISSUER_ENV = "DISH_MCP_OAUTH_ISSUER"
-OAUTH_JWKS_URL_ENV = "DISH_MCP_OAUTH_JWKS_URL"
-OAUTH_AUDIENCE_ENV = "DISH_MCP_OAUTH_AUDIENCE"
+BACKEND_ENV = "DISH_MCP_BACKEND"
+GITHUB_CLIENT_ID_ENV = "DISH_MCP_GITHUB_CLIENT_ID"
+GITHUB_CLIENT_SECRET_ENV = "DISH_MCP_GITHUB_CLIENT_SECRET"
+GITHUB_USER_ID_ENV = "DISH_MCP_GITHUB_USER_ID"
 RESOURCE_URL_ENV = "DISH_MCP_RESOURCE_URL"
 BIND_HOST_ENV = "DISH_MCP_BIND_HOST"
 BIND_PORT_ENV = "DISH_MCP_BIND_PORT"
-REQUIRED_SCOPE = "dish:connected"
 DEFAULT_BIND_HOST = "127.0.0.1"
 DEFAULT_BIND_PORT = 8765
-JWT_ALGORITHMS = (
-    "RS256",
-    "RS384",
-    "RS512",
-    "PS256",
-    "PS384",
-    "PS512",
-    "ES256",
-    "ES384",
-    "ES512",
-    "EdDSA",
-)
 LOG = logging.getLogger("dish.mcp")
 SERVER_INSTRUCTIONS = (
     "Dish PostgreSQL workflow authority is behind these tools. Keep one stable client.run_id "
@@ -70,7 +57,7 @@ SERVER_INSTRUCTIONS = (
 
 
 def _resolve_local_refs(value: Any, schemas: Mapping[str, Any]) -> Any:
-    """Resolve OpenAPI component-schema refs into a standalone MCP JSON Schema."""
+    """Compatibility helper retained for transition parity tests."""
     if isinstance(value, list):
         return [_resolve_local_refs(item, schemas) for item in value]
     if not isinstance(value, Mapping):
@@ -91,64 +78,25 @@ def _resolve_local_refs(value: Any, schemas: Mapping[str, Any]) -> Any:
                 raise ValueError(f"schema reference {name} did not resolve to an object")
             merged.update(_resolve_local_refs(extras, schemas))
         return merged
-    return {
-        str(key): _resolve_local_refs(child, schemas)
-        for key, child in value.items()
-    }
-
-
-def _mcp_output_schema(value: Any, schemas: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the canonical Action response as a valid MCP object output schema."""
-    resolved = _resolve_local_refs(value, schemas)
-    if not isinstance(resolved, dict):
-        raise ValueError("Dish MCP output schema must resolve to an object schema")
-    schema_type = resolved.get("type")
-    if schema_type is None:
-        resolved["type"] = "object"
-    elif schema_type != "object":
-        raise ValueError("Dish MCP output schema must have type object")
-    return resolved
-
-
-def _tool_annotations(command: str) -> dict[str, bool]:
-    definition = COMMAND_DEFINITIONS[command]
-    is_mutation = definition.request_replay
-    return {
-        "readOnlyHint": not is_mutation,
-        "idempotentHint": True,
-        "destructiveHint": is_mutation,
-        "openWorldHint": False,
-    }
+    return {str(key): _resolve_local_refs(child, schemas) for key, child in value.items()}
 
 
 def build_tools() -> tuple[dict[str, Any], ...]:
-    """Project MCP tools from the authoritative PostgreSQL Action/OpenAPI metadata."""
-    spec = postgres_action_openapi()
-    schemas = spec["components"]["schemas"]
-    tools: list[dict[str, Any]] = []
-    for command in ACTION_COMMANDS:
-        operation = spec["paths"][f"/v1/action/{command}"]["post"]
-        request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
-        response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
-        name = f"dish_{command.replace('-', '_')}"
-        tools.append(
-            {
-                "name": name,
-                "title": operation["summary"],
-                "description": (
-                    f"{operation['description']} Supply the existing Dish Action request body "
-                    "unchanged as client plus arguments."
-                ),
-                "inputSchema": _resolve_local_refs(request_schema, schemas),
-                "outputSchema": _mcp_output_schema(response_schema, schemas),
-                "annotations": _tool_annotations(command),
-            }
-        )
-    return tuple(tools)
+    """Project MCP tools from the transport-neutral connected command contract."""
+    return tuple(
+        {
+            "name": spec.tool_name,
+            "title": spec.title,
+            "description": spec.description,
+            "inputSchema": spec.input_schema(),
+            "outputSchema": result_envelope_schema(command=spec.name),
+            "annotations": spec.annotations(),
+        }
+        for spec in CONNECTED_COMMAND_SPECS
+    )
 
 
 TOOLS = build_tools()
-TOOL_COMMANDS = {tool["name"]: command for tool, command in zip(TOOLS, ACTION_COMMANDS)}
 MCP_TOOLS = tuple(Tool.model_validate(tool) for tool in TOOLS)
 
 
@@ -174,10 +122,8 @@ def _https_url(raw_value: str, *, label: str, resource: bool = False) -> str:
     if parsed.fragment:
         raise ValueError(f"{label} must not contain a fragment")
     if resource:
-        if parsed.path != "/mcp" or parsed.params or parsed.query:
+        if not parsed.path.endswith("/mcp") or parsed.params or parsed.query:
             raise ValueError(f"{label} must be the public MCP resource URL ending exactly in /mcp")
-    elif label == OAUTH_ISSUER_ENV and (parsed.params or parsed.query):
-        raise ValueError(f"{label} must be an issuer URL without parameters or query")
     return value
 
 
@@ -200,149 +146,70 @@ def _bind_port(raw_value: str) -> int:
 
 @dataclass(frozen=True, slots=True)
 class MCPAuthConfig:
-    issuer_url: str
-    jwks_url: str
+    github_client_id: str
+    github_client_secret: str
+    github_user_id: str
     resource_url: str
-    audience: str | None = None
     bind_host: str = DEFAULT_BIND_HOST
     bind_port: int = DEFAULT_BIND_PORT
 
+    @property
+    def base_url(self) -> str:
+        return self.resource_url.removesuffix("/mcp").rstrip("/")
+
+    @property
+    def issuer_url(self) -> str:
+        return self.base_url
+
     @classmethod
     def from_environment(cls) -> "MCPAuthConfig":
-        issuer = os.environ.get(OAUTH_ISSUER_ENV, "")
-        jwks = os.environ.get(OAUTH_JWKS_URL_ENV, "")
+        client_id = os.environ.get(GITHUB_CLIENT_ID_ENV, "")
+        client_secret = os.environ.get(GITHUB_CLIENT_SECRET_ENV, "")
+        user_id = os.environ.get(GITHUB_USER_ID_ENV, "")
         resource = os.environ.get(RESOURCE_URL_ENV, "")
         missing = [
             name
             for name, value in (
-                (OAUTH_ISSUER_ENV, issuer),
-                (OAUTH_JWKS_URL_ENV, jwks),
+                (GITHUB_CLIENT_ID_ENV, client_id),
+                (GITHUB_CLIENT_SECRET_ENV, client_secret),
+                (GITHUB_USER_ID_ENV, user_id),
                 (RESOURCE_URL_ENV, resource),
             )
             if not value.strip()
         ]
         if missing:
             raise ValueError(f"required MCP OAuth configuration missing: {', '.join(missing)}")
-        audience = os.environ.get(OAUTH_AUDIENCE_ENV, "").strip() or None
+        if not user_id.strip().isdigit():
+            raise ValueError(f"{GITHUB_USER_ID_ENV} must be a numeric GitHub user ID")
         return cls(
-            issuer_url=_https_url(issuer, label=OAUTH_ISSUER_ENV),
-            jwks_url=_https_url(jwks, label=OAUTH_JWKS_URL_ENV),
+            github_client_id=client_id.strip(),
+            github_client_secret=client_secret.strip(),
+            github_user_id=user_id.strip(),
             resource_url=_https_url(resource, label=RESOURCE_URL_ENV, resource=True),
-            audience=audience,
             bind_host=_loopback_bind_host(os.environ.get(BIND_HOST_ENV, DEFAULT_BIND_HOST)),
             bind_port=_bind_port(os.environ.get(BIND_PORT_ENV, str(DEFAULT_BIND_PORT))),
         )
 
 
-def _claim_strings(value: Any, *, claim: str) -> tuple[str, ...]:
-    if isinstance(value, str) and value.strip():
-        return (value.strip(),)
-    if isinstance(value, list) and value and all(isinstance(item, str) and item.strip() for item in value):
-        return tuple(item.strip() for item in value)
-    raise ValueError(f"OAuth access token claim {claim} has unsupported shape")
+class DishGitHubProvider(GitHubProvider):
+    """FastMCP OAuth proxy restricted to one immutable GitHub account ID."""
 
-
-def _token_scopes(claims: Mapping[str, Any]) -> list[str]:
-    scope = claims.get("scope")
-    if scope is not None:
-        if not isinstance(scope, str):
-            raise ValueError("OAuth access token scope claim must be a string")
-        return [item for item in scope.split() if item]
-    scp = claims.get("scp")
-    if scp is None:
-        return []
-    if isinstance(scp, str):
-        return [item for item in scp.split() if item]
-    if isinstance(scp, list) and all(isinstance(item, str) and item.strip() for item in scp):
-        return [item.strip() for item in scp]
-    raise ValueError("OAuth access token scp claim has unsupported shape")
-
-
-def _token_client_id(claims: Mapping[str, Any]) -> str:
-    client_id = claims.get("client_id")
-    azp = claims.get("azp")
-    if client_id is not None and (not isinstance(client_id, str) or not client_id.strip()):
-        raise ValueError("OAuth access token client_id claim must be a non-empty string")
-    if azp is not None and (not isinstance(azp, str) or not azp.strip()):
-        raise ValueError("OAuth access token azp claim must be a non-empty string")
-    if isinstance(client_id, str) and isinstance(azp, str) and client_id.strip() != azp.strip():
-        raise ValueError("OAuth access token client_id and azp claims disagree")
-    value = client_id if isinstance(client_id, str) else azp
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("OAuth access token must identify its client with client_id or azp")
-    return value.strip()
-
-
-def _token_subject(claims: Mapping[str, Any]) -> str | None:
-    subject = claims.get("sub")
-    if subject is None:
-        return None
-    if not isinstance(subject, str) or not subject.strip():
-        raise ValueError("OAuth access token sub claim must be a non-empty string")
-    return subject.strip()
-
-
-class OIDCJWTVerifier(TokenVerifier):
-    """Verify external OAuth/OIDC JWT access tokens against the configured JWKS."""
-
-    def __init__(self, config: MCPAuthConfig, *, jwks_client: Any | None = None) -> None:
-        self.config = config
-        self._jwks = jwks_client or jwt.PyJWKClient(config.jwks_url, cache_keys=True)
-
-    def _target_is_valid(self, claims: Mapping[str, Any]) -> bool:
-        resource = claims.get("resource")
-        if resource is not None:
-            try:
-                return self.config.resource_url in _claim_strings(resource, claim="resource")
-            except ValueError:
-                return False
-        audience = claims.get("aud")
-        try:
-            values = set(_claim_strings(audience, claim="aud"))
-        except ValueError:
-            return False
-        allowed = {self.config.resource_url}
-        if self.config.audience:
-            allowed.add(self.config.audience)
-        return bool(values & allowed)
-
-    def _verify_sync(self, token: str) -> AccessToken | None:
-        try:
-            signing_key = self._jwks.get_signing_key_from_jwt(token).key
-            claims = jwt.decode(
-                token,
-                key=signing_key,
-                algorithms=list(JWT_ALGORITHMS),
-                issuer=self.config.issuer_url,
-                options={"require": ["exp", "iss"], "verify_aud": False},
-            )
-            if not isinstance(claims, Mapping) or not self._target_is_valid(claims):
-                raise ValueError("OAuth access token is not targeted at this Dish MCP resource")
-            client_id = _token_client_id(claims)
-            subject = _token_subject(claims)
-            scopes = _token_scopes(claims)
-            expires_at = int(claims["exp"])
-            return AccessToken(
-                token=token,
-                client_id=client_id,
-                scopes=scopes,
-                expires_at=expires_at,
-                resource=self.config.resource_url,
-                subject=subject,
-                claims={"iss": self.config.issuer_url},
-            )
-        except (jwt.PyJWTError, TypeError, ValueError, OverflowError) as exc:
-            # Never log the raw bearer or decoded claims. Rejection class is sufficient support evidence.
-            LOG.info("mcp_oauth_token_rejected reason=%s", type(exc).__name__)
-            return None
+    def __init__(self, *, allowed_user_id: str, **kwargs: Any) -> None:
+        self.allowed_user_id = allowed_user_id
+        super().__init__(**kwargs)
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        if not isinstance(token, str) or not token.strip():
+        access = await super().verify_token(token)
+        if access is None or access.subject != self.allowed_user_id:
+            if access is not None:
+                LOG.warning("mcp_github_user_rejected")
             return None
-        return await asyncio.to_thread(self._verify_sync, token)
+        return access
 
 
 class DishMCPAdapter:
+    """Transition Action backend used while native PostgreSQL qualification is incomplete."""
+
     def __init__(self, *, action_url: str, action_token: str):
         self.action_url = _loopback_action_url(action_url)
         self.action_token = action_token.strip()
@@ -357,7 +224,14 @@ class DishMCPAdapter:
             raise ValueError(f"{ACTION_URL_ENV} is required")
         return cls(action_url=action_url, action_token=action_token)
 
-    def call(self, tool_name: str, tool_input: Mapping[str, Any]) -> dict[str, Any]:
+    def call(
+        self,
+        tool_name: str,
+        tool_input: Mapping[str, Any],
+        *,
+        caller: Mapping[str, str | None] | None = None,
+    ) -> dict[str, Any]:
+        del caller
         try:
             command = TOOL_COMMANDS[tool_name]
         except KeyError as exc:
@@ -373,9 +247,9 @@ class DishMCPAdapter:
         run_id = client.get("run_id")
         if not isinstance(run_id, str) or not run_id.strip():
             raise ValueError("client.run_id is required")
-        definition = COMMAND_DEFINITIONS[command]
+        spec = definition_for(command)
         request_id = client.get("request_id")
-        if definition.request_replay:
+        if spec.request_replay:
             if not isinstance(request_id, str) or not request_id.strip():
                 raise ValueError("client.request_id is required for this replay-bound command")
         elif request_id is not None:
@@ -405,114 +279,127 @@ def _caller_audit_context(token: AccessToken | None) -> dict[str, str | None]:
     }
 
 
-def _redacted_adapter_error(exc: Exception, adapter: DishMCPAdapter) -> str:
+def _redacted_adapter_error(exc: Exception, adapter: Any) -> str:
     detail = f"{type(exc).__name__}: {exc}"
-    if adapter.action_token:
-        detail = detail.replace(adapter.action_token, "<redacted>")
+    token = str(getattr(adapter, "action_token", "") or "")
+    if token:
+        detail = detail.replace(token, "<redacted>")
     return detail
 
 
-def build_server(adapter: DishMCPAdapter) -> Server[Any]:
-    async def list_tools(
-        ctx: ServerRequestContext[Any], params: PaginatedRequestParams | None
-    ) -> ListToolsResult:
-        del ctx, params
-        return ListToolsResult(tools=list(MCP_TOOLS))
+class DishTool(FastMCPTool):
+    _adapter: Any = PrivateAttr()
 
-    async def call_tool(
-        ctx: ServerRequestContext[Any], params: CallToolRequestParams
-    ) -> CallToolResult:
-        del ctx
-        arguments = params.arguments or {}
-        if not isinstance(arguments, Mapping):
-            return CallToolResult(
-                content=[TextContent(type="text", text="Dish MCP adapter failure: tool arguments must be an object")],
-                is_error=True,
-            )
+    def __init__(self, definition: Mapping[str, Any], adapter: Any) -> None:
+        super().__init__(
+            name=str(definition["name"]),
+            title=str(definition["title"]),
+            description=str(definition["description"]),
+            parameters=dict(definition["inputSchema"]),
+            output_schema=dict(definition["outputSchema"]),
+            annotations=ToolAnnotations.model_validate(definition["annotations"]),
+        )
+        self._adapter = adapter
+
+    async def run(self, arguments: dict[str, Any]) -> ToolResult:
         caller = _caller_audit_context(get_access_token())
-        client = arguments.get("client") if isinstance(arguments, Mapping) else None
+        client = arguments.get("client")
         run_id = client.get("run_id") if isinstance(client, Mapping) else None
         LOG.info(
             "mcp_connected_agent_call caller=%s tool=%s run_id=%s",
             json.dumps(caller, sort_keys=True, separators=(",", ":")),
-            params.name,
+            self.name,
             run_id,
         )
         try:
-            structured = await asyncio.to_thread(adapter.call, params.name, arguments)
+            structured = await asyncio.to_thread(
+                self._adapter.call,
+                self.name,
+                arguments,
+                caller=caller,
+            )
         except Exception as exc:
             LOG.warning(
                 "mcp_adapter_failure caller=%s tool=%s error_type=%s",
                 json.dumps(caller, sort_keys=True, separators=(",", ":")),
-                params.name,
+                self.name,
                 type(exc).__name__,
             )
-            return CallToolResult(
+            return ToolResult(
                 content=[
                     TextContent(
                         type="text",
-                        text=f"Dish MCP adapter failure: {_redacted_adapter_error(exc, adapter)}",
+                        text=f"Dish MCP adapter failure: {_redacted_adapter_error(exc, self._adapter)}",
                     )
                 ],
                 is_error=True,
             )
-        return CallToolResult(
-            content=[
-                TextContent(
-                    type="text",
-                    text=json.dumps(structured, sort_keys=True, ensure_ascii=False),
-                )
-            ],
+        renderer = getattr(self._adapter, "content_text", None)
+        text = (
+            renderer(structured)
+            if callable(renderer)
+            else json.dumps(structured, sort_keys=True, ensure_ascii=False)
+        )
+        return ToolResult(
+            content=[TextContent(type="text", text=text)],
             structured_content=structured,
             is_error=False,
         )
 
-    return Server(
+
+def create_app(adapter: Any, config: MCPAuthConfig):
+    """Build the one authenticated GitHub OAuth MCP shell around a backend adapter."""
+    auth = DishGitHubProvider(
+        client_id=config.github_client_id,
+        client_secret=config.github_client_secret,
+        allowed_user_id=config.github_user_id,
+        base_url=config.base_url,
+        issuer_url=config.issuer_url,
+        required_scopes=[],
+        require_authorization_consent=True,
+    )
+    server = FastMCP(
         SERVER_NAME,
         version=SERVER_VERSION,
         instructions=SERVER_INSTRUCTIONS,
-        on_list_tools=list_tools,
-        on_call_tool=call_tool,
+        auth=auth,
+        tools=[DishTool(tool, adapter) for tool in TOOLS],
     )
-
-
-def create_app(
-    adapter: DishMCPAdapter,
-    config: MCPAuthConfig,
-    *,
-    token_verifier: TokenVerifier | None = None,
-):
-    """Build the private OAuth-protected Streamable HTTP ASGI app."""
-    server = build_server(adapter)
-    verifier = token_verifier or OIDCJWTVerifier(config)
-    auth = AuthSettings.model_validate(
-        {
-            "issuer_url": config.issuer_url,
-            "resource_server_url": config.resource_url,
-            "required_scopes": [REQUIRED_SCOPE],
-        }
-    )
-    return server.streamable_http_app(
-        streamable_http_path="/mcp",
+    return server.http_app(
+        path="/mcp",
         json_response=True,
         stateless_http=True,
-        host=config.bind_host,
-        auth=auth,
-        token_verifier=verifier,
     )
+
+
+def backend_from_environment(config: MCPAuthConfig) -> Any:
+    backend = os.environ.get(BACKEND_ENV, "action").strip().lower() or "action"
+    if backend == "action":
+        return DishMCPAdapter.from_environment()
+    if backend == "postgresql":
+        from dish_service.native_mcp_server import native_adapter_from_environment
+
+        return native_adapter_from_environment(authenticated_owner_id=config.github_user_id)
+    raise ValueError(f"{BACKEND_ENV} must be action or postgresql")
 
 
 def main() -> int:
     config = MCPAuthConfig.from_environment()
-    app = create_app(DishMCPAdapter.from_environment(), config)
-    uvicorn.run(
-        app,
-        host=config.bind_host,
-        port=config.bind_port,
-        access_log=False,
-        log_level="info",
-    )
-    return 0
+    adapter = backend_from_environment(config)
+    app = create_app(adapter, config)
+    try:
+        uvicorn.run(
+            app,
+            host=config.bind_host,
+            port=config.bind_port,
+            access_log=False,
+            log_level="info",
+        )
+        return 0
+    finally:
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            close()
 
 
 if __name__ == "__main__":

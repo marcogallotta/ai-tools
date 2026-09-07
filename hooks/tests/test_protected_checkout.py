@@ -14,11 +14,26 @@ def test_prompt_free_git_accepts_ordinary_feature_mutations(
     assert classifier_module.prompt_free_git(command, protected_repo["linked"])
 
 
+@pytest.mark.parametrize("command", [
+    "git branch -D old", "git branch -d old", "git branch -D old feature-2",
+    "git branch --delete old", "git branch -Df old",
+])
+def test_prompt_free_git_accepts_unrelated_branch_delete_from_primary(
+    classifier_module, protected_repo, command
+):
+    # Deleting an unrelated local branch by name cannot touch `main` and
+    # git refuses to delete the currently-checked-out branch, so this must
+    # not require approval merely because the primary checkout is on main.
+    assert classifier_module.prompt_free_git(command, protected_repo["primary"])
+
+
 @pytest.mark.parametrize("command,cwd", [
     ("git commit -m x", "primary"),
     ("git push origin HEAD:main", "linked"),
     ("git push origin +main", "linked"),
     ("git branch -D main", "linked"),
+    ("git branch -D main", "primary"),
+    ("git branch -D old main", "primary"),
     ("git branch --set-upstream-toorigin/main", "primary"),
     ("git push --all", "linked"),
     ("git push --mirror", "linked"),

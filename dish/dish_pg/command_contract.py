@@ -603,6 +603,25 @@ def validate_postgres_action_request(
     return client, validated_arguments
 
 
+def connected_argument_schema(command: str) -> dict[str, Any]:
+    """Return the transport-neutral connected-agent argument schema.
+
+    The PostgreSQL command contract is the transition authority for domain validation.
+    Action/OpenAPI adapters may continue to call their legacy names while connected
+    transports consume this neutral entry point.
+    """
+
+    return postgres_action_argument_schema(command)
+
+
+def validate_connected_request(
+    command: str, request: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate one connected-agent request independent of its transport."""
+
+    return validate_postgres_action_request(command, request)
+
+
 POSTGRES_CLIENT_RUN_ID_SCHEMA = deepcopy(CLIENT_RUN_ID_SCHEMA)
 POSTGRES_CLIENT_REQUEST_ID_SCHEMA = deepcopy(CLIENT_REQUEST_ID_SCHEMA)
 POSTGRES_DISH_ID_SCHEMA = dict(CANONICAL_DISH_UUID_SCHEMA)

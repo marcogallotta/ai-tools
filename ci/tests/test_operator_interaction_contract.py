@@ -8,6 +8,19 @@ SOURCE = ROOT / "dish" / "docs" / "chatgpt-projects" / "source.json"
 CLAUDE = ROOT / "CLAUDE.md"
 CLAUDE_GLOBAL = ROOT / "CLAUDE-global.md"
 CLAUDE_OPERATOR_STYLE = ROOT / ".claude" / "output-styles" / "dish-operator.md"
+AGENTS = ROOT / "AGENTS.md"
+
+
+def test_dish_role_index_is_the_loud_first_action_before_generic_skills_or_tools():
+    for path in (CLAUDE, AGENTS):
+        text = path.read_text()
+        prefix = "\n".join(text.splitlines()[:12])
+        assert "DISH REQUESTS: READ THE ROLE INDEX BEFORE ANYTHING ELSE" in prefix
+        assert "FIRST Dish action" in prefix
+        assert "dish/docs/agents/index.md" in prefix
+        assert "/code-review" in prefix
+        assert "role routing happens first" in prefix
+        assert "mapped standing contract" in prefix
 
 
 def test_role_index_routes_every_role_through_one_shared_operator_contract():

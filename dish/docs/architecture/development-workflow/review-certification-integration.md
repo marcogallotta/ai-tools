@@ -18,6 +18,8 @@ Ordinary CI certifies the exact PR source head selected from the formal Review e
 
 Final landing is a separately authorized local Integration action bound by an explicit exact-head handoff and fresh GitHub/Asana reads. Mechanical reconciliation that changes the head still requires an exact-head recheck; any semantic choice returns to Implementation and substantive Review.
 
+The explicit per-change shortcut is the only standing exception to those default Review/Integration phase boundaries. For an exact `TRIVIAL` capability, guarded one-commit publication may fast-forward `main` directly, so formal Review and a separate Integration action do not occur for that exact change. For `FAST-TRACK`, the PR and Integration boundaries remain; only formal Review may be omitted, and only when the exact durable authorization records `skip_review=true`. Any shortcut fallback immediately restores the ordinary Review/certification/Integration requirements. Integration must verify the exact grant’s risk-selected validation before landing: meaningful readback is sufficient for non-executable/mechanical surfaces when tests add no evidence, while product/runtime/infrastructure/migration/persistence/service/config/deployment and comparable executable/high-consequence changes require focused executable proof of the intended invariant. Failed evidence remains failed regardless of shortcut authority.
+
 ## Invariants
 
 - Material authorship and independent Review do not collapse into one actor for the same candidate.
@@ -27,6 +29,7 @@ Final landing is a separately authorized local Integration action bound by an ex
 - A green specialized workflow cannot substitute for required ordinary exact-head certification.
 - Baseline-debt admission retains the failed raw evidence and requires the repository's typed proof boundary.
 - Review never merges; Integration never invents semantic fixes.
+- A shortcut omission is valid only for the exact durable per-change capability; agents cannot infer or self-authorize it.
 
 ## Current anchors
 
