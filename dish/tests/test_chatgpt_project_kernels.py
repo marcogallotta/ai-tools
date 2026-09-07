@@ -58,7 +58,7 @@ def test_manifest_source_identity_topology_and_metadata():
  m,s=kernels.load_canonical(); kernels.validate_topology(s)
  assert m['canonical_version'].endswith(m['kernel_identity_sha256'][:12])
  assert kernels.kernel_identity(s)==m['kernel_identity_sha256']
- assert kernels.repository_config(s)==('marcogallotta/ai-tools','main','connected GitHub connector')
+ assert kernels.repository_config(s)==('marcogallotta/ai-tools','main','GitHub connector plugin_connector_*')
  for role in s['roles']:
   for r in kernels.effective_rules(s,role):
    assert r['impact'] in {'breaking','additive','compatible'} and r['surface'] and r['action_boundaries']
@@ -69,15 +69,23 @@ def test_missing_repository_bootstrap_fails_closed():
   bad=copy.deepcopy(s); bad.pop(field)
   with pytest.raises(kernels.KernelError,match=field): kernels.kernel_identity(bad)
 
-def test_every_kernel_disambiguates_github_connector_from_dish_mcp():
+def test_every_kernel_requires_connector_identity_and_rejects_mcp_substitution():
  m,s=kernels.load_canonical()
  for role in s['roles']:
   text=kernels.render_role_with_version(s,role,m['canonical_version'])
-  assert 'For every GitHub read/write, use the GitHub Connector.' in text
-  assert 'Never use the GitHub MCP app.' in text
+  assert 'plugin_connector_*' in text
+  assert 'plugin_asdk_app_*' in text
+  assert 'generic `Github`' in text
+  assert 'names do not prove identity' in text
+  assert 'connector identity/access is unavailable/unclear' in text
+  assert 'tell Marco and stop; no substitute' in text
  worker=kernels.generated_profile_paths(m,s)['worker'].read_text()
- assert 'For every GitHub read/write, use the GitHub Connector.' in worker
- assert 'Never use the GitHub MCP app.' in worker
+ assert 'plugin_connector_*' in worker
+ assert 'plugin_asdk_app_*' in worker
+ assert 'generic `Github`' in worker
+ assert 'names do not prove identity' in worker
+ assert 'connector identity/access is unavailable/unclear' in worker
+ assert 'tell Marco and stop; no substitute' in worker
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])

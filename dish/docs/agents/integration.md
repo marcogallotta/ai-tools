@@ -41,7 +41,7 @@ The role contract is host-independent even though tooling differs.
 
 ### ChatGPT
 
-Use the connected GitHub integration as source/history authority for read-only Integration diagnosis and upstream repository/review context. Under V1-A, ChatGPT must not execute final Integration landing or merge through connector-native writes. If a reviewed candidate is ready but no authorized local launcher is available, leave it `INTEGRATION READY`; connector capability is not a fallback.
+Use only the authorized GitHub connector defined in [`repository-routing.md`](repository-routing.md#github-integration-identity) as source/history authority for read-only Integration diagnosis and upstream repository/review context. Under V1-A, ChatGPT must not execute final Integration landing or merge through connector-native writes. If a reviewed candidate is ready but no authorized local launcher is available, leave it `INTEGRATION READY`; connector capability is not a fallback.
 
 ### Claude Code and Codex
 
