@@ -26,6 +26,7 @@ from dish_pg.native_section_carry_forward import (
 )
 from dish_pg.native_section_content_materializer import (
     NativeSectionContentMaterializationError,
+    PostStagingContentCorrection,
     materialize_staged_native_section_content,
     materialized_content_version_id,
 )
@@ -901,6 +902,37 @@ def test_rejects_stale_current_content_pointer(core_db) -> None:
                 migration_event_id=migration_event_id,
                 catalog_version_id=expectation.base_catalog_version_id,
                 materialized_at=NOW,
+            )
+
+
+def test_rejects_unknown_post_staging_content_correction(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        seeded, expectation, _, migration_event_id, _ = _stage_pr3(session, ids)
+        unknown = _next(ids)
+        correction = PostStagingContentCorrection(
+            task_id=_next(ids),
+            source_content_version_id=_next(ids),
+            current_content_version_id=_next(ids),
+            command_execution_id=_next(ids),
+            current_content_identity="0" * 64,
+            current_contract_binding_id=_next(ids),
+            current_section_id=_next(ids),
+            legacy_destination_line="Destination section: unknown",
+            destination_display_name="unknown",
+        )
+
+        with pytest.raises(
+            NativeSectionContentMaterializationError,
+            match="correction set contains an unknown occurrence",
+        ):
+            materialize_staged_native_section_content(
+                session,
+                generation_id=seeded["generation_id"],
+                migration_event_id=migration_event_id,
+                catalog_version_id=expectation.base_catalog_version_id,
+                materialized_at=NOW,
+                post_staging_content_corrections={unknown: correction},
             )
 
 
