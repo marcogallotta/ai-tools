@@ -75,9 +75,9 @@ Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatg
 
 For unqualified Dish PR/issue references, use [`repository-routing.md`](repository-routing.md) when the trigger applies.
 
-Every ChatGPT GitHub operation uses the integration-identity rule in
-[`repository-routing.md`](repository-routing.md#github-integration-identity). A tool merely named
-`Github` is not evidence that it is the authorized connector.
+Every ChatGPT GitHub operation uses the Connector-route provenance rule in
+[`repository-routing.md`](repository-routing.md#github-connector-routing). A `Github.*` namespace
+or “GitHub MCP Server” description neither proves nor disproves Connector provenance.
 
 
 Ratified cross-Project standing invariants that must survive Project regeneration/reconciliation are governed by [`standing-invariants.md`](standing-invariants.md) and its independent machine-readable registry.
@@ -127,8 +127,8 @@ Do not add this footer to ordinary commit-message prose. Commit authorship/signi
 
 Role and execution host are separate concerns. The same Dish role may run under ChatGPT, Claude Code, or Codex, but host-specific transport/bootstrap policy does not transfer with the role.
 
-- **ChatGPT agents** use only the authorized `plugin_connector_*` GitHub connector defined in
-  [`repository-routing.md`](repository-routing.md#github-integration-identity) and may perform branch,
+- **ChatGPT agents** enter through the authorized GitHub Connector route defined in
+  [`repository-routing.md`](repository-routing.md#github-connector-routing) and may perform branch,
   commit, PR, and Review operations through it when the standing role authorizes them. Integration
   V1-A final landing is the explicit exception: only the local Claude/Codex Integration host may
   perform reconciliation/merge, as defined by `integration.md`.
