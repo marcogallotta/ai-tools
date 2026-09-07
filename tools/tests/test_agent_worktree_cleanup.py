@@ -34,30 +34,34 @@ def test_cleanup_known_dispositions_remove_clean_recoverable_worktree_and_exact_
 def test_cleanup_refuses_dirty_only_recovery_copy_remote_ahead_and_divergence(h: Harness) -> None:
     h.start(task="1060", branch="agent/dirty-cleanup")
     h.tool("publish", "--task", "1060", "--json")
+    dirty_head = git_out(h.wt("1060"), "rev-parse", "HEAD")
     (h.wt("1060") / "dirty.txt").write_text("dirty\n")
-    result = h.tool("cleanup", "--task", "1060", "--disposition", "closed", "--json", check=False)
+    result = h.raw_tool(*_terminal_args("1060", "agent/dirty-cleanup", dirty_head), check=False)
     assert_error(result, "DIRTY_CLEANUP")
 
     h.start(task="1061", branch="agent/only-copy")
     h.tool("publish", "--task", "1061", "--json")
     h.commit_local("1061", "unpublished")
-    result = h.tool("cleanup", "--task", "1061", "--disposition", "closed", "--json", check=False)
-    assert_error(result, "ONLY_RECOVERY_COPY")
+    unpublished_head = git_out(h.wt("1061"), "rev-parse", "HEAD")
+    result = h.raw_tool(*_terminal_args("1061", "agent/only-copy", unpublished_head), check=False)
+    assert_error(result, "EXPECTED_HEAD_MISMATCH")
     assert h.wt("1061").exists()
 
     h.start(task="1062", branch="agent/cleanup-remote-ahead")
     h.tool("publish", "--task", "1062", "--json")
+    prior = git_out(h.wt("1062"), "rev-parse", "HEAD")
     h.remote_branch_commit("agent/cleanup-remote-ahead", "cleanup remote ahead")
-    result = h.tool("cleanup", "--task", "1062", "--disposition", "closed", "--json", check=False)
+    result = h.raw_tool(*_terminal_args("1062", "agent/cleanup-remote-ahead", prior), check=False)
     assert_error(result, "EXPECTED_HEAD_MISMATCH")
 
     h.start(task="1063", branch="agent/cleanup-divergent")
     h.tool("publish", "--task", "1063", "--json")
     remote_base = git_out(h.origin, "rev-parse", "refs/heads/agent/cleanup-divergent")
     h.commit_local("1063", "cleanup local divergent")
+    divergent_head = git_out(h.wt("1063"), "rev-parse", "HEAD")
     h.remote_branch_commit("agent/cleanup-divergent", "cleanup remote divergent", start=remote_base)
-    result = h.tool("cleanup", "--task", "1063", "--disposition", "closed", "--json", check=False)
-    assert_error(result, "ONLY_RECOVERY_COPY")
+    result = h.raw_tool(*_terminal_args("1063", "agent/cleanup-divergent", divergent_head), check=False)
+    assert_error(result, "EXPECTED_HEAD_MISMATCH")
 
 
 def test_cleanup_refuses_ignored_task_local_content_and_preserves_worktree(h: Harness) -> None:
@@ -77,7 +81,8 @@ def test_cleanup_refuses_ignored_task_local_content_and_preserves_worktree(h: Ha
     assert ignored.name in ignored_paths
     assert all(path == ignored.name or path.startswith("tools/.venv/") for path in ignored_paths)
 
-    result = h.tool("cleanup", "--task", task, "--disposition", "closed", "--json", check=False)
+    head = git_out(h.wt(task), "rev-parse", "HEAD")
+    result = h.raw_tool(*_terminal_args(task, branch, head), check=False)
     assert_error(result, "IGNORED_CONTENT_CLEANUP")
     assert h.wt(task).is_dir()
     assert ignored.read_text(encoding="utf-8") == "only task-local copy\n"

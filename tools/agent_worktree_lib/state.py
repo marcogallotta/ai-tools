@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import re
 import shutil
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -101,6 +102,62 @@ def task_worktree_path(task_gid: str, branch: str | None = None, lineage_id: str
             fail("LINEAGE_ID_INVALID", "branch and lineage_id must be supplied together for worktree resolution")
         return worktree_root() / task_gid / f"{_branch_digest(branch)}-{lineage_id}"
     return worktree_root() / task_gid
+
+
+def create_attempt_path(task_gid: str, branch: str, lineage_id: str | None = None) -> Path:
+    suffix = lineage_id or "legacy"
+    return state_root() / "create-attempts" / f"{require_task_gid(task_gid)}-{_branch_digest(branch)}-{suffix}.json"
+
+
+def prepare_create_attempt(
+    *, task_gid: str, operation: str, branch: str, candidate: Path, repo: Any,
+    agent_id: str | None, base_ref: str, base_sha: str,
+    expected_remote_head: str | None, local_branch_preexisted: bool,
+) -> tuple[Path, dict[str, Any]]:
+    lineage_id = os.environ.get("DISH_AGENT_LINEAGE_ID")
+    path = create_attempt_path(task_gid, branch, lineage_id)
+    identity = {
+        "schema": "dish-worktree-create-attempt-v1",
+        "status": "PREPARED",
+        "operation": operation,
+        "repository": EXPECTED_REPOSITORY,
+        "origin_id": repo.origin_id,
+        "git_common_dir": str(repo.common_dir),
+        "task_gid": task_gid,
+        "branch": branch,
+        "lineage_id": lineage_id,
+        "candidate_path": str(candidate),
+        "agent_id": agent_id,
+        "base_ref": base_ref,
+        "base_sha": base_sha,
+        "expected_remote_head": expected_remote_head,
+        "local_branch_preexisted": local_branch_preexisted,
+    }
+    if path.exists():
+        current = read_json_object(path, "worktree creation attempt")
+        comparable = {key: current.get(key) for key in identity}
+        if comparable != identity:
+            fail("CREATE_ATTEMPT_MISMATCH", "prepared worktree creation identity differs from this exact start/adopt request")
+        return path, current
+    attempt = dict(identity)
+    attempt["attempt_id"] = uuid.uuid4().hex
+    attempt["prepared_at"] = now_utc()
+    atomic_write_json(path, attempt)
+    return path, attempt
+
+
+def retire_create_attempt(path: Path, attempt_id: str) -> None:
+    if not path.exists():
+        return
+    current = read_json_object(path, "worktree creation attempt")
+    if current.get("attempt_id") != attempt_id:
+        fail("CREATE_ATTEMPT_MISMATCH", "worktree creation attempt changed before retirement")
+    path.unlink()
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def new_active_task_state(
