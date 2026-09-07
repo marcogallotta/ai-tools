@@ -1465,6 +1465,18 @@
       "delivery": {
         "mode": "DIRECT_ALWAYS_ON"
       },
+      "id": "github-connector-not-dish-mcp",
+      "impact": "additive",
+      "surface": "authority",
+      "text": "For every GitHub read/write, use the GitHub connector—never the Dish MCP app. Dish MCP's GitHub OAuth is login only; its tools are Dish workflow only."
+    },
+    {
+      "action_boundaries": [
+        "*"
+      ],
+      "delivery": {
+        "mode": "DIRECT_ALWAYS_ON"
+      },
       "id": "live-authority",
       "impact": "breaking",
       "surface": "authority",
