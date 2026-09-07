@@ -109,7 +109,7 @@ def test_cooked_history_is_soft_state_and_not_a_hard_filter() -> None:
     ]
 
 
-def test_blocker_wakes_without_erasing_evidence() -> None:
+def test_blocker_wakes_without_erasing_evidence_identity() -> None:
     blocked = ev(
         "rendang-blocked",
         subject="rendang",
@@ -123,7 +123,9 @@ def test_blocker_wakes_without_erasing_evidence() -> None:
     )
     before = compile_recommendation_state([blocked], as_of=T0)
     after = compile_recommendation_state(
-        [blocked], as_of=T0 + timedelta(days=5), resolved_wake_conditions={"kerisik-arrived"}
+        [blocked],
+        as_of=T0 + timedelta(days=5),
+        resolved_wake_conditions={"kerisik-arrived"},
     )
     assert (
         build_recommendation_context(before, candidate_keys=["rendang"])
@@ -151,7 +153,7 @@ def test_runtime_sourcing_blocker_is_hard_and_never_spends_soft_budget() -> None
     assert context.soft_signals == ()
 
 
-def test_lane_and_interest_are_soft_ranking_evidence() -> None:
+def test_lane_and_interest_are_soft_ranking_evidence_when_lane_matches() -> None:
     state = compile_recommendation_state(
         [
             ev(
@@ -161,6 +163,7 @@ def test_lane_and_interest_are_soft_ranking_evidence() -> None:
                 signal_type=SignalType.LANE,
                 value="consolidate",
                 scope=SignalScope(ScopeKind.LANE, "curries"),
+                lifetime=Lifetime.MEDIUM_TERM,
             ),
             ev(
                 "fesenjan-interest",
@@ -176,11 +179,65 @@ def test_lane_and_interest_are_soft_ranking_evidence() -> None:
         state,
         candidate_keys=["jalfrezi", "fesenjan"],
         authoritative_eligibility=eligible("jalfrezi", "fesenjan"),
+        relevant_subjects={SubjectType.LANE: {"curries"}},
     )
     assert {s.signal_id for s in context.soft_signals} == {
         "jalfrezi-lane",
         "fesenjan-interest",
     }
+
+
+def test_nonmatching_lane_does_not_consume_bounded_payload() -> None:
+    state = compile_recommendation_state(
+        [
+            ev(
+                "curries",
+                subject="curries",
+                subject_type=SubjectType.LANE,
+                signal_type=SignalType.LANE,
+                value="consolidate",
+                scope=SignalScope(ScopeKind.LANE, "curries"),
+            ),
+            ev(
+                "baking",
+                subject="baking",
+                subject_type=SubjectType.LANE,
+                signal_type=SignalType.LANE,
+                value="expand",
+                scope=SignalScope(ScopeKind.LANE, "baking"),
+            ),
+        ],
+        as_of=T0,
+    )
+    context = build_recommendation_context(
+        state,
+        candidate_keys=["jalfrezi"],
+        authoritative_eligibility=eligible("jalfrezi"),
+        relevant_subjects={SubjectType.LANE: {"curries"}},
+    )
+    assert [s.signal_id for s in context.soft_signals] == ["curries"]
+
+
+def test_session_scoped_unrelated_dish_does_not_consume_payload() -> None:
+    state = compile_recommendation_state(
+        [
+            ev(
+                "not-risotto",
+                subject="risotto",
+                signal_type=SignalType.SUPPRESSION,
+                value="not tonight",
+                scope=SESSION,
+                lifetime=Lifetime.SESSION,
+            )
+        ],
+        as_of=T0,
+    )
+    context = build_recommendation_context(
+        state,
+        candidate_keys=["fesenjan"],
+        authoritative_eligibility=eligible("fesenjan"),
+    )
+    assert context.soft_signals == ()
 
 
 def test_dish_saturation_does_not_generalize_to_cuisine() -> None:
@@ -218,14 +275,15 @@ def test_session_scope_ends_but_explicit_durable_exclusion_persists() -> None:
         subject="sweet breakfast",
         signal_type=SignalType.EXCLUSION,
         value="do not recommend",
-        scope=SignalScope(ScopeKind.DISH, "sweet breakfast"),
         lifetime=Lifetime.DURABLE,
         source=EvidenceSource.EXPLICIT_MARCO,
         evidence_kind=EvidenceKind.EXPLICIT,
         eligibility=EligibilityEffect.HARD_EXCLUDE,
     )
     state = compile_recommendation_state(
-        [not_tonight, durable], as_of=T0 + timedelta(days=1), ended_scopes={SESSION}
+        [not_tonight, durable],
+        as_of=T0 + timedelta(days=1),
+        ended_scopes={SESSION},
     )
     assert {s.signal_id for s in state.signals} == {"durable-exclude"}
     context = build_recommendation_context(state, candidate_keys=["sweet breakfast"])
@@ -279,6 +337,23 @@ def test_inference_cannot_harden_into_block_or_durable_exclusion() -> None:
         )
 
 
+def test_blocker_and_exclusion_labels_cannot_be_softened() -> None:
+    with pytest.raises(ValueError, match="blocker signals must be hard blocks"):
+        ev(
+            "soft-blocker",
+            subject="candidate",
+            signal_type=SignalType.BLOCKER,
+            value="maybe blocked",
+        )
+    with pytest.raises(ValueError, match="exclusion signals must be hard exclusions"):
+        ev(
+            "soft-exclusion",
+            subject="candidate",
+            signal_type=SignalType.EXCLUSION,
+            value="maybe exclude",
+        )
+
+
 def test_narrow_session_signal_precedes_conflicting_broad_preference_without_rewriting_it() -> None:
     state = compile_recommendation_state(
         [
@@ -315,11 +390,11 @@ def test_soft_payload_is_capped_but_hard_lookup_reads_complete_state() -> None:
     soft = [
         ev(
             f"soft-{index:05d}",
-            subject=f"dish-{index}",
+            subject=f"preference-{index}",
+            subject_type=SubjectType.PREFERENCE,
             signal_type=SignalType.INTEREST,
             value="curious",
             at=T0 + timedelta(seconds=index),
-            subject_type=SubjectType.PREFERENCE,
             scope=GLOBAL,
             source=EvidenceSource.AGENT_INFERENCE,
             evidence_kind=EvidenceKind.DERIVED,
@@ -331,16 +406,12 @@ def test_soft_payload_is_capped_but_hard_lookup_reads_complete_state() -> None:
         subject="blocked dish",
         signal_type=SignalType.BLOCKER,
         value="ingredient unavailable",
-        at=T0,
         source=EvidenceSource.RUNTIME_FACT,
         evidence_kind=EvidenceKind.AUTHORITATIVE,
         eligibility=EligibilityEffect.HARD_BLOCK,
     )
     state = compile_recommendation_state([*soft, hard], as_of=T0 + timedelta(days=1))
-    context = build_recommendation_context(
-        state,
-        candidate_keys=["blocked dish"],
-    )
+    context = build_recommendation_context(state, candidate_keys=["blocked dish"])
     assert len(context.soft_signals) == MAX_SOFT_SIGNALS
     assert context.eligibility_for("blocked dish").status is CandidateEligibility.BLOCKED
 
@@ -407,6 +478,22 @@ def test_no_implicit_time_decay_after_ninety_days() -> None:
     assert [s.signal_id for s in state.signals] == ["old-interest"]
 
 
+def test_medium_term_signal_does_not_decay_without_explicit_transition() -> None:
+    lane = ev(
+        "consolidate",
+        subject="subcontinental",
+        subject_type=SubjectType.LANE,
+        signal_type=SignalType.LANE,
+        value="consolidate",
+        scope=SignalScope(ScopeKind.LANE, "subcontinental"),
+        lifetime=Lifetime.MEDIUM_TERM,
+    )
+    state = compile_recommendation_state([lane], as_of=T0 + timedelta(days=365))
+    assert [(s.signal_id, s.lifetime) for s in state.signals] == [
+        ("consolidate", Lifetime.MEDIUM_TERM)
+    ]
+
+
 def test_explicit_expiry_is_deterministic() -> None:
     expires = T0 + timedelta(days=7)
     signal = ev(
@@ -431,6 +518,7 @@ def test_soft_priority_tie_break_is_deterministic() -> None:
             ev(
                 "b",
                 subject="x",
+                subject_type=SubjectType.PREFERENCE,
                 signal_type=SignalType.INTEREST,
                 value="one",
                 scope=GLOBAL,
@@ -438,6 +526,7 @@ def test_soft_priority_tie_break_is_deterministic() -> None:
             ev(
                 "a",
                 subject="y",
+                subject_type=SubjectType.PREFERENCE,
                 signal_type=SignalType.INTEREST,
                 value="two",
                 scope=GLOBAL,
@@ -447,8 +536,8 @@ def test_soft_priority_tie_break_is_deterministic() -> None:
     )
     context = build_recommendation_context(
         state,
-        candidate_keys=["x", "y"],
-        authoritative_eligibility=eligible("x", "y"),
+        candidate_keys=["candidate"],
+        authoritative_eligibility=eligible("candidate"),
     )
     assert [s.signal_id for s in context.soft_signals] == ["a", "b"]
 
@@ -482,7 +571,7 @@ def test_clear_event_removes_target_without_mutating_history() -> None:
     assert {"parked", "clear-parked"}.issubset(state.inactive_signal_ids)
 
 
-def test_recommendation_layer_accepts_scratchpad_authority_without_owning_its_lifecycle() -> None:
+def test_recommendation_layer_accepts_scratchpad_authority_without_owning_lifecycle() -> None:
     parked = ev(
         "scratchpad-parked",
         subject="mapo tofu",
@@ -495,3 +584,139 @@ def test_recommendation_layer_accepts_scratchpad_authority_without_owning_its_li
     signal = state.signals[0]
     assert signal.source is EvidenceSource.SCRATCHPAD_AUTHORITY
     assert signal.provenance == ("evidence:scratchpad-parked",)
+
+
+def test_repeated_derived_suppression_folds_to_latest_without_becoming_hard() -> None:
+    first = ev(
+        "reject-1",
+        subject="candidate",
+        signal_type=SignalType.SUPPRESSION,
+        value="declined",
+        source=EvidenceSource.AGENT_INFERENCE,
+        evidence_kind=EvidenceKind.DERIVED,
+        strength=Strength.WEAK,
+        confidence=Confidence.LOW,
+    )
+    second = ev(
+        "reject-2",
+        subject="candidate",
+        signal_type=SignalType.SUPPRESSION,
+        value="declined",
+        at=T0 + timedelta(minutes=1),
+        source=EvidenceSource.AGENT_INFERENCE,
+        evidence_kind=EvidenceKind.DERIVED,
+        strength=Strength.MEDIUM,
+        confidence=Confidence.MEDIUM,
+    )
+    state = compile_recommendation_state([first, second], as_of=T0 + timedelta(minutes=2))
+    assert len(state.signals) == 1
+    signal = state.signals[0]
+    assert signal.signal_id == "reject-2"
+    assert signal.eligibility_effect is EligibilityEffect.SOFT
+    assert signal.provenance == ("evidence:reject-1", "evidence:reject-2")
+
+
+def test_weaker_later_inference_does_not_erase_explicit_same_scope_state() -> None:
+    explicit = ev(
+        "explicit",
+        subject="spice",
+        subject_type=SubjectType.PREFERENCE,
+        signal_type=SignalType.PREFERENCE,
+        value="likes spicy",
+        scope=GLOBAL,
+        evidence_kind=EvidenceKind.EXPLICIT,
+    )
+    inferred = ev(
+        "inferred",
+        subject="spice",
+        subject_type=SubjectType.PREFERENCE,
+        signal_type=SignalType.PREFERENCE,
+        value="avoid spicy",
+        scope=GLOBAL,
+        at=T0 + timedelta(days=1),
+        source=EvidenceSource.AGENT_INFERENCE,
+        evidence_kind=EvidenceKind.DERIVED,
+    )
+    state = compile_recommendation_state([explicit, inferred], as_of=T0 + timedelta(days=2))
+    assert {s.signal_id for s in state.signals} == {"explicit", "inferred"}
+
+
+def test_weaker_same_value_inference_folds_into_stronger_provenance() -> None:
+    explicit = ev(
+        "explicit",
+        subject="spice",
+        subject_type=SubjectType.PREFERENCE,
+        signal_type=SignalType.PREFERENCE,
+        value="likes spicy",
+        scope=GLOBAL,
+        evidence_kind=EvidenceKind.EXPLICIT,
+    )
+    inferred = ev(
+        "inferred",
+        subject="spice",
+        subject_type=SubjectType.PREFERENCE,
+        signal_type=SignalType.PREFERENCE,
+        value="likes spicy",
+        scope=GLOBAL,
+        at=T0 + timedelta(days=1),
+        source=EvidenceSource.AGENT_INFERENCE,
+        evidence_kind=EvidenceKind.DERIVED,
+    )
+    state = compile_recommendation_state([explicit, inferred], as_of=T0 + timedelta(days=2))
+    assert [s.signal_id for s in state.signals] == ["explicit"]
+    assert state.signals[0].provenance == ("evidence:explicit", "evidence:inferred")
+    assert "inferred" in state.inactive_signal_ids
+
+
+def test_hard_and_soft_prerequisite_state_do_not_implicitly_replace_each_other() -> None:
+    hard = ev(
+        "hard-prereq",
+        subject="dish",
+        signal_type=SignalType.PREREQUISITE,
+        value="ingredient missing",
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        eligibility=EligibilityEffect.HARD_BLOCK,
+    )
+    soft = ev(
+        "soft-prereq",
+        subject="dish",
+        signal_type=SignalType.PREREQUISITE,
+        value="ingredient route uncertain",
+        at=T0 + timedelta(minutes=1),
+        source=EvidenceSource.EXPLICIT_MARCO,
+        evidence_kind=EvidenceKind.EXPLICIT,
+        eligibility=EligibilityEffect.SOFT,
+    )
+    state = compile_recommendation_state([hard, soft], as_of=T0 + timedelta(minutes=2))
+    assert {s.signal_id for s in state.signals} == {"hard-prereq", "soft-prereq"}
+    assert (
+        build_recommendation_context(state, candidate_keys=["dish"])
+        .eligibility_for("dish")
+        .status
+        is CandidateEligibility.BLOCKED
+    )
+
+
+def test_duplicate_evidence_identity_is_rejected() -> None:
+    one = ev(
+        "duplicate",
+        subject="x",
+        signal_type=SignalType.INTEREST,
+        value="one",
+    )
+    two = ev(
+        "duplicate",
+        subject="y",
+        signal_type=SignalType.INTEREST,
+        value="two",
+        at=T0 + timedelta(seconds=1),
+    )
+    with pytest.raises(ValueError, match="event_id values must be unique"):
+        compile_recommendation_state([one, two], as_of=T0 + timedelta(days=1))
+
+
+def test_soft_limit_never_exceeds_versioned_cap() -> None:
+    state = compile_recommendation_state([], as_of=T0)
+    with pytest.raises(ValueError, match="soft_limit must be between"):
+        build_recommendation_context(state, candidate_keys=[], soft_limit=MAX_SOFT_SIGNALS + 1)
