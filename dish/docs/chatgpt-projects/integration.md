@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-7f54132a6559
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-420b8386ccfc
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
@@ -16,7 +16,7 @@ Triggered policy reads (before the governed action):
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
 - execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
 - external/current-main defect while pursuing an existing objective -> `dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission`
-- fast-track -> `dish/docs/agents/fast-track-process.md#Procedure`
+- fast-track -> `dish/docs/agents/trivial-fast-track.md#Procedure`
 - task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
@@ -45,7 +45,7 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
-- Fast-track: read triggered Procedure.
+- Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.
 - Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.
