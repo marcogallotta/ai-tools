@@ -13,13 +13,20 @@ from dish_pg.connected_command_spec import (
     result_envelope_schema,
 )
 from dish_pg.openapi import postgres_action_openapi
-from dish_service import native_mcp_server
+from dish_service import mcp_server, native_mcp_server
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
 
 
 RUN_ID = "11111111-1111-4111-8111-111111111111"
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"
+OWNER_ID = "192548"
+CALLER = {
+    "principal_class": "connected-agent",
+    "issuer": "https://dish.example/dish",
+    "client_id": "chatgpt",
+    "subject": OWNER_ID,
+}
 
 
 class FakeService:
@@ -39,6 +46,7 @@ class FakeService:
             "data": {"sections": []},
             "errors": [],
         }
+        self.closed = False
 
     def execute_agent(
         self,
@@ -51,7 +59,15 @@ class FakeService:
         self.calls.append(("execute", command, arguments, principal, request_id))
         return dict(self.result)
 
-    def record_replay_validation_failure(
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeValidationRecorder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+
+    def record(
         self,
         command: str,
         arguments: dict[str, Any],
@@ -63,7 +79,6 @@ class FakeService:
     ) -> dict[str, Any]:
         self.calls.append(
             (
-                "validation",
                 command,
                 arguments,
                 principal,
@@ -95,11 +110,23 @@ def _resolve_openapi_refs(value: Any, schemas: dict[str, Any]) -> Any:
     return {key: _resolve_openapi_refs(child, schemas) for key, child in value.items()}
 
 
+def _adapter(
+    service: FakeService | None = None,
+    recorder: FakeValidationRecorder | None = None,
+) -> native_mcp_server.NativeMCPAdapter:
+    return native_mcp_server.NativeMCPAdapter(
+        service or FakeService(),
+        owner_id=OWNER_ID,
+        validation_recorder=recorder or FakeValidationRecorder(),
+    )
+
+
 def test_connected_registry_is_exact_18_command_product_contract() -> None:
     assert CONNECTED_COMMANDS == ACTION_COMMANDS
     assert len(CONNECTED_COMMANDS) == 18
     assert tuple(spec.name for spec in CONNECTED_COMMAND_SPECS) == CONNECTED_COMMANDS
     assert tuple(TOOL_COMMANDS.values()) == CONNECTED_COMMANDS
+    assert tuple(mcp_server.TOOL_COMMANDS.values()) == CONNECTED_COMMANDS
     assert "qualify-file-transport" not in CONNECTED_COMMANDS
     assert "queue" not in CONNECTED_COMMANDS
     assert "archive" not in CONNECTED_COMMANDS
@@ -141,27 +168,44 @@ def test_connected_output_schemas_preserve_qualified_result_envelope_parity() ->
         assert result_envelope_schema(command=command) == expected
 
 
-def test_native_read_dispatches_directly_to_connected_service() -> None:
+def test_authenticated_native_read_dispatches_directly_to_connected_service() -> None:
     service = FakeService()
-    adapter = native_mcp_server.NativeMCPAdapter(service, owner_id="chatgpt-project")
+    adapter = _adapter(service)
 
-    result = adapter.call_tool(
+    result = adapter.call(
         "dish_sections",
         {"client": {"run_id": RUN_ID}, "arguments": {}},
+        caller=CALLER,
     )
 
-    assert result.is_error is False
-    assert result.structured_content["ok"] is True
-    assert result.structured_content["data"]["agent_guidance"]["source"] == "dish"
+    assert result["ok"] is True
+    assert result["data"]["agent_guidance"]["source"] == "dish"
     assert service.calls == [
         (
             "execute",
             "sections",
             {},
-            ServicePrincipal(owner_id="chatgpt-project", run_id=RUN_ID),
+            ServicePrincipal(owner_id=OWNER_ID, run_id=RUN_ID),
             None,
         )
     ]
+
+
+def test_native_backend_refuses_missing_or_mismatched_authenticated_caller() -> None:
+    adapter = _adapter()
+
+    with pytest.raises(native_mcp_server.NativeMCPRuntimeError, match="authenticated MCP caller"):
+        adapter.call(
+            "dish_sections",
+            {"client": {"run_id": RUN_ID}, "arguments": {}},
+            caller=None,
+        )
+    with pytest.raises(native_mcp_server.NativeMCPRuntimeError, match="authenticated MCP caller"):
+        adapter.call(
+            "dish_sections",
+            {"client": {"run_id": RUN_ID}, "arguments": {}},
+            caller={**CALLER, "subject": "999999"},
+        )
 
 
 def test_native_mutation_preserves_explicit_replay_identity() -> None:
@@ -181,39 +225,45 @@ def test_native_mutation_preserves_explicit_replay_identity() -> None:
             "errors": [],
         }
     )
-    adapter = native_mcp_server.NativeMCPAdapter(service, owner_id="chatgpt-project")
+    adapter = _adapter(service)
 
-    result = adapter.call_tool(
+    result = adapter.call(
         "dish_create",
         {
             "client": {"run_id": RUN_ID, "request_id": REQUEST_ID},
             "arguments": {"agent": "gpt", "title": "MCP direct"},
         },
+        caller=CALLER,
     )
 
-    assert result.structured_content["command"] == "create"
+    assert result["command"] == "create"
     assert service.calls[0][4] == REQUEST_ID
-    assert service.calls[0][3] == ServicePrincipal(
-        owner_id="chatgpt-project", run_id=RUN_ID
-    )
+    assert service.calls[0][3] == ServicePrincipal(owner_id=OWNER_ID, run_id=RUN_ID)
 
 
-def test_replay_bound_validation_failure_is_recorded_with_same_ids() -> None:
+def test_replay_bound_validation_failure_records_native_surface_with_same_ids() -> None:
     service = FakeService()
-    adapter = native_mcp_server.NativeMCPAdapter(service, owner_id="chatgpt-project")
+    recorder = FakeValidationRecorder()
+    adapter = _adapter(service, recorder)
 
-    result = adapter.call_tool(
+    result = adapter.call(
         "dish_create",
         {
             "client": {"run_id": RUN_ID, "request_id": REQUEST_ID},
             "arguments": {"agent": "gpt"},
         },
+        caller=CALLER,
     )
 
-    assert result.is_error is False
-    assert result.structured_content["ok"] is False
-    assert service.calls[0][0] == "validation"
-    assert service.calls[0][4] == REQUEST_ID
+    assert result["ok"] is False
+    assert len(recorder.calls) == 1
+    recorded = recorder.calls[0]
+    assert recorded[0] == "create"
+    assert recorded[1] == {"agent": "gpt"}
+    assert recorded[2] == ServicePrincipal(owner_id=OWNER_ID, run_id=RUN_ID)
+    assert recorded[3] == REQUEST_ID
+    assert isinstance(recorded[4], str) and recorded[4]
+    assert recorded[5] == native_mcp_server.NATIVE_VALIDATION_SURFACE
 
 
 def test_normal_dish_failure_is_structured_not_mcp_transport_error() -> None:
@@ -233,16 +283,13 @@ def test_normal_dish_failure_is_structured_not_mcp_transport_error() -> None:
             "errors": [{"rule": "blocked"}],
         }
     )
-    adapter = native_mcp_server.NativeMCPAdapter(service, owner_id="chatgpt-project")
-
-    result = adapter.call_tool(
+    result = _adapter(service).call(
         "dish_sections",
         {"client": {"run_id": RUN_ID}, "arguments": {}},
+        caller=CALLER,
     )
-
-    assert result.is_error is False
-    assert result.structured_content["ok"] is False
-    assert result.structured_content["code"] == "CONFLICT"
+    assert result["ok"] is False
+    assert result["code"] == "CONFLICT"
 
 
 def test_backend_unavailability_becomes_transport_failure() -> None:
@@ -257,40 +304,23 @@ def test_backend_unavailability_becomes_transport_failure() -> None:
         )
 
     service.execute_agent = unavailable  # type: ignore[method-assign]
-    adapter = native_mcp_server.NativeMCPAdapter(service, owner_id="chatgpt-project")
 
     with pytest.raises(native_mcp_server.NativeMCPRuntimeError):
-        adapter.call_tool(
+        _adapter(service).call(
             "dish_sections",
             {"client": {"run_id": RUN_ID}, "arguments": {}},
+            caller=CALLER,
         )
-
-
-def test_server_advertises_exact_tools_schemas_annotations_and_instructions() -> None:
-    tools = native_mcp_server._mcp_tools()
-    assert len(tools) == 18
-    assert [tool.name for tool in tools] == [
-        spec.tool_name for spec in CONNECTED_COMMAND_SPECS
-    ]
-    assert all(tool.output_schema is not None for tool in tools)
-    options = native_mcp_server.create_server(
-        native_mcp_server.NativeMCPAdapter(FakeService(), owner_id="chatgpt-project")
-    ).create_initialization_options()
-    assert options.instructions == native_mcp_server.SERVER_INSTRUCTIONS
-    assert "MCP connection" in options.instructions
-    assert "client.request_id" in options.instructions
-    assert "allowed_actions" in options.instructions
-    assert "human_action" in options.instructions
 
 
 def test_non_connected_tool_is_rejected_before_service_dispatch() -> None:
     service = FakeService()
-    adapter = native_mcp_server.NativeMCPAdapter(service, owner_id="chatgpt-project")
-
+    adapter = _adapter(service)
     with pytest.raises(native_mcp_server.NativeMCPRuntimeError):
-        adapter.call_tool(
+        adapter.call(
             "dish_qualify_file_transport",
             {"client": {"run_id": RUN_ID}, "arguments": {}},
+            caller=CALLER,
         )
     assert service.calls == []
 
@@ -299,20 +329,23 @@ def test_runtime_refuses_asana_environment(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("DISH_PROFILE", "test")
     monkeypatch.setenv("DISH_ASANA_TOKEN", "must-not-exist")
     with pytest.raises(DishRuleError) as exc_info:
-        native_mcp_server.runtime_service_from_environment()
+        native_mcp_server.runtime_service_from_environment(
+            authenticated_owner_id=OWNER_ID
+        )
     assert exc_info.value.rule == "postgresql_native_mcp_asana_environment_forbidden"
 
 
-def test_runtime_uses_direct_postgres_identity_without_action_config(
+def test_runtime_uses_authenticated_owner_without_action_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     generation = "33333333-3333-4333-8333-333333333333"
     for key in list(__import__("os").environ):
-        if "ASANA" in key:
+        if "ASANA" in key.upper():
             monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("DISH_PROFILE", "test")
     monkeypatch.setenv(
-        "DISH_PG_DATABASE_URL", "postgresql+psycopg://dish:test@127.0.0.1/dish_native_test"
+        "DISH_PG_DATABASE_URL",
+        "postgresql+psycopg://dish:test@127.0.0.1/dish_native_test",
     )
     monkeypatch.setenv("DISH_PG_EXPECTED_DATABASE_NAME", "dish_native_test")
     monkeypatch.setenv("DISH_PG_EXPECTED_SCHEMA_HEAD", "head-1")
@@ -320,7 +353,6 @@ def test_runtime_uses_direct_postgres_identity_without_action_config(
     monkeypatch.setenv("DISH_PG_EXPECTED_GENERATION_ID", generation)
     monkeypatch.setenv("DISH_PG_CURSOR_SECRET", "x" * 24)
     monkeypatch.setenv("DISH_PG_AUTHORITY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("DISH_CONNECTED_AGENT_OWNER_ID", "chatgpt-project")
     monkeypatch.setattr(native_mcp_server, "ALEMBIC_HEAD", "head-1")
     captured: dict[str, Any] = {}
 
@@ -337,11 +369,13 @@ def test_runtime_uses_direct_postgres_identity_without_action_config(
 
     monkeypatch.setattr(native_mcp_server, "PostgresRuntimeService", FakeRuntime)
 
-    runtime = native_mcp_server.runtime_service_from_environment()
+    runtime = native_mcp_server.runtime_service_from_environment(
+        authenticated_owner_id=OWNER_ID
+    )
 
     assert runtime is not None
     assert captured["profile"] == "test"
     assert captured["expected_database"] == "dish_native_test"
     assert captured["expected_generation_id"] == __import__("uuid").UUID(generation)
     assert captured["config"].action_token is None
-    assert captured["config"].action_client_id == "chatgpt-project"
+    assert captured["config"].action_client_id == OWNER_ID

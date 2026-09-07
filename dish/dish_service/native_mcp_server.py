@@ -1,72 +1,33 @@
 #!/usr/bin/env python3
-"""Native stdio MCP server for PostgreSQL-authoritative Dish connected agents."""
+"""Direct PostgreSQL backend for the authenticated Dish MCP shell."""
 from __future__ import annotations
 
-import logging
+from datetime import datetime, timezone
 import os
-import uuid
 from pathlib import Path
 from typing import Any, Mapping
+import uuid
 
-import anyio
-from mcp.server.context import ServerRequestContext
-from mcp.server.lowlevel.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import (
-    CallToolRequestParams,
-    CallToolResult,
-    ListToolsResult,
-    PaginatedRequestParams,
-    TextContent,
-    Tool,
-    ToolAnnotations,
-)
+from sqlalchemy.exc import SQLAlchemyError
 
-from dish_pg.connected_command_spec import (
-    CONNECTED_COMMAND_SPECS,
-    TOOL_COMMANDS,
-    definition_for,
-    result_envelope_schema,
-)
+from dish_pg.command_contract import COMMAND_DEFINITIONS
+from dish_pg.command_port import CommandCall, CommandPortError, PostgresCommandPort
+from dish_pg.connected_command_spec import TOOL_COMMANDS, definition_for
+from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.release import ALEMBIC_HEAD
+from dish_pg.workflow import RequestIdentityConflict, WorkflowAuthorityError
 from dish_service.action_guidance import attach_connected_agent_guidance
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 
-LOG = logging.getLogger("dish.native_mcp")
-SERVER_NAME = "dish-postgresql-native-mcp"
-SERVER_VERSION = "1"
-_CONNECTED_OWNER_ENV = "DISH_CONNECTED_AGENT_OWNER_ID"
-
-SERVER_INSTRUCTIONS = """Dish PostgreSQL is workflow authority. Keep client.run_id stable for one Dish agent run; MCP connection, session, and JSON-RPC request IDs do not replace it. For every new replay-bound logical mutation, use a fresh canonical client.request_id. After response loss, retry the same logical mutation only with the exact same client.run_id, client.request_id, command, and arguments. Follow each canonical ResultEnvelope's allowed_actions, agent_guidance, continuation identifiers, and human_action exactly; never invent or rediscover identifiers when Dish returned one. Verification must use an independent client.run_id when required by the workflow. An ok:false ResultEnvelope is a normal Dish result, not an MCP transport failure."""
+NATIVE_VALIDATION_SURFACE = "mcp-native-validation"
 
 
 class NativeMCPRuntimeError(RuntimeError):
     """Transport-level native MCP failure; canonical Dish failures stay structured."""
-
-
-def _mcp_tools() -> list[Tool]:
-    tools: list[Tool] = []
-    for spec in CONNECTED_COMMAND_SPECS:
-        tools.append(
-            Tool(
-                name=spec.tool_name,
-                title=spec.title,
-                description=spec.description,
-                input_schema=spec.input_schema(),
-                output_schema=result_envelope_schema(command=spec.name),
-                annotations=ToolAnnotations(
-                    read_only_hint=spec.read_only,
-                    destructive_hint=spec.destructive,
-                    open_world_hint=spec.open_world,
-                    idempotent_hint=spec.idempotent,
-                ),
-            )
-        )
-    return tools
 
 
 def _canonical_error(command: str, error: DishRuleError) -> dict[str, Any]:
@@ -84,32 +45,132 @@ def _minimal_content(payload: Mapping[str, Any]) -> str:
     return f"Dish {command}: {code}{replayed}"
 
 
-def _call_result(payload: dict[str, Any]) -> CallToolResult:
-    return CallToolResult(
-        content=[TextContent(type="text", text=_minimal_content(payload))],
-        structured_content=payload,
-        is_error=False,
-    )
+class NativeValidationRecorder:
+    """Record native-MCP validation failures through canonical PostgreSQL replay authority.
 
+    PostgresRuntimeService's existing public wrapper remains HTTP-specific and records
+    ``postgresql-http-validation``. This bounded adapter uses the same command-port
+    replay authority while preserving the real native-MCP invocation provenance.
+    """
 
-def _transport_error(message: str) -> CallToolResult:
-    return CallToolResult(
-        content=[TextContent(type="text", text=message)],
-        is_error=True,
-    )
+    def __init__(self, service: PostgresRuntimeService) -> None:
+        self.service = service
+
+    def record(
+        self,
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal,
+        request_id: str,
+        error: DishRuleError,
+        invocation_surface: str,
+    ) -> dict[str, Any]:
+        try:
+            run_id = uuid.UUID(principal.run_id)
+            parsed_request_id = uuid.UUID(request_id)
+        except ValueError as exc:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "service command identifiers are invalid",
+                rule="service_identifier_invalid",
+            ) from exc
+
+        definition = COMMAND_DEFINITIONS.get(command)
+        if definition is None or definition.principal not in {"agent", "admin"}:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "command is not eligible for replay-bound validation",
+                rule="postgresql_validation_principal_invalid",
+                details={"command": command},
+            )
+
+        envelope = error_envelope(command, error)
+        envelope["data"]["request_id"] = request_id
+        recorded_at = datetime.now(timezone.utc)
+        try:
+            with session_scope(self.service._session_maker) as session:
+                authoritative, replayed = PostgresCommandPort(
+                    session,
+                    cursor_secret=self.service._cursor_secret,
+                ).record_validation_failure(
+                    CommandCall(
+                        command_name=command,
+                        arguments=dict(arguments),
+                        owner_id=principal.owner_id,
+                        principal_class=definition.principal,
+                        run_id=run_id,
+                        request_id=parsed_request_id,
+                        now=recorded_at,
+                    ),
+                    result_payload=envelope,
+                    invocation_surface=invocation_surface,
+                )
+                session.flush()
+            if replayed:
+                authoritative.setdefault("data", {})["request_replayed"] = True
+                authoritative["data"]["request_id"] = request_id
+            return authoritative
+        except RequestIdentityConflict as exc:
+            raise DishRuleError(
+                "CONFLICT",
+                "request ID was already used for different work",
+                rule="service_request_identity_conflict",
+                details={"request_id": request_id},
+            ) from exc
+        except (CommandPortError, WorkflowAuthorityError) as exc:
+            raise DishRuleError(
+                "CONFLICT",
+                str(exc),
+                rule="postgresql_command_rejected",
+            ) from exc
+        except SQLAlchemyError as exc:
+            raise DishRuleError(
+                "BACKEND_REJECTED",
+                "PostgreSQL authority is unavailable; validation failure was not recorded",
+                rule="postgresql_authority_unavailable",
+                retryable=True,
+                details={"error_type": type(exc).__name__},
+            ) from exc
 
 
 class NativeMCPAdapter:
-    """Validate MCP calls then dispatch directly to PostgreSQL application authority."""
+    """Validate authenticated MCP calls then dispatch directly to PostgreSQL authority."""
 
-    def __init__(self, service: PostgresRuntimeService, *, owner_id: str) -> None:
+    action_token = ""
+
+    def __init__(
+        self,
+        service: PostgresRuntimeService,
+        *,
+        owner_id: str,
+        validation_recorder: NativeValidationRecorder | Any | None = None,
+    ) -> None:
         owner = owner_id.strip()
         if not owner:
-            raise ValueError("connected-agent owner identity is required")
+            raise ValueError("authenticated connected-agent owner identity is required")
         self.service = service
         self.owner_id = owner
+        self.validation_recorder = validation_recorder or NativeValidationRecorder(service)
 
-    def _principal(self, run_id: str) -> ServicePrincipal:
+    def close(self) -> None:
+        self.service.close()
+
+    @staticmethod
+    def content_text(payload: Mapping[str, Any]) -> str:
+        return _minimal_content(payload)
+
+    def _principal(
+        self,
+        run_id: str,
+        *,
+        caller: Mapping[str, str | None] | None,
+    ) -> ServicePrincipal:
+        subject = None if caller is None else caller.get("subject")
+        if subject != self.owner_id:
+            raise NativeMCPRuntimeError(
+                "authenticated MCP caller identity is missing or does not match the configured owner"
+            )
         return ServicePrincipal(owner_id=self.owner_id, run_id=run_id)
 
     def _record_validation_failure(
@@ -118,6 +179,7 @@ class NativeMCPAdapter:
         request: Mapping[str, Any],
         *,
         error: DishRuleError,
+        caller: Mapping[str, str | None] | None,
     ) -> dict[str, Any] | None:
         spec = definition_for(command)
         if not spec.request_replay or spec.principal == "verification":
@@ -135,17 +197,24 @@ class NativeMCPAdapter:
             uuid.UUID(request_id)
         except ValueError:
             return None
-        recorded = self.service.record_replay_validation_failure(
+        recorded = self.validation_recorder.record(
             command,
             arguments,
-            principal=self._principal(run_id),
+            principal=self._principal(run_id, caller=caller),
             request_id=request_id,
             error=error,
+            invocation_surface=NATIVE_VALIDATION_SURFACE,
         )
         recorded.setdefault("http_status", 400)
         return attach_connected_agent_guidance(recorded)
 
-    def call_tool(self, tool_name: str, request: Mapping[str, Any]) -> CallToolResult:
+    def call(
+        self,
+        tool_name: str,
+        request: Mapping[str, Any],
+        *,
+        caller: Mapping[str, str | None] | None = None,
+    ) -> dict[str, Any]:
         command = TOOL_COMMANDS.get(tool_name)
         if command is None:
             raise NativeMCPRuntimeError(f"unknown Dish MCP tool: {tool_name}")
@@ -154,57 +223,33 @@ class NativeMCPAdapter:
             client, arguments = spec.validate(request)
         except DishRuleError as exc:
             try:
-                recorded = self._record_validation_failure(command, request, error=exc)
+                recorded = self._record_validation_failure(
+                    command,
+                    request,
+                    error=exc,
+                    caller=caller,
+                )
             except DishRuleError as record_exc:
                 if record_exc.rule == "postgresql_authority_unavailable":
                     raise NativeMCPRuntimeError(str(record_exc)) from record_exc
                 raise
-            return _call_result(recorded or _canonical_error(command, exc))
+            return recorded or _canonical_error(command, exc)
 
         run_id = client["run_id"]
         request_id = client.get("request_id")
+        principal = self._principal(run_id, caller=caller)
         try:
             payload = self.service.execute_agent(
                 command,
                 arguments,
-                principal=self._principal(run_id),
+                principal=principal,
                 request_id=request_id,
             )
         except DishRuleError as exc:
             if exc.rule == "postgresql_authority_unavailable":
                 raise NativeMCPRuntimeError(str(exc)) from exc
-            return _call_result(_canonical_error(command, exc))
-        return _call_result(attach_connected_agent_guidance(payload))
-
-
-def create_server(adapter: NativeMCPAdapter) -> Server[Any]:
-    tools = _mcp_tools()
-
-    async def list_tools(
-        _ctx: ServerRequestContext[Any],
-        _params: PaginatedRequestParams | None,
-    ) -> ListToolsResult:
-        return ListToolsResult(tools=tools)
-
-    async def call_tool(
-        _ctx: ServerRequestContext[Any], params: CallToolRequestParams
-    ) -> CallToolResult:
-        arguments = params.arguments or {}
-        if not isinstance(arguments, Mapping):
-            return _transport_error("Dish MCP tool arguments must be an object")
-        try:
-            return adapter.call_tool(params.name, arguments)
-        except NativeMCPRuntimeError as exc:
-            LOG.error("native MCP transport failure: %s", exc)
-            return _transport_error(str(exc))
-
-    return Server(
-        SERVER_NAME,
-        version=SERVER_VERSION,
-        instructions=SERVER_INSTRUCTIONS,
-        on_list_tools=list_tools,
-        on_call_tool=call_tool,
-    )
+            return _canonical_error(command, exc)
+        return attach_connected_agent_guidance(payload)
 
 
 def _required_env(name: str) -> str:
@@ -219,9 +264,10 @@ def _required_env(name: str) -> str:
     return value.strip()
 
 
-def runtime_service_from_environment() -> PostgresRuntimeService:
-    """Build the direct PostgreSQL runtime without Action listener/auth configuration."""
-
+def runtime_service_from_environment(
+    *, authenticated_owner_id: str
+) -> PostgresRuntimeService:
+    """Build the direct PostgreSQL runtime behind the authenticated MCP boundary."""
     profile = _required_env("DISH_PROFILE")
     if profile not in {"test", "prod"}:
         raise DishRuleError(
@@ -229,13 +275,23 @@ def runtime_service_from_environment() -> PostgresRuntimeService:
             "DISH_PROFILE must be test or prod",
             rule="postgresql_runtime_profile_invalid",
         )
-    asana_keys = sorted(key for key, value in os.environ.items() if "ASANA" in key and value)
+    asana_keys = sorted(
+        key for key, value in os.environ.items() if "ASANA" in key.upper() and value
+    )
     if asana_keys:
         raise DishRuleError(
             "BACKEND_REJECTED",
             "native MCP PostgreSQL runtime refuses Asana environment configuration",
             rule="postgresql_native_mcp_asana_environment_forbidden",
             details={"environment_keys": asana_keys},
+        )
+
+    owner = authenticated_owner_id.strip()
+    if not owner:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "authenticated MCP owner identity is required",
+            rule="postgresql_native_mcp_owner_missing",
         )
 
     expected_database = _required_env("DISH_PG_EXPECTED_DATABASE_NAME")
@@ -251,7 +307,10 @@ def runtime_service_from_environment() -> PostgresRuntimeService:
                 "expected PostgreSQL database must be a disposable dish_*_test database",
                 rule="postgresql_runtime_database_not_disposable",
             )
-    elif not expected_database.startswith("dish_") or not expected_database.endswith("_prod"):
+    elif (
+        not expected_database.startswith("dish_")
+        or not expected_database.endswith("_prod")
+    ):
         raise DishRuleError(
             "INVALID_ARGUMENT",
             "expected PostgreSQL database must be an explicit dish_*_prod database",
@@ -292,11 +351,10 @@ def runtime_service_from_environment() -> PostgresRuntimeService:
             rule="postgresql_runtime_state_dir_missing",
         )
 
-    connected_owner_id = _required_env(_CONNECTED_OWNER_ENV)
     config = ServiceConfig(
         db_path=state_dir / "unused-legacy-authority.sqlite3",
         honest_root=state_dir,
-        action_client_id=connected_owner_id,
+        action_client_id=owner,
         legacy_writer_fence_path=None,
     )
     service = PostgresRuntimeService(
@@ -319,33 +377,8 @@ def runtime_service_from_environment() -> PostgresRuntimeService:
         raise
 
 
-async def _run_stdio(server: Server[Any]) -> None:
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
-
-
-def main() -> int:
-    logging.basicConfig(level=os.environ.get("DISH_LOG_LEVEL", "INFO"))
-    service: PostgresRuntimeService | None = None
-    try:
-        service = runtime_service_from_environment()
-        adapter = NativeMCPAdapter(
-            service,
-            owner_id=_required_env(_CONNECTED_OWNER_ENV),
-        )
-        anyio.run(_run_stdio, create_server(adapter))
-        return 0
-    except (DishRuleError, NativeMCPRuntimeError, RuntimeError, ValueError) as exc:
-        LOG.error("native MCP startup/runtime failure: %s", exc)
-        return 2
-    finally:
-        if service is not None:
-            service.close()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+def native_adapter_from_environment(*, authenticated_owner_id: str) -> NativeMCPAdapter:
+    service = runtime_service_from_environment(
+        authenticated_owner_id=authenticated_owner_id
+    )
+    return NativeMCPAdapter(service, owner_id=authenticated_owner_id)
