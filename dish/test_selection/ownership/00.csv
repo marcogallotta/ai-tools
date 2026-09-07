@@ -133,7 +133,7 @@ docs/architecture/postgresql-runtime.md,documentation,1,1,architecture; document
 docs/architecture/system-context.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 docs/asana-project-migration-runbook.md,documentation,1,1,documentation,,,none,,,,
 docs/chatgpt-projects/coordinator.md,documentation,1,1,agent-policy; documentation; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
-docs/chatgpt-projects/fast-track-gates.json,config-or-runner,1,4,agent-policy; config,tests/test_fast_track_overlay.py,tests/test_fast_track_overlay.py,none,,exact changed test/module,,
+docs/agents/trivial-fast-track.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/chatgpt-projects/integration.md,documentation,1,1,agent-policy; documentation; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
 docs/chatgpt-projects/manifest.json,config-or-runner,1,1,agent-policy; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
 docs/chatgpt-projects/source.json,config-or-runner,1,1,agent-policy; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
