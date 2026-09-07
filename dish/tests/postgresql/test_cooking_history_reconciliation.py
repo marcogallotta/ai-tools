@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import sys
-from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
 
-from dish_pg import models
 import dish_pg.cooking_history_reconciliation as reconciliation
+from dish_pg import models
 from dish_pg.cooking_history_reconciliation import migrate_missing_history, reconcile_existing_history
 from dish_pg.database import session_scope
 from tests.support.postgresql.command import _port
