@@ -35,7 +35,20 @@ def test_fast_track_policy_routes_to_the_current_trivial_procedure():
     manifest,source=kernels.load_canonical()
     for role in source['roles']:
         rendered=kernels.render_role(manifest,source,role)
-        assert 'Fast-track: read triggered Procedure.' in rendered
+        assert 'Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`.' in rendered
+
+    assert 'fresh independent Reviewer immediately after publication' in procedure
+    assert 'disproportionate CI work' in procedure
+    assert 'Workflow Friction without turning that capture into a landing gate' in procedure
+
+
+def test_local_outer_worker_dispatches_independent_review_and_continues():
+    review=(DISH_ROOT/'docs'/'agents'/'review.md').read_text()
+    workflow=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+    assert 'for a locally or remotely authored head' in review
+    assert 'must not have materially authored the candidate' in review
+    assert 'continue the already-authorized phase progression through Integration/merge' in review
+    assert 'including a locally authored head' in workflow
 
 
 def _worker_profile():
