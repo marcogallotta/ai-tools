@@ -63,7 +63,7 @@ def _add_verification_queue(session, ids, context) -> uuid.UUID:
     session.add(
         models.Section(
             section_id=section_id,
-            logical_name="Verification Queue",
+            logical_name=f"legacy-verification-{section_id}",
             lifecycle="active",
             created_at=NOW,
             retired_at=None,
@@ -113,7 +113,7 @@ def _add_destination_section(session, ids, context, *, external_id="12345") -> u
     session.add(
         models.Section(
             section_id=section_id,
-            logical_name="Sichuan",
+            logical_name=f"legacy-destination-{section_id}",
             lifecycle="active",
             created_at=NOW,
             retired_at=None,
