@@ -8,7 +8,12 @@ from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg.database import session_scope
 from tests.support.postgresql.command import _call, _port, _start_initial
-from tests.support.postgresql.workflow import _next, _register_run, workflow_db
+from tests.support.postgresql.workflow import (
+    _next,
+    _register_run,
+    _simulate_future_unarchive,
+    workflow_db,
+)
 
 
 def test_revoked_run_cannot_reenter_after_simulated_unarchive_but_cook_log_stays_legal(
@@ -47,9 +52,7 @@ def test_revoked_run_cannot_reenter_after_simulated_unarchive_but_cook_log_stays
 
         # Simulate the state a future explicit unarchive would expose without
         # implementing or specifying an unarchive command in this task.
-        state = session.get(models.DishState, (context["generation_id"], task_id))
-        state.archived_at = None
-        session.flush()
+        _simulate_future_unarchive(session, ids, context, task_id)
 
         before_challenges = session.scalar(
             select(func.count()).select_from(wf.PlanningIntentChallenge)
