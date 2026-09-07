@@ -1,0 +1,576 @@
+"""Bounded cooking recommendation state compiled from immutable evidence.
+
+This module is deliberately a projection layer.  It does not persist evidence, write
+Scratchpad/profile state, or own safety/halal policy.  Callers supply immutable evidence
+and authoritative eligibility observations; the reducer produces deterministic current
+state and a bounded soft-signal payload.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum, IntEnum
+from typing import Iterable, Mapping, Sequence
+
+MAX_SOFT_SIGNALS = 32
+RULE_VERSION = "cooking-recommendation-state-v1"
+
+
+class SubjectType(str, Enum):
+    CANDIDATE = "candidate"
+    DISH = "dish"
+    LANE = "lane"
+    LEARNING = "learning"
+    PREFERENCE = "preference"
+    PREREQUISITE = "prerequisite"
+
+
+class SignalType(str, Enum):
+    COOKED = "cooked"
+    REPEAT = "repeat"
+    CORRECTION = "correction"
+    SATURATION = "saturation"
+    BLOCKER = "blocker"
+    SUPPRESSION = "suppression"
+    EXCLUSION = "exclusion"
+    LANE = "lane"
+    LEARNING = "learning"
+    INTEREST = "interest"
+    PREFERENCE = "preference"
+    EFFORT = "effort"
+    FORMAT = "format"
+    NOVELTY = "novelty"
+    PREREQUISITE = "prerequisite"
+
+
+class ScopeKind(str, Enum):
+    REQUEST = "request"
+    SESSION = "session"
+    CANDIDATE = "candidate"
+    DISH = "dish"
+    LANE = "lane"
+    LEARNING = "learning"
+    PREFERENCE = "preference"
+    GLOBAL = "global"
+
+
+class Strength(IntEnum):
+    WEAK = 1
+    MEDIUM = 2
+    STRONG = 3
+
+
+class Confidence(IntEnum):
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+
+
+class Lifetime(str, Enum):
+    REQUEST = "request"
+    SESSION = "session"
+    UNTIL_WAKE = "until_wake"
+    UNTIL_EXPIRY = "until_expiry"
+    DURABLE = "durable"
+
+
+class EvidenceSource(str, Enum):
+    EXPLICIT_MARCO = "explicit_marco"
+    AGENT_INFERENCE = "agent_inference"
+    RUNTIME_FACT = "runtime_fact"
+    COOK_OUTCOME = "cook_outcome"
+    IMPORTED_HISTORY = "imported_history"
+    SCRATCHPAD_AUTHORITY = "scratchpad_authority"
+    PROFILE_AUTHORITY = "profile_authority"
+
+
+class EvidenceKind(IntEnum):
+    DERIVED = 1
+    AUTHORITATIVE = 2
+    EXPLICIT = 3
+
+
+class EligibilityEffect(str, Enum):
+    SOFT = "soft"
+    HARD_BLOCK = "hard_block"
+    HARD_EXCLUDE = "hard_exclude"
+
+
+class EventKind(str, Enum):
+    SET = "set"
+    CLEAR = "clear"
+
+
+class CandidateEligibility(str, Enum):
+    ELIGIBLE = "eligible"
+    BLOCKED = "blocked"
+    EXCLUDED = "excluded"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class SignalScope:
+    kind: ScopeKind
+    key: str
+
+    def __post_init__(self) -> None:
+        if not self.key.strip():
+            raise ValueError("scope key must be non-blank")
+
+
+@dataclass(frozen=True)
+class RecommendationEvidence:
+    event_id: str
+    kind: EventKind
+    subject_type: SubjectType
+    subject_key: str
+    signal_type: SignalType
+    value: str
+    scope: SignalScope
+    strength: Strength
+    confidence: Confidence
+    lifetime: Lifetime
+    valid_from: datetime
+    source: EvidenceSource
+    evidence_kind: EvidenceKind
+    provenance: tuple[str, ...]
+    eligibility_effect: EligibilityEffect = EligibilityEffect.SOFT
+    expires_at: datetime | None = None
+    wake_condition: str | None = None
+    supersedes: tuple[str, ...] = ()
+    clears: tuple[str, ...] = ()
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.event_id.strip():
+            raise ValueError("event_id must be non-blank")
+        if not self.subject_key.strip():
+            raise ValueError("subject_key must be non-blank")
+        if self.kind is EventKind.SET and not self.value.strip():
+            raise ValueError("set events require a non-blank value")
+        if not self.provenance or any(not item.strip() for item in self.provenance):
+            raise ValueError("at least one immutable provenance pointer is required")
+        _require_aware(self.valid_from, "valid_from")
+        if self.expires_at is not None:
+            _require_aware(self.expires_at, "expires_at")
+        if self.lifetime is Lifetime.UNTIL_EXPIRY and self.expires_at is None:
+            raise ValueError("until_expiry evidence requires expires_at")
+        if self.expires_at is not None and self.lifetime is not Lifetime.UNTIL_EXPIRY:
+            raise ValueError("expires_at is only valid for until_expiry evidence")
+        if self.lifetime is Lifetime.UNTIL_WAKE and not (self.wake_condition or "").strip():
+            raise ValueError("until_wake evidence requires a wake_condition")
+        if self.wake_condition is not None and self.lifetime is not Lifetime.UNTIL_WAKE:
+            raise ValueError("wake_condition is only valid for until_wake evidence")
+        if self.kind is EventKind.CLEAR:
+            if not self.clears:
+                raise ValueError("clear events must name at least one signal to clear")
+            if self.eligibility_effect is not EligibilityEffect.SOFT:
+                raise ValueError("clear events do not carry eligibility effects")
+        if self.evidence_kind is EvidenceKind.DERIVED and (self.clears or self.supersedes):
+            raise ValueError("derived evidence cannot clear or supersede authoritative state")
+        _validate_eligibility_effect(self)
+
+
+@dataclass(frozen=True)
+class RecommendationSignal:
+    signal_id: str
+    subject_type: SubjectType
+    subject_key: str
+    signal_type: SignalType
+    value: str
+    scope: SignalScope
+    strength: Strength
+    confidence: Confidence
+    lifetime: Lifetime
+    valid_from: datetime
+    source: EvidenceSource
+    evidence_kind: EvidenceKind
+    provenance: tuple[str, ...]
+    eligibility_effect: EligibilityEffect
+    expires_at: datetime | None
+    wake_condition: str | None
+    reason: str | None
+
+    @property
+    def slot(self) -> tuple[SubjectType, str, SignalType, ScopeKind, str]:
+        return (
+            self.subject_type,
+            self.subject_key,
+            self.signal_type,
+            self.scope.kind,
+            self.scope.key,
+        )
+
+
+@dataclass(frozen=True)
+class CompiledRecommendationState:
+    rule_version: str
+    as_of: datetime
+    signals: tuple[RecommendationSignal, ...]
+    inactive_signal_ids: tuple[str, ...]
+
+    def for_subject(
+        self, subject_type: SubjectType, subject_key: str
+    ) -> tuple[RecommendationSignal, ...]:
+        return tuple(
+            signal
+            for signal in self.signals
+            if signal.subject_type is subject_type and signal.subject_key == subject_key
+        )
+
+
+@dataclass(frozen=True)
+class EligibilityObservation:
+    status: CandidateEligibility
+    provenance: tuple[str, ...]
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status is CandidateEligibility.UNKNOWN:
+            raise ValueError("unknown is represented by a missing authoritative observation")
+        if not self.provenance or any(not item.strip() for item in self.provenance):
+            raise ValueError("eligibility observations require provenance")
+
+
+@dataclass(frozen=True)
+class CandidateEligibilityResult:
+    candidate_key: str
+    status: CandidateEligibility
+    reasons: tuple[str, ...]
+    provenance: tuple[str, ...]
+
+    @property
+    def actionable(self) -> bool:
+        return self.status is CandidateEligibility.ELIGIBLE
+
+
+@dataclass(frozen=True)
+class RecommendationContext:
+    rule_version: str
+    soft_signals: tuple[RecommendationSignal, ...]
+    eligibility: tuple[CandidateEligibilityResult, ...]
+
+    def eligibility_for(self, candidate_key: str) -> CandidateEligibilityResult:
+        for item in self.eligibility:
+            if item.candidate_key == candidate_key:
+                return item
+        raise KeyError(candidate_key)
+
+
+def compile_recommendation_state(
+    events: Iterable[RecommendationEvidence],
+    *,
+    as_of: datetime,
+    ended_scopes: Iterable[SignalScope] = (),
+    resolved_wake_conditions: Iterable[str] = (),
+) -> CompiledRecommendationState:
+    """Compile current state without implicit time decay.
+
+    State changes only through an explicit scope end, explicit expiry, authoritative
+    wake resolution, clear/supersession evidence, or a later explicit/authoritative
+    event in the same logical slot.
+    """
+    _require_aware(as_of, "as_of")
+    ended = set(ended_scopes)
+    resolved_wakes = {item for item in resolved_wake_conditions if item}
+    ordered = sorted(events, key=lambda item: (item.valid_from, item.event_id))
+
+    active: dict[str, RecommendationSignal] = {}
+    inactive: set[str] = set()
+
+    for event in ordered:
+        if event.valid_from > as_of:
+            continue
+
+        # Explicit lifecycle relations are deterministic and append-only.
+        for target in (*event.supersedes, *event.clears):
+            if target in active:
+                del active[target]
+            inactive.add(target)
+
+        if event.kind is EventKind.CLEAR:
+            inactive.add(event.event_id)
+            continue
+
+        signal = _signal_from_event(event)
+
+        # Later non-derived evidence in the exact same slot replaces earlier
+        # slot state.  Different scopes remain simultaneously visible so a
+        # narrow session correction can override, without rewriting, durable
+        # preference history.
+        if event.evidence_kind is not EvidenceKind.DERIVED:
+            for signal_id, previous in tuple(active.items()):
+                if previous.slot == signal.slot:
+                    del active[signal_id]
+                    inactive.add(signal_id)
+
+        if _is_inactive_by_lifecycle(
+            signal,
+            as_of=as_of,
+            ended_scopes=ended,
+            resolved_wake_conditions=resolved_wakes,
+        ):
+            inactive.add(signal.signal_id)
+            continue
+
+        active[signal.signal_id] = signal
+
+    # A later wake/expiry/scope resolution also applies to signals inserted
+    # before the resolving input was supplied.
+    for signal_id, signal in tuple(active.items()):
+        if _is_inactive_by_lifecycle(
+            signal,
+            as_of=as_of,
+            ended_scopes=ended,
+            resolved_wake_conditions=resolved_wakes,
+        ):
+            del active[signal_id]
+            inactive.add(signal_id)
+
+    return CompiledRecommendationState(
+        rule_version=RULE_VERSION,
+        as_of=as_of,
+        signals=tuple(sorted(active.values(), key=lambda signal: signal.signal_id)),
+        inactive_signal_ids=tuple(sorted(inactive)),
+    )
+
+
+def build_recommendation_context(
+    state: CompiledRecommendationState,
+    *,
+    candidate_keys: Sequence[str],
+    authoritative_eligibility: Mapping[str, EligibilityObservation] | None = None,
+    soft_limit: int = MAX_SOFT_SIGNALS,
+) -> RecommendationContext:
+    """Build the bounded prompt/read-model payload for a candidate set.
+
+    Hard eligibility is resolved per candidate from the complete active state
+    plus authoritative observations; it is never truncated by ``soft_limit``.
+    A candidate with no exact eligibility observation and no known active hard
+    signal is UNKNOWN and therefore non-actionable.
+    """
+    if soft_limit < 0 or soft_limit > MAX_SOFT_SIGNALS:
+        raise ValueError(f"soft_limit must be between 0 and {MAX_SOFT_SIGNALS}")
+
+    candidates = tuple(dict.fromkeys(key.strip() for key in candidate_keys if key.strip()))
+    observations = authoritative_eligibility or {}
+
+    eligibility = tuple(
+        _candidate_eligibility(state, candidate_key, observations.get(candidate_key))
+        for candidate_key in candidates
+    )
+
+    candidate_set = set(candidates)
+    soft = [
+        signal
+        for signal in state.signals
+        if signal.eligibility_effect is EligibilityEffect.SOFT
+        and _soft_signal_relevant(signal, candidate_set)
+    ]
+    soft.sort(key=_soft_priority_key)
+
+    return RecommendationContext(
+        rule_version=state.rule_version,
+        soft_signals=tuple(soft[:soft_limit]),
+        eligibility=eligibility,
+    )
+
+
+def _candidate_eligibility(
+    state: CompiledRecommendationState,
+    candidate_key: str,
+    observation: EligibilityObservation | None,
+) -> CandidateEligibilityResult:
+    hard_signals = tuple(
+        signal
+        for signal in state.signals
+        if signal.subject_type in {SubjectType.CANDIDATE, SubjectType.DISH}
+        and signal.subject_key == candidate_key
+        and signal.eligibility_effect is not EligibilityEffect.SOFT
+    )
+
+    local_exclusions = tuple(
+        signal for signal in hard_signals if signal.eligibility_effect is EligibilityEffect.HARD_EXCLUDE
+    )
+    local_blocks = tuple(
+        signal for signal in hard_signals if signal.eligibility_effect is EligibilityEffect.HARD_BLOCK
+    )
+
+    # External proper-authority blocks/exclusions are exact facts, and cannot
+    # be softened by this recommendation layer.
+    if observation is not None and observation.status is CandidateEligibility.EXCLUDED:
+        return _eligibility_result(
+            candidate_key,
+            CandidateEligibility.EXCLUDED,
+            local_exclusions,
+            observation,
+        )
+    if local_exclusions:
+        return _eligibility_result(
+            candidate_key,
+            CandidateEligibility.EXCLUDED,
+            local_exclusions,
+            observation,
+        )
+    if observation is not None and observation.status is CandidateEligibility.BLOCKED:
+        return _eligibility_result(
+            candidate_key,
+            CandidateEligibility.BLOCKED,
+            local_blocks,
+            observation,
+        )
+    if local_blocks:
+        return _eligibility_result(
+            candidate_key,
+            CandidateEligibility.BLOCKED,
+            local_blocks,
+            observation,
+        )
+    if observation is not None and observation.status is CandidateEligibility.ELIGIBLE:
+        return _eligibility_result(
+            candidate_key,
+            CandidateEligibility.ELIGIBLE,
+            (),
+            observation,
+        )
+
+    return CandidateEligibilityResult(
+        candidate_key=candidate_key,
+        status=CandidateEligibility.UNKNOWN,
+        reasons=("authoritative eligibility not refreshed",),
+        provenance=(),
+    )
+
+
+def _eligibility_result(
+    candidate_key: str,
+    status: CandidateEligibility,
+    local_signals: Sequence[RecommendationSignal],
+    observation: EligibilityObservation | None,
+) -> CandidateEligibilityResult:
+    reasons = [signal.reason or signal.value for signal in local_signals]
+    provenance = [pointer for signal in local_signals for pointer in signal.provenance]
+    if observation is not None and observation.status is status:
+        if observation.reason:
+            reasons.append(observation.reason)
+        provenance.extend(observation.provenance)
+    return CandidateEligibilityResult(
+        candidate_key=candidate_key,
+        status=status,
+        reasons=tuple(dict.fromkeys(reasons)),
+        provenance=tuple(dict.fromkeys(provenance)),
+    )
+
+
+def _signal_from_event(event: RecommendationEvidence) -> RecommendationSignal:
+    return RecommendationSignal(
+        signal_id=event.event_id,
+        subject_type=event.subject_type,
+        subject_key=event.subject_key,
+        signal_type=event.signal_type,
+        value=event.value,
+        scope=event.scope,
+        strength=event.strength,
+        confidence=event.confidence,
+        lifetime=event.lifetime,
+        valid_from=event.valid_from,
+        source=event.source,
+        evidence_kind=event.evidence_kind,
+        provenance=event.provenance,
+        eligibility_effect=event.eligibility_effect,
+        expires_at=event.expires_at,
+        wake_condition=event.wake_condition,
+        reason=event.reason,
+    )
+
+
+def _is_inactive_by_lifecycle(
+    signal: RecommendationSignal,
+    *,
+    as_of: datetime,
+    ended_scopes: set[SignalScope],
+    resolved_wake_conditions: set[str],
+) -> bool:
+    if signal.scope in ended_scopes:
+        return True
+    if signal.lifetime is Lifetime.UNTIL_EXPIRY:
+        assert signal.expires_at is not None
+        if as_of >= signal.expires_at:
+            return True
+    if signal.lifetime is Lifetime.UNTIL_WAKE:
+        assert signal.wake_condition is not None
+        if signal.wake_condition in resolved_wake_conditions:
+            return True
+    return False
+
+
+def _soft_signal_relevant(signal: RecommendationSignal, candidate_keys: set[str]) -> bool:
+    if signal.scope.kind in {ScopeKind.REQUEST, ScopeKind.SESSION}:
+        return True
+    if signal.subject_type in {SubjectType.CANDIDATE, SubjectType.DISH}:
+        return signal.subject_key in candidate_keys
+    return True
+
+
+def _soft_priority_key(signal: RecommendationSignal) -> tuple[int, int, int, int, float, str]:
+    tier = _scope_tier(signal)
+    # Lower tuple sorts first.  Later timestamps sort first by negating POSIX
+    # time; stable identity is the final deterministic tie-break.
+    return (
+        tier,
+        -int(signal.evidence_kind),
+        -int(signal.confidence),
+        -int(signal.strength),
+        -signal.valid_from.timestamp(),
+        signal.signal_id,
+    )
+
+
+def _scope_tier(signal: RecommendationSignal) -> int:
+    if signal.scope.kind in {ScopeKind.REQUEST, ScopeKind.SESSION}:
+        return 0
+    if signal.scope.kind in {ScopeKind.CANDIDATE, ScopeKind.DISH} or signal.subject_type in {
+        SubjectType.CANDIDATE,
+        SubjectType.DISH,
+    }:
+        return 1
+    if signal.scope.kind in {ScopeKind.LANE, ScopeKind.LEARNING} or signal.subject_type in {
+        SubjectType.LANE,
+        SubjectType.LEARNING,
+    }:
+        return 2
+    return 3
+
+
+def _validate_eligibility_effect(event: RecommendationEvidence) -> None:
+    if event.eligibility_effect is EligibilityEffect.SOFT:
+        return
+    if event.kind is not EventKind.SET:
+        raise ValueError("only set events can carry hard eligibility")
+    if event.subject_type not in {SubjectType.CANDIDATE, SubjectType.DISH}:
+        raise ValueError("hard eligibility is candidate/dish scoped")
+    if event.evidence_kind is EvidenceKind.DERIVED or event.source is EvidenceSource.AGENT_INFERENCE:
+        raise ValueError("inference cannot create hard eligibility")
+    trusted = {
+        EvidenceSource.EXPLICIT_MARCO,
+        EvidenceSource.RUNTIME_FACT,
+        EvidenceSource.SCRATCHPAD_AUTHORITY,
+        EvidenceSource.PROFILE_AUTHORITY,
+    }
+    if event.source not in trusted:
+        raise ValueError("hard eligibility requires an authoritative source")
+    if event.eligibility_effect is EligibilityEffect.HARD_BLOCK:
+        if event.signal_type not in {SignalType.BLOCKER, SignalType.PREREQUISITE}:
+            raise ValueError("hard blocks require blocker/prerequisite signal type")
+        return
+    if event.signal_type is not SignalType.EXCLUSION:
+        raise ValueError("hard exclusions require exclusion signal type")
+    if event.evidence_kind is not EvidenceKind.EXPLICIT:
+        raise ValueError("hard exclusions require explicit evidence")
+    if event.lifetime is not Lifetime.DURABLE:
+        raise ValueError("hard exclusions must be explicitly durable")
+
+
+def _require_aware(value: datetime, field: str) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field} must be timezone-aware")
