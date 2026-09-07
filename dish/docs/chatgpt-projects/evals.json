@@ -292,8 +292,7 @@
         "require_explicit_implementation_composition_for_implementation"
       ],
       "required_rules": [
-        "role-contract-authority",
-        "development-workflow-context-preload"
+        "role-contract-authority"
       ],
       "roles": [
         "development-workflow"
@@ -315,7 +314,7 @@
         "decide_test_scope_across_both_roles"
       ],
       "required_rules": [
-        "development-workflow-context-preload"
+        "role-contract-authority"
       ],
       "roles": [
         "development-workflow"
@@ -337,7 +336,7 @@
         "classify_residual_certification_only_after_fallback_check"
       ],
       "required_rules": [
-        "development-workflow-context-preload",
+        "role-contract-authority",
         "fallback-surface"
       ],
       "roles": [
@@ -1034,7 +1033,7 @@
         "record_evidence_and_next_action"
       ],
       "required_rules": [
-        "development-workflow-friction-triage"
+        "repository-friction-capture"
       ],
       "roles": [
         "development-workflow"
@@ -1052,7 +1051,7 @@
         "update_active_task_or_pr"
       ],
       "required_rules": [
-        "development-workflow-friction-triage"
+        "repository-friction-capture"
       ],
       "roles": [
         "development-workflow"
@@ -1123,8 +1122,27 @@
         "durable-review-state"
       ],
       "roles": [
-        "development-workflow",
         "coordinator"
+      ]
+    },
+    {
+      "expected_outcome": "classify_review_durably",
+      "forbidden_actions": [
+        "mark_implementation_ready_without_review"
+      ],
+      "id": "durable-review-classification-development-workflow",
+      "prompt": "A research/design task needs agent review before implementation. Make its state recoverable by a fresh agent.",
+      "required_actions": [
+        "record_review_type",
+        "record_exact_review_question",
+        "record_review_baseline",
+        "record_review_dependency"
+      ],
+      "required_rules": [
+        "development-workflow-review-v4-boundary"
+      ],
+      "roles": [
+        "development-workflow"
       ]
     },
     {
@@ -1142,8 +1160,25 @@
         "durable-review-state"
       ],
       "roles": [
-        "development-workflow",
         "coordinator"
+      ]
+    },
+    {
+      "expected_outcome": "require_durable_review_verdict",
+      "forbidden_actions": [
+        "treat_chat_only_review_as_complete"
+      ],
+      "id": "chat-only-review-verdict-not-complete-development-workflow",
+      "prompt": "A chat says design review passed, but Asana has no durable verdict. Is review complete?",
+      "required_actions": [
+        "treat_chat_verdict_as_non_durable",
+        "write_or_require_asana_verdict"
+      ],
+      "required_rules": [
+        "development-workflow-review-v4-boundary"
+      ],
+      "roles": [
+        "development-workflow"
       ]
     },
     {
@@ -3672,7 +3707,7 @@
         "development-workflow"
       ],
       "required_rules": [
-        "development-workflow-design-review"
+        "development-workflow-review-v4-boundary"
       ],
       "prompt": "Development Workflow receives an explicit independent Design Review assignment for an exact candidate it did not author. Its standing contract permits this read-only mode.",
       "expected_outcome": "perform_authorized_design_review_without_code_review_authority",
@@ -4237,7 +4272,7 @@
         "require-fresh-independent-design-review"
       ],
       "required_rules": [
-        "review-v4-author-falsification"
+        "development-workflow-review-v4-boundary"
       ],
       "roles": [
         "development-workflow"
@@ -4311,7 +4346,6 @@
       "id": "review-v4-verbatim-marco-wording",
       "prompts": {
         "coordinator": "Marco supplied the exact approved headline. Shorten it in the outgoing handoff so it reads better.",
-        "development-workflow": "Marco supplied exact outcome wording. Normalize it into a cleaner design headline.",
         "implementation": "The handoff contains Marco-approved exact wording. Paraphrase it in the implementation contract.",
         "review": "The candidate preserves meaning but rewrites Marco-approved exact words. Treat that as equivalent."
       },
@@ -4324,9 +4358,27 @@
       ],
       "roles": [
         "coordinator",
-        "development-workflow",
         "implementation",
         "review"
+      ]
+    },
+    {
+      "expected_outcome": "exact_marco_wording_preserved_verbatim",
+      "forbidden_actions": [
+        "paraphrase-exact-wording",
+        "synthesize-exact-wording"
+      ],
+      "id": "review-v4-verbatim-marco-wording-development-workflow",
+      "prompt": "Marco supplied exact outcome wording. Normalize it into a cleaner design headline.",
+      "required_actions": [
+        "preserve-exact-wording",
+        "require-explicit-approval-for-alternative"
+      ],
+      "required_rules": [
+        "development-workflow-review-v4-boundary"
+      ],
+      "roles": [
+        "development-workflow"
       ]
     },
     {

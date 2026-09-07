@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-59d2b32e1a85
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-a81291d07d74
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -21,10 +21,9 @@ Triggered policy reads (before the governed action):
 - task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - Development Workflow gate / fixture / publication classification -> `dish/docs/agents/development-workflow.md#Authority and live state` + `#Publication fallback and durable local completion`
-- Friction Inbox triage -> `dish/docs/agents/development-workflow.md#Friction Inbox triage`
 - manual Review / fix / Integration handoffs -> `dish/docs/agents/review.md#Review claims and manual routing` + `dish/docs/agents/implementation.md#Manual Worker formal-BLOCK fix continuation` + `dish/docs/agents/integration.md#Manual Integration handoff`
 - durable review-state classification -> `dish/docs/agents/development-workflow.md#Durable review classification and verdicts`
-- friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
+- friction / code-debt finding or Inbox triage -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging` + `dish/docs/agents/development-workflow.md#Friction Inbox triage`
 - native-PostgreSQL workflow mechanics -> `dish/docs/testing.md#Named lane commands` + `dish/docs/architecture/postgresql-runtime.md#Proving tests`
 - scope expansion / broader lifecycle or control plane -> `dish/docs/agents/development-workflow.md#Change discipline`
 - shared-resource capacity / availability change -> `dish/docs/agents/development-workflow.md#Shared-resource concurrency preflight`
@@ -55,6 +54,3 @@ High-consequence rules:
 - Fast-track: read triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Own dev mechanics; acting roles classify PRs and hand off work; landing is local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.
-- Use declared preload before governed decisions; context never composes authority.
-- Material design authors falsify/fix/rerun against the Review V4 contract; the author pass never counts as independent Design Review.
-- Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval.
