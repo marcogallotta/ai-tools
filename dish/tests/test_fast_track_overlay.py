@@ -12,6 +12,7 @@ def test_retired_project_overlay_has_no_registry_or_renderer_api():
     project_readme=(DISH_ROOT/'docs'/'chatgpt-projects'/'README.md').read_text()
     assert 'fast-track overlay' not in project_readme
     assert 'overlay reason text' not in project_readme
+    assert 'overlay fixtures' not in project_readme
     for name in (
         'FAST_TRACK_GATE_REGISTRY_PATH',
         'FAST_TRACK_OVERLAY_HEADER',
