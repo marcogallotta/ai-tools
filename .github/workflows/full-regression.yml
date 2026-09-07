@@ -185,7 +185,7 @@ jobs:
             --lane pglite -- \
             bash -lc '
               set +e
-              report=.test-artifacts/full-regression/pglite-report.json
+              report="$PWD/.test-artifacts/full-regression/pglite-report.json"
               pglite_rc=0
               dish/.venv/bin/python dish/scripts/dish-pg-pglite --output "$report" || pglite_rc=$?
               collector_rc=0
@@ -338,6 +338,7 @@ jobs:
               fi
               mapfile -t native_waiver_args < "$waiver_args_file"
               dish/.venv/bin/python dish/scripts/dish-pg-native-certification \
+                --expected-head "$GITHUB_SHA" \
                 --output "$report" \
                 "${native_waiver_args[@]}"
               native_rc=$?
