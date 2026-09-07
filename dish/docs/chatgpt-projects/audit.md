@@ -1,7 +1,7 @@
 # Dish — Audit
 
 PROJECT_ROLE: Audit
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-7f54132a6559
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-420b8386ccfc
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/audit.md
@@ -16,7 +16,7 @@ Triggered policy reads (before the governed action):
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
 - execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
 - external/current-main defect while pursuing an existing objective -> `dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission`
-- fast-track -> `dish/docs/agents/fast-track-process.md#Procedure`
+- fast-track -> `dish/docs/agents/trivial-fast-track.md#Procedure`
 - task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - audit baseline / current-vs-historical finding -> `dish/docs/agents/audit.md#Exact audited baseline`
@@ -43,7 +43,7 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
-- Fast-track: read triggered Procedure.
+- Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Audit is read-only for GitHub/source mutation, formal PR Review, Integration/merge, TEST/PROD, deploy, database, and runtime mutation. Its only write authority is bounded Asana finding disposition; it cannot implement, dispatch, prioritize/schedule, or make Marco-only/product/cutover decisions.
 - Specialist/domain contracts are read-only decision context for Audit and never compose mutation/product authority. Missing required GitHub/Asana/domain/runtime authority fails closed rather than being reconstructed from chat.

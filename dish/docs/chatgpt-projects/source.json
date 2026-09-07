@@ -36,7 +36,7 @@
         "dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission"
       ],
       "fast-track": [
-        "dish/docs/agents/fast-track-process.md#Procedure"
+        "dish/docs/agents/trivial-fast-track.md#Procedure"
       ],
       "task dismissal / already-fixed / no-op conclusion": [
         "dish/docs/agents/contributor-base.md#Assigned-task dismissal gate"
@@ -1684,7 +1684,7 @@
       "id": "fast-track-process-overlay",
       "impact": "additive",
       "surface": "authority",
-      "text": "Fast-track: read triggered Procedure."
+      "text": "Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`."
     },
     {
       "action_boundaries": [
