@@ -61,8 +61,8 @@ def _human_action_instruction(action: Mapping[str, Any]) -> str:
     )
 
 
-def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
-    """Render immediate GPT guidance from one canonical Action result."""
+def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Render immediate connected-agent guidance from one canonical Dish result."""
 
     command = str(result.get("command") or "")
     code = str(result.get("code") or "")
@@ -253,14 +253,14 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def attach_action_agent_guidance(result: dict[str, Any]) -> dict[str, Any]:
-    """Attach contextual guidance to a canonical result returned via GPT Action."""
+def attach_connected_agent_guidance(result: dict[str, Any]) -> dict[str, Any]:
+    """Attach contextual guidance to a canonical connected-agent result."""
 
     data = result.setdefault("data", {})
     if not isinstance(data, dict):
         # Canonical Dish results always use an object here; fail closed rather than
         # replacing malformed application output silently.
-        raise ValueError("Action result data must be an object")
+        raise ValueError("connected-agent result data must be an object")
     if (
         result.get("ok")
         and result.get("command") == "prepare"
@@ -281,5 +281,17 @@ def attach_action_agent_guidance(result: dict[str, Any]) -> dict[str, Any]:
                 "fresh_client_request_id": True,
                 "omit_arguments": ["prepared_operation_id"],
             }
-    data["agent_guidance"] = action_agent_guidance(result)
+    data["agent_guidance"] = connected_agent_guidance(result)
     return result
+
+
+def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Compatibility alias for the transition Action adapter."""
+
+    return connected_agent_guidance(result)
+
+
+def attach_action_agent_guidance(result: dict[str, Any]) -> dict[str, Any]:
+    """Compatibility alias for the transition Action adapter."""
+
+    return attach_connected_agent_guidance(result)
