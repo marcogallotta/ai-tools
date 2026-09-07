@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "host": "codex",
+  "task_class": "narrow-fix",
+  "kind": "legitimate",
+  "role": "implementation",
+  "intercepted_tools": ["Bash"],
+  "events": [
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "git rev-parse HEAD"}}, "expected_category": "mandatory"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "rg -n PreToolUse hooks codex"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "tools/agent-worktree exec --task 123 -- true"}}, "expected_category": "action"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "pytest -q hooks/tests/test_investigation_guard.py"}}, "expected_category": "proof"}
+  ]
+}
