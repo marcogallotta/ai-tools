@@ -21,6 +21,7 @@ from . import models
 from .native_section_carry_forward import CARRY_FORWARD_REVISION
 
 _MATERIALIZED_CONTENT_NAME = "native-section-staged-content-materialization-v1"
+_HISTORICAL_IMPORTED_IDENTITY_SCHEME = "2"
 
 
 class NativeSectionContentMaterializationError(ValueError):
@@ -88,11 +89,21 @@ def _validate_source(
         raise NativeSectionContentMaterializationError(
             "staged carry-forward source ContentVersion is missing"
         )
+    historical_import_identity = (
+        source.identity_scheme == _HISTORICAL_IMPORTED_IDENTITY_SCHEME
+        and source.representation_kind == "document"
+        and source.creator_route == "import"
+        and source.import_run_id is not None
+        and source.command_execution_id is None
+    )
     if (
         source.generation_id != occurrence.generation_id
         or source.task_id != occurrence.task_id
         or source.content_version_id != occurrence.source_content_version_id
-        or source.identity_scheme != CONTENT_IDENTITY_SCHEME
+        or (
+            source.identity_scheme != CONTENT_IDENTITY_SCHEME
+            and not historical_import_identity
+        )
         or source.content_identity != occurrence.source_content_identity
         or content_identity(source.title, source.body) != occurrence.source_content_identity
     ):
@@ -131,6 +142,7 @@ def _content_matches(
     occurrence: models.NativeSectionContentCarryForwardOccurrence,
     source: models.ContentVersion,
     successor_id: uuid.UUID,
+    dish_version: int,
 ) -> bool:
     return bool(
         content is not None
@@ -148,7 +160,7 @@ def _content_matches(
         and content.predecessor_content_version_id
         == occurrence.source_content_version_id
         and content.contract_binding_id == source.contract_binding_id
-        and content.created_dish_version == occurrence.source_dish_version + 1
+        and content.created_dish_version == dish_version
     )
 
 
@@ -284,24 +296,24 @@ def materialize_staged_native_section_content(
 
         successor_id = materialized_content_version_id(occurrence.carry_forward_id)
         successor = session.get(models.ContentVersion, successor_id)
-        next_version = occurrence.source_dish_version + 1
-        next_receipt = session.get(
-            models.DishMutationReceipt,
-            (generation_id, occurrence.task_id, next_version),
-        )
 
         if state.current_content_version_id == successor_id:
+            materialized_version = state.dish_version
+            materialized_receipt = session.get(
+                models.DishMutationReceipt,
+                (generation_id, occurrence.task_id, materialized_version),
+            )
             if (
-                state.dish_version != next_version
-                or state.placement_version != next_version
+                state.placement_version != materialized_version
                 or state.catalog_version_id != catalog_version_id
-                or state.completion_version >= next_version
-                or not _receipt_matches(next_receipt, occurrence)
+                or state.completion_version >= materialized_version
+                or not _receipt_matches(materialized_receipt, occurrence)
                 or not _content_matches(
                     successor,
                     occurrence=occurrence,
                     source=source,
                     successor_id=successor_id,
+                    dish_version=materialized_version,
                 )
             ):
                 raise NativeSectionContentMaterializationError(
@@ -312,23 +324,45 @@ def materialize_staged_native_section_content(
 
         if (
             state.current_content_version_id != occurrence.source_content_version_id
-            or state.dish_version != occurrence.source_dish_version
+            or state.dish_version < occurrence.source_dish_version
         ):
             raise NativeSectionContentMaterializationError(
                 "current DishState/content pointer moved since 0048 staging"
+            )
+        intervening = tuple(
+            session.scalars(
+                select(models.DishMutationReceipt)
+                .where(
+                    models.DishMutationReceipt.generation_id == generation_id,
+                    models.DishMutationReceipt.task_id == occurrence.task_id,
+                    models.DishMutationReceipt.dish_version > occurrence.source_dish_version,
+                    models.DishMutationReceipt.dish_version <= state.dish_version,
+                )
+                .order_by(models.DishMutationReceipt.dish_version)
+            )
+        )
+        if tuple(row.dish_version for row in intervening) != tuple(
+            range(occurrence.source_dish_version + 1, state.dish_version + 1)
+        ) or any(row.content_changed or row.placement_changed for row in intervening):
+            raise NativeSectionContentMaterializationError(
+                "intervening Dish mutation lineage is incomplete or changed content/placement"
             )
         if state.catalog_version_id is not None:
             raise NativeSectionContentMaterializationError(
                 "source DishState already carries an unexpected native catalog placement"
             )
+        next_version = state.dish_version + 1
+        next_receipt = session.get(
+            models.DishMutationReceipt,
+            (generation_id, occurrence.task_id, next_version),
+        )
         if successor is not None or next_receipt is not None:
             raise NativeSectionContentMaterializationError(
                 "successor Dish mutation slot is already occupied by conflicting materialization"
             )
-        pending.append((occurrence, source, state, successor_id))
+        pending.append((occurrence, source, state, successor_id, next_version))
 
-    for occurrence, source, state, successor_id in pending:
-        next_version = occurrence.source_dish_version + 1
+    for occurrence, source, state, successor_id, next_version in pending:
         session.add(
             models.DishMutationReceipt(
                 generation_id=generation_id,
@@ -370,7 +404,7 @@ def materialize_staged_native_section_content(
             .where(
                 models.DishState.generation_id == generation_id,
                 models.DishState.task_id == occurrence.task_id,
-                models.DishState.dish_version == occurrence.source_dish_version,
+                models.DishState.dish_version == next_version - 1,
                 models.DishState.current_content_version_id
                 == occurrence.source_content_version_id,
                 models.DishState.catalog_version_id.is_(None),

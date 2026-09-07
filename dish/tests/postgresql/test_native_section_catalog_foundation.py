@@ -664,12 +664,12 @@ def test_pr2a_absent_pointer_preserves_legacy_authority(core_db) -> None:
         )
 
 
-def _stage_runtime_switch_fixture(session, ids, monkeypatch):
+def _stage_runtime_switch_fixture(session, ids, monkeypatch, **fixture_kwargs):
     monkeypatch.setattr(
         "dish_pg.native_section_carry_forward._verified_repository_identity",
         lambda: RepositoryIdentity(commit_sha="a" * 40, tree_sha="b" * 40),
     )
-    return _stage_pr3(session, ids)
+    return _stage_pr3(session, ids, **fixture_kwargs)
 
 
 def test_pr2f_atomically_materializes_and_establishes_revision_one_root(
@@ -745,6 +745,43 @@ def test_pr2f_atomically_materializes_and_establishes_revision_one_root(
         assert CatalogRepository(session).active_runtime_catalog_contract(
             seeded["generation_id"]
         ) is not None
+
+
+def test_pr2f_finalizes_staged_historical_imported_identity_scheme(
+    core_db, monkeypatch
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        seeded, expectation, _, _carry_event_id, occurrences = _stage_runtime_switch_fixture(
+            session, ids, monkeypatch, first_identity_scheme="2"
+        )
+        historical_occurrence = occurrences[0]
+        historical_source = session.get(
+            models.ContentVersion, historical_occurrence.source_content_version_id
+        )
+        assert historical_source is not None
+
+        result = finalize_native_catalog_runtime_authority(
+            session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
+        )
+
+        assert result.inserted is True
+        assert result.materialization.materialized_count == len(occurrences) == 23
+        assert result.materialization.already_materialized_count == 0
+        assert historical_source.identity_scheme == "2"
+        assert (
+            models.resolve_current_native_catalog_runtime(
+                session, seeded["generation_id"]
+            )
+            is not None
+        )
+        assert (
+            session.get(
+                models.DishState,
+                (seeded["generation_id"], historical_occurrence.task_id),
+            ).catalog_version_id
+            == expectation.base_catalog_version_id
+        )
 
 
 def test_pr2f_failure_rolls_back_finalizer_event_root_and_pointer(
