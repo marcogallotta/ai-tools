@@ -1,12 +1,12 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-f333b344fbfd",
+  "canonical_version": "dish-chatgpt-projects-v2-df1dc2c8a0e8",
   "change_history_shards": [
     "manifest-history/00.json",
     "manifest-history/01.json",
     "manifest-history/02.json",
     "manifest-history/03.json"
   ],
-  "current_transition_from": "dish-chatgpt-projects-v2-420b8386ccfc",
+  "current_transition_from": "dish-chatgpt-projects-v2-f333b344fbfd",
   "generated_profile_files": {
     "worker": "worker.md"
   },
@@ -20,8 +20,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "c26480a55081d81c736000719332800a1414aad66f27099166f9aa3e719f40ad",
-  "kernel_identity_sha256": "f333b344fbfd4e6ea86062562b80021fa4038048bf8e5076def330fbf7e454ab",
+  "generated_sha256": "50acec71fd83335aa331debd523d66e31c09da68e8a1f0064dc4863fd9c20d85",
+  "kernel_identity_sha256": "df1dc2c8a0e88662ed5704206c2ea2c7070656ea920e31ab224e5889bf462ee9",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -138,6 +138,7 @@
       "dish-chatgpt-projects-v2-d3a070d57fb2",
       "dish-chatgpt-projects-v2-d96ab5f0588d",
       "dish-chatgpt-projects-v2-dc2161f69f2e",
+      "dish-chatgpt-projects-v2-df1dc2c8a0e8",
       "dish-chatgpt-projects-v2-e537f97c302f",
       "dish-chatgpt-projects-v2-f333b344fbfd",
       "dish-chatgpt-projects-v2-fdf64d096829"
@@ -145,6 +146,6 @@
   },
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "8ddc4bb977573c093e9564357c9f28b856c4007098a485b74e9c4531f8ed2940",
+  "source_sha256": "73cb8dd3da0c84ff45a7aeba67ce85a127836705e5c76ae0ac9ed65f6f8ae5d3",
   "version_namespace": "dish-chatgpt-projects-v2"
 }
