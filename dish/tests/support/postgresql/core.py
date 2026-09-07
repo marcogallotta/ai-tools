@@ -9,9 +9,6 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, event, select
-from sqlalchemy.orm import Session, sessionmaker
-
 from dish_pg import models
 from dish_pg.release_history import (
     EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
@@ -25,6 +22,9 @@ from dish_pg.repositories import (
     ScalarMutationSource,
 )
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
+from sqlalchemy import create_engine, event, inspect, select
+from sqlalchemy.orm import Session, sessionmaker
+
 from tests.support.postgresql.certification import postgresql_dsn
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -215,6 +215,17 @@ def _bootstrap_registry(
             retired_at=None,
         )
     )
+    if inspect(session.connection()).has_table("sections"):
+        session.add(
+            models.Section(
+                section_id=section_id,
+                logical_name="Research Queue",
+                lifecycle="active",
+                created_at=NOW,
+                retired_at=None,
+            )
+        )
+        session.flush()
     registry_version_id = _next(ids)
     registry.add_registry_version(
         models.SectionRegistryVersion(
