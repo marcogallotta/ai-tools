@@ -1474,6 +1474,17 @@
         ],
         "rule_id": "review-v4-verbatim-intent",
         "surface": "authority"
+      },
+      {
+        "action_boundaries": [
+          "project-settings-render"
+        ],
+        "impact": "compatible",
+        "roles": [
+          "*"
+        ],
+        "rule_id": "renderer:retire-project-fast-track-overlay",
+        "surface": "presentation"
       }
     ],
     "from_renderer_fingerprint": "bbafe83569bababba09a5245b56ec8342fca94d3d8a76acd6490f91ca6ee28a9",

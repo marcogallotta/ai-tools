@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
-from functools import lru_cache
 import hashlib
-import importlib.util
 
 import pytest
 import test_pr_lifecycle as base
@@ -336,57 +333,6 @@ def test_worker_omitted_packet_design_review_verdict_uses_final_digest_reread(om
     p.assert_worker_review_independent(records, digest, design)
     surface.add_comment(context["task"], "VERDICT: PASS")
     assert surface.stories[-1]["text"] == "VERDICT: PASS"
-
-
-@lru_cache(maxsize=1)
-def _fast_track_module():
-    path = base.ROOT / "dish" / "scripts" / "chatgpt_project_kernels.py"
-    spec = importlib.util.spec_from_file_location("worker_fast_track_eval", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_worker_omitted_packet_override_sensitive_action_uses_live_fast_track_gate(omitted_packet_state):
-    gh, _ = omitted_packet_state
-    assert len(gh.comments) >= 64
-    ft = _fast_track_module()
-    gate = ft.fast_track_gate_registry()["repository-context-bundle-witness"]
-    version = int(gate["current_version"])
-    semantic = gate["semantic_digest"]
-    scope = f"repository-context-bundle-witness@{version}"
-    overlay = {
-        "version": "fasttrack-r3",
-        "state": "ACTIVE",
-        "generation": "worker-omitted-packet-eval",
-        "scope": [scope],
-        "gate_semantics": {scope: semantic},
-        "expiry": None,
-        "reason": "bounded omitted-packet qualification",
-    }
-    use = ft.fast_track_use(
-        overlay,
-        gate_id="repository-context-bundle-witness",
-        gate_version=version,
-        task="1217591724565043",
-        candidate=f"PR#31@{base.HEAD}",
-        action="worker omitted-packet override-sensitive qualification",
-        raw_evidence="FAILED: bundle unavailable",
-        now=datetime(2026, 8, 18, tzinfo=timezone.utc),
-    )
-    assert use["marker"] == "GATE WAIVED BY MARCO OVERRIDE"
-    with pytest.raises(ft.KernelError, match="inactive"):
-        ft.fast_track_use(
-            {**overlay, "state": "INACTIVE"},
-            gate_id="repository-context-bundle-witness",
-            gate_version=version,
-            task="1217591724565043",
-            candidate=f"PR#31@{base.HEAD}",
-            action="worker omitted-packet override-sensitive qualification",
-            raw_evidence="FAILED: bundle unavailable",
-            now=datetime(2026, 8, 18, tzinfo=timezone.utc),
-        )
 
 
 def test_manual_worker_review_needs_no_automated_attempt_or_authorship_record():
