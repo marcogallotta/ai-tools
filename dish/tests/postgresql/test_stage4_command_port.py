@@ -446,9 +446,11 @@ def test_task_reference_from_dish_reduces_known_shapes(dish_value, expected) -> 
     assert _task_reference_from_dish(dish_value) == expected
 
 
-def _signed_ready_baseline(session, ids, context, task_id):
+def _signed_ready_baseline(
+    session, ids, context, task_id, *, native_destination: bool = False
+):
     _add_verification_queue(session, ids, context)
-    _add_destination_section(session, ids, context)
+    destination_section_id = _add_destination_section(session, ids, context)
     author_run = _next(ids)
     verifier_run = _next(ids)
     _register_run(session, generation_id=context["generation_id"], run_id=author_run)
@@ -461,13 +463,33 @@ def _signed_ready_baseline(session, ids, context, task_id):
     )
     port = _port(session, ids)
     started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
-    prepared = _prepare_for_verification(
-        port,
-        ids,
-        task_id=task_id,
-        operation_id=started.data["operation_id"],
-        run_id=author_run,
-    )
+    if native_destination:
+        prepared = port.execute(
+            _call(
+                "prepare",
+                run_id=author_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": TASK.replace(
+                        "Destination section: Sichuan — 12345",
+                        f"Destination section: Sichuan — section:{destination_section_id}",
+                    ),
+                    "agent": "claude",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert prepared.ok, (prepared.code, prepared.http_status, prepared.data)
+    else:
+        prepared = _prepare_for_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=author_run,
+        )
     _start_verification(
         port,
         ids,
@@ -521,6 +543,21 @@ def _signed_ready_baseline(session, ids, context, task_id):
         models.ContentVersion, uuid.UUID(approved.data["signed_content_version_id"])
     )
     return port, signed
+
+
+def test_submit_resolves_native_destination_from_signed_document(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _port_instance, signed = _signed_ready_baseline(
+            session, ids, context, task_id, native_destination=True
+        )
+        state = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        parsed = parse_canonical_document(
+            title=signed.title, body=signed.body, expected_status="ready"
+        )
+        assert state.section_id == destination_section_id(parsed.document)
 
 
 def test_read_resting_checked_in_task_offers_change_continuation(workflow_db) -> None:
