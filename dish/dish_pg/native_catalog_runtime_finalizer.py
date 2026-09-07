@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import subprocess
 import uuid
@@ -30,6 +32,7 @@ from .native_section_carry_forward import (
 from .native_section_content_materializer import (
     NativeSectionContentMaterializationError,
     NativeSectionContentMaterializationResult,
+    PostStagingContentCorrection,
     materialize_staged_native_section_content,
 )
 from .recovery_control import migration_revision_sha256
@@ -55,6 +58,73 @@ _REQUIRED_INVENTORY_COUNTS = (
     "pending_verification_legacy_destination_documents",
     "ready_without_legacy_destination",
 )
+
+# Exact audited commands committed after immutable 0048 staging.  This is a
+# bounded rebase contract for these three occurrences, not a general allowance
+# for intervening content or placement changes.
+_POST_0048_CONTENT_CORRECTIONS = {
+    uuid.UUID("ad1d6cc9-8ac3-57c5-b4c5-62a283f881ce"): PostStagingContentCorrection(
+        task_id=uuid.UUID("6fad7d0b-27ec-58ed-94de-05c0f033fb26"),
+        source_content_version_id=uuid.UUID("39865cbf-1e11-4061-96eb-e89bc64fdd96"),
+        current_content_version_id=uuid.UUID("6e66faa8-4e1e-4abd-8855-44fc51e3a521"),
+        command_execution_id=uuid.UUID("f2720224-4f5c-455b-817e-4a71564db12d"),
+        current_content_identity="75b90afb56f3242956ff3b0245439d51971296c4b93a40383bca160ae00d54a3",
+        current_contract_binding_id=uuid.UUID("0e90755b-ad96-48e8-8910-d9e12dd0ef86"),
+        current_section_id=uuid.UUID("1b9e67c5-09c7-5625-b8f7-f42e0a7ed144"),
+        legacy_destination_line="Destination section: Mediterranean — 1217084499231803",
+        destination_display_name="Verification Queue",
+    ),
+    uuid.UUID("4b6a40bc-b552-59d6-8ed6-47cba29135e2"): PostStagingContentCorrection(
+        task_id=uuid.UUID("8087403e-a7b0-5087-b8bd-e6aea22dd67e"),
+        source_content_version_id=uuid.UUID("6353c3a4-2295-4ec3-9f32-6c13b6bc0ea4"),
+        current_content_version_id=uuid.UUID("58624b9d-5c3e-41c4-bec5-f2012ef7d0de"),
+        command_execution_id=uuid.UUID("02b2989f-c2fa-4aa4-9024-bbba2b24962d"),
+        current_content_identity="211619b707149fe5041346cfbff5a5bcf1c66879469787d86e1574788fbbe56c",
+        current_contract_binding_id=uuid.UUID("0e90755b-ad96-48e8-8910-d9e12dd0ef86"),
+        current_section_id=uuid.UUID("1b9e67c5-09c7-5625-b8f7-f42e0a7ed144"),
+        legacy_destination_line="Destination section: Mediterranean — 1217084499231803",
+        destination_display_name="Verification Queue",
+    ),
+    uuid.UUID("3fb7fa2b-d602-555f-bb2b-ba1c2fc13f5d"): PostStagingContentCorrection(
+        task_id=uuid.UUID("87368311-6d58-5de8-a9d1-79c49b896aa5"),
+        source_content_version_id=uuid.UUID("43ddcf28-b17f-4142-8c4d-875532bd30a4"),
+        current_content_version_id=uuid.UUID("16812307-30f7-43ef-93eb-0c7ad5aec4de"),
+        command_execution_id=uuid.UUID("889c0734-a19b-4228-bdb0-2bfcdfc64bfe"),
+        current_content_identity="aff56c26ec55ce8fd427b77190e0221b4c07cea05550f3615790f0a7c4b6b40d",
+        current_contract_binding_id=uuid.UUID("0e90755b-ad96-48e8-8910-d9e12dd0ef86"),
+        current_section_id=uuid.UUID("1b9e67c5-09c7-5625-b8f7-f42e0a7ed144"),
+        legacy_destination_line="Destination section: Mediterranean — 1217084499231803",
+        destination_display_name="Verification Queue",
+    ),
+}
+
+
+def _post_staging_correction_gate(
+    corrections: Mapping[uuid.UUID, PostStagingContentCorrection] | None,
+) -> dict[str, object] | None:
+    if not corrections:
+        return None
+    payload = [
+        {
+            "carry_forward_id": str(carry_forward_id),
+            "task_id": str(row.task_id),
+            "source_content_version_id": str(row.source_content_version_id),
+            "current_content_version_id": str(row.current_content_version_id),
+            "command_execution_id": str(row.command_execution_id),
+            "current_content_identity": row.current_content_identity,
+            "current_contract_binding_id": str(row.current_contract_binding_id),
+            "current_section_id": str(row.current_section_id),
+            "legacy_destination_line": row.legacy_destination_line,
+            "destination_display_name": row.destination_display_name,
+        }
+        for carry_forward_id, row in sorted(
+            corrections.items(), key=lambda item: str(item[0])
+        )
+    ]
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {"correction_count": len(payload), "correction_sha256": digest}
 
 
 class NativeCatalogRuntimeFinalizerError(ValueError):
@@ -339,6 +409,7 @@ def _event_details_match(
     source_commit_sha: str,
     inventory_gate: Mapping[str, Any],
     placement_repair_gate: Mapping[str, Any] | None,
+    post_staging_correction_gate: Mapping[str, Any] | None,
     migration_code_sha256: str,
 ) -> bool:
     details = event.details if isinstance(event.details, dict) else {}
@@ -358,6 +429,12 @@ def _event_details_match(
         and details.get("inventory_gate") == dict(inventory_gate)
         and details.get("placement_repair_gate")
         == (None if placement_repair_gate is None else dict(placement_repair_gate))
+        and details.get("post_staging_content_correction_gate")
+        == (
+            None
+            if post_staging_correction_gate is None
+            else dict(post_staging_correction_gate)
+        )
     )
 
 
@@ -519,6 +596,12 @@ def finalize_native_catalog_runtime_authority(
     label_corrections = (
         LEGACY_0048_LABEL_CORRECTIONS if repair_plan is not None else None
     )
+    post_staging_content_corrections = (
+        _POST_0048_CONTENT_CORRECTIONS if repair_plan is not None else None
+    )
+    post_staging_correction_gate = _post_staging_correction_gate(
+        post_staging_content_corrections
+    )
 
     if existing_event is not None or pointer is not None or existing_attestations:
         if existing_event is None or pointer is None:
@@ -533,6 +616,7 @@ def finalize_native_catalog_runtime_authority(
                 catalog_version_id=locked_catalog.catalog_version_id,
                 materialized_at=existing_event.terminal_at,
                 destination_label_corrections=label_corrections,
+                post_staging_content_corrections=post_staging_content_corrections,
             )
         except NativeSectionContentMaterializationError as exc:
             raise NativeCatalogRuntimeFinalizerError(str(exc)) from exc
@@ -557,6 +641,7 @@ def finalize_native_catalog_runtime_authority(
             placement_repair_gate=(
                 None if repair_result is None else repair_result.gate
             ),
+            post_staging_correction_gate=post_staging_correction_gate,
             migration_code_sha256=code_sha,
         ):
             raise NativeCatalogRuntimeFinalizerError(
@@ -588,6 +673,7 @@ def finalize_native_catalog_runtime_authority(
             catalog_version_id=locked_catalog.catalog_version_id,
             materialized_at=now,
             destination_label_corrections=label_corrections,
+            post_staging_content_corrections=post_staging_content_corrections,
         )
     except NativeSectionContentMaterializationError as exc:
         raise NativeCatalogRuntimeFinalizerError(str(exc)) from exc
@@ -630,6 +716,7 @@ def finalize_native_catalog_runtime_authority(
             "placement_repair_gate": (
                 None if repair_result is None else repair_result.gate
             ),
+            "post_staging_content_correction_gate": post_staging_correction_gate,
         },
     )
     session.add(event)

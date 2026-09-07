@@ -31,6 +31,21 @@ class NativeSectionContentMaterializationError(ValueError):
 
 
 @dataclass(frozen=True)
+class PostStagingContentCorrection:
+    """Exact audited command mutation that the 0048 transform must rebase onto."""
+
+    task_id: uuid.UUID
+    source_content_version_id: uuid.UUID
+    current_content_version_id: uuid.UUID
+    command_execution_id: uuid.UUID
+    current_content_identity: str
+    current_contract_binding_id: uuid.UUID
+    current_section_id: uuid.UUID
+    legacy_destination_line: str
+    destination_display_name: str
+
+
+@dataclass(frozen=True)
 class NativeSectionContentMaterializationResult:
     generation_id: uuid.UUID
     migration_event_id: uuid.UUID
@@ -148,9 +163,13 @@ def _content_matches(
     content: models.ContentVersion | None,
     *,
     occurrence: models.NativeSectionContentCarryForwardOccurrence,
-    source: models.ContentVersion,
     successor_id: uuid.UUID,
     dish_version: int,
+    title: str,
+    body: str,
+    content_identity_value: str,
+    predecessor_content_version_id: uuid.UUID,
+    contract_binding_id: uuid.UUID,
 ) -> bool:
     return bool(
         content is not None
@@ -158,18 +177,101 @@ def _content_matches(
         and content.generation_id == occurrence.generation_id
         and content.task_id == occurrence.task_id
         and content.representation_kind == "document"
-        and content.title == occurrence.transformed_title
-        and content.body == occurrence.transformed_body
+        and content.title == title
+        and content.body == body
         and content.identity_scheme == CONTENT_IDENTITY_SCHEME
-        and content.content_identity == occurrence.transformed_content_identity
+        and content.content_identity == content_identity_value
         and content.creator_route == "import"
         and content.import_run_id == occurrence.import_run_id
         and content.command_execution_id is None
-        and content.predecessor_content_version_id
-        == occurrence.source_content_version_id
-        and content.contract_binding_id == source.contract_binding_id
+        and content.predecessor_content_version_id == predecessor_content_version_id
+        and content.contract_binding_id == contract_binding_id
         and content.created_dish_version == dish_version
     )
+
+
+def _rewrite_exact_destination(
+    body: str,
+    *,
+    legacy_line: str,
+    display_name: str,
+    section_id: uuid.UUID,
+) -> str:
+    lines = body.splitlines(keepends=True)
+    matches = [
+        index
+        for index, line in enumerate(lines)
+        if line.rstrip("\r\n").startswith("Destination section:")
+    ]
+    if len(matches) != 1 or lines[matches[0]].rstrip("\r\n") != legacy_line:
+        raise NativeSectionContentMaterializationError(
+            "post-staging content has unexpected Destination section syntax"
+        )
+    index = matches[0]
+    ending = lines[index][len(lines[index].rstrip("\r\n")) :]
+    lines[index] = (
+        f"Destination section: {display_name} — section:{section_id}{ending}"
+    )
+    return "".join(lines)
+
+
+def _validated_post_staging_source(
+    session: Session,
+    *,
+    occurrence: models.NativeSectionContentCarryForwardOccurrence,
+    source: models.ContentVersion,
+    correction: PostStagingContentCorrection,
+    target_display_name: str,
+) -> tuple[models.ContentVersion, str, str, str]:
+    current = session.get(models.ContentVersion, correction.current_content_version_id)
+    receipt = session.get(
+        models.DishMutationReceipt,
+        (
+            occurrence.generation_id,
+            occurrence.task_id,
+            occurrence.source_dish_version + 1,
+        ),
+    )
+    if (
+        correction.task_id != occurrence.task_id
+        or correction.source_content_version_id
+        != occurrence.source_content_version_id
+        or correction.destination_display_name != target_display_name
+        or current is None
+        or current.content_version_id != correction.current_content_version_id
+        or current.generation_id != occurrence.generation_id
+        or current.task_id != occurrence.task_id
+        or current.representation_kind != "document"
+        or current.identity_scheme != CONTENT_IDENTITY_SCHEME
+        or current.content_identity != correction.current_content_identity
+        or content_identity(current.title, current.body)
+        != correction.current_content_identity
+        or current.creator_route != "command_execution"
+        or current.import_run_id is not None
+        or current.command_execution_id != correction.command_execution_id
+        or current.predecessor_content_version_id
+        != occurrence.source_content_version_id
+        or current.contract_binding_id != correction.current_contract_binding_id
+        or current.created_dish_version != occurrence.source_dish_version + 1
+        or receipt is None
+        or receipt.source_route != "command_execution"
+        or receipt.import_run_id is not None
+        or receipt.command_execution_id != correction.command_execution_id
+        or not receipt.content_changed
+        or not receipt.placement_changed
+        or receipt.completion_changed
+        or receipt.archive_changed
+    ):
+        raise NativeSectionContentMaterializationError(
+            "post-staging content correction does not match exact audited lineage"
+        )
+    body = _rewrite_exact_destination(
+        current.body,
+        legacy_line=correction.legacy_destination_line,
+        display_name=correction.destination_display_name,
+        section_id=correction.current_section_id,
+    )
+    return current, current.title, body, content_identity(current.title, body)
 
 
 def materialize_staged_native_section_content(
@@ -180,6 +282,10 @@ def materialize_staged_native_section_content(
     catalog_version_id: uuid.UUID,
     materialized_at: datetime,
     destination_label_corrections: Mapping[uuid.UUID, tuple[uuid.UUID, str, str]]
+    | None = None,
+    post_staging_content_corrections: Mapping[
+        uuid.UUID, PostStagingContentCorrection
+    ]
     | None = None,
 ) -> NativeSectionContentMaterializationResult:
     """Apply the staged 0048 successors without owning or committing the transaction.
@@ -264,12 +370,24 @@ def materialize_staged_native_section_content(
 
     corrections = dict(destination_label_corrections or {})
     used_corrections: set[uuid.UUID] = set()
+    occurrence_ids = {row.carry_forward_id for row in occurrences}
+    post_staging_corrections = dict(post_staging_content_corrections or {})
+    unknown_post_staging_corrections = set(post_staging_corrections) - occurrence_ids
+    if unknown_post_staging_corrections:
+        raise NativeSectionContentMaterializationError(
+            "post-staging content correction set contains an unknown occurrence"
+        )
+    used_post_staging_corrections: set[uuid.UUID] = set()
     pending: list[
         tuple[
             models.NativeSectionContentCarryForwardOccurrence,
             models.ContentVersion,
             models.DishState,
             uuid.UUID,
+            int,
+            str,
+            str,
+            str,
         ]
     ] = []
     already = 0
@@ -319,6 +437,33 @@ def materialize_staged_native_section_content(
 
         successor_id = materialized_content_version_id(occurrence.carry_forward_id)
         successor = session.get(models.ContentVersion, successor_id)
+        post_staging = post_staging_corrections.get(occurrence.carry_forward_id)
+        materialization_source = source
+        materialized_title = occurrence.transformed_title
+        materialized_body = occurrence.transformed_body
+        materialized_identity = occurrence.transformed_content_identity
+        if post_staging is not None:
+            current_target_entry = session.get(
+                models.SectionCatalogEntry,
+                (catalog_version_id, post_staging.current_section_id),
+            )
+            if current_target_entry is None:
+                raise NativeSectionContentMaterializationError(
+                    "post-staging placement is not in the current target catalog"
+                )
+            (
+                materialization_source,
+                materialized_title,
+                materialized_body,
+                materialized_identity,
+            ) = _validated_post_staging_source(
+                session,
+                occurrence=occurrence,
+                source=source,
+                correction=post_staging,
+                target_display_name=current_target_entry.display_name,
+            )
+            used_post_staging_corrections.add(occurrence.carry_forward_id)
 
         if state.current_content_version_id == successor_id:
             if successor is None:
@@ -352,9 +497,15 @@ def materialize_staged_native_section_content(
                 or not _content_matches(
                     successor,
                     occurrence=occurrence,
-                    source=source,
                     successor_id=successor_id,
                     dish_version=materialized_version,
+                    title=materialized_title,
+                    body=materialized_body,
+                    content_identity_value=materialized_identity,
+                    predecessor_content_version_id=(
+                        materialization_source.content_version_id
+                    ),
+                    contract_binding_id=materialization_source.contract_binding_id,
                 )
             ):
                 raise NativeSectionContentMaterializationError(
@@ -363,32 +514,45 @@ def materialize_staged_native_section_content(
             already += 1
             continue
 
-        if (
-            state.current_content_version_id != occurrence.source_content_version_id
-            or state.dish_version < occurrence.source_dish_version
-        ):
+        expected_current_content_id = materialization_source.content_version_id
+        if state.current_content_version_id != expected_current_content_id:
             raise NativeSectionContentMaterializationError(
                 "current DishState/content pointer moved since 0048 staging"
             )
-        intervening = tuple(
-            session.scalars(
-                select(models.DishMutationReceipt)
-                .where(
-                    models.DishMutationReceipt.generation_id == generation_id,
-                    models.DishMutationReceipt.task_id == occurrence.task_id,
-                    models.DishMutationReceipt.dish_version
-                    > occurrence.source_dish_version,
-                    models.DishMutationReceipt.dish_version <= state.dish_version,
+        if post_staging is not None:
+            if (
+                state.dish_version != materialization_source.created_dish_version
+                or state.section_id != post_staging.current_section_id
+            ):
+                raise NativeSectionContentMaterializationError(
+                    "post-staging DishState does not match exact audited placement"
                 )
-                .order_by(models.DishMutationReceipt.dish_version)
+        else:
+            if state.dish_version < occurrence.source_dish_version:
+                raise NativeSectionContentMaterializationError(
+                    "current DishState/content pointer moved since 0048 staging"
+                )
+            intervening = tuple(
+                session.scalars(
+                    select(models.DishMutationReceipt)
+                    .where(
+                        models.DishMutationReceipt.generation_id == generation_id,
+                        models.DishMutationReceipt.task_id == occurrence.task_id,
+                        models.DishMutationReceipt.dish_version
+                        > occurrence.source_dish_version,
+                        models.DishMutationReceipt.dish_version <= state.dish_version,
+                    )
+                    .order_by(models.DishMutationReceipt.dish_version)
+                )
             )
-        )
-        if tuple(row.dish_version for row in intervening) != tuple(
-            range(occurrence.source_dish_version + 1, state.dish_version + 1)
-        ) or any(row.content_changed or row.placement_changed for row in intervening):
-            raise NativeSectionContentMaterializationError(
-                "intervening Dish mutation lineage is incomplete or changed content/placement"
-            )
+            if tuple(row.dish_version for row in intervening) != tuple(
+                range(occurrence.source_dish_version + 1, state.dish_version + 1)
+            ) or any(
+                row.content_changed or row.placement_changed for row in intervening
+            ):
+                raise NativeSectionContentMaterializationError(
+                    "intervening Dish mutation lineage is incomplete or changed content/placement"
+                )
         if state.catalog_version_id is not None:
             raise NativeSectionContentMaterializationError(
                 "source DishState already carries an unexpected native catalog placement"
@@ -402,14 +566,38 @@ def materialize_staged_native_section_content(
             raise NativeSectionContentMaterializationError(
                 "successor Dish mutation slot is already occupied by conflicting materialization"
             )
-        pending.append((occurrence, source, state, successor_id, next_version))
+        pending.append(
+            (
+                occurrence,
+                materialization_source,
+                state,
+                successor_id,
+                next_version,
+                materialized_title,
+                materialized_body,
+                materialized_identity,
+            )
+        )
 
     if used_corrections != set(corrections):
         raise NativeSectionContentMaterializationError(
             "staged carry-forward label correction set is not an exact occurrence match"
         )
+    if used_post_staging_corrections != set(post_staging_corrections):
+        raise NativeSectionContentMaterializationError(
+            "post-staging content correction set is not an exact occurrence match"
+        )
 
-    for occurrence, source, state, successor_id, next_version in pending:
+    for (
+        occurrence,
+        source,
+        state,
+        successor_id,
+        next_version,
+        materialized_title,
+        materialized_body,
+        materialized_identity,
+    ) in pending:
         session.add(
             models.DishMutationReceipt(
                 generation_id=generation_id,
@@ -432,14 +620,14 @@ def materialize_staged_native_section_content(
                 generation_id=generation_id,
                 task_id=occurrence.task_id,
                 representation_kind="document",
-                title=occurrence.transformed_title,
-                body=occurrence.transformed_body,
+                title=materialized_title,
+                body=materialized_body,
                 identity_scheme=CONTENT_IDENTITY_SCHEME,
-                content_identity=occurrence.transformed_content_identity,
+                content_identity=materialized_identity,
                 creator_route="import",
                 import_run_id=occurrence.import_run_id,
                 command_execution_id=None,
-                predecessor_content_version_id=occurrence.source_content_version_id,
+                predecessor_content_version_id=source.content_version_id,
                 contract_binding_id=source.contract_binding_id,
                 created_dish_version=next_version,
                 created_at=materialized_at,
@@ -453,7 +641,7 @@ def materialize_staged_native_section_content(
                 models.DishState.task_id == occurrence.task_id,
                 models.DishState.dish_version == next_version - 1,
                 models.DishState.current_content_version_id
-                == occurrence.source_content_version_id,
+                == source.content_version_id,
                 models.DishState.catalog_version_id.is_(None),
             )
             .values(
