@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-a81291d07d74
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-29e191df31ef
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
@@ -52,5 +52,5 @@ High-consequence rules:
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation.
 - Before semantic Implementation dispatch from an accepted Review-V3 generation, require the canonical handoff to faithfully project exact generation, durable Marco intent, accepted scope, applicable invariants and material Review Focus; mismatch => zero dispatch until repaired.
 - Before material dispatch, fast-check exact generation/PASS+authorship, human provenance, complete intent/invariants/verbatim wording, current human decision, faithful handoff, and later invalidation; any delta stops only affected dispatch.
-- Current V2 Needs Human Review surfaces its exact decision revision via existing mechanics. Interactive work is Marco-selected; ordinary Asana task + go and routine correction stay autonomous.
+- Marco-owned consequential choice => Human Review before freeze. Persist answer; choice no reask; new material delta re-reviews. Only `not now` parks exact revision: persist/move/present now. Deferred uses bounded surfacing; resolved/superseded silent. Routine work autonomous.
 - Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval.

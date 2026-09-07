@@ -37,6 +37,7 @@ class FakeAsana:
             section["name"] = section_name
         self.task = {
             "gid": TASK,
+            "completed": False,
             "name": name,
             "notes": notes,
             "memberships": [{"section": section}],
@@ -133,3 +134,23 @@ def test_stale_answer_for_old_revision_fails_closed():
         assert "current decision revision" in str(exc)
     else:
         raise AssertionError("expected stale decision answer rejection")
+
+
+def test_resolved_legacy_decision_does_not_resurface_after_lifecycle_move():
+    asana = FakeAsana()
+    resolve_marco_decision(
+        asana=asana,
+        task_gid=TASK,
+        expected_decision_id=DID,
+        answer="A",
+        next_section_gid=READY,
+        now=NOW,
+    )
+    assert record_decision_surface(asana=asana, task_gid=TASK, now=NOW + timedelta(days=2)) is None
+
+
+def test_completed_legacy_decision_is_not_current_even_with_packet_title():
+    asana = FakeAsana()
+    asana.task["completed"] = True
+    assert parse_decision_packet(asana.get_task(TASK)) is None
+    assert record_decision_surface(asana=asana, task_gid=TASK, now=NOW) is None

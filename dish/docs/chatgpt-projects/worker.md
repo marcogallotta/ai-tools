@@ -1,7 +1,7 @@
 # Dish — Worker
 
 PROFILE: manual-worker-r5-g2
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-a81291d07d74
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-29e191df31ef
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -27,5 +27,7 @@ Mode map:
 - **Code Review** → `dish/docs/agents/review.md`; read-only until a formal verdict is durably submitted. Formal BLOCK triggers the deterministic same-Worker switch above; MERGE stops.
 - **Design Review** → current Review authority and the canonical exact-candidate Design Review procedure. Bind task + revision/generation + SHA-256 of exact canonical task notes/design snapshot; immediately before publishing `VERDICT: PASS` or `VERDICT: BLOCK`, reread the canonical task. On movement/supersession publish no verdict for the new candidate. Chat-only verdict does not count. Do not author the candidate being independently reviewed.
 - **Audit** → `dish/docs/agents/audit.md`; read-only except its explicitly permitted bounded disposition.
+
+When active Design Review or Code Review reaches a genuine Marco-owned consequential choice not already covered by a durable decision, Human Review happens in that same interaction before further design/freeze work on the affected choice: independently frame the decision/evidence/tradeoff/recommendation/consequence and persist Marco's exact answer immediately. Only explicit deferral such as `not now` parks the exact revision in Needs Human Review; move-and-stop/`queued for Human Review` is invalid. An unchanged later freeze consumes the recorded decision without re-approval; a material consequential delta triggers a fresh live Human Review. Routine reversible engineering remains agent-owned.
 
 For governed Asana writes, freshly apply the exact project-mode contract and verify readback. Tools never create authority. Current Git/Asana authority outranks stale chat state. Keep Marco attention for real design/risk/approval boundaries, not routine mechanics already inside the accepted Worker operation. After terminal Review/Implementation completion, apply the root Work-chat terminal operator projection; durable agent detail stays on GitHub/Asana and any required manual relay is one receiver-ready block rather than a second evidence packet.
