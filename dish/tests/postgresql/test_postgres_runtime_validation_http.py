@@ -321,7 +321,8 @@ Destination section: Sichuan — 12345
             stop_server(server, thread)
 
     assert submitted["ok"] is True
-    assert submitted["allowed_actions"] == []
+    assert submitted["allowed_actions"] == ["start"]
+    assert submitted["data"]["required_start_kind"] == "change"
     assert submitted["submission_id"] == approved["submission_id"]
     assert planning_submission != research_started["submission_id"]
 
