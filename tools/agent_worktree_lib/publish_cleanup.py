@@ -326,7 +326,10 @@ def _command_cleanup_locked(args: argparse.Namespace, runner: GitRunner) -> dict
             assert target_head is not None
             target_contains = remote_contains_head(runner, repo, target_head, expected_head)
             remote_contains = remote_contains_head(runner, repo, remote_head, expected_head)
-            cleanup_remote_deleted = bool(cleanup and cleanup.get("remote_branch_removed"))
+            # A matching durable journal makes remote absence attributable to this
+            # exact cleanup attempt even if the process died after verified deletion
+            # but before checkpointing the phase.
+            cleanup_remote_deleted = bool(cleanup and (cleanup.get("remote_branch_removed") or remote_head is None))
             if not remote_contains and not cleanup_remote_deleted and not (args.disposition == "merged" and target_contains):
                 fail(
                     "ONLY_RECOVERY_COPY",

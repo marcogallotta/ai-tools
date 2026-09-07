@@ -175,6 +175,31 @@ def test_cleanup_restart_reconciles_crash_after_worktree_remove(h: Harness) -> N
     assert h.state(task)["terminal_cleanup"]["complete"] is True
 
 
+def test_cleanup_restart_reconciles_crash_after_remote_delete_before_checkpoint(h: Harness) -> None:
+    task = "1084"
+    branch = "agent/cleanup-restart-remote"
+    h.start(task=task, branch=branch)
+    head = h.commit_local(task, "terminal")
+    h.tool("publish", "--task", task, "--json")
+    state = h.state(task)
+    state["lifecycle"] = "closed"
+    state["disposition"] = "closed"
+    state["terminal_cleanup"] = {
+        "schema": "dish-terminal-cleanup-v1", "task_gid": task, "pr_number": 42,
+        "disposition": "closed", "branch": branch, "expected_head": head,
+        "started_at": "2026-08-14T00:00:00+00:00", "worktree_removed": False,
+        "local_branch_removed": False, "remote_branch_removed": False, "complete": False,
+    }
+    h.state_path(task).write_text(json.dumps(state) + "\n", encoding="utf-8")
+    git(h.origin, "update-ref", "-d", f"refs/heads/{branch}", head)
+
+    data = payload(h.raw_tool(*_terminal_args(task, branch, head)))
+    assert data["remote_branch_removed"] is True
+    assert data["worktree_removed"] is True
+    assert data["local_branch_removed"] is True
+    assert h.state(task)["terminal_cleanup"]["complete"] is True
+
+
 def test_cleanup_restart_reconciles_crash_after_local_branch_delete(h: Harness) -> None:
     task = "1082"
     branch = "agent/cleanup-restart-branch"
