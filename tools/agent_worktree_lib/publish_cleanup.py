@@ -17,7 +17,7 @@ from .operations import (
 from .repository import discover_repository
 from .state import TaskLock, atomic_write_json, clear_agent_reference, load_task_state, read_json_object, state_path, state_path_for_branch
 from .operations import owner_agent_id
-from .ownership import invalidate_claim_after_head_movement, require_active_claim
+from .ownership import invalidate_claim_after_head_movement, lineage_claim_locks, require_active_claim
 from .lineage import LINEAGE_ENV, record_lineage_head, terminalize_lineage
 from .tool_environment import CANONICAL_VENV_RELATIVE, preflight_tool_environment
 
@@ -211,10 +211,14 @@ def _delete_remote_branch_exact(runner: GitRunner, repo, branch: str, expected_h
         fail("REMOTE_DELETE_VERIFY_FAILED", f"remote branch {ref} still exists at {observed} after deletion")
 
 
-def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
+def _command_cleanup_locked(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
     if args.disposition not in DISPOSITIONS:
         fail("INVALID_DISPOSITION", "cleanup disposition must be merged|closed|abandoned|superseded")
+    if not args.branch or not args.expected_head or args.pr_number is None:
+        fail("TERMINAL_IDENTITY_REQUIRED", "cleanup requires --branch, --expected-head, and --pr-number")
+    if args.pr_number <= 0:
+        fail("INVALID_PR", "terminal PR number must be positive")
     requested_state = state_path_for_branch(task_gid, args.branch) if args.branch else None
     if args.branch is None:
         try:
@@ -227,6 +231,11 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
     state = read_json_object(requested_state, "task worktree state") if requested_state is not None else None
     lineage_id = str(state.get("lineage_id")) if state is not None and state.get("lineage_id") else None
     with TaskLock(task_gid, args.branch or (str(state.get("branch")) if state else None), lineage_id):
+        if requested_state is not None:
+            reread = read_json_object(requested_state, "task worktree state")
+            if state is None or reread.get("branch") != state.get("branch") or reread.get("lineage_id") != state.get("lineage_id"):
+                fail("CLEANUP_IDENTITY_MISMATCH", "task lineage state changed before cleanup acquired its task lock")
+            state = reread
         state_file = requested_state
         if state is not None:
             # Terminal cleanup must remain restartable after lifecycle leaves active.
@@ -317,7 +326,10 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
             assert target_head is not None
             target_contains = remote_contains_head(runner, repo, target_head, expected_head)
             remote_contains = remote_contains_head(runner, repo, remote_head, expected_head)
-            cleanup_remote_deleted = bool(cleanup and cleanup.get("remote_branch_removed"))
+            # A matching durable journal makes remote absence attributable to this
+            # exact cleanup attempt even if the process died after verified deletion
+            # but before checkpointing the phase.
+            cleanup_remote_deleted = bool(cleanup and (cleanup.get("remote_branch_removed") or remote_head is None))
             if not remote_contains and not cleanup_remote_deleted and not (args.disposition == "merged" and target_contains):
                 fail(
                     "ONLY_RECOVERY_COPY",
@@ -333,6 +345,8 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
                     "disposition": args.disposition,
                     "branch": branch,
                     "expected_head": expected_head,
+                    "observed_pr_state": args.observed_state,
+                    "observed_at": args.observed_at,
                     "started_at": now_utc(),
                     "worktree_removed": False,
                     "local_branch_removed": False,
@@ -358,6 +372,17 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
                 )
                 cleanup["registry_terminalized"] = True
                 cleanup["registry_terminalized_at"] = now_utc()
+                _write_cleanup_progress(task_gid, state, cleanup)
+
+            if cleanup.get("remote_branch_removed"):
+                if remote_ref_sha(runner, repo, remote_ref, allow_missing=True) is not None:
+                    fail("CLEANUP_IDENTITY_MISMATCH", "journal says remote branch was deleted but it exists again")
+            else:
+                _delete_remote_branch_exact(runner, repo, branch, expected_head)
+                if remote_ref_sha(runner, repo, remote_ref, allow_missing=True) is not None:
+                    fail("REMOTE_DELETE_VERIFY_FAILED", f"remote branch {remote_ref} still exists after terminal cleanup")
+                cleanup["remote_branch_removed"] = True
+                cleanup["remote_branch_removed_at"] = now_utc()
                 _write_cleanup_progress(task_gid, state, cleanup)
 
             if worktree_exists:
@@ -422,7 +447,8 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
             # deleting an unrelated local ref/worktree cache.
             local_head = expected_head
 
-        _delete_remote_branch_exact(runner, repo, branch, expected_head)
+        if state is None:
+            _delete_remote_branch_exact(runner, repo, branch, expected_head)
         remote_removed = remote_ref_sha(runner, repo, remote_ref, allow_missing=True) is None
         if not remote_removed:
             fail("REMOTE_DELETE_VERIFY_FAILED", f"remote branch {remote_ref} still exists after terminal cleanup")
@@ -459,6 +485,20 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
             "current_target_head": target_head,
             "state_path": str(requested_state) if requested_state is not None else None,
         }
+
+
+def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
+    task_gid = require_task_gid(args.task)
+    if not args.branch or not args.expected_head or args.pr_number is None:
+        fail("TERMINAL_IDENTITY_REQUIRED", "cleanup requires --branch, --expected-head, and --pr-number")
+    if args.pr_number <= 0:
+        fail("INVALID_PR", "terminal PR number must be positive")
+    locks = lineage_claim_locks(task_gid, [args.branch], [args.pr_number])
+    locks.acquire()
+    try:
+        return _command_cleanup_locked(args, runner)
+    finally:
+        locks.release()
 
 
 def command_exec(args: argparse.Namespace, runner: GitRunner) -> "NoReturn":

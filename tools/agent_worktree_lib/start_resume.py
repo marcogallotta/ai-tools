@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,8 @@ from .repository import discover_repository
 from .tool_environment import preflight_tool_environment
 from .state import (
     TaskLock, atomic_write_json, clear_agent_reference, load_task_state, new_active_task_state,
-    read_json_object, set_agent_reference, state_path, task_state_paths, task_worktree_path, validate_agent_state,
+    create_attempt_path, prepare_create_attempt, read_json_object, retire_create_attempt,
+    set_agent_reference, state_path, task_state_paths, task_worktree_path, validate_agent_state,
 )
 
 def _checked_out_path(runner: GitRunner, cwd: Path, branch: str) -> str | None:
@@ -271,15 +273,41 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
     validate_agent_state(agent_id)
 
     with TaskLock(task_gid):
+        repo = discover_repository(runner, Path(args.repo))
+        branch = validate_branch(runner, repo.source_top, args.branch)
+        base_ref = validate_base_ref(runner, repo.source_top, args.base_ref)
+        candidate = task_worktree_path(task_gid).resolve()
+        attempt_file = create_attempt_path(task_gid, branch, os.environ.get("DISH_AGENT_LINEAGE_ID"))
         state_file = state_path(task_gid)
         if state_file.exists():
+            state = load_task_state(task_gid)
+            if attempt_file.exists():
+                attempt = read_json_object(attempt_file, "worktree creation attempt")
+                if state.get("creation_attempt_id") == attempt.get("attempt_id"):
+                    retire_create_attempt(attempt_file, str(attempt["attempt_id"]))
+                    return resume_locked(task_gid, agent_id, False, runner, command_name="adopt")
             fail(
                 "ADOPTION_STATE_EXISTS",
                 "task already has durable worktree state; use resume/--takeover instead of adopting the remote branch again",
             )
-        repo = discover_repository(runner, Path(args.repo))
-        branch = validate_branch(runner, repo.source_top, args.branch)
-        base_ref = validate_base_ref(runner, repo.source_top, args.base_ref)
+        runner.check_candidate(candidate)
+        recovering = attempt_file.exists()
+        if not recovering:
+            candidate_path_is_safe(repo, runner, candidate)
+            if branch_exists(runner, repo.source_top, branch):
+                checked = _checked_out_path(runner, repo.source_top, branch)
+                if checked is not None:
+                    fail("BRANCH_CHECKED_OUT", f"handoff branch already exists and is checked out elsewhere: {checked}")
+                fail("BRANCH_COLLISION", f"handoff branch already exists locally without matching task state: {branch}")
+        _validate_adoption_remote(
+            runner, repo=repo, branch=branch, base_ref=base_ref,
+            base_sha=base_sha, expected_head=expected_head,
+        )
+        attempt_file, attempt = prepare_create_attempt(
+            task_gid=task_gid, operation="adopt", branch=branch, candidate=candidate,
+            repo=repo, agent_id=agent_id, base_ref=base_ref, base_sha=base_sha,
+            expected_remote_head=expected_head, local_branch_preexisted=False,
+        )
         provisional, identity, current_target = _adopt_remote_branch_locked(
             runner,
             task_gid=task_gid,
@@ -289,8 +317,11 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
             base_ref=base_ref,
             base_sha=base_sha,
             expected_head=expected_head,
+            allow_exact_local_retry=True,
         )
+        provisional["creation_attempt_id"] = attempt["attempt_id"]
         atomic_write_json(state_file, provisional)
+        retire_create_attempt(attempt_file, str(attempt["attempt_id"]))
         if agent_id is not None:
             set_agent_reference(agent_id, provisional)
         preflight_tool_environment(
@@ -312,6 +343,11 @@ def command_start(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
     base_sha = require_full_sha(args.base, "supplied base SHA")
     validate_agent_state(agent_id)
     with TaskLock(task_gid):
+        repo = discover_repository(runner, Path(args.repo))
+        branch = validate_branch(runner, repo.source_top, args.branch)
+        base_ref = validate_base_ref(runner, repo.source_top, args.base_ref)
+        candidate = task_worktree_path(task_gid).resolve()
+        attempt_file = create_attempt_path(task_gid, branch, os.environ.get("DISH_AGENT_LINEAGE_ID"))
         state_file = state_path(task_gid)
         if state_file.exists():
             state = load_task_state(task_gid)
@@ -320,16 +356,18 @@ def command_start(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
                     "STATE_CONTRADICTION",
                     "task already has durable worktree state with a different branch/base; use resume or explicit recovery",
                 )
+            if attempt_file.exists():
+                attempt = read_json_object(attempt_file, "worktree creation attempt")
+                if state.get("creation_attempt_id") != attempt.get("attempt_id"):
+                    fail("CREATE_ATTEMPT_MISMATCH", "active state does not match the prepared creation attempt")
+                retire_create_attempt(attempt_file, str(attempt["attempt_id"]))
             return resume_locked(task_gid, agent_id, False, runner, command_name="start")
 
-        repo = discover_repository(runner, Path(args.repo))
-        branch = validate_branch(runner, repo.source_top, args.branch)
-        base_ref = validate_base_ref(runner, repo.source_top, args.base_ref)
-        candidate = task_worktree_path(task_gid).resolve()
         runner.check_candidate(candidate)
-        candidate_path_is_safe(repo, runner, candidate)
-
-        if branch_exists(runner, repo.source_top, branch):
+        recovering = attempt_file.exists()
+        if not recovering:
+            candidate_path_is_safe(repo, runner, candidate)
+        if branch_exists(runner, repo.source_top, branch) and not recovering:
             checked = [r.get("worktree") for r in worktree_records(runner, repo.source_top) if r.get("branch") == f"refs/heads/{branch}"]
             if checked:
                 fail("BRANCH_CHECKED_OUT", f"owned branch already exists and is checked out elsewhere: {checked[0]}")
@@ -349,23 +387,36 @@ def command_start(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
         if runner.sha(repo.source_top, base_sha) != base_sha:
             fail("BASE_FETCH_FAILED", "supplied base does not resolve to the exact fetched commit")
 
+        attempt_file, attempt = prepare_create_attempt(
+            task_gid=task_gid, operation="start", branch=branch, candidate=candidate,
+            repo=repo, agent_id=agent_id, base_ref=base_ref, base_sha=base_sha,
+            expected_remote_head=None, local_branch_preexisted=False,
+        )
+        registered = find_worktree_record(worktree_records(runner, repo.source_top), candidate)
+        local_exists = branch_exists(runner, repo.source_top, branch)
+        if local_exists:
+            actual = runner.sha(repo.source_top, f"refs/heads/{branch}")
+            if actual != base_sha:
+                fail("CREATE_ATTEMPT_MISMATCH", f"prepared start branch moved: expected {base_sha}, local has {actual}")
+            if registered is not None:
+                if registered.get("branch") != f"refs/heads/{branch}" or registered.get("HEAD") != base_sha:
+                    fail("CREATE_ATTEMPT_MISMATCH", "prepared start worktree registry identity does not match")
+            else:
+                candidate_path_is_safe(repo, runner, candidate)
+        else:
+            candidate_path_is_safe(repo, runner, candidate)
+
         candidate.parent.mkdir(parents=True, exist_ok=True)
         reason = f"Dish task {task_gid}; agent {agent_id or 'unrecorded'}"
-        add = runner.run(
-            repo.source_top,
-            "worktree",
-            "add",
-            "--lock",
-            "--reason",
-            reason,
-            "-b",
-            branch,
-            str(candidate),
-            base_sha,
-            check=False,
-        )
-        if add.returncode != 0:
-            fail("WORKTREE_CREATE_FAILED", f"git worktree add failed without recovery mutation: {add.stderr.strip()}")
+        if registered is None:
+            add_args = ["worktree", "add", "--lock", "--reason", reason]
+            if not local_exists:
+                add_args += ["-b", branch, str(candidate), base_sha]
+            else:
+                add_args += [str(candidate), branch]
+            add = runner.run(repo.source_top, *add_args, check=False)
+            if add.returncode != 0:
+                fail("WORKTREE_CREATE_FAILED", f"git worktree add failed with PREPARED recovery retained: {add.stderr.strip()}")
 
         git_dir = runner.path(candidate, "--git-dir")
         provisional = new_active_task_state(
@@ -389,7 +440,9 @@ def command_start(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
             fail("WORKTREE_CREATE_VERIFY_FAILED", f"created worktree HEAD {identity.head} != exact base {base_sha}")
         provisional["last_verified_at"] = now_utc()
         provisional["local_head"] = identity.head
+        provisional["creation_attempt_id"] = attempt["attempt_id"]
         atomic_write_json(state_file, provisional)
+        retire_create_attempt(attempt_file, str(attempt["attempt_id"]))
         if agent_id is not None:
             set_agent_reference(agent_id, provisional)
         preflight_tool_environment(

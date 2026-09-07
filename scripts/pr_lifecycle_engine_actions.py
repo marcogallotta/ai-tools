@@ -77,6 +77,13 @@ class LifecycleActionsMixin:
             current.residual_reason = "terminal cleanup dispatcher is not configured"
             current.human_action = "configure repository-owned terminal cleanup before retrying lifecycle dispatch"
             return current
+        fresh = self.inspect(self.github.get_pr(current.number))
+        expected_state = LifecycleState.MERGED if disposition == "merged" else LifecycleState.CLOSED
+        if fresh.head != current.head or fresh.branch != current.branch or fresh.state != expected_state:
+            fresh.residual_reason = "terminal PR branch/head/state moved during the final cleanup preflight"
+            fresh.human_action = "reclassify the fresh PR identity before retrying cleanup"
+            return fresh
+        current = fresh
         try:
             result = terminal_cleaner.dispatch(current, disposition)
         except LifecycleError as exc:

@@ -107,6 +107,33 @@ def test_fresh_start_creates_locked_owned_worktree_and_compatible_agent_referenc
     assert agent["active_worktree"]["task_gid"] == "1001"
 
 
+def test_start_recovers_exact_prepared_worktree_when_active_state_was_not_written(h: Harness) -> None:
+    task = "1014"
+    branch = "agent/prepared-recovery"
+    h.start(task=task, branch=branch)
+    state = h.state(task)
+    attempt = {
+        "schema": "dish-worktree-create-attempt-v1", "status": "PREPARED",
+        "operation": "start", "repository": "marcogallotta/ai-tools",
+        "origin_id": state["repository"]["origin_id"], "git_common_dir": state["git_common_dir"],
+        "task_gid": task, "branch": branch, "lineage_id": state["lineage_id"],
+        "candidate_path": state["worktree_path"], "agent_id": state["owner"]["agent_id"],
+        "base_ref": state["base_ref"], "base_sha": state["base_sha"],
+        "expected_remote_head": None, "local_branch_preexisted": False,
+        "attempt_id": state["creation_attempt_id"], "prepared_at": "2026-09-07T00:00:00+00:00",
+    }
+    digest = hashlib.sha256(branch.encode("utf-8")).hexdigest()[:24]
+    attempt_path = h.home / ".local/state/dish/worktrees/create-attempts" / f"{task}-{digest}-{state['lineage_id']}.json"
+    attempt_path.parent.mkdir(parents=True, exist_ok=True)
+    attempt_path.write_text(json.dumps(attempt) + "\n", encoding="utf-8")
+    h.state_path(task).unlink()
+
+    recovered = payload(h.start(task=task, branch=branch))
+    assert recovered["worktree"] == state["worktree_path"]
+    assert h.state(task)["creation_attempt_id"] == attempt["attempt_id"]
+    assert not attempt_path.exists()
+
+
 def test_stale_dirty_primary_fetches_exact_current_base_without_moving_local_refs(h: Harness) -> None:
     old_main = h.base
     git(h.primary, "branch", "agent/unrelated", old_main)

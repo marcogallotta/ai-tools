@@ -25,6 +25,8 @@ Concurrency is chosen from concrete landing relationships:
 
 - One semantic Implementation owner writes a branch lineage at a time.
 - Local agents use the repository-owned worktree/claim lifecycle; local refs are caches.
+- Start/adopt persist an exact PREPARED creation attempt before branch/worktree effects; exact retries finish the same lineage, while moved or ambiguous partial effects fail closed.
+- Terminal cleanup takes the existing branch/PR claim locks before its task lock and holds them through exact-head deletion so a live writer cannot race cleanup.
 - Branch names managed by that lifecycle are single-use after terminal cleanup.
 - Takeover requires explicit handoff and compare-and-set against current claim identity; silence or age is not owner death.
 - Advisory PR leases improve visibility but never grant ownership.

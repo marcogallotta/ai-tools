@@ -34,7 +34,10 @@ def test_adopt_existing_remote_branch_enters_normal_lifecycle(h: Harness) -> Non
     assert payload(h.tool("resume", "--task", "1217451450280422", "--agent-id", "local-implementation", "--json"))["remote_relation"] == "equal"
     assert payload(h.tool("publish", "--task", "1217451450280422", "--json"))["remote_relation"] == "equal"
     assert payload(h.tool("verify-handoff", "--task", "1217451450280422", "--json"))["remote_owned_head"] == head
-    assert payload(h.tool("cleanup", "--task", "1217451450280422", "--disposition", "closed", "--json"))["disposition"] == "closed"
+    assert payload(h.tool(
+        "cleanup", "--task", "1217451450280422", "--branch", "agent/chatgpt-handoff",
+        "--expected-head", head, "--pr-number", "42", "--disposition", "closed", "--json",
+    ))["disposition"] == "closed"
 
 
 def test_concurrent_adopt_race_never_deletes_unrelated_branch(h: Harness) -> None:

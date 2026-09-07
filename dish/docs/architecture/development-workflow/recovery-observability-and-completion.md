@@ -17,6 +17,7 @@ A current execution may represent a role result as terminal only after the activ
 Ambiguous state-changing outcomes are reconciled before replay. A proven present effect is not repeated; a proven absent safe/idempotent effect may receive a bounded retry; unresolved ambiguity fails closed. Advisory activity signals help avoid duplicate work without becoming ownership or liveness proof.
 
 Source landing closes only the repository phase. Required rollout, activation, deployment, migration, runtime evidence, or operator acceptance remains owned by its actual post-merge gate. Terminal cleanup follows authoritative merged/closed/abandoned disposition and preserves the only recovery pointer when lineage is dirty or ambiguous.
+Its final GitHub identity is reread immediately before dispatch. Cleanup journals the exact terminal observation, deletes the expected remote ref before the local recovery copy, and checkpoints each read-back effect so restart resumes the same identity. Worktree start/adopt similarly fsync an exact PREPARED attempt before Git effects and reconcile only matching partial state.
 
 ## Invariants
 

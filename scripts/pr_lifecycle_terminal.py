@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import re
 import shlex
@@ -154,6 +155,10 @@ class TerminalCleanupDispatcher:
             lifecycle.head,
             "--pr-number",
             str(lifecycle.number),
+            "--observed-state",
+            "merged" if lifecycle.state.value == "merged" else "closed",
+            "--observed-at",
+            datetime.now(timezone.utc).isoformat(),
             "--repo",
             self.repo_path,
             "--disposition",
