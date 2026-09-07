@@ -7,6 +7,14 @@ from pathlib import Path
 import pytest
 
 
+def test_root_guidance_preserves_fail_closed_post_compaction_fallback(hooks_dir):
+    guidance = (hooks_dir.parent / "CLAUDE.md").read_text(encoding="utf-8")
+
+    assert "if role, task, or PR context is incomplete or stale after compaction" in guidance
+    assert "treat unverified pre-compaction history as `UNKNOWN`" in guidance
+    assert "Do not resume substantive work until the repository re-grounding barrier restores current authority" in guidance
+
+
 def _git(cwd, *args):
     subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
 
