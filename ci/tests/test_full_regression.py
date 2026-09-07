@@ -136,6 +136,20 @@ def test_workflow_runs_governed_pglite_exactly_once_before_later_groups():
     assert workflow.index(pglite_lane) < workflow.index("Run browser acceptance group")
 
 
+def test_workflow_binds_postgresql_lanes_to_root_and_exact_head():
+    workflow = WORKFLOW.read_text()
+    pglite = workflow.split(
+        "Run governed PGlite group (harness:pglite-nested-collection)", 1
+    )[1].split("Run Python/control-plane group", 1)[0]
+    native = workflow.split("Run native PostgreSQL group", 1)[1].split(
+        "Stop isolated PostgreSQL", 1
+    )[0]
+
+    assert 'report="$PWD/.test-artifacts/full-regression/pglite-report.json"' in pglite
+    assert "dish/.venv/bin/python dish/scripts/dish-pg-native-certification" in native
+    assert '--expected-head "$GITHUB_SHA"' in native
+
+
 def test_unchanged_success_dedupes_scheduled_only():
     runs = {"workflow_runs": [{"id": 100, "status": "completed", "conclusion": "success", "head_sha": SHA}]}
     scheduled = fr.decide_run(runs_payload=runs, main_sha=SHA, event="schedule", current_run_id="101")
