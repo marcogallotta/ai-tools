@@ -11,6 +11,7 @@ from typing import Any, Mapping, Protocol, Sequence
 from pr_lifecycle_support import AUTHORING_EVIDENCE_PENDING_RE, FULL_SHA_RE, LifecycleError
 from installed_host_cert import EVIDENCE as INSTALLED_HOST_CERT_EVIDENCE, requirement_for_files, status_from_comments
 from pr_lifecycle_owner import task_ids_from_pr
+from pr_gate import local_code_quality_admission
 
 EXACT_BYTE_HANDOFF = "EXACT-BYTE HANDOFF"
 FRESH_AUTHORING_REQUIRED = "FRESH AUTHORING REQUIRED"
@@ -28,6 +29,7 @@ class PublicationCompletionGitHub(Protocol):
     def get_pr(self, number: int) -> dict[str, Any]: ...
     def get_pr_files(self, number: int) -> list[dict[str, Any]]: ...
     def get_comments(self, number: int) -> list[dict[str, Any]]: ...
+    def collaborator_permission(self, login: str) -> str: ...
     def update_pr_body(self, number: int, body: str) -> dict[str, Any]: ...
     def mark_ready_for_review(self, number: int) -> dict[str, Any]: ...
 
@@ -319,6 +321,18 @@ def _pre_review_blocker_reason(
                     f"{INSTALLED_HOST_CERT_EVIDENCE} remains pending: "
                     f"{status.error or 'certificate missing'}"
                 )
+        quality = local_code_quality_admission(
+            Path(__file__).resolve().parents[1],
+            dict(pr),
+            github.get_comments(snapshot["number"]),
+            github.collaborator_permission,
+        )
+        if not bool(quality.get("admissible")):
+            return (
+                "code-quality author result remains pending: "
+                f"{quality.get('reason') or 'admission failed'}; "
+                "run the repository code-quality evaluator on the exact head and persist its result comment"
+            )
     except (LifecycleError, AttributeError) as exc:
         return f"pre-Review blocker evaluation failed: {exc}"
     return None

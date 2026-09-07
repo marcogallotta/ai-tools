@@ -113,10 +113,17 @@ def _manifest_hashes(repo_root: Path, target: dict[str, Any]) -> dict[str, str]:
 
 
 def _python_tag(version: str) -> str:
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    match = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", version)
     if not match:
-        raise BundleError(f"python_version must be MAJOR.MINOR.PATCH, got {version!r}")
+        raise BundleError(f"python_version must be MAJOR.MINOR or MAJOR.MINOR.PATCH, got {version!r}")
     return f"cp{match.group(1)}{match.group(2)}"
+
+
+def _python_series(version: str) -> tuple[int, int]:
+    match = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", version)
+    if not match:
+        raise BundleError(f"invalid Python version {version!r}")
+    return int(match.group(1)), int(match.group(2))
 
 
 def expected_metadata(repo_root: Path) -> dict[str, Any]:
@@ -202,7 +209,6 @@ def _verify_runtime(target: dict[str, Any], *, builder: dict[str, Any] | None = 
         )
     checks = (
         ("python_implementation", target["python_implementation"]),
-        ("python_version", target["python_version"]),
         ("platform_system", target["platform_system"]),
         ("platform_architecture", target["platform_architecture"]),
         ("sysconfig_platform", target["sysconfig_platform"]),
@@ -213,6 +219,11 @@ def _verify_runtime(target: dict[str, Any], *, builder: dict[str, Any] | None = 
             raise BundleError(
                 f"runtime compatibility mismatch for {key}: expected {expected!r}, got {facts[key]!r}"
             )
+    if _python_series(str(facts["python_version"])) != _python_series(str(target["python_version"])):
+        raise BundleError(
+            "runtime compatibility mismatch for python_version: "
+            f"expected {target['python_version']!r} series, got {facts['python_version']!r}"
+        )
     # glibc has forward-compatible symbol versioning: a bundle built against an
     # older glibc runs fine on a newer one, but not the reverse, so this is a
     # minimum-version check rather than the exact match used for the other facts.

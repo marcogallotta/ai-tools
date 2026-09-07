@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 from enum import Enum
+import hashlib
 import json
 import re
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 REQUIRED_CERTIFICATION_CONTEXT = "Dish / exact-head certification"
 REQUIRED_CERTIFICATION_WORKFLOW_PATH = ".github/workflows/ci.yml"
@@ -18,6 +21,17 @@ REQUIRED_ORDINARY_CI_CONTEXT = REQUIRED_CERTIFICATION_CONTEXT
 REQUIRED_ORDINARY_CI_WORKFLOW_PATH = REQUIRED_CERTIFICATION_WORKFLOW_PATH
 _RUN_TARGET_RE = re.compile(r"/actions/runs/(?P<run_id>[0-9]+)(?:/|$)")
 _VERDICT_RE = re.compile(r"(?im)^\s*VERDICT:\s*(MERGE|BLOCK)\s*$")
+
+QUALITY_RESULT_MARKER = "<!-- dish-code-quality-result:v1 head="
+QUALITY_WRITER_PERMISSIONS = {"write", "maintain", "admin"}
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(_ROOT / "scripts"))
+
+from code_quality_gate import extract_comment as extract_code_quality_comment  # noqa: E402
+from code_quality_common import GateError as CodeQualityError, _git_file, _load_policy  # noqa: E402
+
 
 
 class GateError(ValueError):
@@ -85,6 +99,199 @@ def pr_is_draft(pr: dict[str, Any]) -> bool:
 
 def pr_head_sha(pr: dict[str, Any]) -> str:
     return _head_sha(pr)
+
+
+def _require_sha(value: Any, label: str) -> str:
+    text = str(value or "").lower()
+    if re.fullmatch(r"[0-9a-f]{40}", text) is None:
+        raise GateError(f"{label} must be an exact 40-character SHA")
+    return text
+
+
+def _target_base_sha(pr: Mapping[str, Any]) -> str:
+    base = pr.get("base")
+    if isinstance(base, Mapping) and base.get("sha"):
+        return _require_sha(base.get("sha"), "PR target base")
+    if pr.get("baseRefOid"):
+        return _require_sha(pr.get("baseRefOid"), "PR target base")
+    raise GateError("PR JSON is missing base.sha/baseRefOid")
+
+
+def _comment_timestamp(comment: Mapping[str, Any]) -> str:
+    return str(comment.get("updated_at") or comment.get("created_at") or "")
+
+
+def _selected_quality_comment(comments: list[dict[str, Any]], head: str) -> dict[str, Any] | None:
+    marker = f"{QUALITY_RESULT_MARKER}{head} "
+    matches = [
+        item for item in comments
+        if isinstance(item, dict) and marker in str(item.get("body") or "")
+    ]
+    if not matches:
+        return None
+    return max(matches, key=_comment_timestamp)
+
+
+def _comment_login(comment: Mapping[str, Any]) -> str:
+    user = comment.get("user")
+    login = str(user.get("login") or "").strip() if isinstance(user, Mapping) else ""
+    if not login:
+        raise GateError("selected code-quality result comment has no author login")
+    return login
+
+
+def _parse_policy(raw: bytes) -> dict[str, Any]:
+    try:
+        policy = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise GateError("code-quality policy is not valid UTF-8 TOML") from exc
+    if int(policy.get("version", 0)) != 1:
+        raise GateError("unsupported code-quality policy version")
+    return policy
+
+
+def evaluate_code_quality_admission(
+    pr: dict[str, Any],
+    *,
+    comparison_base_sha: str,
+    compared_target_base_sha: str,
+    compared_head_sha: str,
+    policy_bytes: bytes,
+    policy_source_sha: str,
+    bootstrap: bool,
+    comments: list[dict[str, Any]],
+    permissions: Mapping[str, str],
+) -> dict[str, Any]:
+    """One semantic code-quality admission core over normalized authoritative evidence."""
+    target_base = _target_base_sha(pr)
+    head = _require_sha(_head_sha(pr), "PR head")
+    comparison_base = _require_sha(comparison_base_sha, "comparison base")
+    if _require_sha(compared_target_base_sha, "compare target base") != target_base:
+        return {"admissible": False, "reason": "merge-base proof target base does not match PR"}
+    if _require_sha(compared_head_sha, "compare head") != head:
+        return {"admissible": False, "reason": "merge-base proof head does not match PR"}
+    source = _require_sha(policy_source_sha, "policy source")
+    expected_source = head if bootstrap else comparison_base
+    if source != expected_source:
+        return {"admissible": False, "reason": "code-quality policy source does not match comparison/bootstrap identity"}
+    policy = _parse_policy(policy_bytes)
+    policy_digest = hashlib.sha256(policy_bytes).hexdigest()
+    if not bool(policy.get("enabled")):
+        return {
+            "admissible": True,
+            "reason": "comparison-base code-quality policy is disabled",
+            "comparison_base_sha": comparison_base,
+            "policy_source_sha": source,
+            "policy_digest": policy_digest,
+            "bootstrap": bool(bootstrap),
+        }
+    if bootstrap:
+        return {"admissible": False, "reason": "enabled bootstrap code-quality policy is not review-admissible"}
+    selected = _selected_quality_comment(comments, head)
+    if selected is None:
+        return {"admissible": False, "reason": f"missing local code-quality result for exact head {head}"}
+    login = _comment_login(selected)
+    permission = str(permissions.get(login) or "").lower()
+    if permission not in QUALITY_WRITER_PERMISSIONS:
+        return {
+            "admissible": False,
+            "reason": f"local code-quality result author lacks repository write permission: {login}",
+            "result_author": login,
+            "result_author_permission": permission or None,
+        }
+    try:
+        result = extract_code_quality_comment(
+            str(selected.get("body") or ""),
+            expected_head=head,
+            expected_target_base=target_base,
+            expected_comparison_base=comparison_base,
+            expected_pr_number=_pr_number(pr),
+        )
+    except (CodeQualityError, json.JSONDecodeError) as exc:
+        return {"admissible": False, "reason": str(exc)}
+    if result.get("policy_source_sha") != source:
+        return {"admissible": False, "reason": "code-quality result policy source is invalid"}
+    if result.get("policy_digest") != policy_digest:
+        return {"admissible": False, "reason": "code-quality result policy digest is invalid"}
+    if bool(result.get("bootstrap")) != bool(bootstrap):
+        return {"admissible": False, "reason": "code-quality result bootstrap identity is invalid"}
+    if result.get("outcome") != "PASS":
+        return {"admissible": False, "reason": f"code-quality result outcome is {result.get('outcome')!r}, expected 'PASS'"}
+    return {
+        "admissible": True,
+        "reason": "authorized exact-head local code-quality PASS is admissible",
+        "comparison_base_sha": comparison_base,
+        "policy_source_sha": source,
+        "policy_digest": policy_digest,
+        "bootstrap": bool(bootstrap),
+        "result_author": login,
+        "result_author_permission": permission,
+    }
+
+
+def local_code_quality_admission(
+    repo: Path,
+    pr: dict[str, Any],
+    comments: list[dict[str, Any]],
+    collaborator_permission: Callable[[str], str],
+) -> dict[str, Any]:
+    """Local adapter: acquire merge-base/policy from git, GitHub comments/permission from caller."""
+    target_base = _target_base_sha(pr)
+    head = _require_sha(_head_sha(pr), "PR head")
+    try:
+        completed = subprocess.run(
+            ["git", "merge-base", target_base, head], cwd=repo, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if completed.returncode != 0:
+            raise GateError(f"cannot derive local comparison base: {completed.stderr.strip() or 'git merge-base failed'}")
+        comparison_base = _require_sha(completed.stdout.strip(), "comparison base")
+        policy, source, _digest, bootstrap = _load_policy(repo, comparison_base, head)
+        del policy, _digest
+        raw = _git_file(repo, source, "ci/code-quality.toml")
+        if raw is None:
+            raise GateError("code-quality policy bytes are unavailable at policy source")
+        permissions: dict[str, str] = {}
+        selected = _selected_quality_comment(comments, head)
+        if selected is not None:
+            login = _comment_login(selected)
+            permissions[login] = collaborator_permission(login)
+        return evaluate_code_quality_admission(
+            pr,
+            comparison_base_sha=comparison_base,
+            compared_target_base_sha=target_base,
+            compared_head_sha=head,
+            policy_bytes=raw,
+            policy_source_sha=source,
+            bootstrap=bootstrap,
+            comments=comments,
+            permissions=permissions,
+        )
+    except (CodeQualityError, OSError, subprocess.SubprocessError) as exc:
+        return {"admissible": False, "reason": f"code-quality evidence acquisition failed: {exc}"}
+
+
+def connector_code_quality_admission(pr: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    """Connector adapter over exact PR/Compare/policy/comment/permission evidence."""
+    try:
+        policy_text = evidence.get("policy_text")
+        comments = evidence.get("comments")
+        permissions = evidence.get("permissions")
+        if not isinstance(policy_text, str) or not isinstance(comments, list) or not isinstance(permissions, dict):
+            raise GateError("connector code-quality evidence is missing policy_text/comments/permissions")
+        return evaluate_code_quality_admission(
+            pr,
+            comparison_base_sha=str(evidence.get("comparison_base_sha") or ""),
+            compared_target_base_sha=str(evidence.get("compared_target_base_sha") or ""),
+            compared_head_sha=str(evidence.get("compared_head_sha") or ""),
+            policy_bytes=policy_text.encode("utf-8"),
+            policy_source_sha=str(evidence.get("policy_source_sha") or ""),
+            bootstrap=bool(evidence.get("bootstrap")),
+            comments=[dict(item) for item in comments if isinstance(item, dict)],
+            permissions={str(k): str(v) for k, v in permissions.items()},
+        )
+    except (GateError, TypeError, ValueError) as exc:
+        return {"admissible": False, "reason": f"connector code-quality evidence invalid: {exc}"}
 
 
 def is_review_discoverable(pr: dict[str, Any], *, allow_draft: bool = False) -> bool:
@@ -387,6 +594,7 @@ def _parser() -> argparse.ArgumentParser:
     review = sub.add_parser("review-ready", help="test ordinary Review discoverability")
     review.add_argument("--pr-json", required=True)
     review.add_argument("--allow-draft", action="store_true")
+    review.add_argument("--quality-evidence-json", required=True, help="normalized connector evidence for the shared code-quality admission core")
     integration = sub.add_parser("integration", help="verify exact reviewed head certification")
     integration.add_argument("--pr-json", required=True)
     integration.add_argument("--reviewed-head", required=True)
@@ -401,9 +609,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pr = _load_json(args.pr_json)
         if args.command == "review-ready":
+            quality = connector_code_quality_admission(pr, _load_json(args.quality_evidence_json))
             result = {
-                "discoverable": is_review_discoverable(pr, allow_draft=args.allow_draft),
+                "discoverable": is_review_discoverable(pr, allow_draft=args.allow_draft) and bool(quality.get("admissible")),
                 "draft": _draft(pr), "head_sha": _head_sha(pr), "state": _state(pr),
+                "code_quality": quality,
             }
             print(json.dumps(result, sort_keys=True))
             return 0 if result["discoverable"] else 3

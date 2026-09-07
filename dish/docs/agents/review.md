@@ -17,6 +17,7 @@ Ordinary PRs get bounded high-signal review. Use a narrow specialist review only
 ## Review discovery and identity
 
 Ordinary discovery considers only open PRs with GitHub `draft=false`. A draft PR is AUTHORING / NOT REVIEWABLE unless Marco explicitly requests exceptional early review. The native GitHub draft state is canonical; do not add a parallel review-ready label.
+When the comparison-base code-quality policy is enabled, `draft=false` is necessary but not sufficient: ordinary discovery must also pass the repository-owned `scripts/pr_gate.py review-ready` admission. ChatGPT Review supplies authoritative connector evidence for the exact PR base/head, GitHub Compare merge base, exact comparison-base policy bytes, PR result comments, and the selected result author's collaborator permission; it does not require a local PR git graph. Missing, stale, malformed, non-PASS, or unauthorized result evidence keeps the PR non-discoverable.
 
 Before reviewing:
 

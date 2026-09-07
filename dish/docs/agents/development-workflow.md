@@ -171,7 +171,7 @@ Use GitHub's native draft state as the canonical authoring gate:
 - Coordinator/Review polling ignores drafts unless Marco explicitly requests early review;
 - semantic commits after review begins still invalidate prior exact-head review regardless of draft history.
 
-`scripts/pr_gate.py review-ready` is the repository-owned deterministic predicate for tooling/evals. Do not create a second label/state machine for review readiness.
+`scripts/pr_gate.py review-ready` is the repository-owned deterministic predicate for tooling/evals. It combines open/non-draft state with the shared code-quality admission envelope; fresh ChatGPT Review supplies connector-native PR/Compare/policy/comment/permission evidence, while author finalization uses the local-git adapter over the same semantic core. Do not create a second label/state machine for review readiness.
 
 ## PR self-containment for forked review
 

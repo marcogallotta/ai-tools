@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 import test_pr_lifecycle as base
+import pr_lifecycle_publication_completion as publication_completion
 from pr_lifecycle_publication_completion import (
     DIRECT_CONNECTOR,
     EXACT_BYTE_HANDOFF,
@@ -21,6 +22,15 @@ from pr_lifecycle_publication_completion import (
 
 HEAD = base.HEAD
 TREE = "d" * 40
+
+
+@pytest.fixture(autouse=True)
+def _disabled_quality_gate_by_default(monkeypatch):
+    monkeypatch.setattr(
+        publication_completion,
+        "local_code_quality_admission",
+        lambda *args, **kwargs: {"admissible": True, "reason": "comparison-base code-quality policy is disabled"},
+    )
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -204,6 +214,9 @@ class FinalizerGitHub(base.FakeGitHub):
             self.pr["draft"] = False
         return deepcopy(self.pr)
 
+    def collaborator_permission(self, login):
+        return "admin"
+
 
 def test_complete_implementation_draft_finalizer_marks_same_pr_ready_and_reads_back():
     gh = FinalizerGitHub(base.pr(draft=True, body="Owning task: 1217482679284514\nFocused evidence: PASS\n"))
@@ -336,3 +349,19 @@ def test_github_ready_for_review_transport_uses_graphql_then_authoritative_rest_
     readback = github.mark_ready_for_review(31)
     assert readback["draft"] is False
     assert [call[0] for call in http.calls] == ["GET", "POST", "GET"]
+
+
+def test_finalizer_rejects_nonadmissible_code_quality_result(monkeypatch):
+    monkeypatch.setattr(
+        publication_completion,
+        "local_code_quality_admission",
+        lambda *args, **kwargs: {
+            "admissible": False,
+            "reason": "local code-quality result author lacks repository write permission: outsider",
+        },
+    )
+    gh = FinalizerGitHub(base.pr(draft=True, body="Owning task: 1217482679284514\n"))
+    result = base.engine(gh).finalize_implementation_pr(31, expected_head=HEAD)
+    assert result["complete"] is False
+    assert "lacks repository write permission" in result["reason"]
+    assert not any(event[0] == "mark-ready" for event in gh.events)
