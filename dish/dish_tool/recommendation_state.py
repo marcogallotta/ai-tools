@@ -1,13 +1,13 @@
 """Bounded cooking recommendation state compiled from immutable evidence.
 
-This module is deliberately a projection layer.  It does not persist evidence, write
-Scratchpad/profile state, or own safety/halal policy.  Callers supply immutable evidence
+This module is deliberately a projection layer. It does not persist evidence, write
+Scratchpad/profile state, or own safety/halal policy. Callers supply immutable evidence
 and authoritative eligibility observations; the reducer produces deterministic current
 state and a bounded soft-signal payload.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum, IntEnum
 from typing import Iterable, Mapping, Sequence
@@ -69,6 +69,7 @@ class Confidence(IntEnum):
 class Lifetime(str, Enum):
     REQUEST = "request"
     SESSION = "session"
+    MEDIUM_TERM = "medium_term"
     UNTIL_WAKE = "until_wake"
     UNTIL_EXPIRY = "until_expiry"
     DURABLE = "durable"
@@ -192,13 +193,14 @@ class RecommendationSignal:
     reason: str | None
 
     @property
-    def slot(self) -> tuple[SubjectType, str, SignalType, ScopeKind, str]:
+    def slot(self) -> tuple[SubjectType, str, SignalType, ScopeKind, str, EligibilityEffect]:
         return (
             self.subject_type,
             self.subject_key,
             self.signal_type,
             self.scope.kind,
             self.scope.key,
+            self.eligibility_effect,
         )
 
 
@@ -267,13 +269,16 @@ def compile_recommendation_state(
     """Compile current state without implicit time decay.
 
     State changes only through an explicit scope end, explicit expiry, authoritative
-    wake resolution, clear/supersession evidence, or a later explicit/authoritative
-    event in the same logical slot.
+    wake resolution, clear/supersession evidence, or later evidence in the same
+    logical slot. Weaker evidence cannot erase stronger state implicitly.
     """
     _require_aware(as_of, "as_of")
     ended = set(ended_scopes)
     resolved_wakes = {item for item in resolved_wake_conditions if item}
     ordered = sorted(events, key=lambda item: (item.valid_from, item.event_id))
+    event_ids = [event.event_id for event in ordered]
+    if len(event_ids) != len(set(event_ids)):
+        raise ValueError("recommendation evidence event_id values must be unique")
 
     active: dict[str, RecommendationSignal] = {}
     inactive: set[str] = set()
@@ -294,15 +299,32 @@ def compile_recommendation_state(
 
         signal = _signal_from_event(event)
 
-        # Later non-derived evidence in the exact same slot replaces earlier
-        # slot state.  Different scopes remain simultaneously visible so a
-        # narrow session correction can override, without rewriting, durable
-        # preference history.
-        if event.evidence_kind is not EvidenceKind.DERIVED:
-            for signal_id, previous in tuple(active.items()):
-                if previous.slot == signal.slot:
-                    del active[signal_id]
-                    inactive.add(signal_id)
+        # Repeated current state in one logical slot is folded. Equal or stronger
+        # later evidence replaces the earlier current value. Weaker later evidence
+        # cannot silently erase stronger explicit/authoritative state; if it
+        # conflicts, both remain visible for conservative ranking/conflict handling.
+        folded_into_stronger = False
+        for signal_id, previous in tuple(active.items()):
+            if previous.slot != signal.slot:
+                continue
+            if previous.value == signal.value and event.evidence_kind < previous.evidence_kind:
+                active[signal_id] = replace(
+                    previous,
+                    provenance=_merge_provenance(previous.provenance, signal.provenance),
+                )
+                inactive.add(signal.signal_id)
+                folded_into_stronger = True
+                break
+            if event.evidence_kind >= previous.evidence_kind:
+                if previous.value == signal.value:
+                    signal = replace(
+                        signal,
+                        provenance=_merge_provenance(previous.provenance, signal.provenance),
+                    )
+                del active[signal_id]
+                inactive.add(signal_id)
+        if folded_into_stronger:
+            continue
 
         if _is_inactive_by_lifecycle(
             signal,
@@ -340,6 +362,7 @@ def build_recommendation_context(
     *,
     candidate_keys: Sequence[str],
     authoritative_eligibility: Mapping[str, EligibilityObservation] | None = None,
+    relevant_subjects: Mapping[SubjectType, Iterable[str]] | None = None,
     soft_limit: int = MAX_SOFT_SIGNALS,
 ) -> RecommendationContext:
     """Build the bounded prompt/read-model payload for a candidate set.
@@ -348,12 +371,21 @@ def build_recommendation_context(
     plus authoritative observations; it is never truncated by ``soft_limit``.
     A candidate with no exact eligibility observation and no known active hard
     signal is UNKNOWN and therefore non-actionable.
+
+    Candidate/dish state is matched automatically by candidate key. Lane,
+    learning, and prerequisite state is included only when the caller declares
+    that subject relevant to the candidate set. Broader preference state remains
+    eligible by default and may be narrowed through ``relevant_subjects``.
     """
     if soft_limit < 0 or soft_limit > MAX_SOFT_SIGNALS:
         raise ValueError(f"soft_limit must be between 0 and {MAX_SOFT_SIGNALS}")
 
     candidates = tuple(dict.fromkeys(key.strip() for key in candidate_keys if key.strip()))
     observations = authoritative_eligibility or {}
+    subject_filters = {
+        subject_type: {key.strip() for key in keys if key.strip()}
+        for subject_type, keys in (relevant_subjects or {}).items()
+    }
 
     eligibility = tuple(
         _candidate_eligibility(state, candidate_key, observations.get(candidate_key))
@@ -365,7 +397,7 @@ def build_recommendation_context(
         signal
         for signal in state.signals
         if signal.eligibility_effect is EligibilityEffect.SOFT
-        and _soft_signal_relevant(signal, candidate_set)
+        and _soft_signal_relevant(signal, candidate_set, subject_filters)
     ]
     soft.sort(key=_soft_priority_key)
 
@@ -390,13 +422,17 @@ def _candidate_eligibility(
     )
 
     local_exclusions = tuple(
-        signal for signal in hard_signals if signal.eligibility_effect is EligibilityEffect.HARD_EXCLUDE
+        signal
+        for signal in hard_signals
+        if signal.eligibility_effect is EligibilityEffect.HARD_EXCLUDE
     )
     local_blocks = tuple(
-        signal for signal in hard_signals if signal.eligibility_effect is EligibilityEffect.HARD_BLOCK
+        signal
+        for signal in hard_signals
+        if signal.eligibility_effect is EligibilityEffect.HARD_BLOCK
     )
 
-    # External proper-authority blocks/exclusions are exact facts, and cannot
+    # External proper-authority blocks/exclusions are exact facts and cannot
     # be softened by this recommendation layer.
     if observation is not None and observation.status is CandidateEligibility.EXCLUDED:
         return _eligibility_result(
@@ -504,17 +540,24 @@ def _is_inactive_by_lifecycle(
     return False
 
 
-def _soft_signal_relevant(signal: RecommendationSignal, candidate_keys: set[str]) -> bool:
-    if signal.scope.kind in {ScopeKind.REQUEST, ScopeKind.SESSION}:
-        return True
+def _soft_signal_relevant(
+    signal: RecommendationSignal,
+    candidate_keys: set[str],
+    relevant_subjects: Mapping[SubjectType, set[str]],
+) -> bool:
     if signal.subject_type in {SubjectType.CANDIDATE, SubjectType.DISH}:
         return signal.subject_key in candidate_keys
-    return True
+    if signal.subject_type in {SubjectType.LANE, SubjectType.LEARNING, SubjectType.PREREQUISITE}:
+        return signal.subject_key in relevant_subjects.get(signal.subject_type, set())
+    if signal.subject_type is SubjectType.PREFERENCE:
+        allowed = relevant_subjects.get(SubjectType.PREFERENCE)
+        return allowed is None or signal.subject_key in allowed
+    return signal.scope.kind in {ScopeKind.REQUEST, ScopeKind.SESSION}
 
 
 def _soft_priority_key(signal: RecommendationSignal) -> tuple[int, int, int, int, float, str]:
     tier = _scope_tier(signal)
-    # Lower tuple sorts first.  Later timestamps sort first by negating POSIX
+    # Lower tuple sorts first. Later timestamps sort first by negating POSIX
     # time; stable identity is the final deterministic tie-break.
     return (
         tier,
@@ -543,6 +586,12 @@ def _scope_tier(signal: RecommendationSignal) -> int:
 
 
 def _validate_eligibility_effect(event: RecommendationEvidence) -> None:
+    if event.kind is EventKind.SET:
+        if event.signal_type is SignalType.BLOCKER and event.eligibility_effect is not EligibilityEffect.HARD_BLOCK:
+            raise ValueError("blocker signals must be hard blocks")
+        if event.signal_type is SignalType.EXCLUSION and event.eligibility_effect is not EligibilityEffect.HARD_EXCLUDE:
+            raise ValueError("exclusion signals must be hard exclusions")
+
     if event.eligibility_effect is EligibilityEffect.SOFT:
         return
     if event.kind is not EventKind.SET:
@@ -569,6 +618,10 @@ def _validate_eligibility_effect(event: RecommendationEvidence) -> None:
         raise ValueError("hard exclusions require explicit evidence")
     if event.lifetime is not Lifetime.DURABLE:
         raise ValueError("hard exclusions must be explicitly durable")
+
+
+def _merge_provenance(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(pointer for group in groups for pointer in group))
 
 
 def _require_aware(value: datetime, field: str) -> None:
