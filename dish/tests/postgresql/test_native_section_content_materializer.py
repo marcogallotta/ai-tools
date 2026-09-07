@@ -15,6 +15,10 @@ from dish_pg.native_catalog_runtime_finalizer import (
     NativeCatalogRuntimeFinalizerError,
     finalize_native_catalog_runtime_authority,
 )
+from dish_pg.native_history_placement_repair import (
+    SNAPSHOT_RECORD_COUNT,
+    _load_snapshot,
+)
 from dish_pg.native_section_carry_forward import (
     RepositoryIdentity,
     apply_carry_forward,
@@ -72,7 +76,13 @@ def _stage_pr3(session: Session, ids: Iterator[uuid.UUID], **fixture_kwargs):
             )
         )
     )
-    return seeded, expectation, source_rows, uuid.UUID(receipt["migration_event_id"]), occurrences
+    return (
+        seeded,
+        expectation,
+        source_rows,
+        uuid.UUID(receipt["migration_event_id"]),
+        occurrences,
+    )
 
 
 def _complete_after_staging(
@@ -147,9 +157,7 @@ def _install_successor_catalog(
     rename_target: uuid.UUID | None = None,
     omit_target: uuid.UUID | None = None,
 ) -> uuid.UUID:
-    current = session.get(
-        models.ActiveSectionCatalog, seeded["generation_id"]
-    )
+    current = session.get(models.ActiveSectionCatalog, seeded["generation_id"])
     base = session.get(
         models.SectionCatalogVersion, expectation.base_catalog_version_id
     )
@@ -231,11 +239,21 @@ def test_materializes_staged_successors_inside_caller_transaction(core_db) -> No
     factory, ids = core_db
     with factory() as session:
         with session.begin():
-            seeded, expectation, _, migration_event_id, occurrences = _stage_pr3(session, ids)
+            seeded, expectation, _, migration_event_id, occurrences = _stage_pr3(
+                session, ids
+            )
             before = {
-                row.task_id: (state.section_id, state.registry_version_id, state.completion_version)
+                row.task_id: (
+                    state.section_id,
+                    state.registry_version_id,
+                    state.completion_version,
+                )
                 for row in occurrences
-                if (state := session.get(models.DishState, (seeded["generation_id"], row.task_id)))
+                if (
+                    state := session.get(
+                        models.DishState, (seeded["generation_id"], row.task_id)
+                    )
+                )
                 is not None
             }
 
@@ -247,28 +265,62 @@ def test_materializes_staged_successors_inside_caller_transaction(core_db) -> No
                 materialized_at=NOW,
             )
             assert session.in_transaction()
-            assert (result.occurrence_count, result.materialized_count, result.already_materialized_count) == (23, 23, 0)
+            assert (
+                result.occurrence_count,
+                result.materialized_count,
+                result.already_materialized_count,
+            ) == (23, 23, 0)
 
             for occurrence in occurrences:
-                state = session.get(models.DishState, (seeded["generation_id"], occurrence.task_id))
-                successor_id = materialized_content_version_id(occurrence.carry_forward_id)
+                state = session.get(
+                    models.DishState, (seeded["generation_id"], occurrence.task_id)
+                )
+                successor_id = materialized_content_version_id(
+                    occurrence.carry_forward_id
+                )
                 successor = session.get(models.ContentVersion, successor_id)
                 assert state is not None and successor is not None
-                assert successor.predecessor_content_version_id == occurrence.source_content_version_id
+                assert (
+                    successor.predecessor_content_version_id
+                    == occurrence.source_content_version_id
+                )
                 assert successor.body == occurrence.transformed_body
-                assert successor.content_identity == occurrence.transformed_content_identity
-                assert successor.created_dish_version == occurrence.source_dish_version + 1
+                assert (
+                    successor.content_identity
+                    == occurrence.transformed_content_identity
+                )
+                assert (
+                    successor.created_dish_version == occurrence.source_dish_version + 1
+                )
                 assert state.current_content_version_id == successor_id
                 assert state.catalog_version_id == expectation.base_catalog_version_id
-                assert state.dish_version == state.placement_version == occurrence.source_dish_version + 1
-                assert (state.section_id, state.registry_version_id, state.completion_version) == before[occurrence.task_id]
+                assert (
+                    state.dish_version
+                    == state.placement_version
+                    == occurrence.source_dish_version + 1
+                )
+                assert (
+                    state.section_id,
+                    state.registry_version_id,
+                    state.completion_version,
+                ) == before[occurrence.task_id]
                 mutation = session.get(
                     models.DishMutationReceipt,
-                    (seeded["generation_id"], occurrence.task_id, occurrence.source_dish_version + 1),
+                    (
+                        seeded["generation_id"],
+                        occurrence.task_id,
+                        occurrence.source_dish_version + 1,
+                    ),
                 )
                 assert mutation is not None
-                assert (mutation.content_changed, mutation.placement_changed) == (True, True)
-                assert (mutation.completion_changed, mutation.archive_changed) == (False, False)
+                assert (mutation.content_changed, mutation.placement_changed) == (
+                    True,
+                    True,
+                )
+                assert (mutation.completion_changed, mutation.archive_changed) == (
+                    False,
+                    False,
+                )
 
             retry = materialize_staged_native_section_content(
                 session,
@@ -277,10 +329,15 @@ def test_materializes_staged_successors_inside_caller_transaction(core_db) -> No
                 catalog_version_id=expectation.base_catalog_version_id,
                 materialized_at=NOW,
             )
-            assert (retry.materialized_count, retry.already_materialized_count) == (0, 23)
+            assert (retry.materialized_count, retry.already_materialized_count) == (
+                0,
+                23,
+            )
 
 
-def test_materializes_when_current_content_predates_source_dish_version(core_db) -> None:
+def test_materializes_when_current_content_predates_source_dish_version(
+    core_db,
+) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
         seeded, expectation, source_rows = _fixture(session, ids)
@@ -471,6 +528,55 @@ def test_finalizer_roots_compatible_additive_successor_catalog(core_db) -> None:
         )
 
 
+def test_history_repair_snapshot_preserves_distinct_operator_categories() -> None:
+    sections, records, _digest = _load_snapshot()
+
+    assert len(records) == SNAPSHOT_RECORD_COUNT == 265
+    assert sections["1217202747684673"] == "Indo/Malay/Singapore"
+    assert sections["1215259129474856"] == "Southeast Asia Misc."
+    assert sections["1215259129474861"] == "Mediterranean herbs"
+    assert sections["1215259129474860"] == "Mediterranean"
+    assert len({task_gid for task_gid, _section_gid in records}) == 265
+
+
+def test_materializer_accepts_only_an_exact_row_bound_legacy_label_correction(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        seeded, expectation, _, event_id, occurrences = _stage_pr3(session, ids)
+        occurrence = occurrences[0]
+        successor_id = _install_successor_catalog(
+            session,
+            ids,
+            seeded=seeded,
+            expectation=expectation,
+            rename_target=occurrence.target_section_id,
+        )
+        current_entry = session.get(
+            models.SectionCatalogEntry,
+            (successor_id, occurrence.target_section_id),
+        )
+        assert current_entry is not None
+
+        result = materialize_staged_native_section_content(
+            session,
+            generation_id=seeded["generation_id"],
+            migration_event_id=event_id,
+            catalog_version_id=successor_id,
+            materialized_at=NOW,
+            destination_label_corrections={
+                occurrence.carry_forward_id: (
+                    occurrence.target_section_id,
+                    occurrence.destination_display_name,
+                    current_entry.display_name,
+                )
+            },
+        )
+
+        assert result.materialized_count == len(occurrences)
+
+
 def test_migrations_repair_historical_null_then_enforce_native_not_null(
     tmp_path: Path,
 ) -> None:
@@ -531,7 +637,10 @@ def test_migrations_repair_historical_null_then_enforce_native_not_null(
             )
             assert repaired is not None
             assert repaired.section_id == historical_target_section_id
-        columns = {column["name"]: column for column in inspect(engine).get_columns("dish_states")}
+        columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("dish_states")
+        }
         assert columns["section_id"]["nullable"] is False
         assert any(
             foreign_key["constrained_columns"] == ["section_id"]
@@ -594,39 +703,66 @@ def test_rebased_finalizer_failure_rolls_back_all_new_authority(
         "dish_pg.native_catalog_runtime_finalizer.materialize_staged_native_section_content",
         _fail_after_materialization,
     )
-    with pytest.raises(
-        NativeCatalogRuntimeFinalizerError,
-        match="injected failure after rebased staged materialization",
-    ), session_scope(factory) as session:
+    with (
+        pytest.raises(
+            NativeCatalogRuntimeFinalizerError,
+            match="injected failure after rebased staged materialization",
+        ),
+        session_scope(factory) as session,
+    ):
         finalize_native_catalog_runtime_authority(
             session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
         )
 
     with session_scope(factory) as session:
-        assert session.scalar(
-            select(func.count()).select_from(models.AppliedMigrationEvent).where(
-                models.AppliedMigrationEvent.generation_id == seeded["generation_id"],
-                models.AppliedMigrationEvent.revision == FINALIZER_REVISION,
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(models.AppliedMigrationEvent)
+                .where(
+                    models.AppliedMigrationEvent.generation_id
+                    == seeded["generation_id"],
+                    models.AppliedMigrationEvent.revision == FINALIZER_REVISION,
+                )
             )
-        ) == 0
-        assert session.scalar(
-            select(func.count()).select_from(models.NativeCatalogRuntimeAttestation).where(
-                models.NativeCatalogRuntimeAttestation.generation_id == seeded["generation_id"]
+            == 0
+        )
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(models.NativeCatalogRuntimeAttestation)
+                .where(
+                    models.NativeCatalogRuntimeAttestation.generation_id
+                    == seeded["generation_id"]
+                )
             )
-        ) == 0
-        assert session.get(models.CurrentNativeCatalogRuntime, seeded["generation_id"]) is None
+            == 0
+        )
+        assert (
+            session.get(models.CurrentNativeCatalogRuntime, seeded["generation_id"])
+            is None
+        )
         assert session.get(models.ContentVersion, successor_id) is None
-        assert session.get(
-            models.DishMutationReceipt, (seeded["generation_id"], rebased_task_id, 3)
-        ) is None
+        assert (
+            session.get(
+                models.DishMutationReceipt,
+                (seeded["generation_id"], rebased_task_id, 3),
+            )
+            is None
+        )
         for occurrence in occurrences:
             state = session.get(
                 models.DishState, (seeded["generation_id"], occurrence.task_id)
             )
             assert state is not None
-            assert state.current_content_version_id == source_content_ids[occurrence.task_id]
+            assert (
+                state.current_content_version_id
+                == source_content_ids[occurrence.task_id]
+            )
             assert state.catalog_version_id is None
-        state = session.get(models.DishState, (seeded["generation_id"], rebased_task_id))
+        state = session.get(
+            models.DishState, (seeded["generation_id"], rebased_task_id)
+        )
         assert state is not None
         assert state.dish_version == state.completion_version == 2
         assert state.completed is True
@@ -635,10 +771,17 @@ def test_rebased_finalizer_failure_rolls_back_all_new_authority(
 def test_rejects_intervening_placement_receipt_before_materialization(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
-        seeded, expectation, _, migration_event_id, occurrences = _stage_pr3(session, ids)
+        seeded, expectation, _, migration_event_id, occurrences = _stage_pr3(
+            session, ids
+        )
         occurrence = occurrences[0]
-        state = session.get(models.DishState, (seeded["generation_id"], occurrence.task_id))
-        assert state is not None and occurrence.source_dish_version == state.dish_version == 1
+        state = session.get(
+            models.DishState, (seeded["generation_id"], occurrence.task_id)
+        )
+        assert (
+            state is not None
+            and occurrence.source_dish_version == state.dish_version == 1
+        )
         session.add(
             models.DishMutationReceipt(
                 generation_id=seeded["generation_id"],
@@ -684,32 +827,49 @@ def test_rejects_intervening_placement_receipt_before_materialization(core_db) -
 def test_rejects_stale_current_content_pointer(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
-        seeded, expectation, _, migration_event_id, occurrences = _stage_pr3(session, ids)
+        seeded, expectation, _, migration_event_id, occurrences = _stage_pr3(
+            session, ids
+        )
         occurrence = occurrences[0]
-        source = session.get(models.ContentVersion, occurrence.source_content_version_id)
+        source = session.get(
+            models.ContentVersion, occurrence.source_content_version_id
+        )
         assert source is not None
         next_version = occurrence.source_dish_version + 1
         competing_content_id = _next(ids)
         competing_body = source.body + "\nCompeting write\n"
         session.add(
             models.DishMutationReceipt(
-                generation_id=seeded["generation_id"], task_id=occurrence.task_id,
-                dish_version=next_version, source_route="import",
-                import_run_id=occurrence.import_run_id, command_execution_id=None,
-                content_changed=True, placement_changed=False, completion_changed=False,
-                archive_changed=False, occurred_at=NOW,
+                generation_id=seeded["generation_id"],
+                task_id=occurrence.task_id,
+                dish_version=next_version,
+                source_route="import",
+                import_run_id=occurrence.import_run_id,
+                command_execution_id=None,
+                content_changed=True,
+                placement_changed=False,
+                completion_changed=False,
+                archive_changed=False,
+                occurred_at=NOW,
             )
         )
         session.flush()
         session.add(
             models.ContentVersion(
-                content_version_id=competing_content_id, generation_id=seeded["generation_id"],
-                task_id=occurrence.task_id, representation_kind="document", title=source.title,
-                body=competing_body, identity_scheme=CONTENT_IDENTITY_SCHEME,
-                content_identity=content_identity(source.title, competing_body), creator_route="import",
-                import_run_id=occurrence.import_run_id, command_execution_id=None,
+                content_version_id=competing_content_id,
+                generation_id=seeded["generation_id"],
+                task_id=occurrence.task_id,
+                representation_kind="document",
+                title=source.title,
+                body=competing_body,
+                identity_scheme=CONTENT_IDENTITY_SCHEME,
+                content_identity=content_identity(source.title, competing_body),
+                creator_route="import",
+                import_run_id=occurrence.import_run_id,
+                command_execution_id=None,
                 predecessor_content_version_id=occurrence.source_content_version_id,
-                contract_binding_id=source.contract_binding_id, created_dish_version=next_version,
+                contract_binding_id=source.contract_binding_id,
+                created_dish_version=next_version,
                 created_at=NOW,
             )
         )
@@ -721,39 +881,67 @@ def test_rejects_stale_current_content_pointer(core_db) -> None:
                 models.DishState.task_id == occurrence.task_id,
                 models.DishState.dish_version == occurrence.source_dish_version,
             )
-            .values(current_content_version_id=competing_content_id, dish_version=next_version, updated_at=NOW)
+            .values(
+                current_content_version_id=competing_content_id,
+                dish_version=next_version,
+                updated_at=NOW,
+            )
             .execution_options(synchronize_session=False)
         )
         assert moved.rowcount == 1
         session.flush()
 
-        with pytest.raises(NativeSectionContentMaterializationError, match="current DishState/content pointer moved"):
+        with pytest.raises(
+            NativeSectionContentMaterializationError,
+            match="current DishState/content pointer moved",
+        ):
             materialize_staged_native_section_content(
-                session, generation_id=seeded["generation_id"], migration_event_id=migration_event_id,
-                catalog_version_id=expectation.base_catalog_version_id, materialized_at=NOW,
+                session,
+                generation_id=seeded["generation_id"],
+                migration_event_id=migration_event_id,
+                catalog_version_id=expectation.base_catalog_version_id,
+                materialized_at=NOW,
             )
 
 
 def test_rejects_conflicting_successor_mutation_slot(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
-        seeded, expectation, _, migration_event_id, occurrences = _stage_pr3(session, ids)
+        seeded, expectation, _, migration_event_id, occurrences = _stage_pr3(
+            session, ids
+        )
         occurrence = occurrences[0]
         session.add(
             models.DishMutationReceipt(
-                generation_id=seeded["generation_id"], task_id=occurrence.task_id,
-                dish_version=occurrence.source_dish_version + 1, source_route="import",
-                import_run_id=occurrence.import_run_id, command_execution_id=None,
-                content_changed=True, placement_changed=False, completion_changed=False,
-                archive_changed=False, occurred_at=NOW,
+                generation_id=seeded["generation_id"],
+                task_id=occurrence.task_id,
+                dish_version=occurrence.source_dish_version + 1,
+                source_route="import",
+                import_run_id=occurrence.import_run_id,
+                command_execution_id=None,
+                content_changed=True,
+                placement_changed=False,
+                completion_changed=False,
+                archive_changed=False,
+                occurred_at=NOW,
             )
         )
         session.flush()
-        before = int(session.scalar(select(func.count()).select_from(models.ContentVersion)) or 0)
-        with pytest.raises(NativeSectionContentMaterializationError, match="successor Dish mutation slot is already occupied"):
+        before = int(
+            session.scalar(select(func.count()).select_from(models.ContentVersion)) or 0
+        )
+        with pytest.raises(
+            NativeSectionContentMaterializationError,
+            match="successor Dish mutation slot is already occupied",
+        ):
             materialize_staged_native_section_content(
-                session, generation_id=seeded["generation_id"], migration_event_id=migration_event_id,
-                catalog_version_id=expectation.base_catalog_version_id, materialized_at=NOW,
+                session,
+                generation_id=seeded["generation_id"],
+                migration_event_id=migration_event_id,
+                catalog_version_id=expectation.base_catalog_version_id,
+                materialized_at=NOW,
             )
-        after = int(session.scalar(select(func.count()).select_from(models.ContentVersion)) or 0)
+        after = int(
+            session.scalar(select(func.count()).select_from(models.ContentVersion)) or 0
+        )
         assert after == before
