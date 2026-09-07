@@ -287,11 +287,15 @@ def compile_recommendation_state(
         if event.valid_from > as_of:
             continue
 
-        # Explicit lifecycle relations are deterministic and append-only.
-        for target in (*event.supersedes, *event.clears):
-            if target in active:
-                del active[target]
-            inactive.add(target)
+        # Explicit lifecycle relations are deterministic, append-only, and may
+        # retire current state only at the same subject/scope and equal or higher
+        # evidence authority. A weaker or unrelated relation fails closed.
+        for target_id in (*event.supersedes, *event.clears):
+            target = active.get(target_id)
+            if target is not None:
+                _validate_lifecycle_relation(event, target)
+                del active[target_id]
+            inactive.add(target_id)
 
         if event.kind is EventKind.CLEAR:
             inactive.add(event.event_id)
@@ -518,6 +522,20 @@ def _signal_from_event(event: RecommendationEvidence) -> RecommendationSignal:
         wake_condition=event.wake_condition,
         reason=event.reason,
     )
+
+
+def _validate_lifecycle_relation(
+    event: RecommendationEvidence,
+    target: RecommendationSignal,
+) -> None:
+    if (
+        event.subject_type is not target.subject_type
+        or event.subject_key != target.subject_key
+        or event.scope != target.scope
+    ):
+        raise ValueError("lifecycle relation must match target subject and scope")
+    if event.evidence_kind < target.evidence_kind:
+        raise ValueError("lifecycle relation cannot retire stronger evidence")
 
 
 def _is_inactive_by_lifecycle(
