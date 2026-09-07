@@ -72,8 +72,9 @@ For new work:
 3. commit/publish coherent work on the owned branch;
 4. open a **draft pull request** early when useful for durable Git/PR identity;
 5. finish the applicable task-scoped evidence for the complete changed-path set while the PR remains draft;
-6. update the PR description with final implementation evidence/limitations and the exact current head SHA;
-7. verify every recorded SHA is current, then explicitly mark the PR **ready for review**;
+6. update the PR description with final implementation evidence/limitations; use GitHub's live PR head
+   metadata as the sole current-head authority rather than copying a `Current head` value into prose;
+7. verify the live PR head and every durable SHA-bound marker, then explicitly mark the PR **ready for review**;
 8. verify GitHub now reports `draft=false`; only then return it for ordinary review discovery.
 
 `draft=true` means **AUTHORING / NOT REVIEWABLE**. The PR may exist and receive implementation commits while evidence is still in progress, but ordinary Coordinator/Review discovery must ignore it. While a draft is specifically waiting on unfinished task-scoped authoring evidence, keep one concise durable line in the PR description: `IMPLEMENTATION EVIDENCE PENDING: <exact evidence>`. Remove or replace that line as the evidence is completed. Pending ordinary CI after the ready-for-review transition is Integration evidence, not unfinished authoring evidence. Marco may explicitly request an exceptional early review of a draft; that is an override, not a change to the normal state machine.
@@ -101,7 +102,8 @@ Before requesting review, ensure the PR description contains:
 
 - the owning Asana task URL or GID;
 - the exact task goal and implementation scope;
-- the exact source/base SHA and current PR head SHA;
+- the exact source/base SHA; obtain the current PR head from live GitHub metadata rather than duplicating
+  it in body prose that can become stale after a rebase or other mechanical head movement;
 - a concise semantic summary;
 - the exact changed files or a clear changed-surface summary when the PR is large;
 - tests/checks/evidence actually run and any environment limitation or missing certification;

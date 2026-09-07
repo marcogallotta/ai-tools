@@ -14,7 +14,7 @@
 - [Authority and recovery model](#authority-and-recovery-model)
 - [Commands](#commands) and [derived lifecycle states](#derived-lifecycle-states)
 - [Terminal disposition and cleanup](#terminal-disposition-and-cleanup) and [structured advisory leases](#structured-advisory-leases)
-- [Review routing](#review-routing) and [BLOCK → implementation/fix routing](#block--implementationfix-routing)
+- [Review routing](#review-routing) and [BLOCK → implementation/fix routing](#block---implementationfix-routing)
 - [External dependency blockers](#external-dependency-blockers)
 - [Local work after Review MERGE](#local-work-after-review-merge)
 - [Integration composition](#integration-composition)

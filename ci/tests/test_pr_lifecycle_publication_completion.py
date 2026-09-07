@@ -184,6 +184,18 @@ def test_temporary_containment_contract_forbids_broken_bundle_card_and_requires_
     assert "working directly downloadable file/attachment surface" in implementation
 
 
+def test_pr_navigation_and_handoff_metadata_use_live_head_authority():
+    repo_root = Path(__file__).resolve().parents[2]
+    runbook = (repo_root / "ci/pr-lifecycle-dispatcher-runbook.md").read_text(encoding="utf-8")
+    implementation = (repo_root / "dish/docs/agents/implementation.md").read_text(encoding="utf-8")
+    local_handoff = (repo_root / "tools/agent-worktree-handoff.md").read_text(encoding="utf-8")
+
+    assert "[BLOCK → implementation/fix routing](#block---implementationfix-routing)" in runbook
+    assert "GitHub's live PR head" in implementation
+    assert "sole current-head authority" in implementation
+    assert "do not copy a self-described `Current head`" in local_handoff
+
+
 class FinalizerGitHub(base.FakeGitHub):
     def __init__(self, candidate=None, *, ready_mutates=True, body_update_mutates=True):
         candidate = deepcopy(candidate or base.pr(draft=True))
