@@ -97,7 +97,6 @@ def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_f
 
 def test_generated_kernels_current_bound_and_within_budget():
  m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==9
- overlay=kernels.project_settings_compatibility_overlay()
  fixture={'candidate_version':'dish-chatgpt-projects-test-g1','pr_number':1,'candidate_ref':'refs/pull/1/head','candidate_head':'a'*40,'candidate_manifest_sha256':'b'*64,'production_version':m['canonical_version']}
  for role,p in kernels.generated_paths(m,s).items():
   text=p.read_text(); assert len(text)<=m['max_project_settings_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text; assert 'PROJECT_CHANNEL: production' in text
@@ -105,12 +104,9 @@ def test_generated_kernels_current_bound_and_within_budget():
   assert 'Version mismatch alone never blocks' in text and 'Malformed history is ?/3' in text
   reports=[
    kernels.render_project_settings_payload(m,s,role),
-   kernels.render_project_settings_payload(m,s,role,overlay=overlay),
    kernels.render_project_settings_payload(m,s,role,channel='test',**fixture),
-   kernels.render_project_settings_payload(m,s,role,channel='test',overlay=overlay,**fixture),
   ]
   assert all(r['total_chars']<=m['max_project_settings_chars'] and r['remaining_chars']>=0 for r in reports)
-  assert reports[0]['overlay_chars']==0 and kernels.FAST_TRACK_OVERLAY_HEADER not in reports[0]['text']
  profile_paths=kernels.generated_profile_paths(m,s)
  assert profile_paths=={'worker': DISH_ROOT/'docs'/'chatgpt-projects'/'worker.md'}
  worker=profile_paths['worker'].read_text()
@@ -138,29 +134,19 @@ def test_git_first_startup_and_test_candidate_binding_are_explicit():
  with pytest.raises(kernels.KernelError,match='TEST candidate requires exact'):
   kernels.render_test_candidate(s,'review',candidate_version='x',pr_number=140,candidate_ref='refs/pull/140/head',candidate_head='bad',candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
 
-def test_project_settings_budget_rejects_false_green_test_and_overlay_compositions():
- m,s=kernels.load_canonical(); role='review'; prod=kernels.render_project_settings_payload(m,s,role); overlay=kernels.project_settings_compatibility_overlay()
+def test_project_settings_budget_rejects_false_green_test_composition():
+ m,s=kernels.load_canonical(); role='review'; prod=kernels.render_project_settings_payload(m,s,role)
  raw_test=kernels._render_test_candidate_kernel(s,role,candidate_version='test',pr_number=1,candidate_ref='refs/pull/1/head',candidate_head='1'*40,candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
  assert prod['total_chars']<len(raw_test)
  low=copy.deepcopy(m); low['max_project_settings_chars']=prod['total_chars']+1; low['project_settings_compatibility']=copy.deepcopy(m['project_settings_compatibility']); low['project_settings_compatibility'].update({'qualified_chars':low['max_project_settings_chars'],'basis':'empirical-project-save-load-readback','evidence_ref':'test:empirical'})
  with pytest.raises(kernels.ProjectSettingsOverflow) as exc:
   kernels.render_project_settings_payload(low,s,role,channel='test',candidate_version='test',pr_number=1,candidate_ref='refs/pull/1/head',candidate_head='1'*40,candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
  assert exc.value.report['base_kernel_chars']<=low['max_project_settings_chars']<exc.value.report['total_chars']
- overlay_limit=prod['total_chars']+1; low['max_project_settings_chars']=overlay_limit; low['project_settings_compatibility']['qualified_chars']=overlay_limit
- with pytest.raises(kernels.ProjectSettingsOverflow) as exc:
-  kernels.render_project_settings_payload(low,s,role,overlay=overlay)
- assert exc.value.report['overlay_chars']>0 and exc.value.report['excess_chars']>0
-
 def test_project_settings_actual_variable_values_are_checked_without_truncation():
  m,s=kernels.load_canonical(); role='review'; long_ref='refs/pull/140/head-'+'x'*1400
  with pytest.raises(kernels.ProjectSettingsOverflow) as exc:
   kernels.render_test_candidate(s,role,candidate_version='dish-chatgpt-projects-test-candidate',pr_number=140,candidate_ref=long_ref,candidate_head='1'*40,candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
  assert exc.value.report['channel']=='test' and exc.value.report['total_chars']>m['max_project_settings_chars']
- long_overlay=kernels.project_settings_compatibility_overlay(); long_overlay['reason']='r'*1400
- with pytest.raises(kernels.ProjectSettingsOverflow) as exc:
-  kernels.render_project_settings_payload(m,s,role,overlay=long_overlay)
- assert exc.value.report['overlay_chars']>1400
-
 def test_project_settings_budget_change_requires_bound_evidence():
  m,_=kernels.load_canonical(); assert kernels.project_settings_policy(m)==8000; assert 'max_kernel_chars' not in m
  unbound=copy.deepcopy(m); unbound['max_project_settings_chars']=8500
