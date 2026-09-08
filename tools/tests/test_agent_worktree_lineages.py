@@ -23,6 +23,14 @@ def _claim(h: Harness, task: str, branch: str, agent: str, *, pr: int | None = N
     return subprocess.run(args, cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+def _bind_harness_process_env(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    for key, value in h.env.items():
+        monkeypatch.setenv(key, value)
+    for key in list(os.environ):
+        if key not in h.env:
+            monkeypatch.delenv(key, raising=False)
+
+
 def test_same_task_different_branches_are_distinct_concurrent_lineages(h: Harness) -> None:
     for agent in ("a", "b"):
         h.agent_file(agent)
@@ -52,6 +60,93 @@ def test_same_task_same_branch_second_agent_requires_exact_takeover(h: Harness) 
     h.start(task="4103", branch="agent/one-writer", agent="a")
     refused = _claim(h, "4103", "agent/one-writer", "b")
     assert_error(refused, "OWNER_HANDOFF_REQUIRED")
+
+
+def test_registry_rollback_retries_ambiguous_persistence_and_restores_exact_claim(
+    h: Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task, branch = "4190", "agent/registry-rollback-retry"
+    h.agent_file("a", owning_task_gid=task)
+    h.start(task=task, branch=branch, agent="a")
+    _bind_harness_process_env(h, monkeypatch)
+    sys.path.insert(0, str(TOOLS_DIR))
+    from agent_worktree_lib.common import GitRunner
+    from agent_worktree_lib.repository import discover_repository
+    from agent_worktree_lib import lineage as lineage_mod
+
+    runner = GitRunner()
+    repo = discover_repository(runner, h.primary)
+    resolved = lineage_mod.read_registry(runner, repo, branch)
+    assert resolved is not None
+    prior_sha, prior = resolved
+    new_token = "b" * 32
+    _, _, rollback_snapshot = lineage_mod.claim_registry_ownership(
+        runner, repo, task_gid=task, branch=branch,
+        lineage_id=str(prior["lineage_id"]), sha=prior_sha, marker=prior,
+        agent_id="b", token=new_token, takeover=True,
+        expected_claim=str(prior["claim_token"]),
+    )
+    real_push = lineage_mod._push_marker_cas
+    attempts = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected pre-push persistence failure")
+        return real_push(*args, **kwargs)
+
+    monkeypatch.setattr(lineage_mod, "_push_marker_cas", fail_once)
+    lineage_mod.release_registry_claim(
+        runner, repo, task_gid=task, branch=branch,
+        lineage_id=str(prior["lineage_id"]), token=new_token,
+        restore_claim=rollback_snapshot,
+    )
+    assert attempts == 2
+    restored = lineage_mod.read_registry(runner, repo, branch)
+    assert restored is not None
+    _, marker = restored
+    for key in ("claim_generation", "claim_token", "claim_agent_id", "owner_agent_id", "claim_active"):
+        assert marker.get(key) == prior.get(key)
+
+
+def test_local_claim_rollback_retries_ambiguous_atomic_write(
+    h: Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task, branch = "4191", "agent/local-rollback-retry"
+    h.agent_file("a", owning_task_gid=task)
+    h.start(task=task, branch=branch, agent="a")
+    _bind_harness_process_env(h, monkeypatch)
+    sys.path.insert(0, str(TOOLS_DIR))
+    from agent_worktree_lib import ownership as ownership_mod
+
+    claim_files = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
+    assert len(claim_files) == 1
+    path = claim_files[0]
+    previous = json.loads(path.read_text(encoding="utf-8"))
+    failed_token = "c" * 32
+    active = dict(previous)
+    active.update(agent_id="b", token=failed_token, released_at=None, takeover=True)
+    path.write_text(json.dumps(active) + "\n", encoding="utf-8")
+    real_write = ownership_mod.atomic_write_json
+    attempts = 0
+
+    def fail_once(write_path, payload):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("injected pre-replace local persistence failure")
+        return real_write(write_path, payload)
+
+    monkeypatch.setattr(ownership_mod, "atomic_write_json", fail_once)
+    resolved_owner = ownership_mod._settle_failed_claim_reconciled(
+        task_gid=task, branch=branch, lineage_id=str(previous["lineage_id"]),
+        path=path, token=failed_token, agent_id="b", previous=previous,
+        baseline_state_owner="a",
+    )
+    assert resolved_owner == "a"
+    assert attempts == 2
+    assert json.loads(path.read_text(encoding="utf-8")) == previous
 
 
 def test_pr_identity_is_permanently_bound_to_one_branch_lineage(h: Harness) -> None:

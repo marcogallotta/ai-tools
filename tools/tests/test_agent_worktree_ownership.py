@@ -34,6 +34,14 @@ def record(h: Harness, task: str) -> tuple[Path, dict[str, object]]:
     return matches[0], json.loads(matches[0].read_text())
 
 
+def lineage_marker(h: Harness, branch: str) -> dict[str, object]:
+    digest = hashlib.sha256(branch.encode("utf-8")).hexdigest()[:24]
+    return json.loads(git_out(
+        h.origin, "show", "-s", "--format=%B",
+        f"refs/heads/dish-agent-lineage-registry/{digest}",
+    ))
+
+
 def test_claim_gate_and_concurrent_start_choose_one_owner(h: Harness) -> None:
     h.agent_file("direct", owning_task_gid="3000")
     direct = h.raw_tool("start", "--task", "3000", "--branch", "agent/direct", "--base-ref", "refs/heads/main", "--base", h.current_remote_main(), "--agent-id", "direct", check=False)
@@ -113,6 +121,7 @@ def test_failed_takeover_child_restores_prior_coherent_owner(h: Harness) -> None
     h.start(task=task, branch=branch, agent="a")
     _, prior = record(h, task)
     prior_token = str(prior["token"])
+    prior_registry = lineage_marker(h, branch)
 
     failed = claim(
         h,
@@ -128,6 +137,10 @@ def test_failed_takeover_child_restores_prior_coherent_owner(h: Harness) -> None
     assert after["agent_id"] == "a"
     assert after["token"] == prior_token
     assert h.state(task)["owner"]["agent_id"] == "a"
+    after_registry = lineage_marker(h, branch)
+    for key in ("claim_generation", "claim_token", "claim_agent_id", "owner_agent_id", "claim_active"):
+        assert after_registry.get(key) == prior_registry.get(key)
+    assert after_registry["claim_rollback"]["failed_generation"] == prior_registry["claim_generation"] + 1
 
     resumed = claim(
         h,
@@ -988,6 +1001,7 @@ def test_post_refresh_failed_different_owner_restores_exact_prior_lifecycle(
     )
     claim_path, prior_claim = record(h, task)
     prior_state = h.state(task)
+    prior_registry = lineage_marker(h, branch)
     child = (
         ["python3", "-c", "raise SystemExit(9)"]
         if failure == "nonzero"
@@ -1012,17 +1026,13 @@ def test_post_refresh_failed_different_owner_restores_exact_prior_lifecycle(
     assert git_out(h.wt(task), "rev-parse", "HEAD") == preserved
     assert json.loads(replacement_identity_path.read_text(encoding="utf-8")) == prior_identity
 
-    branch_digest = hashlib.sha256(branch.encode("utf-8")).hexdigest()[:24]
-    branch_marker = json.loads(git_out(
-        h.origin, "show", "-s", "--format=%B",
-        f"refs/heads/dish-agent-lineage-registry/{branch_digest}",
-    ))
+    branch_marker = lineage_marker(h, branch)
     pr_marker = json.loads(git_out(
         h.origin, "show", "-s", "--format=%B",
         f"refs/heads/dish-agent-pr-registry/{pr}",
     ))
-    assert branch_marker["claim_active"] is False
-    assert branch_marker["owner_agent_id"] == old_agent
+    for key in ("claim_generation", "claim_token", "claim_agent_id", "owner_agent_id", "claim_active"):
+        assert branch_marker.get(key) == prior_registry.get(key)
     assert pr_marker["claim_active"] is False
 
 

@@ -221,7 +221,7 @@ def claim_registry_ownership(
     token: str,
     takeover: bool,
     expected_claim: str | None,
-) -> tuple[str, int, str | None]:
+) -> tuple[str, int, dict[str, Any]]:
     """Take the repository-wide writer claim for an already-resolved lineage marker."""
     durable_owner = marker.get("owner_agent_id")
     if durable_owner is not None and durable_owner != agent_id and not takeover:
@@ -265,7 +265,11 @@ def claim_registry_ownership(
     )
     new_sha = _marker_commit(runner, repo, updated, parent=sha)
     _push_marker_cas(runner, repo, branch=branch, marker_sha=new_sha, expected_sha=sha)
-    return new_sha, generation, durable_owner
+    # The exact pre-acquisition marker is rollback authority.  A failed wrapper
+    # must be able to restore the whole claim identity, not only its owner; an
+    # owner-only rollback strands the local prior token against a newer registry
+    # token/generation and makes every subsequent exact-CAS takeover impossible.
+    return new_sha, generation, dict(marker)
 
 
 _NO_OWNER_OVERRIDE = object()
@@ -280,14 +284,15 @@ def release_registry_claim(
     lineage_id: str,
     token: str,
     owner_agent_id: Any = _NO_OWNER_OVERRIDE,
+    restore_claim: dict[str, Any] | None = None,
 ) -> None:
     """Release the active repository-wide writer claim.
 
     By default the marker's durable ``owner_agent_id`` is left as the agent that
-    just held the claim. Pass ``owner_agent_id`` explicitly (a string, or ``None``
-    for "no prior owner") to roll the durable owner back to its pre-claim value
-    when the claimed local-agent command failed and never durably completed a
-    handoff.
+    just held the claim. ``restore_claim`` is the exact marker snapshot returned
+    by :func:`claim_registry_ownership`; it is accepted only for the immediately
+    succeeding generation and restores the prior token/owner/generation/activity
+    tuple after a wrapper failed before durable ownership acceptance.
     """
     current = read_registry(runner, repo, branch)
     if current is None:
@@ -300,11 +305,61 @@ def release_registry_claim(
     if marker.get("claim_token") != token or not marker.get("claim_active"):
         fail("OWNERSHIP_CLAIM_MISMATCH", "repository-wide claim generation changed before release")
     updated = dict(marker)
-    updated.update(claim_active=False, updated_at=now_utc())
-    if owner_agent_id is not _NO_OWNER_OVERRIDE:
+    if restore_claim is not None:
+        if owner_agent_id is not _NO_OWNER_OVERRIDE:
+            fail("LINEAGE_REGISTRY_ROLLBACK_INVALID", "claim rollback cannot also override only the durable owner")
+        identity_keys = ("schema", "state", "repository", "task_gid", "branch", "branch_digest", "lineage_id")
+        if any(restore_claim.get(key) != marker.get(key) for key in identity_keys):
+            fail("LINEAGE_REGISTRY_ROLLBACK_INVALID", "prior claim snapshot belongs to a different branch lineage")
+        prior_generation = int(restore_claim.get("claim_generation", 0))
+        if marker.get("claim_generation") != prior_generation + 1:
+            fail("LINEAGE_REGISTRY_ROLLBACK_STALE", "active claim is not the immediate successor of the rollback snapshot")
+        for key in ("claim_generation", "claim_token", "claim_agent_id", "owner_agent_id", "claim_active"):
+            if key in restore_claim:
+                updated[key] = restore_claim[key]
+            else:
+                updated.pop(key, None)
+        updated["claim_rollback"] = {
+            "failed_token": token,
+            "failed_generation": marker.get("claim_generation"),
+            "restored_token": restore_claim.get("claim_token"),
+            "restored_generation": prior_generation,
+            "at": now_utc(),
+        }
+        updated["updated_at"] = now_utc()
+    else:
+        updated.update(claim_active=False, updated_at=now_utc())
+    if restore_claim is None and owner_agent_id is not _NO_OWNER_OVERRIDE:
         updated["owner_agent_id"] = owner_agent_id
     new_sha = _marker_commit(runner, repo, updated, parent=sha)
-    _push_marker_cas(runner, repo, branch=branch, marker_sha=new_sha, expected_sha=sha)
+    try:
+        _push_marker_cas(runner, repo, branch=branch, marker_sha=new_sha, expected_sha=sha)
+    except Exception as first_error:
+        if restore_claim is None:
+            raise
+        observed = read_registry(runner, repo, branch)
+        if observed is not None:
+            observed_sha, observed_marker = observed
+            restored_keys = (
+                "claim_generation", "claim_token", "claim_agent_id",
+                "owner_agent_id", "claim_active",
+            )
+            if all(observed_marker.get(key) == updated.get(key) for key in restored_keys):
+                return
+            # A failure before ref movement is safe to retry against the exact
+            # same parent. Any other outcome is a real concurrent transition and
+            # must retain the original fail-closed diagnostic.
+            if (
+                observed_sha == sha
+                and observed_marker.get("claim_token") == token
+                and observed_marker.get("claim_active") is True
+            ):
+                _push_marker_cas(
+                    runner, repo, branch=branch, marker_sha=new_sha,
+                    expected_sha=sha,
+                )
+                return
+        raise first_error
 
 
 def assert_active_registry_claim(
