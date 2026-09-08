@@ -305,8 +305,8 @@ def compile_recommendation_state(
             continue
 
         # Explicit lifecycle relations are deterministic, append-only, and may
-        # retire current state only at the same subject/scope and equal or higher
-        # evidence authority. A weaker or unrelated relation fails closed.
+        # retire current state only at the same subject/scope, through the same
+        # proper source authority, and with equal or higher evidence kind.
         for target_id in (*event.supersedes, *event.clears):
             target = active.get(target_id)
             if target is not None:
@@ -553,6 +553,8 @@ def _validate_lifecycle_relation(
         raise ValueError("lifecycle relation must match target subject and scope")
     if event.evidence_kind < target.evidence_kind:
         raise ValueError("lifecycle relation cannot retire stronger evidence")
+    if event.source is not target.source:
+        raise ValueError("lifecycle relation cannot cross source authority")
 
 
 def _is_inactive_by_lifecycle(

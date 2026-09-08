@@ -261,3 +261,190 @@ def test_equal_authority_same_scope_clear_still_retires_exclusion() -> None:
         },
     ).eligibility_for("sweet breakfast")
     assert result.status is CandidateEligibility.ELIGIBLE
+
+
+@pytest.mark.parametrize(
+    "source",
+    [EvidenceSource.SCRATCHPAD_AUTHORITY, EvidenceSource.PROFILE_AUTHORITY],
+)
+def test_cross_authority_clear_cannot_retire_runtime_hard_block(
+    source: EvidenceSource,
+) -> None:
+    scope = SignalScope(ScopeKind.DISH, "rendang")
+    blocker = RecommendationEvidence(
+        event_id="runtime-block",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=SignalType.BLOCKER,
+        value="pedigree unresolved",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0,
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("runtime:pedigree",),
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+    )
+    cross_authority_clear = RecommendationEvidence(
+        event_id=f"cross-clear-{source.value}",
+        kind=EventKind.CLEAR,
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=SignalType.BLOCKER,
+        value="clear",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0 + timedelta(minutes=1),
+        source=source,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=(f"evidence:{source.value}",),
+        clears=("runtime-block",),
+    )
+    with pytest.raises(ValueError, match="cross source authority"):
+        compile_recommendation_state(
+            [blocker, cross_authority_clear],
+            as_of=T0 + timedelta(minutes=2),
+        )
+
+
+def test_cross_authority_supersede_cannot_retire_scratchpad_lifecycle() -> None:
+    scope = SignalScope(ScopeKind.DISH, "zhong wontons")
+    parked = RecommendationEvidence(
+        event_id="scratchpad-parked",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="zhong wontons",
+        signal_type=SignalType.SUPPRESSION,
+        value="parked until chilli oil rebuild",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.UNTIL_WAKE,
+        valid_from=T0,
+        source=EvidenceSource.SCRATCHPAD_AUTHORITY,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("scratchpad:zhong-wontons",),
+        wake_condition="chilli-oil-ready",
+    )
+    replacement = RecommendationEvidence(
+        event_id="runtime-unpark",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="zhong wontons",
+        signal_type=SignalType.SUPPRESSION,
+        value="available",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0 + timedelta(minutes=1),
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("runtime:chilli-oil-ready",),
+        supersedes=("scratchpad-parked",),
+    )
+    with pytest.raises(ValueError, match="cross source authority"):
+        compile_recommendation_state(
+            [parked, replacement],
+            as_of=T0 + timedelta(minutes=2),
+        )
+
+
+def test_cross_authority_clear_cannot_retire_profile_configuration() -> None:
+    scope = SignalScope(ScopeKind.PREFERENCE, "spice")
+    profile_preference = RecommendationEvidence(
+        event_id="profile-spice",
+        kind=EventKind.SET,
+        subject_type=SubjectType.PREFERENCE,
+        subject_key="spice",
+        signal_type=SignalType.PREFERENCE,
+        value="mild",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0,
+        source=EvidenceSource.PROFILE_AUTHORITY,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("profile:spice",),
+    )
+    scratchpad_clear = RecommendationEvidence(
+        event_id="scratchpad-clear-profile",
+        kind=EventKind.CLEAR,
+        subject_type=SubjectType.PREFERENCE,
+        subject_key="spice",
+        signal_type=SignalType.PREFERENCE,
+        value="clear",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0 + timedelta(minutes=1),
+        source=EvidenceSource.SCRATCHPAD_AUTHORITY,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("scratchpad:clear-profile",),
+        clears=("profile-spice",),
+    )
+    with pytest.raises(ValueError, match="cross source authority"):
+        compile_recommendation_state(
+            [profile_preference, scratchpad_clear],
+            as_of=T0 + timedelta(minutes=2),
+        )
+
+
+def test_same_source_runtime_clear_can_retire_runtime_hard_block() -> None:
+    scope = SignalScope(ScopeKind.DISH, "rendang")
+    blocker = RecommendationEvidence(
+        event_id="runtime-block",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=SignalType.BLOCKER,
+        value="pedigree unresolved",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0,
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("runtime:pedigree",),
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+    )
+    clear = RecommendationEvidence(
+        event_id="runtime-clear",
+        kind=EventKind.CLEAR,
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=SignalType.BLOCKER,
+        value="clear",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0 + timedelta(minutes=1),
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("runtime:pedigree-resolved",),
+        clears=("runtime-block",),
+    )
+    state = compile_recommendation_state(
+        [blocker, clear],
+        as_of=T0 + timedelta(minutes=2),
+    )
+    result = build_recommendation_context(
+        state,
+        candidate_keys=["rendang"],
+        authoritative_eligibility={
+            "rendang": EligibilityObservation(
+                CandidateEligibility.ELIGIBLE,
+                ("eligibility:rendang",),
+            )
+        },
+    ).eligibility_for("rendang")
+    assert result.status is CandidateEligibility.ELIGIBLE
