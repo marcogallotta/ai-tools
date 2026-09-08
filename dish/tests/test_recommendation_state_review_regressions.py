@@ -10,6 +10,7 @@ from dish_tool.recommendation_state import (
     CandidateEligibility,
     Confidence,
     EligibilityEffect,
+    EligibilityObservation,
     EventKind,
     EvidenceKind,
     EvidenceSource,
@@ -42,6 +43,8 @@ def _event(
     lifetime: Lifetime = Lifetime.DURABLE,
     eligibility_effect: EligibilityEffect = EligibilityEffect.SOFT,
     supersedes: tuple[str, ...] = (),
+    wake_condition: str | None = None,
+    reason: str | None = None,
 ) -> RecommendationEvidence:
     return RecommendationEvidence(
         event_id=event_id,
@@ -60,6 +63,8 @@ def _event(
         provenance=(f"evidence:{event_id}",),
         eligibility_effect=eligibility_effect,
         supersedes=supersedes,
+        wake_condition=wake_condition,
+        reason=reason,
     )
 
 
@@ -117,6 +122,61 @@ def test_candidate_hard_eligibility_result_keeps_reason_and_provenance_fan_in_bo
     assert result.status is CandidateEligibility.BLOCKED
     assert len(result.provenance) == MAX_PROVENANCE_POINTERS
     assert len(result.reasons) == MAX_ELIGIBILITY_REASONS
+
+
+@pytest.mark.parametrize("signal_type", [SignalType.BLOCKER, SignalType.PREREQUISITE])
+def test_newer_same_scope_hard_fact_wake_preserves_older_unresolved_blocker(
+    signal_type: SignalType,
+) -> None:
+    scope = SignalScope(ScopeKind.DISH, "rendang")
+    older = _event(
+        "older-runtime-block",
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=signal_type,
+        value="blocked",
+        scope=scope,
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        at=T0,
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+        reason="pedigree unresolved",
+    )
+    newer = _event(
+        "newer-runtime-block",
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=signal_type,
+        value="blocked",
+        scope=scope,
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        at=T0 + timedelta(minutes=1),
+        lifetime=Lifetime.UNTIL_WAKE,
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+        wake_condition="ingredient-arrived",
+        reason="ingredient unavailable",
+    )
+
+    state = compile_recommendation_state(
+        [older, newer],
+        as_of=T0 + timedelta(minutes=2),
+        resolved_wake_conditions={"ingredient-arrived"},
+    )
+    result = build_recommendation_context(
+        state,
+        candidate_keys=["rendang"],
+        authoritative_eligibility={
+            "rendang": EligibilityObservation(
+                CandidateEligibility.ELIGIBLE,
+                ("eligibility:rendang",),
+            )
+        },
+    ).eligibility_for("rendang")
+
+    assert result.status is CandidateEligibility.BLOCKED
+    assert [signal.signal_id for signal in state.signals] == ["older-runtime-block"]
+    assert "newer-runtime-block" in state.inactive_signal_ids
 
 
 def test_profile_current_configuration_retires_older_direct_recommendation_evidence() -> None:

@@ -323,12 +323,16 @@ def compile_recommendation_state(
         signal = _signal_from_event(event)
 
         # Repeated current state in one logical slot is folded only when the new
-        # event is allowed to retire the prior signal. Unrelated source authorities
-        # remain visible as conflicts. Weaker same-source evidence cannot silently
-        # erase stronger state.
+        # event is allowed to retire the prior signal. Hard eligibility uses its
+        # lifecycle identity as an additional same-fact boundary so one genuine
+        # blocker cannot erase another merely because their coarse slot matches.
+        # Unrelated source authorities remain visible as conflicts. Weaker same-
+        # source evidence cannot silently erase stronger state.
         folded_into_stronger = False
         for signal_id, previous in tuple(active.items()):
             if previous.slot != signal.slot:
+                continue
+            if not _same_hard_lifecycle_fact(previous, signal):
                 continue
             can_retire = _source_can_retire(event, previous)
             if not can_retire:
@@ -557,6 +561,28 @@ def _signal_from_event(event: RecommendationEvidence) -> RecommendationSignal:
         expires_at=event.expires_at,
         wake_condition=event.wake_condition,
         reason=event.reason,
+    )
+
+
+def _same_hard_lifecycle_fact(
+    previous: RecommendationSignal,
+    current: RecommendationSignal,
+) -> bool:
+    """Return whether coarse same-slot state is safe to coalesce implicitly.
+
+    Soft recommendation state keeps the established slot behavior. Hard eligibility
+    is fail-closed: only signals with the same value and lifecycle fate are treated
+    as repeated observations of one fact. Distinct hard facts require an explicit
+    clear/supersedes relation to retire one another.
+    """
+    if current.eligibility_effect is EligibilityEffect.SOFT:
+        return True
+    return (
+        previous.value == current.value
+        and previous.lifetime is current.lifetime
+        and previous.expires_at == current.expires_at
+        and previous.wake_condition == current.wake_condition
+        and previous.reason == current.reason
     )
 
 
