@@ -89,6 +89,49 @@ def test_every_kernel_selects_connector_and_rejects_mcp_app():
  assert 'plugin_connector_*' not in worker
  assert 'plugin_asdk_app_*' not in worker
 
+def test_project_transport_profiles_are_explicit_mutually_exclusive_and_fail_closed():
+ routing=(DISH_ROOT/'docs'/'agents'/'repository-routing.md').read_text()
+ runbook=(DISH_ROOT/'deploy'/'mcp-app.md').read_text()
+ routing_words=' '.join(routing.split())
+ runbook_words=' '.join(runbook.split())
+
+ assert 'Recurring repository-role Projects — Connector-only' in routing
+ assert 'select the installed GitHub Connector' in routing_words
+ assert 'Never select or invoke the separate GitHub MCP app or any other MCP app' in routing_words
+ assert 'General Dish and Cooking Projects — MCP-app-only' in routing
+ assert 'select the installed GitHub MCP app and Dish MCP app' in routing_words
+ assert 'Never select or invoke the GitHub Connector or any other Connector' in routing_words
+ assert 'Never mix Connector tools and MCP apps' in routing_words
+ assert 'For every GitHub read or write, use the GitHub Connector' not in routing
+
+ assert runbook.count('TRANSPORT — MCP APPS ONLY') == 2
+ assert runbook.count('Select the installed GitHub MCP app and Dish MCP app') == 2
+ assert runbook.count('never select or invoke the GitHub Connector or any other Connector') == 2
+ assert runbook.count('Never mix transport families in this chat') == 2
+ assert 'fail closed rather than switching' in runbook_words
+
+ blanket_connector_phrases=(
+  'For every GitHub read or write, use the GitHub Connector',
+  'ChatGPT uses only the authorized GitHub connector',
+  'GitHub Connect remains live source/history/PR/review authority',
+  'download through the GitHub connector',
+  'GitHub connector remains the normal publication path',
+  'with the available connector',
+ )
+ policy_paths=(
+  DISH_ROOT.parent/'CLAUDE.md',
+  DISH_ROOT/'docs'/'agents'/'index.md',
+  DISH_ROOT/'docs'/'agents'/'coordinator.md',
+  DISH_ROOT/'docs'/'agents'/'implementation.md',
+  DISH_ROOT/'docs'/'agents'/'review.md',
+  DISH_ROOT/'docs'/'agents'/'integration.md',
+  DISH_ROOT/'docs'/'agents'/'development-workflow.md',
+ )
+ for path in policy_paths:
+  text=path.read_text()
+  for phrase in blanket_connector_phrases:
+   assert phrase not in text, f'{path}: stale blanket Connector directive: {phrase}'
+
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
  removed=edge['changes'][0]

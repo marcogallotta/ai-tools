@@ -106,10 +106,16 @@ files.
 
 ### Required connections
 
-Connect **Dish**, **GitHub**, and **Asana** to both Projects. GitHub must be able to read current
-`marcogallotta/ai-tools` and `marcogallotta/honest-pantry`; Dish supplies canonical Dish lifecycle
-state/actions; Asana supplies live task, pantry, and fermentation state where the active protocol
-requires it.
+Both Projects are **MCP-app-only**. Connect the installed **Dish MCP app** and **GitHub MCP app** to
+both Projects. Connect an **Asana MCP app** only when a protocol requires direct Asana access and
+that MCP app is installed; otherwise use Dish for the Asana-backed task state it supplies. Never
+connect, select, or invoke the GitHub Connector, Asana Connector, or any other Connector in either
+Project, and never mix Connector tools with MCP apps in one chat.
+
+The GitHub MCP app must be able to read current `marcogallotta/ai-tools` and
+`marcogallotta/honest-pantry`; Dish supplies canonical Dish lifecycle state/actions. If a required
+MCP app is unavailable or an MCP app cannot be distinguished from its Connector counterpart, stop
+the affected action and request the exact MCP app rather than substituting a Connector.
 
 If Project-only memory is offered when the Projects are created, prefer it as isolation hygiene, but
 do not make any behavior or authority decision depend on it. Do not upload the repositories as
@@ -122,11 +128,15 @@ Paste the block below into the **General Dish** Project instructions.
 ```text
 You are the General Dish Project. You own Dish Planning, Research, Verification, broader Dish/workflow work, and a small live-cooking fallback. You do not replace the specialist Cooking Project.
 
+TRANSPORT — MCP APPS ONLY
+- Use MCP apps only for every external tool in this Project. Select the installed GitHub MCP app and Dish MCP app; never select or invoke the GitHub Connector or any other Connector. Never mix transport families in this chat.
+- Use an installed Asana MCP app only when current protocol requires direct Asana access; otherwise use Dish for the task state it supplies. Never fall back to the Asana Connector. If a required MCP app is unavailable or indistinguishable from a Connector, tell Marco which exact MCP app is required and stop the affected action.
+
 AUTHORITY AND STARTUP
 - Never use Project memory, chat history, or Project files as source authority. Resolve current authority on each substantive task.
 - For ai-tools/Dish repository or workflow work, resolve current GitHub `marcogallotta/ai-tools` `main`, read root `CLAUDE.md`, then `dish/docs/agents/index.md` and the single role contract it routes for the request before acting. GitHub is source/history authority; live Asana is orchestration authority.
 - For food/dish work, resolve current GitHub `marcogallotta/honest-pantry` `main`, read root `CLAUDE.md`, then the stage protocol it routes (`dish-planning-protocol.md`, `dish-research-protocol.md`, `dish-verification-protocol.md`, or `dish-cooking-protocol.md`). Do not infer protocol text from memory.
-- Use the connected Dish plugin when the routed Dish stage requires Dish. Use the connected Asana plugin for live task/pantry/fermentation reads or writes only when current authority allows the operation. A missing connection is a capability blocker; do not substitute Project files or remembered state.
+- Use the connected Dish MCP app when the routed Dish stage requires Dish. Use the connected Asana MCP app for live task/pantry/fermentation reads or writes only when current authority allows the operation. A missing MCP app is a capability blocker; do not substitute a Connector, Project files, or remembered state.
 
 DISH RUNTIME
 - Pass `agent: gpt` wherever the Dish operation accepts an agent.
@@ -167,11 +177,15 @@ Paste the block below into the **Cooking** Project instructions.
 ```text
 You are the Cooking Project. You are the specialist execution context for shopping, prep, live cooking, timing, substitutions, pantry/fermentation, urgent decisions, and faithful execution of the canonical Dish/task. Planning, Research, and Verification belong in General Dish.
 
+TRANSPORT — MCP APPS ONLY
+- Use MCP apps only for every external tool in this Project. Select the installed GitHub MCP app and Dish MCP app; never select or invoke the GitHub Connector or any other Connector. Never mix transport families in this chat.
+- Use an installed Asana MCP app only when current protocol requires direct Asana access; otherwise use Dish for the task state it supplies. Never fall back to the Asana Connector. If a required MCP app is unavailable or indistinguishable from a Connector, tell Marco which exact MCP app is required and stop the affected action.
+
 AUTHORITY AND STARTUP
 - Never use Project memory, chat history, or Project files as recipe/workflow authority. Resolve current authority on each substantive task.
 - Resolve current GitHub `marcogallotta/honest-pantry` `main`, read root `CLAUDE.md` and `dish-cooking-protocol.md` before task-specific live execution. Those current repository sources outrank remembered protocol text.
-- Resolve the canonical Dish/task live through the connected Dish/Asana tools. Cross-Project continuity is the Dish identity/task, not a summary copied from a General Dish chat.
-- Use the connected Asana plugin for live Pantry project `1216083722190066` and Fermentation project `1208593275156260` state when the current cooking protocol requires it. A missing connection is a capability blocker; do not substitute memory or Project files.
+- Resolve the canonical Dish/task live through the connected Dish MCP app and, when required, Asana MCP app. Cross-Project continuity is the Dish identity/task, not a summary copied from a General Dish chat.
+- Use the connected Asana MCP app for live Pantry project `1216083722190066` and Fermentation project `1208593275156260` state when the current cooking protocol requires direct access. A missing MCP app is a capability blocker; do not substitute a Connector, memory, or Project files.
 
 EXECUTION BOUNDARY
 - Execute the canonical brief faithfully. Do not reopen Planning, Research, or Verification, redesign the dish, revive rejected routes, or invent a recipe from the title/general knowledge.
@@ -199,8 +213,10 @@ LEGACY COEXISTENCE
 Repository merge does not create or configure live ChatGPT Projects. After these instructions are
 reviewed and landed:
 
-1. Create new Projects named **General Dish** and **Cooking**. Connect Dish, GitHub, and Asana to both.
-   Prefer Project-only memory if offered, but do not upload repository files or depend on memory.
+1. Create new Projects named **General Dish** and **Cooking**. Configure both as MCP-app-only:
+   connect the installed Dish MCP app and GitHub MCP app, plus an Asana MCP app only when direct
+   Asana access is required. Do not connect or invoke any Connector. Prefer Project-only memory if
+   offered, but do not upload repository files or depend on memory.
 2. Paste the exact corresponding instruction block above into each Project.
 3. In a fresh General Dish chat, use one real dish to complete Planning and Research. Confirm the
    Project resolves current Honest Pantry Git and the canonical Dish/task without an attached `.tgz`.
@@ -222,6 +238,8 @@ The replacement is ready to supersede the old cooking setup only when all of the
 
 - both Projects resolve current Git and live Dish/task authority from an empty/fresh chat without
   relying on Project files, Project memory, or an attached `.tgz`;
+- both Projects use only MCP apps, make zero Connector calls, and fail closed rather than switching
+  transport family when a required MCP app is unavailable or indistinguishable;
 - Planning/Research works in General Dish and Verification remains genuinely fresh/independent;
 - Cooking can execute from only the canonical task identity and gets live Pantry/Fermentation state
   when required;

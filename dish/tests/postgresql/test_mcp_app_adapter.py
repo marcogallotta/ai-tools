@@ -323,3 +323,6 @@ def test_caddy_and_runbook_expose_github_oauth_proxy_paths():
     assert "DISH_MCP_GITHUB_CLIENT_ID" in runbook
     assert "DISH_MCP_GITHUB_CLIENT_SECRET" in runbook
     assert "DISH_MCP_GITHUB_USER_ID" in runbook
+    assert "Both Projects are **MCP-app-only**" in runbook
+    assert "Never\nconnect, select, or invoke the GitHub Connector" in runbook
+    assert runbook.count("TRANSPORT — MCP APPS ONLY") == 2

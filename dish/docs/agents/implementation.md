@@ -47,9 +47,9 @@ Day-one branch rules:
 - another agent must not push semantic changes to that branch without an explicit handoff of ownership;
 - Claude Code/Codex local implementation uses the shared `tools/agent-worktree` lifecycle so one task attempt has one durable external linked worktree, one owned branch, and task-keyed recoverability state under `~/.local/state/dish/worktrees/`; do not create a competing host-specific lifecycle;
 - replacement local agents resume the same task record/branch/worktree after explicit orchestration handoff; takeover changes local provenance only and does not infer agent liveness;
-- ChatGPT uses only the authorized GitHub connector defined in
+- ChatGPT uses only the active Project's authorized, mutually exclusive GitHub route defined in
   [`repository-routing.md`](repository-routing.md#github-connector-routing) as repository
-  source/history authority and may perform the branch/commit/PR flow through it;
+  source/history authority and may perform the branch/commit/PR flow through that route;
 - do not reuse a branch whose PR was merged, closed, abandoned, or superseded for unrelated work;
 - local worktree cleanup goes through the shared lifecycle only after disposition is established by GitHub/Asana authority; it must refuse dirty, ambiguous, or unrecoverable state and must not remove the only recovery pointer.
 
@@ -118,9 +118,9 @@ If the task has moved projects or its live Asana URL is available, prefer the cu
 
 Host tooling differs, but the artifact contract does not:
 
-- **ChatGPT:** use only the authorized GitHub connector defined in
-  [`repository-routing.md`](repository-routing.md#github-connector-routing) for source/history
-  and branch/commit/PR operations;
+- **ChatGPT:** use only the active Project's authorized GitHub route defined in
+  [`repository-routing.md`](repository-routing.md#github-connector-routing) for source/history and
+  branch/commit/PR operations; never mix Connector and MCP-app families;
 - **Claude Code/Codex:** use the live checkout plus the repository-owned `tools/agent-worktree` lifecycle for local branch/worktree freshness, ownership, publication, and handoff verification, then open/update the GitHub PR.
 
 Regardless of host, the coordinator/reviewer/integrator must be able to identify the same branch, commit, PR URL, and exact PR head SHA.
@@ -143,7 +143,7 @@ Under that heading record at least:
 - exact PR URL/number, existing branch, and exact current PR head SHA;
 - handoff class `LOCAL IMPLEMENTATION COMPLETION` and estimated handoff size (`SMALL`, `MODERATE`, or `SUBSTANTIAL`);
 - exact missing path and the exact smallest mechanical delta that remains unpublished;
-- why connector-native publication is unsafe or unavailable;
+- why the active Project-authorized remote publication route is unsafe or unavailable;
 - evidence already completed and exactly what it proves;
 - exact focused completion/check commands where stable and governed;
 - explicit branch-ownership handoff from the current Implementation agent to a local Implementation-completion agent;
@@ -153,10 +153,10 @@ The PR must contain the complete agent-to-agent instructions; Marco must not be 
 
 ### Temporary exact-byte bundle containment
 
-For the current publication-friction containment path, the GitHub connector remains the normal publication path. Do **not** pre-route local merely because a candidate is large, multi-file, or looks inconvenient to publish. First attempt normal connector publication. Only when that actual attempt is failing/unavailable or starts degrading into slow manual blob/chunk/base64 work, and the remote Implementation agent still has the complete exact candidate bytes, may this local fallback activate. The human relay is then deliberately minimal:
+For the current publication-friction containment path, the active Project-authorized GitHub route remains the normal publication path. Do **not** pre-route local merely because a candidate is large, multi-file, or looks inconvenient to publish. First attempt normal remote publication through that route. Only when that actual attempt is failing/unavailable or starts degrading into slow manual blob/chunk/base64 work, and the remote Implementation agent still has the complete exact candidate bytes, may this local fallback activate. The human relay is then deliberately minimal:
 
 - before producing the bundle, post the durable local-claim handoff witness to the owning task using the exact `dish-prelaunch:v1 ... host=local ...` source/marker shape in `templates/implementation-handoff.md` ("For a local first claim..."), with this PR's exact branch/base/PR/head. Without it, `tools/agent-worktree` refuses the local agent's first claim on this branch;
-- before stopping the GitHub connector path, tell Marco **why it stopped and exactly what was tried**. Name the concrete connector mutation(s)/fallback(s) attempted and the observed failure/degradation; `large`, `multi-file`, or `looks slow` is not a stop reason by itself;
+- before stopping the authorized remote GitHub path, tell Marco **why it stopped and exactly what was tried**. Name the concrete route mutation(s)/fallback(s) attempted and the observed failure/degradation; `large`, `multi-file`, or `looks slow` is not a stop reason by itself;
 - produce **one downloadable exact candidate Git bundle**; that bundle is the only file Marco is expected to download or pass to the local agent;
 - deliver that bundle through a **working directly downloadable file/attachment surface**. Do **not** use the ChatGPT generated-file/artifact-card or sandbox-link/card form Marco has reported as non-working. If the current host cannot produce a working download, do not claim the local handoff is ready: keep the PR draft and tell Marco which delivery surface(s) were tried and why delivery stopped;
 - give Marco **one short copy/paste fenced handoff block** naming the task/PR/branch, the bundle basename, and expected candidate tree; do not add a second checklist, sidecar-download list, or long transcript;
