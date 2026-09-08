@@ -320,13 +320,15 @@ def compile_recommendation_state(
 
         signal = _signal_from_event(event)
 
-        # Repeated current state in one logical slot is folded. Equal or stronger
-        # later evidence replaces the earlier current value. Weaker later evidence
-        # cannot silently erase stronger explicit/authoritative state; if it
-        # conflicts, both remain visible for conservative ranking/conflict handling.
+        # Repeated current state from one source authority in one logical slot is
+        # folded. Cross-authority state remains visible for conservative conflict
+        # handling instead of implicitly retiring another authority's fact.
+        # Weaker same-source evidence cannot silently erase stronger state.
         folded_into_stronger = False
         for signal_id, previous in tuple(active.items()):
             if previous.slot != signal.slot:
+                continue
+            if previous.source is not event.source:
                 continue
             if previous.value == signal.value and event.evidence_kind < previous.evidence_kind:
                 active[signal_id] = replace(

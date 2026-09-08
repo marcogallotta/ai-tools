@@ -448,3 +448,202 @@ def test_same_source_runtime_clear_can_retire_runtime_hard_block() -> None:
         },
     ).eligibility_for("rendang")
     assert result.status is CandidateEligibility.ELIGIBLE
+
+
+@pytest.mark.parametrize(
+    ("source", "evidence_kind"),
+    [
+        (EvidenceSource.EXPLICIT_MARCO, EvidenceKind.EXPLICIT),
+        (EvidenceSource.SCRATCHPAD_AUTHORITY, EvidenceKind.AUTHORITATIVE),
+        (EvidenceSource.PROFILE_AUTHORITY, EvidenceKind.AUTHORITATIVE),
+    ],
+)
+def test_cross_authority_same_slot_set_cannot_displace_runtime_hard_block(
+    source: EvidenceSource,
+    evidence_kind: EvidenceKind,
+) -> None:
+    scope = SignalScope(ScopeKind.DISH, "rendang")
+    blocker = RecommendationEvidence(
+        event_id="runtime-slot-block",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=SignalType.BLOCKER,
+        value="pedigree unresolved",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0,
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("runtime:slot-pedigree",),
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+    )
+    expiring_replacement = RecommendationEvidence(
+        event_id=f"cross-slot-{source.value}",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=SignalType.BLOCKER,
+        value="temporarily available",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.UNTIL_EXPIRY,
+        valid_from=T0 + timedelta(minutes=1),
+        source=source,
+        evidence_kind=evidence_kind,
+        provenance=(f"evidence:cross-slot-{source.value}",),
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+        expires_at=T0 + timedelta(minutes=2),
+    )
+    state = compile_recommendation_state(
+        [blocker, expiring_replacement],
+        as_of=T0 + timedelta(minutes=3),
+    )
+    result = build_recommendation_context(
+        state,
+        candidate_keys=["rendang"],
+        authoritative_eligibility={
+            "rendang": EligibilityObservation(
+                CandidateEligibility.ELIGIBLE,
+                ("eligibility:rendang",),
+            )
+        },
+    ).eligibility_for("rendang")
+    assert result.status is CandidateEligibility.BLOCKED
+    assert {signal.signal_id for signal in state.signals} == {"runtime-slot-block"}
+
+
+def test_cross_authority_same_slot_set_preserves_profile_configuration() -> None:
+    scope = SignalScope(ScopeKind.PREFERENCE, "spice")
+    profile_preference = RecommendationEvidence(
+        event_id="profile-slot-spice",
+        kind=EventKind.SET,
+        subject_type=SubjectType.PREFERENCE,
+        subject_key="spice",
+        signal_type=SignalType.PREFERENCE,
+        value="mild",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0,
+        source=EvidenceSource.PROFILE_AUTHORITY,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("profile:slot-spice",),
+    )
+    scratchpad_conflict = RecommendationEvidence(
+        event_id="scratchpad-slot-spice",
+        kind=EventKind.SET,
+        subject_type=SubjectType.PREFERENCE,
+        subject_key="spice",
+        signal_type=SignalType.PREFERENCE,
+        value="hot",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0 + timedelta(minutes=1),
+        source=EvidenceSource.SCRATCHPAD_AUTHORITY,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("scratchpad:slot-spice",),
+    )
+    state = compile_recommendation_state(
+        [profile_preference, scratchpad_conflict],
+        as_of=T0 + timedelta(minutes=2),
+    )
+    assert {signal.signal_id for signal in state.signals} == {
+        "profile-slot-spice",
+        "scratchpad-slot-spice",
+    }
+
+
+def test_cross_authority_same_slot_set_preserves_scratchpad_lifecycle() -> None:
+    scope = SignalScope(ScopeKind.DISH, "zhong wontons")
+    parked = RecommendationEvidence(
+        event_id="scratchpad-slot-parked",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="zhong wontons",
+        signal_type=SignalType.SUPPRESSION,
+        value="parked until chilli oil rebuild",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.UNTIL_WAKE,
+        valid_from=T0,
+        source=EvidenceSource.SCRATCHPAD_AUTHORITY,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("scratchpad:slot-zhong-wontons",),
+        wake_condition="chilli-oil-ready",
+    )
+    runtime_conflict = RecommendationEvidence(
+        event_id="runtime-slot-available",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="zhong wontons",
+        signal_type=SignalType.SUPPRESSION,
+        value="available",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0 + timedelta(minutes=1),
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("runtime:slot-available",),
+    )
+    state = compile_recommendation_state(
+        [parked, runtime_conflict],
+        as_of=T0 + timedelta(minutes=2),
+    )
+    assert {signal.signal_id for signal in state.signals} == {
+        "runtime-slot-available",
+        "scratchpad-slot-parked",
+    }
+
+
+def test_same_source_later_set_still_replaces_same_slot_state() -> None:
+    scope = SignalScope(ScopeKind.DISH, "rendang")
+    old_blocker = RecommendationEvidence(
+        event_id="runtime-old-block",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=SignalType.BLOCKER,
+        value="pedigree unresolved",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0,
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("runtime:old-block",),
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+    )
+    new_blocker = RecommendationEvidence(
+        event_id="runtime-new-block",
+        kind=EventKind.SET,
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=SignalType.BLOCKER,
+        value="sourcing route unavailable",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0 + timedelta(minutes=1),
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("runtime:new-block",),
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+    )
+    state = compile_recommendation_state(
+        [old_blocker, new_blocker],
+        as_of=T0 + timedelta(minutes=2),
+    )
+    assert [signal.signal_id for signal in state.signals] == ["runtime-new-block"]
+    assert "runtime-old-block" in state.inactive_signal_ids
