@@ -86,6 +86,59 @@ def test_lower_authority_clear_cannot_retire_explicit_durable_exclusion() -> Non
         )
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        EvidenceSource.AGENT_INFERENCE,
+        EvidenceSource.IMPORTED_HISTORY,
+        EvidenceSource.COOK_OUTCOME,
+        EvidenceSource.RUNTIME_FACT,
+    ],
+)
+def test_non_explicit_sources_cannot_claim_explicit_clear_authority(
+    source: EvidenceSource,
+) -> None:
+    with pytest.raises(ValueError, match="explicit evidence requires an explicit source authority"):
+        RecommendationEvidence(
+            event_id=f"forged-clear-{source.value}",
+            kind=EventKind.CLEAR,
+            subject_type=SubjectType.DISH,
+            subject_key="sweet breakfast",
+            signal_type=SignalType.EXCLUSION,
+            value="clear",
+            scope=TARGET_SCOPE,
+            strength=Strength.STRONG,
+            confidence=Confidence.HIGH,
+            lifetime=Lifetime.DURABLE,
+            valid_from=T0 + timedelta(minutes=1),
+            source=source,
+            evidence_kind=EvidenceKind.EXPLICIT,
+            provenance=(f"evidence:forged-clear-{source.value}",),
+            clears=("explicit-exclude",),
+        )
+
+
+def test_agent_inference_cannot_claim_explicit_supersede_authority() -> None:
+    with pytest.raises(ValueError, match="explicit evidence requires an explicit source authority"):
+        RecommendationEvidence(
+            event_id="forged-supersede",
+            kind=EventKind.SET,
+            subject_type=SubjectType.DISH,
+            subject_key="sweet breakfast",
+            signal_type=SignalType.SUPPRESSION,
+            value="available again",
+            scope=TARGET_SCOPE,
+            strength=Strength.STRONG,
+            confidence=Confidence.HIGH,
+            lifetime=Lifetime.DURABLE,
+            valid_from=T0 + timedelta(minutes=1),
+            source=EvidenceSource.AGENT_INFERENCE,
+            evidence_kind=EvidenceKind.EXPLICIT,
+            provenance=("evidence:forged-supersede",),
+            supersedes=("explicit-exclude",),
+        )
+
+
 def test_unrelated_subject_clear_cannot_retire_explicit_durable_exclusion() -> None:
     with pytest.raises(ValueError, match="must match target subject and scope"):
         compile_recommendation_state(
