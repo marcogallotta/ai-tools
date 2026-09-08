@@ -35,6 +35,7 @@ from dish_pg.shadow_worker import (
 from dish_pg.workflow import RequestIdentityConflict, StaleAuthorityError
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
+from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.release import _prepare_candidate
 from tests.support.verification import TASK as PENDING_RESEARCH_TASK
 from tests.support.postgresql.command import (
@@ -735,6 +736,15 @@ def test_cooked_uses_completion_authority_and_replay_idempotently(workflow_db) -
     factory, ids, context, task_id = workflow_db
     run_id, request_id = _next(ids), _next(ids)
     with session_scope(factory) as session:
+        imported_completed_id = _next(ids)
+        _import_one(
+            session,
+            ids,
+            context,
+            task_id=imported_completed_id,
+            asana_gid="123456790",
+            completed=True,
+        )
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         port = _port(session, ids)
         definition = definition_for("cooked")
@@ -802,6 +812,10 @@ def test_cooked_uses_completion_authority_and_replay_idempotently(workflow_db) -
             section_reference=context["section_id"]
         )
         assert after_page.items == ()
+        cooked_page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
+            section_reference=context["section_id"], status="cooked"
+        )
+        assert [item.task_id for item in cooked_page.items] == [task_id]
 
 
 def test_archive_alone_accepts_private_admin_principal_without_projection(workflow_db) -> None:

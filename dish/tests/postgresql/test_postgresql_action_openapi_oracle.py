@@ -166,6 +166,7 @@ def test_postgresql_discovery_reads_reuse_one_stable_run_id_and_expose_paginatio
     }
     section_schema = postgres_action_argument_schema("section-tasks")
     assert "cursor" in section_schema["properties"]
+    assert section_schema["properties"]["status"]["enum"] == ["incomplete", "cooked"]
     assert "request_id" not in POSTGRES_CLIENT_RUN_ID_SCHEMA
 
 

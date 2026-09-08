@@ -201,6 +201,9 @@ def build_parser() -> JsonArgumentParser:
     section_tasks.add_argument(
         "--cursor", default=None, help="opaque next_cursor from a prior section-tasks page"
     )
+    section_tasks.add_argument(
+        "--status", choices=("incomplete", "cooked"), default=argparse.SUPPRESS
+    )
 
     search = subparsers.add_parser(
         SEARCH_COMMAND,
