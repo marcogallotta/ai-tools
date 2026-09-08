@@ -143,6 +143,7 @@ class RecommendationEvidence:
     supersedes: tuple[str, ...] = ()
     clears: tuple[str, ...] = ()
     reason: str | None = None
+    fact_key: str | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id.strip():
@@ -153,6 +154,8 @@ class RecommendationEvidence:
             raise ValueError("set events require a non-blank value")
         if not self.provenance or any(not item.strip() for item in self.provenance):
             raise ValueError("at least one immutable provenance pointer is required")
+        if self.fact_key is not None and not self.fact_key.strip():
+            raise ValueError("fact_key must be non-blank when supplied")
         _require_aware(self.valid_from, "valid_from")
         if self.expires_at is not None:
             _require_aware(self.expires_at, "expires_at")
@@ -210,6 +213,7 @@ class RecommendationSignal:
     expires_at: datetime | None
     wake_condition: str | None
     reason: str | None
+    fact_key: str | None
 
     @property
     def slot(self) -> tuple[SubjectType, str, SignalType, ScopeKind, str, EligibilityEffect]:
@@ -324,7 +328,7 @@ def compile_recommendation_state(
 
         # Repeated current state in one logical slot is folded only when the new
         # event is allowed to retire the prior signal. Hard eligibility uses its
-        # lifecycle identity as an additional same-fact boundary so one genuine
+        # stable fact identity as an additional same-fact boundary so one genuine
         # blocker cannot erase another merely because their coarse slot matches.
         # Unrelated source authorities remain visible as conflicts. Weaker same-
         # source evidence cannot silently erase stronger state.
@@ -332,7 +336,7 @@ def compile_recommendation_state(
         for signal_id, previous in tuple(active.items()):
             if previous.slot != signal.slot:
                 continue
-            if not _same_hard_lifecycle_fact(previous, signal):
+            if not _same_hard_fact(previous, signal):
                 continue
             can_retire = _source_can_retire(event, previous)
             if not can_retire:
@@ -561,31 +565,30 @@ def _signal_from_event(event: RecommendationEvidence) -> RecommendationSignal:
         expires_at=event.expires_at,
         wake_condition=event.wake_condition,
         reason=event.reason,
+        fact_key=event.fact_key,
     )
 
 
-def _same_hard_lifecycle_fact(
+def _same_hard_fact(
     previous: RecommendationSignal,
     current: RecommendationSignal,
 ) -> bool:
     """Return whether coarse same-slot state is safe to coalesce implicitly.
 
     Soft recommendation state keeps the established slot behavior. Hard eligibility
-    is fail-closed on lifecycle *shape*: only signals with the same lifecycle fate
-    (lifetime/expiry/wake condition) are treated as repeated observations of one
-    fact, so the same authoritative source can still replace its own prior
-    same-slot fact with an updated value/reason. Distinct hard facts with a
-    different lifecycle fate (e.g. a durable blocker vs. a wake-bound blocker for
-    the same candidate/scope) require an explicit clear/supersedes relation to
-    retire one another; comparing on value/reason as well would make ordinary
-    same-source re-assertion of a hard fact fail to fold.
+    is fail-closed on stable fact identity. Only signals carrying the same explicit
+    fact key are treated as repeated observations of one fact, so a source can
+    still update that fact while independent blockers or prerequisites remain
+    active even when their lifecycle shape is identical. Unkeyed hard evidence and
+    distinct keys require an explicit clear/supersedes relation to retire one
+    another.
     """
     if current.eligibility_effect is EligibilityEffect.SOFT:
         return True
     return (
-        previous.lifetime is current.lifetime
-        and previous.expires_at == current.expires_at
-        and previous.wake_condition == current.wake_condition
+        previous.fact_key is not None
+        and current.fact_key is not None
+        and previous.fact_key == current.fact_key
     )
 
 

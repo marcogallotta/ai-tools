@@ -623,6 +623,7 @@ def test_same_source_later_set_still_replaces_same_slot_state() -> None:
         evidence_kind=EvidenceKind.AUTHORITATIVE,
         provenance=("runtime:old-block",),
         eligibility_effect=EligibilityEffect.HARD_BLOCK,
+        fact_key="rendang-availability",
     )
     new_blocker = RecommendationEvidence(
         event_id="runtime-new-block",
@@ -640,6 +641,7 @@ def test_same_source_later_set_still_replaces_same_slot_state() -> None:
         evidence_kind=EvidenceKind.AUTHORITATIVE,
         provenance=("runtime:new-block",),
         eligibility_effect=EligibilityEffect.HARD_BLOCK,
+        fact_key="rendang-availability",
     )
     state = compile_recommendation_state(
         [old_blocker, new_blocker],

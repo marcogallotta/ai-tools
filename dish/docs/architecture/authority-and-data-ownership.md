@@ -46,6 +46,9 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 - Frontend read projections, caches, presentation registries, and browser state cannot become
   task, placement, completion, workflow, or projection authority.
 - Cooking recommendation state cannot become a competing Scratchpad/Profile lifecycle or safety/halal authority; inferred soft evidence cannot create a hard blocker or durable exclusion.
+- Hard recommendation evidence coalesces implicitly only when both observations name the same
+  stable fact key. Independent or unkeyed blockers and prerequisites remain active even when
+  source, candidate, scope, and lifecycle shape match; clearing one event does not retire another.
 
 During pre-cutover observation, the writable frontend security database is physically distinct
 from the PostgreSQL task-observation database. Observation credentials are read-only. Restoring

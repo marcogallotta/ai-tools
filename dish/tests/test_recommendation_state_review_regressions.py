@@ -45,6 +45,7 @@ def _event(
     supersedes: tuple[str, ...] = (),
     wake_condition: str | None = None,
     reason: str | None = None,
+    fact_key: str | None = None,
 ) -> RecommendationEvidence:
     return RecommendationEvidence(
         event_id=event_id,
@@ -65,6 +66,76 @@ def _event(
         supersedes=supersedes,
         wake_condition=wake_condition,
         reason=reason,
+        fact_key=fact_key,
+    )
+
+
+@pytest.mark.parametrize("signal_type", [SignalType.BLOCKER, SignalType.PREREQUISITE])
+def test_clearing_newer_independent_same_shape_hard_fact_preserves_older(
+    signal_type: SignalType,
+) -> None:
+    scope = SignalScope(ScopeKind.CANDIDATE, "rendang")
+    older = _event(
+        "runtime-pedigree-block",
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=signal_type,
+        value="pedigree unresolved",
+        scope=scope,
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        at=T0,
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+        fact_key="pedigree",
+    )
+    newer = _event(
+        "runtime-supplier-block",
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=signal_type,
+        value="supplier unavailable",
+        scope=scope,
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        at=T0 + timedelta(minutes=1),
+        eligibility_effect=EligibilityEffect.HARD_BLOCK,
+        fact_key="supplier",
+    )
+    clear_newer = RecommendationEvidence(
+        event_id="runtime-supplier-clear",
+        kind=EventKind.CLEAR,
+        subject_type=SubjectType.DISH,
+        subject_key="rendang",
+        signal_type=signal_type,
+        value="",
+        scope=scope,
+        strength=Strength.STRONG,
+        confidence=Confidence.HIGH,
+        lifetime=Lifetime.DURABLE,
+        valid_from=T0 + timedelta(minutes=2),
+        source=EvidenceSource.RUNTIME_FACT,
+        evidence_kind=EvidenceKind.AUTHORITATIVE,
+        provenance=("runtime:supplier-clear",),
+        clears=("runtime-supplier-block",),
+    )
+
+    state = compile_recommendation_state(
+        [older, newer, clear_newer],
+        as_of=T0 + timedelta(minutes=3),
+    )
+
+    assert [signal.signal_id for signal in state.signals] == [
+        "runtime-pedigree-block"
+    ]
+    assert state.inactive_signal_ids == (
+        "runtime-supplier-block",
+        "runtime-supplier-clear",
+    )
+    assert (
+        build_recommendation_context(state, candidate_keys=["rendang"])
+        .eligibility_for("rendang")
+        .status
+        is CandidateEligibility.BLOCKED
     )
 
 
