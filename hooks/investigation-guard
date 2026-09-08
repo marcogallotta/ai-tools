@@ -104,10 +104,10 @@ def identity_for_session(sid: str) -> dict[str, Any] | None:
     return value
 
 
-def task_and_role(sid: str) -> tuple[str | None, str | None]:
+def task_role_and_class(sid: str) -> tuple[str | None, str | None, str]:
     identity = identity_for_session(sid)
     if not identity:
-        return None, None
+        return None, None, "unclassified"
     active = identity.get("active_worktree")
     task = identity.get("owning_task_gid") or (active.get("task_gid") if isinstance(active, dict) else None)
     role = identity.get("role")
@@ -115,7 +115,24 @@ def task_and_role(sid: str) -> tuple[str | None, str | None]:
     if task_s and not TASK_GID.fullmatch(task_s):
         task_s = None
     role_s = str(role).strip().lower().replace("_", "-") if isinstance(role, str) else None
-    return task_s, role_s
+    launch = identity.get("launch_provenance")
+    block_review_id = launch.get("block_review_id") if isinstance(launch, dict) else None
+    admitted_narrow_fix = (
+        role_s == "implementation"
+        and isinstance(launch, dict)
+        and launch.get("schema") == "dish-local-implementation-launch-v1"
+        and launch.get("role") == "implementation"
+        and str(launch.get("task_gid") or "") == task_s
+        and str(block_review_id or "").isdigit()
+    )
+    configured = os.environ.get("DISH_INVESTIGATION_CLASS")
+    if configured and SAFE_ID.fullmatch(configured):
+        if configured == "narrow-fix" and not admitted_narrow_fix:
+            return task_s, role_s, "unclassified"
+        return task_s, role_s, configured
+    if admitted_narrow_fix:
+        return task_s, role_s, "narrow-fix"
+    return task_s, role_s, "unclassified"
 
 
 def state_path(host: str, sid: str, task: str | None) -> Path:
@@ -150,7 +167,7 @@ def _lock_file(path: Path):
     return handle
 
 
-def load_state(host: str, sid: str, task: str | None, role: str | None) -> dict[str, Any]:
+def load_state(host: str, sid: str, task: str | None, role: str | None, task_class: str) -> dict[str, Any]:
     path = state_path(host, sid, task)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -163,7 +180,8 @@ def load_state(host: str, sid: str, task: str | None, role: str | None) -> dict[
             "session_id": sid,
             "task_gid": task,
             "role": role,
-            "task_class": os.environ.get("DISH_INVESTIGATION_CLASS", "narrow-fix"),
+            "task_class": task_class,
+            "task_class_admitted": task_class != "unclassified",
             "started_at": utcnow(),
             "grounding_completed_at": None,
             "first_action_at": None,
@@ -178,6 +196,11 @@ def load_state(host: str, sid: str, task: str | None, role: str | None) -> dict[
             "degraded_surfaces": [],
             "observations": [],
         }
+    if "task_class_admitted" not in value:
+        # State produced before task-class admission was explicit inherited the
+        # narrow-fix default. Reclassify it from current mechanical evidence.
+        value["task_class"] = task_class
+        value["task_class_admitted"] = task_class != "unclassified"
     return value
 
 
@@ -344,11 +367,11 @@ def process(payload: dict[str, Any], host: str) -> dict[str, Any] | None:
     sid = session_id(payload)
     if not sid:
         return None
-    task, role = task_and_role(sid)
+    task, role, task_class = task_role_and_class(sid)
     path = state_path(host, sid, task)
     lock = _lock_file(path.with_suffix(path.suffix + ".lock"))
     try:
-        state = load_state(host, sid, task, role)
+        state = load_state(host, sid, task, role, task_class)
         category, detail = classify(payload, state)
         now = utcnow()
         tool = str(payload.get("tool_name") or payload.get("toolName") or "") or "Bash"
@@ -370,7 +393,12 @@ def process(payload: dict[str, Any], host: str) -> dict[str, Any] | None:
                 state["degraded_surfaces"].append(marker)
 
         policy = load_policy(host, str(state.get("task_class") or "standard"))
-        hard_qualified = bool(task and policy and tool in set(policy.get("qualified_tools") or []))
+        hard_qualified = bool(
+            task
+            and state.get("task_class_admitted")
+            and policy
+            and tool in set(policy.get("qualified_tools") or [])
+        )
         decision: dict[str, Any] | None = None
 
         if category == "investigation" and not state.get("grounding_completed_at"):

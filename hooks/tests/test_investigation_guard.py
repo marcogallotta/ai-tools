@@ -15,10 +15,25 @@ def isolate_ambient_codex_identity(monkeypatch):
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
 
 
-def _identity(root: Path, session: str = "session-1", task: str = "1234567890", role: str = "implementation") -> None:
+def _identity(
+    root: Path,
+    session: str = "session-1",
+    task: str = "1234567890",
+    role: str = "implementation",
+    *,
+    block_review_id: str | None = None,
+) -> None:
     path = root / "agents" / f"{session}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"agent_id": session, "owning_task_gid": task, "role": role}) + "\n")
+    identity = {"agent_id": session, "owning_task_gid": task, "role": role}
+    if block_review_id is not None:
+        identity["launch_provenance"] = {
+            "schema": "dish-local-implementation-launch-v1",
+            "role": "implementation",
+            "task_gid": task,
+            "block_review_id": block_review_id,
+        }
+    path.write_text(json.dumps(identity) + "\n")
 
 
 def _policy(root: Path, *, host: str = "claude", task_class: str = "standard", cap: int = 2,
@@ -126,9 +141,9 @@ def test_pre_grounding_discovery_cannot_exhaust_narrow_cap(investigation_guard, 
     assert _state(investigation_guard, root)["investigation_count"] == 0
 
 
-def test_repository_default_policy_hard_closes_fresh_codex_host(investigation_guard, monkeypatch, tmp_path):
+def test_repository_default_policy_hard_closes_fresh_codex_narrow_fix(investigation_guard, monkeypatch, tmp_path):
     root = tmp_path / "state"
-    _identity(root)
+    _identity(root, block_review_id="5141522682")
     monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(root))
     monkeypatch.delenv("DISH_INVESTIGATION_CALIBRATION", raising=False)
     monkeypatch.delenv("DISH_INVESTIGATION_CLASS", raising=False)
@@ -140,6 +155,51 @@ def test_repository_default_policy_hard_closes_fresh_codex_host(investigation_gu
     denied = investigation_guard.process(_payload("Bash", command="rg second /repo"), "codex")
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert _state(investigation_guard, root, host="codex")["task_class"] == "narrow-fix"
+
+
+@pytest.mark.parametrize("role", ("review", "audit", "coordinator", "implementation"))
+def test_unclassified_role_does_not_inherit_narrow_fix_cap(
+    investigation_guard, monkeypatch, tmp_path, role
+):
+    root = tmp_path / "state"
+    _identity(root, role=role)
+    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(root))
+    monkeypatch.delenv("DISH_INVESTIGATION_CALIBRATION", raising=False)
+    monkeypatch.delenv("DISH_INVESTIGATION_CLASS", raising=False)
+    monkeypatch.setattr(investigation_guard, "codex_applies", lambda payload: True)
+
+    role_contract = f"/repo/dish/docs/agents/{role}.md"
+    for path in ("/repo/CLAUDE.md", "/repo/dish/docs/agents/index.md", role_contract):
+        assert investigation_guard.process(_payload("Bash", command=f"cat {path}"), "codex") is None
+    for term in ("first", "second", "third"):
+        assert investigation_guard.process(_payload("Bash", command=f"git show {term}"), "codex") is None
+    state = _state(investigation_guard, root, host="codex")
+    assert state["task_class"] == "unclassified"
+    assert state["task_class_admitted"] is False
+    assert "codex:Bash:observe-only" in state["degraded_surfaces"]
+
+
+@pytest.mark.parametrize("role", ("review", "implementation"))
+def test_unadmitted_role_ignores_narrow_fix_environment(
+    investigation_guard, monkeypatch, tmp_path, role
+):
+    root = tmp_path / "state"
+    _identity(root, role=role)
+    policy = _policy(root, host="codex", task_class="narrow-fix", cap=1, tools=("Bash",))
+    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(root))
+    monkeypatch.setenv("DISH_INVESTIGATION_CALIBRATION", str(policy))
+    monkeypatch.setenv("DISH_INVESTIGATION_CLASS", "narrow-fix")
+    monkeypatch.setattr(investigation_guard, "codex_applies", lambda payload: True)
+
+    for path in (
+        "/repo/CLAUDE.md",
+        "/repo/dish/docs/agents/index.md",
+        f"/repo/dish/docs/agents/{role}.md",
+    ):
+        assert investigation_guard.process(_payload("Bash", command=f"cat {path}"), "codex") is None
+    for term in ("first", "second"):
+        assert investigation_guard.process(_payload("Bash", command=f"git show {term}"), "codex") is None
+    assert _state(investigation_guard, root, host="codex")["task_class"] == "unclassified"
 
 
 def test_repository_default_policy_matches_current_trace_derivation(investigation_guard):
