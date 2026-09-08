@@ -78,9 +78,9 @@ for its retained product paths:
   identity.
 
 The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `search`,
-`cooked-updates`, `cook-logs`, `record-cook-log`, `read`, `proposals`, `apply-proposal`,
+`query`, `cooked-updates`, `cook-logs`, `record-cook-log`, `read`, `proposals`, `apply-proposal`,
 `safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `renew-lease`, and
-`cooked`. `cooked-updates` is the supported incremental cooked-history discovery surface: it returns
+`cooked`. `query` is an exact alias of `cooked-updates`. `cooked-updates` is the supported incremental cooked-history discovery surface: it returns
 only Dishes that are currently cooked when a page is evaluated and whose current cooked transition
 or an immutable cook-log entry qualifies in the fixed `[since, through)` window. The first page
 acquires the active authority-generation row exclusively before minting authoritative service-time

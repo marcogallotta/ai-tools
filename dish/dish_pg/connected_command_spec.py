@@ -1,6 +1,6 @@
 """Transport-neutral contract for Dish connected-agent commands.
 
-This registry owns the ordinary 19-command connected surface used by MCP and,
+This registry owns the ordinary connected command surface used by MCP and,
 during migration, by transport adapters. PostgreSQL remains workflow/replay
 authority; this module describes and validates the connected contract only.
 """
