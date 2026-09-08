@@ -677,6 +677,39 @@ def _settle_failed_claim(
     return post_owner
 
 
+def _settle_failed_claim_reconciled(**kwargs: Any) -> str | None:
+    """Settle locally, reconciling one ambiguous atomic-persistence failure.
+
+    ``atomic_write_json`` can fail before or after replace/fsync.  Readback makes
+    the outcome explicit; retry is safe only while the exact failed token is
+    still present.  Any third state remains a hard ownership ambiguity.
+    """
+    try:
+        return _settle_failed_claim(**kwargs)
+    except Exception as first_error:
+        task_gid = str(kwargs["task_gid"])
+        branch = str(kwargs["branch"])
+        lineage_id = str(kwargs["lineage_id"])
+        token = str(kwargs["token"])
+        agent_id = str(kwargs["agent_id"])
+        previous = kwargs.get("previous")
+        baseline_state_owner = kwargs.get("baseline_state_owner")
+        current = read_claim(task_gid, branch, lineage_id)
+        state_file = state_path_for_branch(task_gid, branch)
+        state = read_json_object(state_file, "task worktree state") if state_file is not None else None
+        post_owner = owner_agent_id(state) if state is not None else None
+        rollback_owner = previous.get("agent_id") if previous is not None else baseline_state_owner
+        if post_owner != agent_id and current == previous:
+            return rollback_owner
+        if post_owner != agent_id and previous is None and current is None:
+            return rollback_owner
+        if post_owner == agent_id and current is not None and current.get("token") == token and current.get("released_at") is not None:
+            return agent_id
+        if current is not None and current.get("token") == token:
+            return _settle_failed_claim(**kwargs)
+        raise first_error
+
+
 class _HeldClaimLocks:
     def __init__(self, paths: list[Path]):
         self.paths = sorted(set(paths), key=str)
@@ -771,7 +804,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     launch_identity_bound = False
     registry_claimed = False
     pr_registry_acquired = False
-    prior_registry_owner: str | None = None
+    prior_registry_claim: dict[str, Any] | None = None
     refresh_rollback: tuple[Path, dict[str, Any], str] | None = None
     refresh_committed = False
     refresh_transition: dict[str, Any] | None = None
@@ -786,7 +819,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         )
         if args.takeover and previous is not None and previous.get("token") != expected_claim:
             fail("OWNER_CLAIM_CHANGED", "takeover expected claim does not match the current durable local claim generation")
-        registry_sha, registry_generation, prior_registry_owner = claim_registry_ownership(
+        registry_sha, registry_generation, prior_registry_claim = claim_registry_ownership(
             runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
             sha=resolved_sha, marker=resolved_marker, agent_id=agent_id, token=token,
             takeover=bool(args.takeover), expected_claim=expected_claim,
@@ -906,7 +939,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         try:
             completed = subprocess.run(argv, cwd=repo.source_top, env=env, check=False, pass_fds=tuple(locks.fds))
         except OSError as exc:
-            resolved_owner = _settle_failed_claim(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
+            resolved_owner = _settle_failed_claim_reconciled(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
             _restore_unaccepted_post_refresh_transition(
                 runner,
                 refresh_rollback=refresh_rollback,
@@ -917,10 +950,14 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 restore_identity(agent_id, prior_identity)
             if pr_registry_acquired:
                 release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
-            release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token, owner_agent_id=resolved_owner)
+            release_registry_claim(
+                runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
+                token=token,
+                restore_claim=prior_registry_claim if resolved_owner != agent_id else None,
+            )
             fail("CLAIM_COMMAND_FAILED", f"could not launch claimed local-agent command: {exc}")
         if completed.returncode != 0:
-            resolved_owner = _settle_failed_claim(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
+            resolved_owner = _settle_failed_claim_reconciled(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
             _restore_unaccepted_post_refresh_transition(
                 runner,
                 refresh_rollback=refresh_rollback,
@@ -935,7 +972,11 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                     restore_identity(agent_id, prior_identity)
             if pr_registry_acquired:
                 release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
-            release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token, owner_agent_id=resolved_owner)
+            release_registry_claim(
+                runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
+                token=token,
+                restore_claim=prior_registry_claim if resolved_owner != agent_id else None,
+            )
             return completed.returncode
         current = read_claim(task_gid, branch, lineage_id)
         if current is None or current.get("token") != token:
@@ -967,7 +1008,11 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 if reg is not None:
                     _, marker = reg
                     if marker.get("lineage_id") == lineage_id and marker.get("claim_token") == token and marker.get("claim_active"):
-                        release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token, owner_agent_id=prior_registry_owner)
+                        release_registry_claim(
+                            runner, repo, task_gid=task_gid, branch=branch,
+                            lineage_id=lineage_id, token=token,
+                            restore_claim=prior_registry_claim,
+                        )
         finally:
             if launch_identity_bound:
                 restore_identity(agent_id, prior_identity)
