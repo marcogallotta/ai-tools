@@ -571,18 +571,21 @@ def _same_hard_lifecycle_fact(
     """Return whether coarse same-slot state is safe to coalesce implicitly.
 
     Soft recommendation state keeps the established slot behavior. Hard eligibility
-    is fail-closed: only signals with the same value and lifecycle fate are treated
-    as repeated observations of one fact. Distinct hard facts require an explicit
-    clear/supersedes relation to retire one another.
+    is fail-closed on lifecycle *shape*: only signals with the same lifecycle fate
+    (lifetime/expiry/wake condition) are treated as repeated observations of one
+    fact, so the same authoritative source can still replace its own prior
+    same-slot fact with an updated value/reason. Distinct hard facts with a
+    different lifecycle fate (e.g. a durable blocker vs. a wake-bound blocker for
+    the same candidate/scope) require an explicit clear/supersedes relation to
+    retire one another; comparing on value/reason as well would make ordinary
+    same-source re-assertion of a hard fact fail to fold.
     """
     if current.eligibility_effect is EligibilityEffect.SOFT:
         return True
     return (
-        previous.value == current.value
-        and previous.lifetime is current.lifetime
+        previous.lifetime is current.lifetime
         and previous.expires_at == current.expires_at
         and previous.wake_condition == current.wake_condition
-        and previous.reason == current.reason
     )
 
 
