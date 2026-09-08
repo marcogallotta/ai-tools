@@ -13,6 +13,8 @@ AUTH_MARKER = "dish-fast-track-authorization:v1"
 _AUTH_RE = re.compile(rf"<!--\s*{re.escape(AUTH_MARKER)}\s+(?P<payload>\{{.*\}})\s*-->")
 _MODES = {"TRIVIAL", "FAST-TRACK"}
 _VALIDATION = {"meaningful-readback", "executable-proof"}
+_FAST_TRACK_TRIGGER_RE = re.compile(r"\b(?:fastrack|fast(?:[\s-]?track))\b", re.IGNORECASE)
+_DIRECT_MAIN_RE = re.compile(r"\b(?:right|direct(?:ly)?)\s+to\s+main\b", re.IGNORECASE)
 
 # These paths change shared authority, runtime/database semantics, deployment/CI,
 # or the fast-track guard itself. A per-change shortcut fails closed instead of
@@ -48,6 +50,25 @@ class FastTrackAuthorization:
     marco_words: str
     skip_review: bool
     validation: str
+
+
+def classify_fast_track_words(words: str) -> str:
+    """Classify Marco's natural route phrase without treating FAST-TRACK as PR by default."""
+    if not isinstance(words, str) or (
+        _FAST_TRACK_TRIGGER_RE.search(words) is None and _DIRECT_MAIN_RE.search(words) is None
+    ):
+        fail("FAST_TRACK_ROUTE_REQUIRED", "words do not contain a fast-track trigger or a direct-to-main route")
+    normalized = " ".join(words.lower().replace("-", " ").split())
+    routes = set()
+    if re.search(r"\b(?:to|right to|direct(?:ly)? to) main\b", normalized):
+        routes.add("main")
+    if re.search(r"\bto (?:pr|pull request)\b", normalized):
+        routes.add("pr")
+    if re.search(r"\bto (?:testing|test)\b", normalized):
+        routes.add("testing")
+    if len(routes) > 1:
+        fail("FAST_TRACK_ROUTE_AMBIGUOUS", f"fast-track words name multiple destinations: {sorted(routes)}")
+    return next(iter(routes), "recommend")
 
 
 def _fallback(reason: str) -> None:

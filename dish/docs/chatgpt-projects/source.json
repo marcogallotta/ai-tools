@@ -35,7 +35,7 @@
       "external/current-main defect while pursuing an existing objective": [
         "dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission"
       ],
-      "fast-track": [
+      "fastrack / fast-track / fast track / direct or right to main": [
         "dish/docs/agents/trivial-fast-track.md#Procedure"
       ],
       "task dismissal / already-fixed / no-op conclusion": [
@@ -1684,7 +1684,7 @@
       "id": "fast-track-process-overlay",
       "impact": "additive",
       "surface": "authority",
-      "text": "Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`."
+      "text": "Fast-track: named route runs; bare asks once; read procedure."
     },
     {
       "action_boundaries": [

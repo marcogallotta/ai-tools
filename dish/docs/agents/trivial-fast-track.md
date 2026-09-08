@@ -1,141 +1,94 @@
-# TRIVIAL / FAST-TRACK: explicit per-change lifecycle shortcuts
+# Fast-track: testing, PR, or main
 
-This is the standing procedure for two narrow, per-change exceptions to the normal
-`implementation branch + commit -> GitHub pull request -> review of the exact PR head ->
-integration of that reviewed head` lifecycle. It exists for tiny, isolated developer-tool,
-docs, or process edits where the normal lifecycle turns a five-minute change into hours of
-handoffs and review churn for no proportionate safety benefit.
-
-This document replaces the earlier `MARCO OVERRIDE — FAST-TRACK PROCESS` ChatGPT Project
-overlay (`fast-track-process.md` / `fast-track-gates.json`), which was never used. There is
-now exactly one "fast-track" meaning in this repository.
-
-## Approved rule
-
-Marco decided this rule on 2026-08-15 (Asana task `1217454324557309`); this document is its
-standing-contract projection.
-
-Agents never self-authorize either path. It is available only when Marco explicitly
-authorizes `TRIVIAL` or `FAST-TRACK` for the specific change.
-
-### TRIVIAL
-
-Use only for genuinely tiny, non-semantic, isolated, low-risk developer-tool/docs/process
-edits when Marco explicitly authorizes `TRIVIAL` for that exact change.
-
-- may skip PR and formal Review for that exact change;
-- use isolated owned worktree/branch mechanics (`tools/agent-worktree`), never the dirty
-  primary checkout;
-- enforce exact bounded changed paths;
-- run the cheapest deterministic validation that directly proves the edit;
-- authoritative readback after the write;
-- no product/database/runtime/production semantics, migration, security boundary, shared
-  high-consequence control plane, or ambiguous change.
-
-### FAST-TRACK
-
-Use only when Marco explicitly authorizes `FAST-TRACK` for that exact change.
-
-- isolated owned branch/worktree;
-- focused validation only;
-- PR remains the default durable publication path;
-- formal Review may be skipped only when Marco explicitly says to skip Review for that
-  specific change;
-- no broad/full-suite ritual unless the changed invariant actually selects it.
-
-### Fail closed
-
-If scope grows, changed paths escape the declared boundary, or the classification becomes
-ambiguous, stop the fast path and route the remainder to the normal lifecycle. `TRIVIAL`
-also stops if the change reveals semantic/high-consequence behavior. `FAST-TRACK` may cover
-such executable/high-consequence behavior only when the exact grant selects
-`executable-proof` and the required focused proof is obtained before landing; otherwise it
-falls back to the normal lifecycle. Do not silently widen the authorization.
+Fast-track is an execution-priority instruction for one bounded correction. It removes workflow
+latency; it does not make the agent careless, widen scope, or turn Marco into the workflow
+coordinator. Destination controls the route, regardless of whether Marco writes `fastrack`,
+`fast-track`, or `fast track`.
 
 ## Procedure
 
-1. Marco explicitly names `TRIVIAL` or `FAST-TRACK` for the specific change. This is a
-   one-time exact-change authorization; agents never infer or mint it themselves.
-2. Before shortcut mutation, an authorized orchestration surface records that exact grant as
-   one durable Asana story on the owning task using this marker (compact JSON is canonical):
+### Route selection
 
-   ```text
-   <!-- dish-fast-track-authorization:v1 {"base_head":"<40-char current main SHA>","base_ref":"refs/heads/main","branch":"agent/<owned-branch>","marco_words":"<Marco's exact words>","mode":"TRIVIAL|FAST-TRACK","paths":["<exact/repository-relative/path>"],"skip_review":true|false,"task":"<gid>","validation":"meaningful-readback|executable-proof"} -->
-   ```
+- `fastrack to main`, `fast-track/direct/right to main`, or an equivalent explicit destination
+  authorizes immediate direct publication to `main` for the exact bounded correction.
+- `fastrack to PR` authorizes immediate branch/PR publication followed by fresh independent
+  exact-head Review and Integration without waiting for ordinary CI.
+- `fastrack to testing` authorizes the smallest reversible change on the active local testing
+  surface, with no commit or push to `main`; after real-use testing, capture the coherent result on
+  an isolated branch and continue through the PR route.
+- Bare `fastrack` requires the agent to inspect urgency, consequence, reversibility, and desired
+  feedback speed, recommend one destination with one concise consequence, and ask once. Marco's
+  answer completes authorization.
 
-   `skip_review=true` is mandatory for `TRIVIAL`; for `FAST-TRACK` it is true only when
-   Marco explicitly authorized skipping Review for that exact change. `validation` records the
-   risk-selected proving boundary: `meaningful-readback` for docs/wording/comments/formatting/
-   non-executable policy/metadata/mechanical edits when tests add no meaningful evidence, or
-   `executable-proof` when product/runtime/infrastructure/migration/persistence/service/config/
-   deployment behavior can materially break and a focused test genuinely proves the invariant. The marker is the
-   executable capability record. `tools/agent-worktree` can consume an existing marker but
-   has no command that creates one, so local agents cannot self-authorize the shortcut.
-3. Create or resume the normal task-owned isolated `agent/*` worktree/branch. The shortcut
-   never permits mutation from the shared primary checkout.
-4. Commit through the guarded command, naming the pre-existing authorization story:
+An explicit destination is the complete route authorization. Do not ask again. The agent derives
+task, path, branch, base, validation, Review, and handoff mechanics. If the named destination seems
+materially inconsistent with the requested outcome, warn once with the concrete consequence and
+ask `Are you sure?`; after confirmation or a direction to continue, execute without reopening it.
 
-   ```sh
-   tools/agent-worktree fast-track-commit \
-     --task <gid> --authorization-story <story-gid> -m '<message>'
-   ```
+### Immediate-action latch
 
-   The command rereads the live story and current `refs/heads/main`, requires task/branch/base
-   identity to match, stages only the actual changed paths, and refuses any path outside the
-   authorized set. Path escape, stale base, or ambiguity returns
-   `FAST_TRACK_FALLBACK_REQUIRED` for either mode. `TRIVIAL` additionally falls back for
-   protected/high-consequence paths; `FAST-TRACK` may cover executable/high-consequence
-   surfaces only under the risk-selected `executable-proof` rule in step 5. Stop the shortcut
-   on any fallback rather than widening the grant.
-5. Run the cheapest meaningful proving boundary selected by the durable grant. `TRIVIAL` remains
-   non-product/non-runtime and uses `meaningful-readback`. `FAST-TRACK` does **not** impose a
-   universal test gate: docs, wording, comments, formatting, non-executable policy, metadata-only,
-   and comparable mechanical edits may use meaningful readback when executable tests add no
-   evidence. Product/runtime/infrastructure/migration/persistence/service/config/deployment and
-   similar executable or high-consequence changes use `executable-proof`: the narrowest focused
-   unit/contract/integration test that exercises the accepted invariant, or isolated/TEST
-   real-transport proof when connected runtime identity/state is material. “Tests exist” is not
-   proof; the selected evidence must exercise the intended behavior. Failed evidence stays failed.
-6. Publish through the guarded command and authoritatively read back the resulting ref:
+Latch the newest instruction as `{action, exclusions, completion condition}`. It atomically
+replaces conflicting older objectives. A direct question or correction preempts pending tool work.
+Before the requested first edit/publication, do not create an Asana task or authorization story,
+prepare a worktree/test plan/PR/Review, regenerate unrelated artifacts, run tests, or inspect
+adjacent consistency. Reuse already-ready machinery only when it is faster. Produce downstream
+durable identity after the first requested artifact when Review or Integration needs it.
 
-   ```sh
-   tools/agent-worktree fast-track-publish \
-     --task <gid> --authorization-story <story-gid>
-   ```
+### Fast-track to main
 
-   - `TRIVIAL`: requires exactly one commit from the authorized current-main base and a clean
-     bounded worktree, then non-force fast-forwards `refs/heads/main` to that exact commit and
-     verifies the remote ref. No PR, formal Review, or separate Integration step exists for
-     that exact authorized change.
-   - `FAST-TRACK`: publishes the owned branch through the normal `agent-worktree publish`
-     safety path. A PR remains the durable publication surface. Formal Review is omitted only
-     when the exact marker records `skip_review=true`; final Integration remains the normal
-     separately authorized action. Before landing, Integration requires the exact risk-selected
-     validation: meaningful readback where tests add no evidence, or focused executable proof for
-     product/runtime and comparable high-consequence behavior.
-     On local Claude Code/Codex, when Review is not skipped and subagents are available, dispatch
-     the fresh independent Reviewer immediately after publication and carry a `MERGE` verdict
-     straight through the authorized local Integration path. Do not stop for Marco to relay the
-     Review or Integration handoff. Observe CI in parallel and apply the Integration contract's
-     candidate-failure/baseline-debt distinction; log disproportionate CI work as Development
-     Workflow Friction without turning that capture into a landing gate.
+1. Resolve current remote `main`, the exact path set, and the smallest coherent change.
+2. Make only that change. For agentic/generated instructions, coherence includes canonical source
+   plus every owned regenerated output; regeneration is artifact production, not testing.
+3. Commit and push directly with non-force expected-head protection. Refuse concurrent `main`
+   movement instead of overwriting it.
+4. Read back remote `main` and report the landing immediately.
+5. Observe CI afterward. Any tests, cleanup, formatting, adjacent work, or attributable repair goes
+   to an isolated PR unless Marco separately fast-tracks that repair.
 
-## Mechanical enforcement
+There is no PR, formal Review, pre-landing test, or CI wait on this route.
 
-The repository-owned bridge lives inside `tools/agent-worktree`; it reuses the existing
-worktree identity, claim, commit, publish, and remote-ref primitives rather than creating a
-second ownership system. It enforces:
+### Fast-track to PR
 
-- pre-existing explicit authorization only; no local/self authorization;
-- exact task + owned branch + `refs/heads/main` base identity;
-- exact bounded changed paths and canonical path syntax;
-- refusal of the shared primary checkout for both modes and protected/high-consequence paths
-  for `TRIVIAL`; `FAST-TRACK` high-consequence eligibility is governed by the exact grant's
-  `executable-proof` requirement before landing;
-- stale-base/concurrent-movement refusal;
-- fail-closed return to the normal lifecycle on any scope or identity escape; and
-- authoritative remote readback after publication.
+1. Create the smallest coherent branch commit and publish the PR without pre-publication test
+   ceremony. For agentic/generated instructions, regenerate the complete owned set first.
+2. Record the exact route grant and candidate identity on the durable PR/task surface without
+   asking Marco for workflow fields.
+3. Dispatch a fresh independent Reviewer for the exact head. The Review records
+   `PRE-INTEGRATION TESTS TO RUN: NONE` unless Marco explicitly requested a pre-landing test.
+4. A `MERGE` verdict proceeds directly through exact-head Integration without waiting for ordinary
+   CI. A semantic `BLOCK` returns only the accepted blocker to Implementation.
+5. Observe CI after landing and repair only candidate-attributable failures on an isolated PR.
 
-The procedure remains deliberately narrow. Expanding eligibility or weakening these guards
-is a standing lifecycle change and goes through the normal Implementation -> independent
-Review -> Integration path.
+### Fast-track to testing
+
+1. Snapshot the exact primary-checkout pre-state for the bounded path set, then make the smallest
+   reversible coherent change there. Do not commit or push `main`.
+2. If agentic/generated instructions are involved, change canonical source and regenerate the full
+   owned output set on that testing surface.
+3. Let Marco test the behavior in real use. Do not substitute broad test ceremony.
+4. When testing finishes, preserve the exact tested delta, restore the primary checkout to its
+   snapshotted pre-state, apply the delta to an isolated owned branch, and continue through
+   fast-track to PR. Never discard unrelated pre-existing changes.
+
+### Live-target evidence
+
+When correctness depends on an unknown host-visible integration, selected tool identity, prompt,
+generated instruction, runtime fact, or target-agent behavior, repository prose and transport
+labels are not evidence. Proactively run the smallest authorized live target-agent/environment
+probe, or propose that single probe when only Marco can perform it. This rule is especially
+important in fast-track and applies to ordinary work too. It never licenses a broad suite. If Marco
+directs proceeding without the probe, proceed and record the uncertainty truthfully.
+
+### Post-landing boundary
+
+Main contains only the coherent fast-tracked correction. Post-landing testing, test fixes, cleanup,
+formatting, generated material unrelated to coherence, and adjacent improvements stay off `main`.
+Monitoring distinguishes candidate-caused, baseline, infrastructure, unrelated, and ambiguous
+failures. Only candidate-caused failures belong to this correction.
+
+## Mechanical minimum
+
+Fast-track retains exact bounded paths, one change identity, canonical generation ownership,
+non-force compare-and-set publication, concurrent-movement refusal, truthful evidence, and
+authoritative readback. These are agent-owned mechanics, not pre-action forms or operator gates.
+An explicit Marco `override` still supersedes this repository procedure for the exact action.

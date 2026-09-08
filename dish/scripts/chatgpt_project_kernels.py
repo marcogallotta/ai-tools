@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render/version/evaluate canonical ChatGPT Project kernels."""
 from __future__ import annotations
-import argparse, copy, hashlib, inspect, json, re, shlex, subprocess, sys
+import argparse, copy, hashlib, inspect, json, os, re, shutil, shlex, subprocess, sys, tempfile
 from pathlib import Path
 from typing import Any
 DISH_ROOT=Path(__file__).resolve().parents[1]; REPO_ROOT=DISH_ROOT.parent; PROJECT_DIR=DISH_ROOT/'docs'/'chatgpt-projects'
@@ -780,6 +780,7 @@ REQUIRED_EVAL_IDS|={'review-v4-author-falsification-before-handoff','review-v4-d
 REQUIRED_EVAL_IDS|={'human-review-live-choice-resolved-now-no-reask','human-review-paraphrase-is-not-substantive','human-review-explicit-not-now-parks-exact-revision','human-review-needs-human-review-move-cannot-end-at-queued','human-review-material-delta-resurfaces-live','human-review-routine-reversible-work-stays-agent-owned','human-review-resolved-or-superseded-parked-item-does-not-resurface'}
 REQUIRED_EVAL_IDS|={'scope-guardrail-design-proportionality-signoff','scope-guardrail-design-remedy-nonauthoritative','scope-guardrail-code-defect-within-design','scope-guardrail-code-review-new-design-requirement','scope-guardrail-fix-agent-obeys-classified-blocker','scope-guardrail-focused-rereview','scope-guardrail-non-pilot-preserves-standing-behavior'}
 REQUIRED_EVAL_IDS|={'durable-before-terminal-design-review-verdict','durable-before-terminal-projection-required','durable-before-terminal-stale-generation-race','durable-before-terminal-fallback-available','durable-before-terminal-all-routes-exhausted','durable-before-terminal-continue-actionable-work','durable-before-terminal-separate-worker-running','durable-before-terminal-stronger-clearance-evidence'}
+REQUIRED_EVAL_IDS|={'fast-track-main-destination','fast-track-pr-destination','fast-track-testing-destination','fast-track-bare-recommends','fast-track-unknown-live-target-probe'}
 ATTENTION_EVAL_IDS={'attention-depth-is-session-persistent','attention-minimum-packet-survives-50-percent','attention-progressive-disclosure-at-200-percent','attention-recovery-interaction'}
 ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field'}
 def _eval_payload():return _read_json(EVALS_PATH)
@@ -952,11 +953,38 @@ def command_reconcile(base_manifest:Path,source:Path,output:Path,base_source:Pat
   candidate,cs=_load_manifest_source_files(candidate_manifest,candidate_source); out=reconcile_manifests(base,bs,candidate,cs,target)
  _write_manifest(output,out); print(f"WROTE {output} canonical_version={out['canonical_version']}")
 def command_refresh(base_manifest:Path,source:Path,base_source:Path|None=None,candidate_manifest:Path|None=None,candidate_source:Path|None=None):
+ global PROJECT_DIR,MANIFEST_PATH,ROLE_INDEX_PATH,ROOT_INSTRUCTIONS_PATH,CLAUDE_OPERATOR_STYLE_PATH
  if source.resolve()!=PROJECT_DIR.joinpath('source.json').resolve(): raise KernelError('refresh requires the canonical docs/chatgpt-projects/source.json')
- command_reconcile(base_manifest,source,MANIFEST_PATH,base_source,candidate_manifest,candidate_source)
- render_all(check=False)
- command_check()
- m,s=load_canonical()
+ real_project=PROJECT_DIR; real_manifest=MANIFEST_PATH; real_role_index=ROLE_INDEX_PATH; real_root=ROOT_INSTRUCTIONS_PATH; real_style=CLAUDE_OPERATOR_STYLE_PATH
+ stage_root=Path(tempfile.mkdtemp(prefix='dish-project-kernel-refresh-')); stage_project=stage_root/'chatgpt-projects'; stage_project.mkdir()
+ stage_manifest=stage_project/'manifest.json'; stage_source=stage_project/'source.json'; shutil.copy2(source,stage_source)
+ stage_role_index=stage_root/'index.md'; stage_root_instructions=stage_root/'CLAUDE.md'; stage_style=stage_root/'dish-operator.md'
+ shutil.copy2(real_role_index,stage_role_index); shutil.copy2(real_root,stage_root_instructions); shutil.copy2(real_style,stage_style)
+ try:
+  PROJECT_DIR=stage_project; MANIFEST_PATH=stage_manifest; ROLE_INDEX_PATH=stage_role_index; ROOT_INSTRUCTIONS_PATH=stage_root_instructions; CLAUDE_OPERATOR_STYLE_PATH=stage_style
+  command_reconcile(base_manifest,stage_source,stage_manifest,base_source,candidate_manifest,candidate_source)
+  render_all(check=False); command_check(); m,s=load_canonical()
+ except Exception:
+  shutil.rmtree(stage_root,ignore_errors=True)
+  raise
+ finally:
+  PROJECT_DIR=real_project; MANIFEST_PATH=real_manifest; ROLE_INDEX_PATH=real_role_index; ROOT_INSTRUCTIONS_PATH=real_root; CLAUDE_OPERATOR_STYLE_PATH=real_style
+ pairs=[(stage_manifest,real_manifest),(stage_role_index,real_role_index),(stage_root_instructions,real_root),(stage_style,real_style)]
+ pairs += [(p,real_project/p.relative_to(stage_project)) for p in sorted(stage_project.rglob('*')) if p.is_file() and p not in {stage_manifest,stage_source}]
+ def display(target): return target.relative_to(REPO_ROOT).as_posix() if target.is_relative_to(REPO_ROOT) else str(target)
+ replaced=[]
+ try:
+  for staged,target in pairs:
+   target.parent.mkdir(parents=True,exist_ok=True); fd,tmp=tempfile.mkstemp(prefix=f'.{target.name}.refresh-',dir=target.parent)
+   try:
+    with os.fdopen(fd,'wb') as handle: handle.write(staged.read_bytes()); handle.flush(); os.fsync(handle.fileno())
+    os.replace(tmp,target); replaced.append(display(target))
+   finally:
+    if os.path.exists(tmp): os.unlink(tmp)
+ except OSError as e:
+  pending=[display(target) for _,target in pairs if display(target) not in replaced]
+  raise KernelError(f'refresh replacement I/O failure: {e}; replaced={replaced}; not_replaced={pending}; staged_recovery={stage_root}') from e
+ shutil.rmtree(stage_root)
  print('PASTE-READY PROJECT KERNELS')
  for role,path in sorted(generated_paths(m,s).items()): print(f'{role}: {path}')
 def _write_json(p,v):p.write_text(json.dumps(v,indent=2,sort_keys=True)+'\n')

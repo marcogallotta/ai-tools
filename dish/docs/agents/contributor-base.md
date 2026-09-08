@@ -37,6 +37,12 @@ Do not invent new workflow mechanisms, coordination state, or authority boundari
 
 Do not claim validation, merge, deployment, or runtime state without authoritative evidence. Follow the assigned role contract for required evidence and handoff.
 
+When correctness depends on an unknown host-visible integration, selected tool identity, prompt,
+generated instruction, runtime fact, or target-agent behavior, repository wording and transport
+labels are not evidence. Proactively run the smallest authorized live target-agent/environment
+probe, or propose that one probe when only Marco can perform it. Do not inflate it into a broad
+suite. If Marco directs proceeding without the probe, preserve the uncertainty truthfully.
+
 ## Development Workflow Friction capture
 
 Repository-modifying roles must be able to discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. When non-blocking development-process friction appears: **notice -> dedupe -> log/update -> continue**. Search the Friction project first; update a matching item or create an unprioritized `Inbox` item with what/where, why it matters, evidence/reproduction, role/host, and suggested next action; then continue the assigned scope.

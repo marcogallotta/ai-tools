@@ -26,20 +26,23 @@ def test_retired_project_overlay_has_no_registry_or_renderer_api():
         assert not hasattr(kernels,name)
 
 
-def test_fast_track_policy_routes_to_the_current_trivial_procedure():
+def test_fast_track_policy_routes_by_destination_in_every_kernel():
     moved=(DISH_ROOT/'docs'/'agents'/'fast-track-process.md').read_text()
     procedure=(DISH_ROOT/'docs'/'agents'/'trivial-fast-track.md').read_text()
     assert 'never-used ChatGPT Project gate-overlay mechanism' in moved
-    assert 'TRIVIAL' in procedure and 'FAST-TRACK' in procedure
+    for phrase in ('fastrack to main', 'fastrack to PR', 'fastrack to testing', 'Bare `fastrack`'):
+        assert phrase in procedure
 
     manifest,source=kernels.load_canonical()
     for role in source['roles']:
         rendered=kernels.render_role(manifest,source,role)
-        assert 'Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`.' in rendered
+        assert 'Fast-track: named route runs; bare asks once; read procedure.' in rendered
+        assert 'fastrack / fast-track / fast track' in rendered
 
-    assert 'fresh independent Reviewer immediately after publication' in procedure
-    assert 'disproportionate CI work' in procedure
-    assert 'Workflow Friction without turning that capture into a landing gate' in procedure
+    assert 'There is no PR, formal Review, pre-landing test, or CI wait' in procedure
+    assert 'fresh independent Reviewer' in procedure
+    assert 'Observe CI after landing and repair only candidate-attributable failures' in procedure
+    assert 'smallest authorized live target-agent/environment' in procedure
 
 
 def test_local_outer_worker_dispatches_independent_review_and_continues():

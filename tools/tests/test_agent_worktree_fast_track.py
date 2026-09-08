@@ -57,6 +57,39 @@ def test_explicit_authorization_is_exact_and_cli_requires_existing_story():
     assert parsed.authorization_story == "story-42"
 
 
+@pytest.mark.parametrize(
+    ("words", "route"),
+    [
+        ("fastrack to main", "main"),
+        ("FAST-TRACK right to main NOW", "main"),
+        ("fast track directly to main", "main"),
+        ("right to main NOW", "main"),
+        ("directly to main", "main"),
+        ("fastrack to PR", "pr"),
+        ("fast-track to pull request", "pr"),
+        ("fastrack to testing", "testing"),
+        ("fast track this", "recommend"),
+    ],
+)
+def test_destination_dominates_fast_track_spelling(words: str, route: str):
+    assert fast_track.classify_fast_track_words(words) == route
+
+
+def test_route_command_reports_destination_action():
+    args = fast_track.build_fast_track_parser().parse_args(
+        ["fast-track-route", "--words", "fastrack right to main NOW"]
+    )
+    payload = fast_track.command_fast_track_route(args)
+    assert payload["route"] == "main"
+    assert "commit, push" in payload["next_action"]
+
+
+def test_multiple_destinations_fail_instead_of_defaulting_to_pr():
+    with pytest.raises(AgentWorktreeError) as exc:
+        fast_track.classify_fast_track_words("fastrack to PR and to main")
+    _assert_code(exc, "FAST_TRACK_ROUTE_AMBIGUOUS")
+
+
 def test_no_self_authorization_without_preexisting_story():
     with pytest.raises(AgentWorktreeError) as exc:
         fast_track._live_authorization(TASK, None, {})

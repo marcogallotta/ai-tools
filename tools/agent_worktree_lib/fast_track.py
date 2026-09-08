@@ -4,7 +4,7 @@ import argparse
 
 from .common import GitRunner, fail, now_utc, require_task_gid
 from .commit import _claimed_state as _commit_claimed_state, command_commit
-from .fast_track_auth import FastTrackAuthorization, _fallback, _live_authorization, _parse_authorization_story
+from .fast_track_auth import FastTrackAuthorization, _fallback, _live_authorization, _parse_authorization_story, classify_fast_track_words
 from .fast_track_guard import (
     _commit_changed_paths,
     _require_bounded,
@@ -30,7 +30,21 @@ def build_fast_track_parser() -> argparse.ArgumentParser:
     publish.add_argument("--task", required=True)
     publish.add_argument("--authorization-story", required=True)
     publish.add_argument("--json", action="store_true")
+    route = sub.add_parser("fast-track-route")
+    route.add_argument("--words", required=True)
+    route.add_argument("--json", action="store_true")
     return parser
+
+
+def command_fast_track_route(args: argparse.Namespace) -> dict[str, Any]:
+    route = classify_fast_track_words(args.words)
+    next_actions = {
+        "main": "make the exact change in the primary checkout, commit, push, and read back; defer tests and cleanup",
+        "pr": "publish the exact change to a PR, dispatch independent exact-head Review, and merge without waiting for ordinary CI",
+        "testing": "make the exact change uncommitted on the active local main/testing surface and stop for real-use testing",
+        "recommend": "recommend main, PR, or testing from the task shape and ask once",
+    }
+    return {"command": "fast-track-route", "route": route, "next_action": next_actions[route]}
 
 def command_fast_track_commit(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     state, _repo, identity, auth = _validated_context(args, runner)
