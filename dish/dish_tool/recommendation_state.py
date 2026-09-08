@@ -176,6 +176,16 @@ class RecommendationEvidence:
         }
         if self.evidence_kind is EvidenceKind.EXPLICIT and self.source not in explicit_sources:
             raise ValueError("explicit evidence requires an explicit source authority")
+        if self.source is EvidenceSource.AGENT_INFERENCE and self.evidence_kind is not EvidenceKind.DERIVED:
+            raise ValueError("agent inference must use derived evidence")
+        lifecycle_sources = {
+            EvidenceSource.EXPLICIT_MARCO,
+            EvidenceSource.RUNTIME_FACT,
+            EvidenceSource.SCRATCHPAD_AUTHORITY,
+            EvidenceSource.PROFILE_AUTHORITY,
+        }
+        if (self.clears or self.supersedes) and self.source not in lifecycle_sources:
+            raise ValueError("lifecycle relations require an authoritative source")
         _validate_eligibility_effect(self)
 
 
