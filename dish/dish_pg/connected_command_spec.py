@@ -1,6 +1,6 @@
 """Transport-neutral contract for Dish connected-agent commands.
 
-This registry owns the ordinary 18-command connected surface used by MCP and,
+This registry owns the ordinary 19-command connected surface used by MCP and,
 during migration, by transport adapters. PostgreSQL remains workflow/replay
 authority; this module describes and validates the connected contract only.
 """
@@ -90,6 +90,7 @@ _READ_DESCRIPTIONS = {
     "sections": "List current Dish sections from PostgreSQL authority.",
     "section-tasks": "List current Dishes in one section using exact returned identifiers.",
     "search": "Search current active Dish titles through PostgreSQL authority.",
+    "cooked-updates": "List current cooked-history updates from PostgreSQL authority.",
     "cook-logs": "List immutable cook logs for one Dish.",
     "read": "Read one exact Dish by canonical Dish ID or returned task identity.",
     "proposals": "List current governed proposals visible to the connected agent.",
@@ -146,8 +147,8 @@ CONNECTED_COMMAND_SPECS = tuple(_spec(name) for name in CONNECTED_COMMANDS)
 CONNECTED_COMMAND_DEFINITIONS = {spec.name: spec for spec in CONNECTED_COMMAND_SPECS}
 TOOL_COMMANDS = {spec.tool_name: spec.name for spec in CONNECTED_COMMAND_SPECS}
 
-if len(CONNECTED_COMMANDS) != 18:
-    raise ValueError("connected-agent inventory must remain exactly 18 commands")
+if len(CONNECTED_COMMANDS) != 19:
+    raise ValueError("connected-agent inventory must remain exactly 19 commands")
 if len(TOOL_COMMANDS) != len(CONNECTED_COMMANDS):
     raise ValueError("connected-agent MCP tool names are not unique")
 

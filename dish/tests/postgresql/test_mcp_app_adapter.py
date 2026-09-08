@@ -18,6 +18,7 @@ EXPECTED_COMMANDS = (
     "sections",
     "section-tasks",
     "search",
+    "cooked-updates",
     "cook-logs",
     "record-cook-log",
     "read",
@@ -120,7 +121,7 @@ def test_mcp_tool_inventory_is_exact_postgresql_connected_contract():
     assert tuple(mcp_server.TOOL_COMMANDS) == tuple(
         f"dish_{command.replace('-', '_')}" for command in EXPECTED_COMMANDS
     )
-    assert len(mcp_server.MCP_TOOLS) == 18
+    assert len(mcp_server.MCP_TOOLS) == 19
     assert "dish_qualify_file_transport" not in mcp_server.TOOL_COMMANDS
     assert "dish_queue" not in mcp_server.TOOL_COMMANDS
     assert "dish_archive" not in mcp_server.TOOL_COMMANDS
