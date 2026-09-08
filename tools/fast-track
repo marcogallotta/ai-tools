@@ -64,6 +64,10 @@ def remote_head(root: Path, ref: str) -> str | None:
     return line.split()[0] if line else None
 
 
+def origin_url(root: Path) -> str:
+    return run(root, "git", "remote", "get-url", "origin").stdout.strip()
+
+
 def command_main(args: argparse.Namespace) -> dict[str, object]:
     if classify_fast_track_words(args.words) != "main":
         raise FastTrackError("main command requires an explicit fast-track-to-main route")
@@ -75,9 +79,18 @@ def command_main(args: argparse.Namespace) -> dict[str, object]:
     observed = remote_head(root, "refs/heads/main")
     if observed != before:
         raise FastTrackError(f"origin/main is {observed}, not local expected head {before}")
-    helper = root / "tools" / "git-commit"
-    result = run(root, str(helper), *paths, "-m", args.message, "-C", str(root))
+    ensure_exact_staging(root, paths)
+    result = run(root, "git", "commit", "-m", args.message, "--", *paths)
     after = head(root)
+    pushed = run(
+        root, "git", "push", "origin", f"HEAD:refs/heads/main", check=False
+    )
+    if pushed.returncode:
+        now = remote_head(root, "refs/heads/main")
+        raise FastTrackError(
+            f"direct-main push refused; expected remote {before}, observed {now}; "
+            "no merge, retry, or force was attempted"
+        )
     verified = remote_head(root, "refs/heads/main")
     if verified != after:
         raise FastTrackError(f"push readback is {verified}, not committed head {after}")
@@ -168,6 +181,7 @@ def command_testing_start(args: argparse.Namespace) -> dict[str, object]:
     if destination.exists():
         raise FastTrackError(f"unfinished testing snapshot already exists: {destination}")
     state: dict[str, object] = {"version": 1, "route": "testing", "repo": str(root),
+                                "origin_url": origin_url(root),
                                 "base_head": head(root), "paths": paths,
                                 "pre": {path: file_state(root, path) for path in paths}}
     atomic_json(destination, state)
@@ -217,7 +231,18 @@ def command_testing_finish(args: argparse.Namespace) -> dict[str, object]:
 def command_testing_apply(args: argparse.Namespace) -> dict[str, object]:
     root = repo_root(args.repo)
     bundle = json.loads(Path(args.bundle).read_text(encoding="utf-8"))
-    paths = list(bundle["paths"])
+    if branch(root) in {"", "main", "master"}:
+        raise FastTrackError("testing bundle must be applied in an isolated non-main checkout")
+    if bundle.get("origin_url") != origin_url(root):
+        raise FastTrackError("testing bundle repository identity differs from target origin")
+    if bundle.get("base_head") != head(root):
+        raise FastTrackError("testing bundle base head differs from target checkout head")
+    raw_paths = bundle.get("paths")
+    if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
+        raise FastTrackError("testing bundle paths are malformed")
+    paths = explicit_paths(root, raw_paths)
+    if set(bundle.get("pre", {})) != set(paths) or set(bundle.get("post", {})) != set(paths):
+        raise FastTrackError("testing bundle path state does not match its exact path set")
     for relative in paths:
         if file_state(root, relative) != bundle["pre"][relative]:
             raise FastTrackError(f"target pre-state differs for {relative}")

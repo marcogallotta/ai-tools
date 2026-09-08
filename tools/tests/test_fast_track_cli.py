@@ -47,6 +47,25 @@ def test_main_commits_pushes_and_reads_back(repository: tuple[Path, Path]):
     assert run(remote, "git", "show", "refs/heads/main:sample.txt").stdout == "after\n"
 
 
+def test_main_refuses_unrelated_pre_staged_paths(repository: tuple[Path, Path]):
+    work, _remote = repository
+    (work / "unrelated.txt").write_text("base\n", encoding="utf-8")
+    run(work, "git", "add", "unrelated.txt")
+    run(work, "git", "commit", "-m", "add unrelated")
+    run(work, "git", "push", "origin", "main")
+    before = run(work, "git", "rev-parse", "HEAD").stdout.strip()
+    (work / "unrelated.txt").write_text("staged\n", encoding="utf-8")
+    run(work, "git", "add", "unrelated.txt")
+    (work / "sample.txt").write_text("after\n", encoding="utf-8")
+    result = run(
+        work, str(SCRIPT), "main", "--words", "fastrack to main", "-C", str(work),
+        "-m", "bounded", "--", "sample.txt", check=False,
+    )
+    assert result.returncode == 2
+    assert "outside the fast-track set" in result.stderr
+    assert run(work, "git", "rev-parse", "HEAD").stdout.strip() == before
+
+
 def test_pr_commits_and_nonforce_publishes_isolated_branch(repository: tuple[Path, Path]):
     work, remote = repository
     run(work, "git", "switch", "-c", "agent/urgent")
@@ -68,6 +87,23 @@ def test_testing_round_trip_restores_then_reapplies_exact_bytes(repository: tupl
     (work / "sample.txt").write_bytes(b"tested\x00bytes\n")
     run(work, str(SCRIPT), "testing-finish", "-C", str(work), "--output", str(bundle))
     assert (work / "sample.txt").read_bytes() == b"before\n"
+    refused = run(
+        work, str(SCRIPT), "testing-apply", "-C", str(work), "--bundle", str(bundle),
+        check=False,
+    )
+    assert refused.returncode == 2
+    assert "isolated non-main" in refused.stderr
     run(work, "git", "switch", "-c", "agent/tested")
+    valid = bundle.read_text(encoding="utf-8")
+    tampered = json.loads(valid)
+    tampered["paths"] = ["../escape"]
+    bundle.write_text(json.dumps(tampered), encoding="utf-8")
+    refused = run(
+        work, str(SCRIPT), "testing-apply", "-C", str(work), "--bundle", str(bundle),
+        check=False,
+    )
+    assert refused.returncode == 2
+    assert "escapes repository" in refused.stderr
+    bundle.write_text(valid, encoding="utf-8")
     run(work, str(SCRIPT), "testing-apply", "-C", str(work), "--bundle", str(bundle))
     assert (work / "sample.txt").read_bytes() == b"tested\x00bytes\n"
