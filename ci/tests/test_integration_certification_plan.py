@@ -70,6 +70,7 @@ def test_output_conforms_to_schema_and_is_deterministic():
         "dish/test_selection/ownership/01.csv",
         "dish/test_selection/ownership/02.csv",
         "dish/test_selection/ownership/03.csv",
+        "dish/test_selection/ownership/04.csv",
         "dish/test_selection/model.py",
         "dish/test_selection/planner.py",
     ]
