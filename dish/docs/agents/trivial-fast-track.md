@@ -46,18 +46,26 @@ durable identity after the first requested artifact when Review or Integration n
    to an isolated PR unless Marco separately fast-tracks that repair.
 
 There is no PR, formal Review, pre-landing test, or CI wait on this route.
+Local agents use `tools/fast-track main --words <exact words> -C <checkout> -m <message> --
+<paths...>` after the exact edit; the helper binds the local/remote main head, commits only those
+paths, pushes without force, and reads back remote main.
 
 ### Fast-track to PR
 
 1. Create the smallest coherent branch commit and publish the PR without pre-publication test
    ceremony. For agentic/generated instructions, regenerate the complete owned set first.
 2. Record the exact route grant and candidate identity on the durable PR/task surface without
-   asking Marco for workflow fields.
+   asking Marco for workflow fields. The PR body carries exactly one
+   `<!-- dish-fast-track-route:v1 route=pr head=<40-hex-head> -->` marker.
 3. Dispatch a fresh independent Reviewer for the exact head. The Review records
    `PRE-INTEGRATION TESTS TO RUN: NONE` unless Marco explicitly requested a pre-landing test.
 4. A `MERGE` verdict proceeds directly through exact-head Integration without waiting for ordinary
    CI. A semantic `BLOCK` returns only the accepted blocker to Implementation.
 5. Observe CI after landing and repair only candidate-attributable failures on an isolated PR.
+
+Local agents may use `tools/fast-track pr --words <exact words> -C <isolated-checkout> -m
+<message> -- <paths...>` to commit and non-force publish without an authorization story. Its output
+provides the exact marker for the PR body.
 
 ### Fast-track to testing
 
@@ -69,6 +77,9 @@ There is no PR, formal Review, pre-landing test, or CI wait on this route.
 4. When testing finishes, preserve the exact tested delta, restore the primary checkout to its
    snapshotted pre-state, apply the delta to an isolated owned branch, and continue through
    fast-track to PR. Never discard unrelated pre-existing changes.
+
+`tools/fast-track testing-start`, `testing-finish`, and `testing-apply` implement that exact-byte
+snapshot, restoration, and transfer for explicit regular-file paths without committing main.
 
 ### Live-target evidence
 
