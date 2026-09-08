@@ -18,6 +18,10 @@ REQUIRED_ORDINARY_CI_CONTEXT = REQUIRED_CERTIFICATION_CONTEXT
 REQUIRED_ORDINARY_CI_WORKFLOW_PATH = REQUIRED_CERTIFICATION_WORKFLOW_PATH
 _RUN_TARGET_RE = re.compile(r"/actions/runs/(?P<run_id>[0-9]+)(?:/|$)")
 _VERDICT_RE = re.compile(r"(?im)^\s*VERDICT:\s*(MERGE|BLOCK)\s*$")
+_FAST_TRACK_TOKEN = "dish-fast-track-route:v1"
+_FAST_TRACK_PR_RE = re.compile(
+    r"<!--\s*dish-fast-track-route:v1\s+route=pr\s+head=(?P<head>[0-9a-f]{40})\s*-->"
+)
 
 
 class GateError(ValueError):
@@ -100,6 +104,22 @@ def review_verdict(body: Any) -> str | None:
         return None
     match = _VERDICT_RE.search(body)
     return match.group(1) if match else None
+
+
+def exact_fast_track_pr_grant(pr: dict[str, Any], *, reviewed_head: str) -> bool:
+    """Validate the deterministic PR-body grant that moves ordinary CI after landing."""
+    body = pr.get("body")
+    if not isinstance(body, str) or _FAST_TRACK_TOKEN not in body:
+        return False
+    matches = list(_FAST_TRACK_PR_RE.finditer(body))
+    if len(matches) != 1:
+        raise GateError("fast-track PR body contains a malformed or ambiguous route grant")
+    granted_head = matches[0].group("head")
+    if granted_head != reviewed_head:
+        raise GateError(
+            f"fast-track PR grant is for {granted_head}, not reviewed head {reviewed_head}"
+        )
+    return True
 
 
 def latest_exact_head_review(
@@ -290,6 +310,16 @@ def diagnose_integration_gate(
             current_head=current_head, reviewed_head=reviewed_head,
             reason="PR is draft; ordinary integration requires review-ready state",
         )
+    if exact_fast_track_pr_grant(pr, reviewed_head=reviewed_head):
+        return {
+            **_diagnosis_result(
+                GateDiagnosis.PASS,
+                current_head=current_head,
+                reviewed_head=reviewed_head,
+                reason="exact-head fast-track-to-PR grant moves ordinary CI after landing",
+            ),
+            "ci_admission": "waived-by-fast-track-pr",
+        }
     status_sha = str(combined_status.get("sha", ""))
     if status_sha != reviewed_head:
         return _diagnosis_result(
@@ -391,8 +421,8 @@ def _parser() -> argparse.ArgumentParser:
     integration.add_argument("--pr-json", required=True)
     integration.add_argument("--reviewed-head", required=True)
     integration.add_argument("--reviewed-at", required=True)
-    integration.add_argument("--status-json", required=True)
-    integration.add_argument("--runs-json", required=True)
+    integration.add_argument("--status-json")
+    integration.add_argument("--runs-json")
     return parser
 
 
@@ -407,12 +437,16 @@ def main(argv: list[str] | None = None) -> int:
             }
             print(json.dumps(result, sort_keys=True))
             return 0 if result["discoverable"] else 3
+        if not exact_fast_track_pr_grant(pr, reviewed_head=args.reviewed_head) and (
+            not args.status_json or not args.runs_json
+        ):
+            raise GateError("ordinary Integration requires --status-json and --runs-json")
         result = evaluate_integration_gate(
             pr,
             reviewed_head=args.reviewed_head,
             reviewed_at=args.reviewed_at,
-            combined_status=_load_json(args.status_json),
-            workflow_runs=_load_json(args.runs_json),
+            combined_status=_load_json(args.status_json) if args.status_json else {},
+            workflow_runs=_load_json(args.runs_json) if args.runs_json else {},
         )
         print(json.dumps(result, sort_keys=True))
         return 0

@@ -47,7 +47,9 @@ Day-one branch rules:
 - another agent must not push semantic changes to that branch without an explicit handoff of ownership;
 - Claude Code/Codex local implementation uses the shared `tools/agent-worktree` lifecycle so one task attempt has one durable external linked worktree, one owned branch, and task-keyed recoverability state under `~/.local/state/dish/worktrees/`; do not create a competing host-specific lifecycle;
 - replacement local agents resume the same task record/branch/worktree after explicit orchestration handoff; takeover changes local provenance only and does not infer agent liveness;
-- ChatGPT uses the connected GitHub integration as repository source/history authority and may perform the branch/commit/PR flow through connector-native GitHub operations;
+- ChatGPT uses only the authorized GitHub connector defined in
+  [`repository-routing.md`](repository-routing.md#github-connector-routing) as repository
+  source/history authority and may perform the branch/commit/PR flow through it;
 - do not reuse a branch whose PR was merged, closed, abandoned, or superseded for unrelated work;
 - local worktree cleanup goes through the shared lifecycle only after disposition is established by GitHub/Asana authority; it must refuse dirty, ambiguous, or unrecoverable state and must not remove the only recovery pointer.
 
@@ -116,7 +118,9 @@ If the task has moved projects or its live Asana URL is available, prefer the cu
 
 Host tooling differs, but the artifact contract does not:
 
-- **ChatGPT:** use the connected GitHub integration as source/history authority and use connector-native branch/commit/PR operations when available;
+- **ChatGPT:** use only the authorized GitHub connector defined in
+  [`repository-routing.md`](repository-routing.md#github-connector-routing) for source/history
+  and branch/commit/PR operations;
 - **Claude Code/Codex:** use the live checkout plus the repository-owned `tools/agent-worktree` lifecycle for local branch/worktree freshness, ownership, publication, and handoff verification, then open/update the GitHub PR.
 
 Regardless of host, the coordinator/reviewer/integrator must be able to identify the same branch, commit, PR URL, and exact PR head SHA.

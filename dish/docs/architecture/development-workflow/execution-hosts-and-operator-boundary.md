@@ -10,7 +10,7 @@ This document records architectural host and human-attention boundaries. It does
 
 ## Current architecture
 
-Semantic role and execution host are separate. ChatGPT uses connected GitHub/Asana capabilities and repository-owned remote publication paths. Claude Code and Codex use a live checkout plus native Git and the repository-owned worktree lifecycle. Worker is an execution mode whose authority comes from the routed standing role, not from its name. Final V1-A Integration landing remains local-only.
+Semantic role and execution host are separate. ChatGPT uses connected GitHub/Asana capabilities and repository-owned remote publication paths. It may use `api_tool` to select the installed GitHub Connector, but must never select the separate GitHub MCP app; authorization follows the selected integration identity, not the transport namespace. Claude Code and Codex use a live checkout plus native Git and the repository-owned worktree lifecycle. Worker is an execution mode whose authority comes from the routed standing role, not from its name. Final V1-A Integration landing remains local-only.
 
 Remote/hosted Implementation is the normal semantic authoring path. Local authoring requires proof of an unavailable remote source/publication capability and bounded exhausted fallbacks. Native tests remain `TESTS ONLY`; sudo, systemd, devices, and installed runtime access remain `LOCAL SYSTEM ACCESS`. Elapsed time and convenience do not change those classes.
 

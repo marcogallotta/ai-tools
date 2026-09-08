@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+"""Execute destination-driven fast-track publication or testing-state capture."""
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from agent_worktree_lib.fast_track_auth import classify_fast_track_words  # noqa: E402
+
+
+class FastTrackError(RuntimeError):
+    pass
+
+
+def run(cwd: Path, *argv: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(argv, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if check and result.returncode:
+        raise FastTrackError(f"{' '.join(argv)} failed: {result.stderr.strip()}")
+    return result
+
+
+def repo_root(raw: str) -> Path:
+    candidate = Path(raw).resolve()
+    result = run(candidate, "git", "rev-parse", "--show-toplevel")
+    return Path(result.stdout.strip()).resolve()
+
+
+def explicit_paths(root: Path, values: list[str]) -> list[str]:
+    if values and values[0] == "--":
+        values = values[1:]
+    if not values or any(value in {".", "-A", "-u", "--all"} for value in values):
+        raise FastTrackError("one or more explicit paths are required; carpet-bomb pathspecs are forbidden")
+    normalized: list[str] = []
+    for value in values:
+        target = (root / value).resolve(strict=False)
+        try:
+            relative = target.relative_to(root).as_posix()
+        except ValueError as exc:
+            raise FastTrackError(f"path escapes repository: {value}") from exc
+        if relative in {"", "."}:
+            raise FastTrackError("repository root is not an explicit path")
+        normalized.append(relative)
+    return sorted(set(normalized))
+
+
+def branch(root: Path) -> str:
+    return run(root, "git", "branch", "--show-current").stdout.strip()
+
+
+def head(root: Path) -> str:
+    return run(root, "git", "rev-parse", "HEAD").stdout.strip()
+
+
+def remote_head(root: Path, ref: str) -> str | None:
+    result = run(root, "git", "ls-remote", "--heads", "origin", ref)
+    line = result.stdout.strip()
+    return line.split()[0] if line else None
+
+
+def origin_url(root: Path) -> str:
+    return run(root, "git", "remote", "get-url", "origin").stdout.strip()
+
+
+def command_main(args: argparse.Namespace) -> dict[str, object]:
+    if classify_fast_track_words(args.words) != "main":
+        raise FastTrackError("main command requires an explicit fast-track-to-main route")
+    root = repo_root(args.repo)
+    paths = explicit_paths(root, args.paths)
+    if branch(root) != "main":
+        raise FastTrackError("fast-track to main must run from the main checkout")
+    before = head(root)
+    observed = remote_head(root, "refs/heads/main")
+    if observed != before:
+        raise FastTrackError(f"origin/main is {observed}, not local expected head {before}")
+    ensure_exact_staging(root, paths)
+    result = run(root, "git", "commit", "-m", args.message, "--", *paths)
+    after = head(root)
+    pushed = run(
+        root, "git", "push", "origin", f"HEAD:refs/heads/main", check=False
+    )
+    if pushed.returncode:
+        now = remote_head(root, "refs/heads/main")
+        raise FastTrackError(
+            f"direct-main push refused; expected remote {before}, observed {now}; "
+            "no merge, retry, or force was attempted"
+        )
+    verified = remote_head(root, "refs/heads/main")
+    if verified != after:
+        raise FastTrackError(f"push readback is {verified}, not committed head {after}")
+    return {"route": "main", "base_head": before, "published_head": after, "paths": paths,
+            "readback": verified, "output": result.stdout.strip(),
+            "next_action": "report landing now; observe CI afterward and repair attributable failures off main"}
+
+
+def ensure_exact_staging(root: Path, paths: list[str]) -> None:
+    outside = set(run(root, "git", "diff", "--cached", "--name-only").stdout.splitlines()) - set(paths)
+    if outside:
+        raise FastTrackError("index contains staged paths outside the fast-track set: " + ", ".join(sorted(outside)))
+    run(root, "git", "--literal-pathspecs", "add", "--", *paths)
+    staged = set(run(root, "git", "diff", "--cached", "--name-only").stdout.splitlines())
+    if not staged:
+        raise FastTrackError("explicit paths contain no change")
+    if not staged.issubset(set(paths)):
+        raise FastTrackError("staged path set escaped the explicit fast-track set")
+
+
+def command_pr(args: argparse.Namespace) -> dict[str, object]:
+    if classify_fast_track_words(args.words) != "pr":
+        raise FastTrackError("pr command requires an explicit fast-track-to-PR route")
+    root = repo_root(args.repo)
+    paths = explicit_paths(root, args.paths)
+    current_branch = branch(root)
+    if not current_branch or current_branch in {"main", "master"}:
+        raise FastTrackError("fast-track to PR requires an isolated non-main branch checkout")
+    old_head = head(root)
+    remote_before = remote_head(root, f"refs/heads/{current_branch}")
+    if remote_before not in {None, old_head}:
+        raise FastTrackError(f"remote branch moved to {remote_before}, not expected {old_head}")
+    ensure_exact_staging(root, paths)
+    run(root, "git", "commit", "-m", args.message, "--", *paths)
+    new_head = head(root)
+    push = run(root, "git", "push", "origin", f"HEAD:refs/heads/{current_branch}")
+    verified = remote_head(root, f"refs/heads/{current_branch}")
+    if verified != new_head:
+        raise FastTrackError(f"branch readback is {verified}, not committed head {new_head}")
+    marker = f"<!-- dish-fast-track-route:v1 route=pr head={new_head} -->"
+    return {"route": "pr", "branch": current_branch, "base_head": old_head,
+            "published_head": new_head, "paths": paths, "grant_marker": marker,
+            "output": push.stderr.strip(),
+            "next_action": "put grant_marker in the PR body, dispatch exact-head Review, then integrate without ordinary-CI admission"}
+
+
+def file_state(root: Path, relative: str) -> dict[str, object]:
+    path = root / relative
+    if not path.exists():
+        return {"kind": "absent"}
+    if not path.is_file() or path.is_symlink():
+        raise FastTrackError(f"testing snapshot supports regular files only: {relative}")
+    return {"kind": "file", "mode": path.stat().st_mode & 0o777,
+            "bytes": base64.b64encode(path.read_bytes()).decode("ascii")}
+
+
+def testing_state_path(root: Path) -> Path:
+    common = run(root, "git", "rev-parse", "--git-common-dir").stdout.strip()
+    common_path = Path(common)
+    if not common_path.is_absolute():
+        common_path = (root / common_path).resolve()
+    return common_path / "dish-fast-track-testing.json"
+
+
+def atomic_json(path: Path, value: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def command_testing_start(args: argparse.Namespace) -> dict[str, object]:
+    if classify_fast_track_words(args.words) != "testing":
+        raise FastTrackError("testing-start requires an explicit fast-track-to-testing route")
+    root = repo_root(args.repo)
+    paths = explicit_paths(root, args.paths)
+    if branch(root) != "main":
+        raise FastTrackError("fast-track to testing must snapshot the active main testing surface")
+    destination = testing_state_path(root)
+    if destination.exists():
+        raise FastTrackError(f"unfinished testing snapshot already exists: {destination}")
+    state: dict[str, object] = {"version": 1, "route": "testing", "repo": str(root),
+                                "origin_url": origin_url(root),
+                                "base_head": head(root), "paths": paths,
+                                "pre": {path: file_state(root, path) for path in paths}}
+    atomic_json(destination, state)
+    return {"route": "testing", "snapshot": str(destination), "paths": paths,
+            "next_action": "make only the requested edit now; do not commit or push"}
+
+
+def restore_state(root: Path, relative: str, state: dict[str, object]) -> None:
+    path = root / relative
+    if state["kind"] == "absent":
+        if path.exists():
+            path.unlink()
+        return
+    raw = base64.b64decode(str(state["bytes"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+        os.chmod(temporary, int(state["mode"]))
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def command_testing_finish(args: argparse.Namespace) -> dict[str, object]:
+    root = repo_root(args.repo)
+    snapshot = testing_state_path(root)
+    if not snapshot.exists():
+        raise FastTrackError("no active fast-track testing snapshot")
+    state = json.loads(snapshot.read_text(encoding="utf-8"))
+    if state.get("repo") != str(root) or state.get("base_head") != head(root):
+        raise FastTrackError("testing checkout identity moved since snapshot")
+    paths = list(state["paths"])
+    post = {path: file_state(root, path) for path in paths}
+    bundle = {**state, "post": post}
+    output = Path(args.output).resolve()
+    atomic_json(output, bundle)
+    for relative in paths:
+        restore_state(root, relative, state["pre"][relative])
+    snapshot.unlink()
+    return {"route": "testing", "bundle": str(output), "restored_head": head(root),
+            "paths": paths, "next_action": "apply the exact bundle in an isolated PR checkout"}
+
+
+def command_testing_apply(args: argparse.Namespace) -> dict[str, object]:
+    root = repo_root(args.repo)
+    bundle = json.loads(Path(args.bundle).read_text(encoding="utf-8"))
+    if branch(root) in {"", "main", "master"}:
+        raise FastTrackError("testing bundle must be applied in an isolated non-main checkout")
+    if bundle.get("origin_url") != origin_url(root):
+        raise FastTrackError("testing bundle repository identity differs from target origin")
+    if bundle.get("base_head") != head(root):
+        raise FastTrackError("testing bundle base head differs from target checkout head")
+    raw_paths = bundle.get("paths")
+    if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
+        raise FastTrackError("testing bundle paths are malformed")
+    paths = explicit_paths(root, raw_paths)
+    if set(bundle.get("pre", {})) != set(paths) or set(bundle.get("post", {})) != set(paths):
+        raise FastTrackError("testing bundle path state does not match its exact path set")
+    for relative in paths:
+        if file_state(root, relative) != bundle["pre"][relative]:
+            raise FastTrackError(f"target pre-state differs for {relative}")
+    for relative in paths:
+        restore_state(root, relative, bundle["post"][relative])
+    return {"route": "testing-to-pr", "paths": paths,
+            "next_action": "publish these exact tested bytes through fast-track to PR"}
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser()
+    sub = result.add_subparsers(dest="command", required=True)
+    for name in ("main", "pr"):
+        item = sub.add_parser(name); item.add_argument("--words", required=True); item.add_argument("-C", "--repo", default="."); item.add_argument("-m", "--message", required=True); item.add_argument("paths", nargs=argparse.REMAINDER)
+    start = sub.add_parser("testing-start"); start.add_argument("--words", required=True); start.add_argument("-C", "--repo", default="."); start.add_argument("paths", nargs=argparse.REMAINDER)
+    finish = sub.add_parser("testing-finish"); finish.add_argument("-C", "--repo", default="."); finish.add_argument("--output", required=True)
+    apply = sub.add_parser("testing-apply"); apply.add_argument("-C", "--repo", default="."); apply.add_argument("--bundle", required=True)
+    return result
+
+
+def main() -> int:
+    args = parser().parse_args()
+    try:
+        command = {"main": command_main, "pr": command_pr, "testing-start": command_testing_start,
+                   "testing-finish": command_testing_finish, "testing-apply": command_testing_apply}[args.command]
+        print(json.dumps(command(args), sort_keys=True))
+        return 0
+    except (FastTrackError, OSError, ValueError) as exc:
+        print(f"fast-track: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

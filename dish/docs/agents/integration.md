@@ -41,7 +41,7 @@ The role contract is host-independent even though tooling differs.
 
 ### ChatGPT
 
-Use the connected GitHub integration as source/history authority for read-only Integration diagnosis and upstream repository/review context. Under V1-A, ChatGPT must not execute final Integration landing or merge through connector-native writes. If a reviewed candidate is ready but no authorized local launcher is available, leave it `INTEGRATION READY`; connector capability is not a fallback.
+Use only the authorized GitHub connector defined in [`repository-routing.md`](repository-routing.md#github-connector-routing) as source/history authority for read-only Integration diagnosis and upstream repository/review context. Under V1-A, ChatGPT must not execute final Integration landing or merge through connector-native writes. If a reviewed candidate is ready but no authorized local launcher is available, leave it `INTEGRATION READY`; connector capability is not a fallback.
 
 ### Claude Code and Codex
 
@@ -147,7 +147,14 @@ Normal landing happens through the approved PR and must leave that PR in GitHub'
 
 Do not force-push `main`.
 
-Marco may explicitly authorize an emergency direct-to-`main` commit. That override must name the exceptional action. State which normal gate is being bypassed, and do not infer that validation/review requirements are waived unless Marco explicitly says so.
+Marco's explicit fast-track-to-main destination authorizes the exact bounded direct-to-`main`
+publication and waives PR, Review, pre-landing tests, and CI wait for that change. Fast-track-to-PR
+instead preserves exact-head Review and Integration while waiving ordinary CI as a merge-admission
+gate when the PR body contains exactly one valid exact-head
+`<!-- dish-fast-track-route:v1 route=pr head=<40-hex-head> -->` marker. `scripts/pr_gate.py
+integration` validates this marker and admits the reviewed head without status/run inputs. In both
+cases use non-force expected-head protection, read back the landing, observe CI
+afterward, and route only attributable repair off `main`. Do not infer either route from bare urgency.
 
 Before reporting completion, re-resolve the PR and require GitHub to report it merged. If an exceptional out-of-band landing already put the reviewed change on the target branch, first verify the authoritative target contains the equivalent reviewed result, comment on the stale PR with the landed identity and exception, then close it. Report that outcome as `landed out-of-band and closed`, never as `PR merged`; it is recovery, not precedent. Deployment/runtime state remains separate and must never be inferred from source state. For a PostgreSQL-backed TEST/PROD deployment, source integration is not a service-promotion gate: follow `docs/postgresql-routine-migration.md` to bind the exact release/source commit, run environment-specific `dish-pg-migrate` preflight, apply any pending migration only under that environment's mutation authority, re-verify the exact Alembic head, and only then perform the separately authorized restart/promotion. Keep TEST and PROD migration evidence separate. A failed or unverifiable migration stops deployment; do not restart/promote or infer an automatic downgrade. Production migration and restart remain Marco-only.
 

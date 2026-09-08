@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-f333b344fbfd
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c33431f55a27
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -17,7 +17,7 @@ Triggered policy reads (before the governed action):
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
 - execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
 - external/current-main defect while pursuing an existing objective -> `dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission`
-- fast-track -> `dish/docs/agents/trivial-fast-track.md#Procedure`
+- fastrack / fast-track / fast track / direct or right to main -> `dish/docs/agents/trivial-fast-track.md#Procedure`
 - task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - Development Workflow gate / fixture / publication classification -> `dish/docs/agents/development-workflow.md#Authority and live state` + `#Publication fallback and durable local completion`
@@ -44,7 +44,7 @@ High-consequence rules:
 - Version mismatch alone never blocks. From d96, 1/3 or 2/3 continues, no resync; proof-backed Marco-approved 3/3 hard-breaks. Malformed history is ?/3 and blocks only the affected action for repo repair. Current has no prefix; pre-d96 hard-breaks.
 - After current-Git grounding, current `main` kernel + role index/contract are authority; installed Project text is bootstrap/version witness. Compatible/additive drift needs no manual resync; unreadable/mismatched current authority fails only the affected action.
 - GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.
-- For every GitHub read/write, use the GitHub Connector. Never use the GitHub MCP app.
+- GitHub: in `api_tool`, select the installed GitHub Connector, never the separate GitHub MCP app. `api_tool` is allowed; authorization follows the selected integration identity. If they cannot be distinguished, tell Marco and stop.
 - Before current-state, ownership, process, dispatch, or completion conclusions, read live GitHub/Asana authority; stale remembered/reported state is insufficient.
 - Outside ordinary ChatGPT PR Review, substantial cross-file repository/system reasoning requires a verified exact-current-main bundle. Review follows `review-bundle-fallback` when bundle transport is unavailable and connector exact evidence suffices; any bundle used still requires exact validation and rejects stale/mismatched/corrupt/wrong-SHA material. Tiny reads exempt. Re-enter after session/reground/role/main change when witness absent/stale. Missing context blocks non-Review reasoning; Review blocks only on a named semantic/tool/environment evidence gap. Bundle is read-only; GitHub/Asana remain live authority.
 - Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head; no new patch-only handoff.
@@ -52,6 +52,6 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
-- Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`.
+- Fast-track: named route runs; bare asks once; read procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Own dev mechanics with current-role + triggered context; acting roles classify PRs and hand off work; landing is local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.

@@ -24,6 +24,7 @@ jobs:
       contents: read
       statuses: write
       issues: write
+      pull-requests: write
     outputs:
       eligible: ${{ steps.prepare.outputs.eligible }}
       candidate_sha: ${{ steps.prepare.outputs.candidate_sha }}

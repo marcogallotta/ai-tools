@@ -1,12 +1,12 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-f333b344fbfd",
+  "canonical_version": "dish-chatgpt-projects-v2-c33431f55a27",
   "change_history_shards": [
     "manifest-history/00.json",
     "manifest-history/01.json",
     "manifest-history/02.json",
     "manifest-history/03.json"
   ],
-  "current_transition_from": "dish-chatgpt-projects-v2-420b8386ccfc",
+  "current_transition_from": "dish-chatgpt-projects-v2-15791c7182a9",
   "generated_profile_files": {
     "worker": "worker.md"
   },
@@ -20,8 +20,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "c26480a55081d81c736000719332800a1414aad66f27099166f9aa3e719f40ad",
-  "kernel_identity_sha256": "f333b344fbfd4e6ea86062562b80021fa4038048bf8e5076def330fbf7e454ab",
+  "generated_sha256": "f4720c1e6eee1f7c42f932855c004ddc8b0d23700e99754a8250510aa9499f9d",
+  "kernel_identity_sha256": "c33431f55a276589244c3c2655a9d868d79a3f70dbb6d00e2318ea9eb26221cf",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -98,6 +98,8 @@
     "versions": [
       "dish-chatgpt-projects-v2-05211aedbf1c",
       "dish-chatgpt-projects-v2-0a572f3b0a67",
+      "dish-chatgpt-projects-v2-148d2cd2a0d2",
+      "dish-chatgpt-projects-v2-15791c7182a9",
       "dish-chatgpt-projects-v2-219f34402511",
       "dish-chatgpt-projects-v2-23365034a0f1",
       "dish-chatgpt-projects-v2-28dcb04decc8",
@@ -133,11 +135,13 @@
       "dish-chatgpt-projects-v2-a81291d07d74",
       "dish-chatgpt-projects-v2-a9cefd1968b7",
       "dish-chatgpt-projects-v2-bfaeef68aed9",
+      "dish-chatgpt-projects-v2-c33431f55a27",
       "dish-chatgpt-projects-v2-c864c29a420d",
       "dish-chatgpt-projects-v2-d048682742d6",
       "dish-chatgpt-projects-v2-d3a070d57fb2",
       "dish-chatgpt-projects-v2-d96ab5f0588d",
       "dish-chatgpt-projects-v2-dc2161f69f2e",
+      "dish-chatgpt-projects-v2-df1dc2c8a0e8",
       "dish-chatgpt-projects-v2-e537f97c302f",
       "dish-chatgpt-projects-v2-f333b344fbfd",
       "dish-chatgpt-projects-v2-fdf64d096829"
@@ -145,6 +149,6 @@
   },
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "8ddc4bb977573c093e9564357c9f28b856c4007098a485b74e9c4531f8ed2940",
+  "source_sha256": "ca79381928c5a660a716ee7a903236f7defa9aa1f71a2175fbb8030613f24997",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

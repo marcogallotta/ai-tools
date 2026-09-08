@@ -31,6 +31,7 @@ from .legacy_history_import import RESOLUTION_EVENT, unresolved_legacy_attention
 from .document_authority import (
     CanonicalDocumentError,
     destination_gid,
+    destination_section_id,
     held_document,
     parse_canonical_document,
     prepared_change_document,
@@ -3066,7 +3067,15 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         signed_parts = parse_canonical_document(
             title=signed.title, body=signed.body, expected_status="ready"
         )
-        section = self.reads.resolve_section(destination_gid(signed_parts.document))
+        destination_value = signed_parts.document.planning_brief.values[
+            "Destination section"
+        ]
+        destination_reference = (
+            destination_section_id(signed_parts.document)
+            if NATIVE_DESTINATION_RE.fullmatch(destination_value)
+            else destination_gid(signed_parts.document)
+        )
+        section = self.reads.resolve_section(destination_reference)
         self._set_placement(
             generation.generation_id,
             task.task_id,

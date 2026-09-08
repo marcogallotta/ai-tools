@@ -224,7 +224,9 @@ Day-one rules for new work:
 
 - agent-created implementation branches use `agent/<short-task-slug>` unless an explicit handoff establishes another convention;
 - one implementation agent owns semantic changes on a branch at a time;
-- Claude Code/Codex use local git/worktrees as appropriate; ChatGPT uses connected-GitHub connector-native operations as source/history authority;
+- Claude Code/Codex use local git/worktrees as appropriate; ChatGPT uses only the authorized
+  GitHub connector defined in [`repository-routing.md`](repository-routing.md#github-connector-routing)
+  for source/history operations;
 - stale/merged/abandoned branches are not reused for unrelated work;
 - eligible terminal implementation lineages are cleaned manually by the authorized acting role only after authoritative disposition and exact-lineage/recoverability checks; Coordinator treats any refusal as a residual anomaly rather than asking an agent to force cleanup.
 

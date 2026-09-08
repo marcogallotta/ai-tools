@@ -98,6 +98,7 @@ def test_selector_gap_duplicate_durable_comments_fail_closed():
 def test_exact_head_workflow_persists_selector_gaps_on_existing_pr_surface():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
     assert "issues: write" in workflow
+    assert "pull-requests: write" in workflow
     assert "Load durable selector-gap history" in workflow
     assert "Persist durable selector-gap debt" in workflow
     assert 'issues/comments?per_page=100' in workflow
