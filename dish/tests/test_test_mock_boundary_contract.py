@@ -264,7 +264,50 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
         "TEST-only authority-run registration boundary: read-only comparisons must not register "
         "a run, while response-comparison scenarios isolate registration from transport parity."
     ),
-
+    ("postgresql/test_legacy_history_import.py", "_store"): (
+        "Storage-boundary fault injection forcing a mid-import failure at the receipt write to"
+        " prove the legacy import stays atomic and audit-only on partial failure."
+    ),
+    ("postgresql/test_native_section_catalog_foundation.py", "_verified_repository_identity"): (
+        "Deterministic repository-identity boundary stubbed so the runtime-switch fixture can"
+        " exercise catalog materialization without a real Git identity resolution."
+    ),
+    ("postgresql/test_native_section_content_carry_forward.py", "_verified_repository_identity"): (
+        "Deterministic repository-identity boundary stubbed by an autouse fixture so carry-forward"
+        " content tests do not depend on a real Git identity resolution."
+    ),
+    ("postgresql/test_native_section_content_materializer.py", "_verified_repository_identity"): (
+        "Deterministic repository-identity boundary stubbed by an autouse fixture so materializer"
+        " tests do not depend on a real Git identity resolution."
+    ),
+    ("postgresql/test_native_section_content_materializer_lineage.py", "_verified_repository_identity"): (
+        "Deterministic repository-identity boundary stubbed by an autouse fixture so materializer"
+        " lineage tests do not depend on a real Git identity resolution."
+    ),
+    ("postgresql/test_routine_migration.py", "_resolve_source_commit"): (
+        "Source-commit resolution boundary stubbed so routine-migration scenario tests control the"
+        " recorded source commit deterministically."
+    ),
+    ("postgresql/test_routine_migration.py", "_repository_script"): (
+        "Alembic script-directory boundary stubbed so routine-migration tests can drive a"
+        " deterministic revision sequence without a real repository checkout."
+    ),
+    ("postgresql/test_routine_migration.py", "_validate_target"): (
+        "Target-validation boundary stubbed so routine-migration tests can isolate staging/final"
+        " revision behavior from live target validation."
+    ),
+    ("postgresql/test_routine_migration.py", "_read_database_state"): (
+        "Database-state read boundary stubbed so routine-migration tests can drive deterministic"
+        " before/after state sequences."
+    ),
+    ("postgresql/test_routine_migration.py", "_finalize_native_placement"): (
+        "Native-placement finalization boundary stubbed so routine-migration tests can observe call"
+        " ordering without performing a real native placement finalize."
+    ),
+    ("postgresql/test_routine_migration.py", "_read_native_placement_state"): (
+        "Native-placement state read boundary stubbed so routine-migration tests can assert on a"
+        " deterministic post-finalize placement state."
+    ),
 }
 
 
