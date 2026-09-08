@@ -5,6 +5,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 from agent_worktree_support import SCRIPT, Harness, assert_error, git_out, h
 
 
@@ -833,6 +835,28 @@ subprocess.run(
     return admitted_head, corrected_head
 
 
+def _prepare_refreshed_block(
+    h: Harness, *, task: str, branch: str, agent: str, pr: int, review_id: str,
+    amend_semantic: bool = False,
+) -> tuple[str, str, str, Path]:
+    _, preserved_head = _publish_successor_from_admitted_pr(
+        h, task=task, branch=branch, agent=agent, pr=pr
+    )
+    h.advance_main_file(f"target refresh {task}")
+    refreshed_head = h.merge_branch_with_main(
+        branch, f"integration refresh {task}", amend_semantic=amend_semantic
+    )
+    h.set_block_review(
+        task=task, pr=pr, branch=branch, head=refreshed_head,
+        review_id=review_id,
+    )
+    provenance = _write_launch_provenance(
+        h, agent=agent, task=task, branch=branch, pr=pr, head=refreshed_head,
+        block_review_id=review_id,
+    )
+    return preserved_head, refreshed_head, record(h, task)[1]["token"], provenance
+
+
 def test_closed_same_lineage_formal_block_replaces_authority_and_allows_published_handoff_readback(
     h: Harness,
 ) -> None:
@@ -894,6 +918,99 @@ subprocess.run(
     assert authority["assignment"]["pr_head"] == blocked_head
     assert authority["assignment"]["pr_head"] != admitted_head
     assert h.state(task)["repository_assignment_authority"] == authority
+
+
+def test_post_refresh_formal_block_fast_forwards_exact_clean_lineage_under_claim_cas(
+    h: Harness,
+) -> None:
+    task, branch, agent, pr, review_id = (
+        "3144", "agent/review-block-refresh", "impl-3144", 3144, "913144"
+    )
+    preserved, refreshed, prior_token, provenance = _prepare_refreshed_block(
+        h, task=task, branch=branch, agent=agent, pr=pr, review_id=review_id
+    )
+    readback = h.root / "refresh-child.json"
+    child = f"""
+import pathlib
+import subprocess
+
+result = subprocess.run(
+    ["python3", {str(SCRIPT)!r}, "resume", "--task", {task!r},
+     "--agent-id", {agent!r}, "--json"],
+    check=True, text=True, stdout=subprocess.PIPE,
+)
+pathlib.Path({str(readback)!r}).write_text(result.stdout, encoding="utf-8")
+"""
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--takeover", "--expected-claim", prior_token,
+        "--pr-number", str(pr), "--pr-head", refreshed, "--pr-lease-state", "none",
+        "--launch-provenance", str(provenance), "--require-launch-provenance",
+        "--", "python3", "-c", child,
+        env={"TEST_ASANA_NO_HANDOFF": "1", "TEST_GITHUB_PRESERVE_PR": "1"},
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert json.loads(readback.read_text(encoding="utf-8"))["local_head"] == refreshed
+    state = h.state(task)
+    _, claim_record = record(h, task)
+    assert git_out(h.wt(task), "rev-parse", "HEAD") == refreshed
+    assert state["local_head"] == state["published_head"] == state["remote_owned_head"] == refreshed
+    assert state["repository_assignment_authority"] == claim_record["repository_assignment_authority"]
+    transition = state["assignment_authority_transitions"][-1]
+    assert transition["from_head"] == preserved
+    assert transition["refresh_head"] == refreshed
+    assert transition["to_review_id"] == review_id
+    assert claim_record["assignment_authority_transitions"][-1] == transition
+
+
+@pytest.mark.parametrize(
+    ("task", "mutation", "expected"),
+    (
+        ("3145", "semantic-descendant", "REFRESH_BLOCK_NOT_MECHANICAL"),
+        ("3146", "semantic-merge-tree", "REFRESH_BLOCK_NOT_MECHANICAL"),
+        ("3147", "moved-target", "REFRESH_BLOCK_TARGET_MISMATCH"),
+        ("3148", "dirty", "REFRESH_BLOCK_WORKTREE_DIRTY"),
+        ("3149", "stale-cas", "OWNER_CLAIM_CHANGED"),
+    ),
+)
+def test_post_refresh_formal_block_rejects_unproved_or_mutated_transition(
+    h: Harness, task: str, mutation: str, expected: str,
+) -> None:
+    branch, agent, pr, review_id = f"agent/refresh-reject-{task}", f"impl-{task}", int(task), f"91{task}"
+    if mutation == "semantic-descendant":
+        _, preserved = _publish_successor_from_admitted_pr(
+            h, task=task, branch=branch, agent=agent, pr=pr
+        )
+        refreshed = h.remote_branch_commit(branch, "semantic descendant")
+        h.set_block_review(task=task, pr=pr, branch=branch, head=refreshed, review_id=review_id)
+        provenance = _write_launch_provenance(
+            h, agent=agent, task=task, branch=branch, pr=pr, head=refreshed,
+            block_review_id=review_id,
+        )
+        prior_token = record(h, task)[1]["token"]
+    else:
+        preserved, refreshed, prior_token, provenance = _prepare_refreshed_block(
+            h, task=task, branch=branch, agent=agent, pr=pr, review_id=review_id,
+            amend_semantic=mutation == "semantic-merge-tree",
+        )
+    if mutation == "moved-target":
+        h.advance_main_file("target moved after refresh")
+    if mutation == "dirty":
+        (h.wt(task) / "dirty.txt").write_text("preserve me\n", encoding="utf-8")
+    expected_claim = "0" * 32 if mutation == "stale-cas" else prior_token
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--takeover", "--expected-claim", expected_claim,
+        "--pr-number", str(pr), "--pr-head", refreshed, "--pr-lease-state", "none",
+        "--launch-provenance", str(provenance), "--require-launch-provenance",
+        "--", "python3", "-c", "raise SystemExit('must not run')",
+        env={"TEST_ASANA_NO_HANDOFF": "1", "TEST_GITHUB_PRESERVE_PR": "1"},
+        check=False,
+    )
+    assert_error(result, expected)
+    assert git_out(h.wt(task), "rev-parse", "HEAD") == preserved
+    assert h.state(task)["repository_assignment_authority"]["assignment"]["pr_head"] != refreshed
 
 
 def test_formal_block_cannot_replace_assignment_without_exact_closed_head_lineage(h: Harness) -> None:

@@ -367,6 +367,29 @@ class Harness:
         git(self.seed, "push", "origin", "main")
         return git_out(self.seed, "rev-parse", "HEAD")
 
+    def advance_main_file(self, text: str = "main advance") -> str:
+        git(self.seed, "fetch", "origin", "main")
+        git(self.seed, "reset", "--hard", "origin/main")
+        path = self.seed / f"main-{len(list(self.seed.glob('main-*.txt')))}.txt"
+        path.write_text(text + "\n", encoding="utf-8")
+        git(self.seed, "add", path.name)
+        git(self.seed, "commit", "-m", text)
+        git(self.seed, "push", "origin", "main")
+        return git_out(self.seed, "rev-parse", "HEAD")
+
+    def merge_branch_with_main(self, branch: str, text: str = "integration refresh", *, amend_semantic: bool = False) -> str:
+        clone = self.root / f"remote-merger-{len(list(self.root.glob('remote-merger-*')))}"
+        run([GIT, "clone", str(self.origin), str(clone)])
+        self._identity(clone)
+        git(clone, "checkout", branch)
+        git(clone, "merge", "--no-ff", "origin/main", "-m", text)
+        if amend_semantic:
+            (clone / "semantic-resolution.txt").write_text("not mechanical\n", encoding="utf-8")
+            git(clone, "add", "semantic-resolution.txt")
+            git(clone, "commit", "--amend", "--no-edit")
+        git(clone, "push", "origin", f"HEAD:refs/heads/{branch}")
+        return git_out(clone, "rev-parse", "HEAD")
+
     def remote_branch_commit(self, branch: str, text: str, *, start: str | None = None) -> str:
         clone = self.root / f"remote-author-{len(list(self.root.glob('remote-author-*')))}"
         run([GIT, "clone", str(self.origin), str(clone)])
