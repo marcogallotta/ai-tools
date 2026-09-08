@@ -62,6 +62,11 @@ class SectionCatalogRebindReceipt(models.Base):
     )
 
 
+# Keep the established core-model namespace available to command/test code while
+# this bounded lifecycle model remains owned by its dedicated module.
+models.SectionCatalogRebindReceipt = SectionCatalogRebindReceipt
+
+
 def _sqlite_rebind_match() -> str:
     return (
         "(NEW.generation_id=OLD.generation_id AND NEW.task_id=OLD.task_id "
