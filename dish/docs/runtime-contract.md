@@ -9,7 +9,7 @@ envelope shape, exit-status handling, and recovery.
 
 ## Authority and scope
 
-The live Asana Cooking task is authoritative for title, body, workflow state, provenance, and cooking instructions. Agents access protocol-managed Cooking tasks only through `dish`; they do not read or write those tasks through the generic Asana CLI. Planning's read-only lookup of completed cooking history through the generic `asana` CLI is the one deliberate exception. It does not authorize writes to governed tasks.
+The live governed task authority is accessed only through `dish`; agents do not read or write protocol-managed Cooking tasks through the generic Asana CLI. Completed/cooked history has no generic-Asana exception: the PostgreSQL source contract exposes read-only `cooked-updates` for incremental discovery and `cook-logs(dish_id)` for the identified Dish's immutable evidence. `search` is active-title discovery, not a cooked-history mechanism. A downstream Planning procedure must not switch to this route merely because source exists; its cutover remains gated on merged implementation, production connected-surface rollout, and authoritative production readback that `cooked-updates` is advertised and executable.
 
 The `ai-tools` checkout supplies deterministic validation and the client executables. In live multi-agent mode, one laptop-hosted `dish-service` process is the sole writable authority for operation state, leases, Asana credentials, audit/recovery, backup, and all governed task mutations. A repository copy or copied SQLite database is never a cross-agent lock.
 The single-agent local test path remains available only for controlled development and is not live multi-agent authority. It requires explicit `DISH_MODE=local` and a separate database that has never been marked as service-owned. Service mode, local `dish`, and local `dish-admin` acquire the same canonical exclusive OS process lock before opening the governed database for mutation and hold it for the full database/process lifetime. The persistent service-owned marker is durable policy evidence, parent-directory fsynced after replacement, and is not the concurrency primitive.
@@ -178,12 +178,12 @@ includes the command, canonical arguments, authenticated owner identity, and run
 
 | Surface | Replay-bound mutations |
 |---|---|
-| Agent Action/private CLI | `create`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `apply-proposal`, `safe-reclaim`; PostgreSQL also exposes `cooked` |
+| Agent Action/private CLI | `create`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `apply-proposal`, `safe-reclaim`; PostgreSQL also exposes `record-cook-log` and `cooked` |
 | Marco admin workflow | `attention`, `inspect`, `holds`, `review-queue`, `review-inspect`, `review-approve`, `review-reject`, `migrate`, `reopen`, `recover`, `repair-destination`, `supply-evidence`, `record-human-decision`, `authorize-governed-change`, `discard`, `abandon-operation`, `reconcile-abandonment` |
 | Lease lifecycle | private agent lease renewal; Action `renew-lease`; Marco-admin `recover-lease` and `expire-lease` |
 | Backup lifecycle | `backup-create`, `backup-restore` |
 
-No mutation endpoint is exempt from request identity. Agent `inspect` is also replay-bound because it records durable Verification evidence. Read-only `sections`, `section-tasks`, `read`, `proposals`, and `health` do not create replay records and do not accept a request ID as mutation authority.
+No mutation endpoint is exempt from request identity. Agent `inspect` is also replay-bound because it records durable Verification evidence. Read-only `sections`, `section-tasks`, `search`, `cooked-updates`, `cook-logs`, `read`, `proposals`, and `health` do not create replay records and do not accept a request ID as mutation authority.
 The connected `renew-lease` Action uses the common body shape: `arguments.operation_id` is replay-bound
 alongside `client.run_id` and `client.request_id`; it is not supplied as a top-level or path parameter.
 

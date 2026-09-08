@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Event
 from types import SimpleNamespace
 
@@ -19,7 +19,11 @@ from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.test_generation_rollover import _rollover_generation_transaction
 from dish_pg.transition import ProjectionService, ShadowService
-from dish_pg.workflow import StaleAuthorityError, WorkflowAuthorityRepository
+from dish_pg.workflow import (
+    StaleAuthorityError,
+    WorkflowAuthorityRepository,
+    WorkflowAuthorityService,
+)
 from tests.support.canonical import TASK
 from tests.support.postgresql.command import _add_verification_queue
 from tests.support.postgresql.concurrency import (
@@ -536,6 +540,175 @@ def test_operation_bound_command_commit_precedes_rollover_and_is_cloned_to_succe
             )
         )
         assert outcome is not None and outcome.outcome_class == "success"
+
+
+
+def test_native_cooked_updates_watermark_serializes_mutation_timestamps(core_db) -> None:
+    """The first-page watermark is the exclusive side of the mutation generation fence."""
+
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    cook_run, before_run, after_run = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    with session_scope(factory) as session:
+        for run_id in (cook_run, before_run, after_run):
+            _register_run(
+                session,
+                generation_id=context["generation_id"],
+                run_id=run_id,
+                agent="codex",
+            )
+        ProjectionService(session, uuid_factory=uuid.uuid4).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="cooked-updates generation-fence race",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+        cooked = _command_port(session).execute(
+            CommandCall(
+                command_name="cooked",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+                owner_id="owner-1",
+                principal_class="agent",
+                run_id=cook_run,
+                request_id=uuid.uuid4(),
+                now=NOW,
+            )
+        )
+        assert cooked.ok, (cooked.code, cooked.data)
+
+    before_fence_held = Event()
+    release_before = Event()
+    page_window_captured = Event()
+    release_page = Event()
+
+    def record_before():
+        with session_scope(factory) as session:
+            WorkflowAuthorityService(session).ensure_initial_cutover_run(
+                generation_id=context["generation_id"],
+                run_id=before_run,
+                owner_id="owner-1",
+                agent="codex",
+                registered_at=datetime.now(timezone.utc),
+            )
+            occurred_at = datetime.now(timezone.utc)
+            before_fence_held.set()
+            assert release_before.wait(timeout=20)
+            result = _command_port(session).execute(
+                CommandCall(
+                    command_name="record-cook-log",
+                    arguments={
+                        "dish_id": str(task_id),
+                        "agent": "codex",
+                        "text": "before watermark",
+                    },
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    run_id=before_run,
+                    request_id=uuid.uuid4(),
+                    now=occurred_at,
+                )
+            )
+            assert result.ok, (result.code, result.data)
+            return occurred_at
+
+    def first_page():
+        with session_scope(factory) as session:
+            result = _command_port(session).execute(
+                CommandCall(
+                    command_name="cooked-updates",
+                    arguments={
+                        "since": (NOW - timedelta(seconds=1)).isoformat(),
+                        "agent": "codex",
+                        "page_size": 10,
+                    },
+                    owner_id="owner-1",
+                    principal_class="reader",
+                    run_id=uuid.uuid4(),
+                    request_id=None,
+                    # Deliberately stale/pre-lock: cooked-updates must not use this as through.
+                    now=NOW - timedelta(days=1),
+                )
+            )
+            assert result.ok, (result.code, result.data)
+            page_window_captured.set()
+            assert release_page.wait(timeout=20)
+            return result
+
+    def record_after():
+        with session_scope(factory) as session:
+            # Production mints CommandCall.now only after this shared generation fence returns.
+            WorkflowAuthorityService(session).ensure_initial_cutover_run(
+                generation_id=context["generation_id"],
+                run_id=after_run,
+                owner_id="owner-1",
+                agent="codex",
+                registered_at=datetime.now(timezone.utc),
+            )
+            occurred_at = datetime.now(timezone.utc)
+            result = _command_port(session).execute(
+                CommandCall(
+                    command_name="record-cook-log",
+                    arguments={
+                        "dish_id": str(task_id),
+                        "agent": "codex",
+                        "text": "after watermark",
+                    },
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    run_id=after_run,
+                    request_id=uuid.uuid4(),
+                    now=occurred_at,
+                )
+            )
+            assert result.ok, (result.code, result.data)
+            return occurred_at
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        before_future = pool.submit(record_before)
+        assert before_fence_held.wait(timeout=20)
+        page_future = pool.submit(first_page)
+        assert_transaction_blocked(page_future)
+
+        release_before.set()
+        before_at = before_future.result(timeout=20)
+        assert page_window_captured.wait(timeout=20)
+        page = page_future
+
+        after_future = pool.submit(record_after)
+        assert_transaction_blocked(after_future)
+        release_page.set()
+        first = page.result(timeout=20)
+        after_at = after_future.result(timeout=20)
+
+    through = datetime.fromisoformat(first.data["through"])
+    assert before_at < through
+    assert after_at >= through
+    assert [row["dish_id"] for row in first.data["updates"]] == [str(task_id)]
+    assert datetime.fromisoformat(
+        first.data["updates"][0]["latest_qualifying_update_at"]
+    ) == before_at
+
+    with session_scope(factory) as session:
+        next_pass = _command_port(session).execute(
+            CommandCall(
+                command_name="cooked-updates",
+                arguments={
+                    "since": first.data["through"],
+                    "agent": "codex",
+                    "generation_id": first.data["generation_id"],
+                    "page_size": 10,
+                },
+                owner_id="owner-1",
+                principal_class="reader",
+                run_id=uuid.uuid4(),
+                request_id=None,
+                now=NOW - timedelta(days=1),
+            )
+        )
+        assert next_pass.ok, (next_pass.code, next_pass.data)
+        assert [row["dish_id"] for row in next_pass.data["updates"]] == [str(task_id)]
+        assert datetime.fromisoformat(
+            next_pass.data["updates"][0]["latest_qualifying_update_at"]
+        ) == after_at
 
 
 def test_rollover_precedes_no_projection_command_and_stale_predecessor_cannot_succeed(

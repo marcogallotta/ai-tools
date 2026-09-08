@@ -77,10 +77,22 @@ for its retained product paths:
 - operation/submission/lease targets remain canonical Dish UUIDs and do not require an Asana task
   identity.
 
-The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `search`, `read`,
-`proposals`, `apply-proposal`, `safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`,
-`submit`, `renew-lease`, and `cooked`. `cooked` marks only an active resting Dish complete through
-PostgreSQL authority; it does not terminate an open workflow operation or project an Asana effect.
+The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `search`,
+`cooked-updates`, `cook-logs`, `record-cook-log`, `read`, `proposals`, `apply-proposal`,
+`safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `renew-lease`, and
+`cooked`. `cooked-updates` is the supported incremental cooked-history discovery surface: it returns
+only Dishes that are currently cooked when a page is evaluated and whose current cooked transition
+or an immutable cook-log entry qualifies in the fixed `[since, through)` window. The first page
+acquires the active authority-generation row exclusively before minting authoritative service-time
+`through`; continuation binds that generation, `since`, `through`, page size, and the deterministic
+`(latest qualifying update time, dish_id)` keyset boundary. Generation movement fails closed with
+`GENERATION_CHANGED` rather than silently crossing a rollover. Current cooked state is intentionally
+not frozen across pages; the event window is. `search` remains active-title discovery and must not be
+used to reconstruct cooked history. Once `cooked-updates` identifies a canonical `dish_id`,
+`cook-logs` supplies that Dish's immutable evidence without Search. `record-cook-log` appends that
+immutable evidence as a replay-bound mutation. `cooked` marks only an active resting Dish complete
+through PostgreSQL authority; it does not terminate an open workflow operation or project an Asana
+effect.
 `proposals` lists exact PostgreSQL-native semantic proposals whose
 governed changes have durable authorization; `apply-proposal` installs only the exact stored,
 revalidated candidate and opens fresh Verification; and `safe-reclaim` performs different-run
