@@ -13,6 +13,8 @@ from enum import Enum, IntEnum
 from typing import Iterable, Mapping, Sequence
 
 MAX_SOFT_SIGNALS = 32
+MAX_PROVENANCE_POINTERS = 8
+MAX_ELIGIBILITY_REASONS = 8
 RULE_VERSION = "cooking-recommendation-state-v1"
 
 
@@ -304,9 +306,9 @@ def compile_recommendation_state(
         if event.valid_from > as_of:
             continue
 
-        # Explicit lifecycle relations are deterministic, append-only, and may
-        # retire current state only at the same subject/scope, through the same
-        # proper source authority, and with equal or higher evidence kind.
+        # Explicit lifecycle relations are deterministic and append-only. Cross-
+        # source retirement is allowed only for a narrow accepted authority
+        # transition; unrelated proper authorities remain isolated.
         for target_id in (*event.supersedes, *event.clears):
             target = active.get(target_id)
             if target is not None:
@@ -320,32 +322,47 @@ def compile_recommendation_state(
 
         signal = _signal_from_event(event)
 
-        # Repeated current state from one source authority in one logical slot is
-        # folded. Cross-authority state remains visible for conservative conflict
-        # handling instead of implicitly retiring another authority's fact.
-        # Weaker same-source evidence cannot silently erase stronger state.
+        # Repeated current state in one logical slot is folded only when the new
+        # event is allowed to retire the prior signal. Unrelated source authorities
+        # remain visible as conflicts. Weaker same-source evidence cannot silently
+        # erase stronger state.
         folded_into_stronger = False
         for signal_id, previous in tuple(active.items()):
             if previous.slot != signal.slot:
                 continue
-            if previous.source is not event.source:
-                continue
-            if previous.value == signal.value and event.evidence_kind < previous.evidence_kind:
-                active[signal_id] = replace(
-                    previous,
-                    provenance=_merge_provenance(previous.provenance, signal.provenance),
-                )
-                inactive.add(signal.signal_id)
-                folded_into_stronger = True
-                break
-            if event.evidence_kind >= previous.evidence_kind:
-                if previous.value == signal.value:
-                    signal = replace(
-                        signal,
+            can_retire = _source_can_retire(event, previous)
+            if not can_retire:
+                if previous.value == signal.value and _signal_can_absorb_same_value(
+                    previous, event
+                ):
+                    active[signal_id] = replace(
+                        previous,
                         provenance=_merge_provenance(previous.provenance, signal.provenance),
                     )
-                del active[signal_id]
-                inactive.add(signal_id)
+                    inactive.add(signal.signal_id)
+                    folded_into_stronger = True
+                    break
+                continue
+            if (
+                event.evidence_kind < previous.evidence_kind
+                and not _controlling_authority_override(event, previous)
+            ):
+                if previous.value == signal.value:
+                    active[signal_id] = replace(
+                        previous,
+                        provenance=_merge_provenance(previous.provenance, signal.provenance),
+                    )
+                    inactive.add(signal.signal_id)
+                    folded_into_stronger = True
+                    break
+                continue
+            if previous.value == signal.value:
+                signal = replace(
+                    signal,
+                    provenance=_merge_provenance(previous.provenance, signal.provenance),
+                )
+            del active[signal_id]
+            inactive.add(signal_id)
         if folded_into_stronger:
             continue
 
@@ -516,8 +533,8 @@ def _eligibility_result(
     return CandidateEligibilityResult(
         candidate_key=candidate_key,
         status=status,
-        reasons=tuple(dict.fromkeys(reasons)),
-        provenance=tuple(dict.fromkeys(provenance)),
+        reasons=_bounded_unique(reasons, MAX_ELIGIBILITY_REASONS),
+        provenance=_bounded_unique(provenance, MAX_PROVENANCE_POINTERS),
     )
 
 
@@ -535,7 +552,7 @@ def _signal_from_event(event: RecommendationEvidence) -> RecommendationSignal:
         valid_from=event.valid_from,
         source=event.source,
         evidence_kind=event.evidence_kind,
-        provenance=event.provenance,
+        provenance=_bounded_unique(event.provenance, MAX_PROVENANCE_POINTERS),
         eligibility_effect=event.eligibility_effect,
         expires_at=event.expires_at,
         wake_condition=event.wake_condition,
@@ -553,10 +570,119 @@ def _validate_lifecycle_relation(
         or event.scope != target.scope
     ):
         raise ValueError("lifecycle relation must match target subject and scope")
-    if event.evidence_kind < target.evidence_kind:
+    if (
+        event.evidence_kind < target.evidence_kind
+        and not _controlling_authority_override(event, target)
+    ):
         raise ValueError("lifecycle relation cannot retire stronger evidence")
-    if event.source is not target.source:
+    if not _source_can_retire(event, target):
         raise ValueError("lifecycle relation cannot cross source authority")
+
+
+def _source_can_retire(
+    event: RecommendationEvidence,
+    target: RecommendationSignal,
+) -> bool:
+    return _source_authority_can_control(
+        controller_source=event.source,
+        controlled_source=target.source,
+        subject_type=event.subject_type,
+        signal_type=event.signal_type,
+        target_signal_type=target.signal_type,
+    )
+
+
+def _signal_can_absorb_same_value(
+    signal: RecommendationSignal,
+    event: RecommendationEvidence,
+) -> bool:
+    if not _source_authority_can_control(
+        controller_source=signal.source,
+        controlled_source=event.source,
+        subject_type=signal.subject_type,
+        signal_type=signal.signal_type,
+        target_signal_type=event.signal_type,
+    ):
+        return False
+    return (
+        signal.evidence_kind >= event.evidence_kind
+        or _source_owner_override(
+            controller_source=signal.source,
+            controlled_source=event.source,
+            subject_type=signal.subject_type,
+            signal_type=signal.signal_type,
+        )
+    )
+
+
+def _source_authority_can_control(
+    *,
+    controller_source: EvidenceSource,
+    controlled_source: EvidenceSource,
+    subject_type: SubjectType,
+    signal_type: SignalType,
+    target_signal_type: SignalType,
+) -> bool:
+    if controller_source is controlled_source:
+        return True
+    if signal_type is not target_signal_type:
+        return False
+
+    # Proper authorities may replace lower-authority recommendation evidence for
+    # the exact same fact, but may not erase one another's independently owned
+    # state.
+    lower_authority_sources = {
+        EvidenceSource.AGENT_INFERENCE,
+        EvidenceSource.COOK_OUTCOME,
+        EvidenceSource.IMPORTED_HISTORY,
+    }
+    proper_authority_sources = {
+        EvidenceSource.EXPLICIT_MARCO,
+        EvidenceSource.RUNTIME_FACT,
+        EvidenceSource.SCRATCHPAD_AUTHORITY,
+        EvidenceSource.PROFILE_AUTHORITY,
+    }
+    if controlled_source in lower_authority_sources and controller_source in proper_authority_sources:
+        return True
+
+    return _source_owner_override(
+        controller_source=controller_source,
+        controlled_source=controlled_source,
+        subject_type=subject_type,
+        signal_type=signal_type,
+    )
+
+
+def _source_owner_override(
+    *,
+    controller_source: EvidenceSource,
+    controlled_source: EvidenceSource,
+    subject_type: SubjectType,
+    signal_type: SignalType,
+) -> bool:
+    # Once stable configurable preference state exists in Profile, it controls
+    # that fact over direct recommendation evidence without making Profile a
+    # generic authority over runtime or Scratchpad state.
+    if (
+        controller_source is EvidenceSource.PROFILE_AUTHORITY
+        and controlled_source is EvidenceSource.EXPLICIT_MARCO
+        and subject_type is SubjectType.PREFERENCE
+    ):
+        return True
+
+    return False
+
+
+def _controlling_authority_override(
+    event: RecommendationEvidence,
+    target: RecommendationSignal,
+) -> bool:
+    return _source_owner_override(
+        controller_source=event.source,
+        controlled_source=target.source,
+        subject_type=event.subject_type,
+        signal_type=event.signal_type,
+    )
 
 
 def _is_inactive_by_lifecycle(
@@ -594,18 +720,31 @@ def _soft_signal_relevant(
     return signal.scope.kind in {ScopeKind.REQUEST, ScopeKind.SESSION}
 
 
-def _soft_priority_key(signal: RecommendationSignal) -> tuple[int, int, int, int, float, str]:
+def _soft_priority_key(signal: RecommendationSignal) -> tuple[int, int, int, int, int, float, str]:
     tier = _scope_tier(signal)
+    # A current durable source owner wins for the fact it owns; otherwise the
+    # accepted direct-evidence/confidence/strength ordering applies.
+    authority_priority = _controlling_source_priority(signal)
     # Lower tuple sorts first. Later timestamps sort first by negating POSIX
     # time; stable identity is the final deterministic tie-break.
     return (
         tier,
+        authority_priority,
         -int(signal.evidence_kind),
         -int(signal.confidence),
         -int(signal.strength),
         -signal.valid_from.timestamp(),
         signal.signal_id,
     )
+
+
+def _controlling_source_priority(signal: RecommendationSignal) -> int:
+    if (
+        signal.source is EvidenceSource.PROFILE_AUTHORITY
+        and signal.subject_type is SubjectType.PREFERENCE
+    ):
+        return 0
+    return 1
 
 
 def _scope_tier(signal: RecommendationSignal) -> int:
@@ -659,8 +798,18 @@ def _validate_eligibility_effect(event: RecommendationEvidence) -> None:
         raise ValueError("hard exclusions must be explicitly durable")
 
 
+def _bounded_unique(values: Iterable[str], limit: int) -> tuple[str, ...]:
+    unique = tuple(dict.fromkeys(values))
+    if len(unique) <= limit:
+        return unique
+    return unique[-limit:]
+
+
 def _merge_provenance(*groups: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(pointer for group in groups for pointer in group))
+    return _bounded_unique(
+        (pointer for group in groups for pointer in group),
+        MAX_PROVENANCE_POINTERS,
+    )
 
 
 def _require_aware(value: datetime, field: str) -> None:
