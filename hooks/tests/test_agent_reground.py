@@ -327,7 +327,7 @@ def test_failed_sessionstart_retains_transcript_context(
     assert pending["last_error"] == "temporary failure"
     assert not agent_reground.marker_path("session-1").exists()
 
-def test_host_configs_wire_compact_reground_without_global_pretool_barrier(hooks_dir):
+def test_host_configs_wire_compact_reground_separately_from_investigation_guard(hooks_dir):
     codex = json.loads((hooks_dir.parent / "codex/hooks.json").read_text())
     session = codex["hooks"]["SessionStart"]
     assert any(
@@ -346,7 +346,9 @@ def test_host_configs_wire_compact_reground_without_global_pretool_barrier(hooks
     claude = json.loads((hooks_dir.parent / ".claude/settings.json").read_text())
     assert claude["hooks"]["SessionStart"][0]["matcher"] == "compact"
     assert "$CLAUDE_PROJECT_DIR" in claude["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    assert "PreToolUse" not in claude["hooks"]
+    claude_pretool = claude["hooks"]["PreToolUse"]
+    assert not any("agent-reground" in hook["command"] for entry in claude_pretool for hook in entry["hooks"])
+    assert any("investigation-guard hook --host claude" in hook["command"] for entry in claude_pretool for hook in entry["hooks"])
 
 
 def test_stale_pretool_invocation_is_non_blocking(agent_reground, monkeypatch, capsys):

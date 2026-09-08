@@ -1,0 +1,541 @@
+#!/usr/bin/env python3
+"""Bounded investigation guard for local Dish agent hook surfaces.
+
+The hard circuit breaker is deliberately independent of model-declared ACTION_READY.
+A calibrated policy may additionally deny exploration after ACTION_READY/action start,
+but failure to declare ACTION_READY never renews the hard investigation envelope.
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import re
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from codex_hook_scope import applies as codex_applies  # noqa: E402
+
+SCHEMA_VERSION = 1
+POLICY_SCHEMA_VERSION = 1
+TRACE_SCHEMA_VERSION = 1
+SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]+$")
+TASK_GID = re.compile(r"^[0-9]+$")
+
+# First reads of these startup/authority anchors are mechanically exempt. A repeat of
+# the same signature consumes investigation budget, so "mandatory" is not renewable.
+MANDATORY_PATH_SUFFIXES = (
+    "CLAUDE.md",
+    "dish/docs/agents/index.md",
+    "dish/docs/agents/contributor-base.md",
+    "dish/docs/chatgpt-projects/manifest.json",
+)
+ROLE_CONTRACTS = {
+    "implementation": "dish/docs/agents/implementation.md",
+    "review": "dish/docs/agents/review.md",
+    "development-workflow": "dish/docs/agents/development-workflow.md",
+    "workflow": "dish/docs/agents/workflow.md",
+    "integration": "dish/docs/agents/integration.md",
+    "audit": "dish/docs/agents/audit.md",
+    "coordinator": "dish/docs/agents/coordinator.md",
+    "postgresql-dark-launch": "dish/docs/agents/postgresql-dark-launch.md",
+}
+DISCOVERY_TOOLS = {"Read", "Grep", "Glob", "Bash"}
+ACTION_TOOLS = {"Edit", "Write", "NotebookEdit"}
+
+READ_ONLY_BASH = re.compile(
+    r"(?:^|[;&|]\s*)(?:rg|grep|find|fd|cat|sed\s+-n|head|tail|ls|tree|git\s+(?:show|log|grep|blame|ls-files|diff|status|rev-parse|branch)|gh\s+(?:api|pr\s+(?:view|diff|checks))|python(?:3)?\s+-m\s+pip\s+show)\b"
+)
+ACTION_BASH = re.compile(
+    r"(?:^|[;&|]\s*)(?:git\s+(?:add|commit|push|reset|checkout|switch|cherry-pick|rebase|merge)|gh\s+pr\s+(?:create|edit|ready)|(?:python3?\s+)?[^;&|]*(?:apply_patch|agent-worktree)|rm\b|mv\b|cp\b|mkdir\b|touch\b|chmod\b|ln\b|tee\b)"
+)
+PROOF_BASH = re.compile(
+    r"(?:pytest\b|python(?:3)?\s+-m\s+pytest\b|dish-test-plan\b|dish-test-lane\b|ruff\b|mypy\b|pyright\b|npm\s+test\b|pnpm\s+test\b|git\s+(?:diff|status)\b)"
+)
+MANDATORY_BASH = re.compile(
+    r"(?:git\s+(?:rev-parse|branch\s+--show-current|remote\s+get-url)|(?:cat|sed\s+-n|head|tail|rg|grep)[^;&|]*(?:CLAUDE\.md|dish/docs/agents/index\.md|dish/docs/agents/(?:implementation|review|development-workflow|workflow|integration|audit|coordinator|postgresql-dark-launch)\.md|dish/docs/chatgpt-projects/(?:worker|implementation|review|development-workflow|workflow|integration|audit|coordinator|postgresql-dark-launch)\.md|dish/docs/chatgpt-projects/manifest\.json)|asana\s+raw\s+GET\s+/tasks/)"
+)
+
+
+def utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def state_root() -> Path:
+    configured = os.environ.get("DISH_AGENT_STATE_ROOT")
+    return Path(configured).expanduser().resolve() if configured else Path.home().resolve() / ".local/state/dish"
+
+
+def guard_root() -> Path:
+    return state_root() / "investigation-guard"
+
+
+def _safe(value: str, label: str) -> str:
+    if not value or not SAFE_ID.fullmatch(value):
+        raise ValueError(f"unsafe {label}")
+    return value
+
+
+def session_id(payload: dict[str, Any]) -> str | None:
+    raw = os.environ.get("CODEX_THREAD_ID") or payload.get("session_id") or payload.get("sessionId") or payload.get("agent_id")
+    if raw is None:
+        return None
+    value = str(raw)
+    return value if SAFE_ID.fullmatch(value) else None
+
+
+def identity_for_session(sid: str) -> dict[str, Any] | None:
+    path = state_root() / "agents" / f"{sid}.json"
+    try:
+        if path.is_symlink():
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict) or value.get("agent_id") not in (None, sid):
+        return None
+    return value
+
+
+def task_and_role(sid: str) -> tuple[str | None, str | None]:
+    identity = identity_for_session(sid)
+    if not identity:
+        return None, None
+    active = identity.get("active_worktree")
+    task = identity.get("owning_task_gid") or (active.get("task_gid") if isinstance(active, dict) else None)
+    role = identity.get("role")
+    task_s = str(task) if task is not None else None
+    if task_s and not TASK_GID.fullmatch(task_s):
+        task_s = None
+    role_s = str(role).strip().lower().replace("_", "-") if isinstance(role, str) else None
+    return task_s, role_s
+
+
+def state_path(host: str, sid: str, task: str | None) -> Path:
+    task_key = task or "unbound"
+    return guard_root() / "sessions" / _safe(host, "host") / _safe(task_key, "task") / f"{_safe(sid, 'session')}.json"
+
+
+def _atomic_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _lock_file(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    handle = path.open("a+", encoding="utf-8")
+    os.chmod(path, 0o600)
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    return handle
+
+
+def load_state(host: str, sid: str, task: str | None, role: str | None) -> dict[str, Any]:
+    path = state_path(host, sid, task)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict) or value.get("schema_version") != SCHEMA_VERSION:
+            raise ValueError
+    except (OSError, json.JSONDecodeError, ValueError):
+        value = {
+            "schema_version": SCHEMA_VERSION,
+            "host": host,
+            "session_id": sid,
+            "task_gid": task,
+            "role": role,
+            "task_class": os.environ.get("DISH_INVESTIGATION_CLASS", "standard"),
+            "started_at": utcnow(),
+            "grounding_completed_at": None,
+            "first_action_at": None,
+            "action_ready": False,
+            "action_started": False,
+            "checkpoint_required": False,
+            "investigation_count": 0,
+            "proof_after_checkpoint_count": 0,
+            "mandatory_seen": [],
+            "action_paths": [],
+            "denials": [],
+            "degraded_surfaces": [],
+            "observations": [],
+        }
+    return value
+
+
+def calibration_path() -> Path:
+    configured = os.environ.get("DISH_INVESTIGATION_CALIBRATION")
+    return Path(configured).expanduser().resolve() if configured else guard_root() / "calibration.json"
+
+
+def load_policy(host: str, task_class: str) -> dict[str, Any] | None:
+    path = calibration_path()
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict) or value.get("schema_version") != POLICY_SCHEMA_VERSION:
+        return None
+    policy = (value.get("calibrations") or {}).get(f"{host}:{task_class}")
+    if not isinstance(policy, dict):
+        return None
+    cap = policy.get("investigation_cap")
+    proof = policy.get("proof_tail_cap")
+    qualified = policy.get("qualified_tools")
+    if not isinstance(cap, int) or cap < 1 or not isinstance(proof, int) or proof < 0:
+        return None
+    if not isinstance(qualified, list) or not all(isinstance(x, str) and x for x in qualified):
+        return None
+    return policy
+
+
+def _path_from_input(tool_input: dict[str, Any]) -> str | None:
+    for key in ("file_path", "path", "notebook_path"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value:
+            return value.replace("\\", "/")
+    return None
+
+
+def mandatory_anchor(path: str | None, role: str | None) -> str | None:
+    if not path:
+        return None
+    normalized = path.replace("\\", "/")
+    suffixes = list(MANDATORY_PATH_SUFFIXES)
+    if role and role in ROLE_CONTRACTS:
+        suffixes.append(ROLE_CONTRACTS[role])
+    # Current Project kernel for the active role/profile is also startup authority.
+    if "/dish/docs/chatgpt-projects/" in f"/{normalized}" and normalized.endswith(".md"):
+        base = normalized.rsplit("/", 1)[-1]
+        if base in {"worker.md", f"{role}.md" if role else ""}:
+            return f"path:{normalized}"
+    if any(normalized.endswith(suffix) for suffix in suffixes):
+        return f"path:{normalized}"
+    return None
+
+
+def _bash_command(payload: dict[str, Any]) -> str:
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return ""
+    value = tool_input.get("command")
+    return str(value) if value is not None else ""
+
+
+def classify(payload: dict[str, Any], state: dict[str, Any]) -> tuple[str, str]:
+    tool = str(payload.get("tool_name") or payload.get("toolName") or "")
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    role = state.get("role") if isinstance(state.get("role"), str) else None
+
+    if payload.get("dish_action_ready") is True:
+        return "action-ready", "host-supplied ACTION_READY marker"
+
+    if tool in ACTION_TOOLS:
+        path = _path_from_input(tool_input)
+        return "action", f"{tool}:{path or 'unknown-path'}"
+
+    if tool == "Read":
+        path = _path_from_input(tool_input)
+        anchor = mandatory_anchor(path, role)
+        if anchor and anchor not in state.get("mandatory_seen", []):
+            return "mandatory", anchor
+        action_paths = set(state.get("action_paths") or [])
+        if path and any(path == p or path.endswith("/" + p) or p.endswith("/" + path) for p in action_paths):
+            return "proof", f"read-action-path:{path}"
+        return "investigation", f"Read:{path or 'unknown-path'}"
+
+    if tool in {"Grep", "Glob"}:
+        path = _path_from_input(tool_input)
+        action_paths = set(state.get("action_paths") or [])
+        if state.get("action_started") and path and any(path == p or path.endswith("/" + p) or p.endswith("/" + path) for p in action_paths):
+            return "proof", f"{tool}-action-path:{path}"
+        return "investigation", f"{tool}:{path or '*'}"
+
+    if tool == "Bash" or (not tool and _bash_command(payload)):
+        command = _bash_command(payload).strip()
+        if ACTION_BASH.search(command):
+            return "action", f"Bash:{command[:180]}"
+        if PROOF_BASH.search(command):
+            return "proof", f"Bash:{command[:180]}"
+        if MANDATORY_BASH.search(command):
+            signature = "bash-mandatory:" + hashlib.sha256(command.encode()).hexdigest()[:20]
+            if signature not in state.get("mandatory_seen", []):
+                return "mandatory", signature
+        if READ_ONLY_BASH.search(command) or command:
+            return "investigation", f"Bash:{command[:180]}"
+
+    return "other", tool or "unknown"
+
+
+def _record_action_path(payload: dict[str, Any], state: dict[str, Any]) -> None:
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    path = _path_from_input(tool_input)
+    if path and path not in state["action_paths"]:
+        state["action_paths"].append(path)
+
+
+def _maybe_grounding_complete(state: dict[str, Any]) -> None:
+    if state.get("grounding_completed_at"):
+        return
+    role = state.get("role")
+    required_suffixes = {"CLAUDE.md", "dish/docs/agents/index.md"}
+    if isinstance(role, str) and role in ROLE_CONTRACTS:
+        required_suffixes.add(ROLE_CONTRACTS[role])
+    seen = "\n".join(state.get("mandatory_seen") or [])
+    if all(suffix in seen for suffix in required_suffixes):
+        state["grounding_completed_at"] = utcnow()
+
+
+def deny_payload(reason: str) -> dict[str, Any]:
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def process(payload: dict[str, Any], host: str) -> dict[str, Any] | None:
+    if str(payload.get("hook_event_name") or payload.get("hookEventName") or "PreToolUse") != "PreToolUse":
+        return None
+    if host == "codex" and not codex_applies(payload):
+        return None
+    sid = session_id(payload)
+    if not sid:
+        return None
+    task, role = task_and_role(sid)
+    path = state_path(host, sid, task)
+    lock = _lock_file(path.with_suffix(path.suffix + ".lock"))
+    try:
+        state = load_state(host, sid, task, role)
+        category, detail = classify(payload, state)
+        now = utcnow()
+        tool = str(payload.get("tool_name") or payload.get("toolName") or "") or "Bash"
+
+        if category == "mandatory":
+            state["mandatory_seen"].append(detail)
+            _maybe_grounding_complete(state)
+        elif category == "action-ready":
+            state["action_ready"] = True
+        elif category == "action":
+            state["action_started"] = True
+            state["action_ready"] = True
+            if not state.get("first_action_at"):
+                state["first_action_at"] = now
+            _record_action_path(payload, state)
+        elif category == "other":
+            marker = f"{host}:{tool}"
+            if marker not in state["degraded_surfaces"]:
+                state["degraded_surfaces"].append(marker)
+
+        policy = load_policy(host, str(state.get("task_class") or "standard"))
+        hard_qualified = bool(task and policy and tool in set(policy.get("qualified_tools") or []))
+        decision: dict[str, Any] | None = None
+
+        if category == "investigation":
+            if hard_qualified:
+                cap = int(policy["investigation_cap"])
+                early = bool(policy.get("early_action_ready", False))
+                if early and state.get("action_ready"):
+                    reason = (
+                        "CHECKPOINT_REQUIRED [investigation-guard]: ACTION_READY/action has been observed; "
+                        "general exploration is closed. Continue the known action, use bounded focused proof, "
+                        "or return one exact material blocker."
+                    )
+                    decision = deny_payload(reason)
+                elif int(state["investigation_count"]) >= cap:
+                    state["checkpoint_required"] = True
+                    reason = (
+                        f"CHECKPOINT_REQUIRED [investigation-guard]: calibrated {host}/{state['task_class']} "
+                        f"investigation cap {cap} is exhausted. No broad-read renewal is available; continue "
+                        "the known action, use bounded focused proof, or return one exact material blocker."
+                    )
+                    decision = deny_payload(reason)
+                else:
+                    state["investigation_count"] = int(state["investigation_count"]) + 1
+                    if int(state["investigation_count"]) >= cap:
+                        state["checkpoint_required"] = True
+            else:
+                state["investigation_count"] = int(state["investigation_count"]) + 1
+                marker = f"{host}:{tool}:observe-only"
+                if marker not in state["degraded_surfaces"]:
+                    state["degraded_surfaces"].append(marker)
+        elif category == "proof" and state.get("checkpoint_required") and hard_qualified:
+            proof_cap = int(policy["proof_tail_cap"])
+            if int(state["proof_after_checkpoint_count"]) >= proof_cap:
+                decision = deny_payload(
+                    "CHECKPOINT_REQUIRED [investigation-guard]: bounded focused-proof tail is exhausted. "
+                    "Do not reopen general investigation; return the exact remaining blocker or finish the action."
+                )
+            else:
+                state["proof_after_checkpoint_count"] = int(state["proof_after_checkpoint_count"]) + 1
+
+        state["observations"].append({"at": now, "tool": tool, "category": category, "detail": detail, "denied": bool(decision)})
+        state["observations"] = state["observations"][-200:]
+        if decision:
+            state["denials"].append({"at": now, "tool": tool, "category": category, "reason": decision["hookSpecificOutput"]["permissionDecisionReason"]})
+            state["denials"] = state["denials"][-50:]
+        _atomic_json(path, state)
+        return decision
+    finally:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        lock.close()
+
+
+def _trace_category_counts(trace: dict[str, Any]) -> tuple[int, int, set[str]]:
+    state = {
+        "role": trace.get("role"), "mandatory_seen": [], "action_paths": [],
+        "action_started": False, "action_ready": False,
+    }
+    investigations = proofs = 0
+    tools: set[str] = set()
+    for event in trace.get("events", []):
+        payload = event.get("payload") if isinstance(event, dict) else None
+        if not isinstance(payload, dict):
+            raise ValueError("trace event payload must be an object")
+        category, _ = classify(payload, state)
+        expected = event.get("expected_category")
+        if expected and expected != category:
+            raise ValueError(f"trace classifier mismatch: expected {expected}, got {category}")
+        tool = str(payload.get("tool_name") or "Bash")
+        tools.add(tool)
+        if category == "mandatory":
+            _, detail = classify(payload, state)
+            state["mandatory_seen"].append(detail)
+        elif category == "investigation":
+            investigations += 1
+        elif category == "proof":
+            proofs += 1
+        elif category == "action":
+            state["action_started"] = True
+            state["action_ready"] = True
+            tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+            path = _path_from_input(tool_input)
+            if path:
+                state["action_paths"].append(path)
+    return investigations, proofs, tools
+
+
+def calibrate(traces: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for trace in traces:
+        if trace.get("schema_version") != TRACE_SCHEMA_VERSION:
+            raise ValueError("unsupported investigation trace schema")
+        host = str(trace.get("host") or "")
+        task_class = str(trace.get("task_class") or "")
+        kind = str(trace.get("kind") or "")
+        if host not in {"claude", "codex"} or not task_class or kind not in {"legitimate", "incident"}:
+            raise ValueError("invalid investigation trace identity")
+        grouped.setdefault((host, task_class), []).append(trace)
+
+    out: dict[str, Any] = {"schema_version": POLICY_SCHEMA_VERSION, "generated_at": utcnow(), "calibrations": {}}
+    for (host, task_class), group in sorted(grouped.items()):
+        legit = [x for x in group if x["kind"] == "legitimate"]
+        incidents = [x for x in group if x["kind"] == "incident"]
+        if not legit or not incidents:
+            continue
+        legit_counts = []
+        proof_counts = []
+        all_tools: set[str] = set()
+        for trace in legit:
+            inv, proof, tools = _trace_category_counts(trace)
+            legit_counts.append(inv); proof_counts.append(proof); all_tools |= tools
+        incident_limits = []
+        for trace in incidents:
+            inv, _proof, tools = _trace_category_counts(trace)
+            all_tools |= tools
+            stop_before = trace.get("stop_before_investigation_count", inv)
+            if not isinstance(stop_before, int) or stop_before < 1 or stop_before > inv:
+                raise ValueError("incident stop_before_investigation_count must be within observed investigation count")
+            incident_limits.append(stop_before)
+        candidate = max(legit_counts)
+        if candidate < 1:
+            candidate = 1
+        if candidate >= min(incident_limits):
+            continue
+        intercepted_sets = []
+        for trace in group:
+            values = trace.get("intercepted_tools")
+            if not isinstance(values, list) or not all(isinstance(x, str) for x in values):
+                intercepted_sets = []
+                break
+            intercepted_sets.append(set(values))
+        if not intercepted_sets:
+            continue
+        qualified = set.intersection(*intercepted_sets)
+        if not all_tools.issubset(qualified):
+            continue
+        digest = hashlib.sha256(json.dumps(group, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        out["calibrations"][f"{host}:{task_class}"] = {
+            "investigation_cap": candidate,
+            "proof_tail_cap": max(proof_counts) if proof_counts else 0,
+            "early_action_ready": False,
+            "qualified_tools": sorted(qualified),
+            "trace_digest": digest,
+            "legitimate_trace_count": len(legit),
+            "incident_trace_count": len(incidents),
+        }
+    return out
+
+
+def read_traces(paths: Iterable[Path]) -> list[dict[str, Any]]:
+    traces = []
+    for path in paths:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError(f"trace must be a JSON object: {path}")
+        traces.append(value)
+    return traces
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command")
+    hook = sub.add_parser("hook")
+    hook.add_argument("--host", choices=("claude", "codex"), required=True)
+    cal = sub.add_parser("calibrate")
+    cal.add_argument("--trace", action="append", required=True)
+    cal.add_argument("--output", required=True)
+    args = parser.parse_args(argv)
+
+    if args.command == "calibrate":
+        traces = read_traces(Path(p) for p in args.trace)
+        result = calibrate(traces)
+        _atomic_json(Path(args.output).expanduser().resolve(), result)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    if args.command == "hook":
+        try:
+            payload = json.load(sys.stdin)
+        except json.JSONDecodeError:
+            return 0
+        if not isinstance(payload, dict):
+            return 0
+        decision = process(payload, args.host)
+        if decision:
+            print(json.dumps(decision))
+        return 0
+    parser.error("choose hook or calibrate")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

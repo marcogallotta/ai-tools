@@ -17,6 +17,16 @@ mutations on a known non-`main` branch, and direct `gh pr` commands are allowed;
 `main`, unresolved, wrapped, compound, and unfamiliar forms retain the prompt.
 Claude's `destructive-op-guard` uses the same small branch check.
 
+The Bash `PreToolUse` entry also invokes `~/.local/bin/investigation-guard`. That guard keeps a
+session/task-local monotonic investigation count outside model reasoning and can enter
+`CHECKPOINT_REQUIRED` only when a trace-derived calibration for the admitted task class exists.
+Without such calibration it remains observe-only. The current Codex repository configuration
+qualifies **Bash only** for this invariant; MCP, built-in non-Bash tools, opaque child-process work,
+or any tool class not proven to emit and honor `PreToolUse` remains `DEGRADED` and must not be
+reported as hard-closed. A separately calibrated deep-research class must be selected at admission
+(e.g. by the session launcher/environment); the model cannot renew or self-promote the ordinary
+investigation envelope.
+
 The shared `hooks/protected_checkout.py` classifier denies direct and visibly
 nested `git checkout`/`git switch` branch changes against the primary
 `~/ai-tools` worktree. It resolves real Git worktree identity, command-line and
@@ -41,6 +51,7 @@ ln -s /home/marco/ai-tools/codex/git-pr.rules /home/marco/.codex/rules/git-pr.ru
 ln -s /home/marco/ai-tools/hooks/dish-operator-context /home/marco/.local/bin/dish-operator-context
 ln -s /home/marco/ai-tools/hooks/agent-reground /home/marco/.local/bin/agent-reground
 ln -s /home/marco/ai-tools/hooks/codex-protected-checkout /home/marco/.local/bin/codex-protected-checkout
+ln -s /home/marco/ai-tools/hooks/investigation-guard /home/marco/.local/bin/investigation-guard
 ```
 
 Do not overwrite existing paths blindly. Inspect and preserve any existing
@@ -62,7 +73,7 @@ git -C "$WT" status --short
 
 Temporarily point the user hook and adapter links at that exact worktree head.
 First inspect `~/.codex/hooks.json`, `~/.codex/rules/git-pr.rules`, `~/.local/bin/dish-operator-context`,
-`~/.local/bin/agent-reground`, and `~/.local/bin/codex-protected-checkout`;
+`~/.local/bin/agent-reground`, `~/.local/bin/codex-protected-checkout`, and `~/.local/bin/investigation-guard`;
 move aside and later restore any pre-existing files or links rather than
 overwriting them.
 
@@ -72,9 +83,11 @@ ln -s "$WT/codex/git-pr.rules" /home/marco/.codex/rules/git-pr.rules
 ln -s "$WT/hooks/dish-operator-context" /home/marco/.local/bin/dish-operator-context
 ln -s "$WT/hooks/agent-reground" /home/marco/.local/bin/agent-reground
 ln -s "$WT/hooks/codex-protected-checkout" /home/marco/.local/bin/codex-protected-checkout
+ln -s "$WT/hooks/investigation-guard" /home/marco/.local/bin/investigation-guard
 
 test "$(readlink -f /home/marco/.codex/hooks.json)" = "$WT/codex/hooks.json"
 test "$(readlink -f /home/marco/.local/bin/dish-operator-context)" = "$WT/hooks/dish-operator-context"
+test "$(readlink -f /home/marco/.local/bin/investigation-guard)" = "$WT/hooks/investigation-guard"
 test "$(git -C "$WT" rev-parse HEAD)" = "$EXPECTED"
 ```
 

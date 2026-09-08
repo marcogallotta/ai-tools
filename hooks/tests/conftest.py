@@ -103,3 +103,8 @@ def agent_reground(monkeypatch):
     # command cwd; production uses the absolute installed launcher.
     monkeypatch.setattr(module, "ASANA_TOOL", pathlib.Path("tools/asana"))
     return module
+
+
+@pytest.fixture
+def investigation_guard():
+    return load_hook_module("investigation-guard")

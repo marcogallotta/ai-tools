@@ -228,7 +228,7 @@ During investigation, separate:
 
 Only the first two belong in the PR. Record adjacent findings separately as follow-up work.
 
-Once the existing mechanism responsible for the requested invariant is identified, stop discovery and make the smallest change needed to enforce or prove that invariant.
+Once the existing mechanism responsible for the requested invariant is identified, stop discovery and make the smallest change needed to enforce or prove that invariant. Treat the work as `ACTION_READY` when mandatory grounding/admission is complete, that mechanism/seam and the smallest next action plus focused proof are known, and no named unresolved material question can change the action. Before any further exploratory read, bind it to that decision-changing question and the alternate action it could select; no such question means act now.
 
 Before adding new files, systems, targets, or process changes, ask whether the change directly satisfies the acceptance criteria. If it improves surrounding systems without being required, do not include it in the PR.
 

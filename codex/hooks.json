@@ -32,6 +32,12 @@
             "command": "/home/marco/.local/bin/codex-protected-checkout",
             "timeout": 10,
             "statusMessage": "Checking protected checkout"
+          },
+          {
+            "type": "command",
+            "command": "/home/marco/.local/bin/investigation-guard hook --host codex",
+            "timeout": 10,
+            "statusMessage": "Checking investigation budget"
           }
         ]
       }

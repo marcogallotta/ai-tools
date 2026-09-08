@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "host": "claude",
+  "task_class": "deep-research",
+  "kind": "legitimate",
+  "role": "development-workflow",
+  "intercepted_tools": ["Read", "Grep", "Glob", "Bash", "Edit", "Write"],
+  "events": [
+    {"payload": {"tool_name": "Read", "tool_input": {"file_path": "/repo/CLAUDE.md"}}, "expected_category": "mandatory"},
+    {"payload": {"tool_name": "Read", "tool_input": {"file_path": "/repo/dish/docs/agents/index.md"}}, "expected_category": "mandatory"},
+    {"payload": {"tool_name": "Read", "tool_input": {"file_path": "/repo/dish/docs/agents/development-workflow.md"}}, "expected_category": "mandatory"},
+    {"payload": {"tool_name": "Grep", "tool_input": {"pattern": "authority", "path": "/repo/dish/docs"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Glob", "tool_input": {"pattern": "**/*.md", "path": "/repo/dish/docs/architecture"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Read", "tool_input": {"file_path": "/repo/dish/docs/architecture/index.md"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "git log --oneline -- dish/docs/architecture"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Grep", "tool_input": {"pattern": "recovery", "path": "/repo/dish/docs/architecture"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Write", "tool_input": {"file_path": "/repo/dish/docs/report.md"}}, "expected_category": "action"}
+  ]
+}
