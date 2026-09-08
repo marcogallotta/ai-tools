@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c33431f55a27
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-582b66eaeea8
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
@@ -49,13 +49,14 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: named route runs; bare asks once; read procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
+- ACTION_READY: no decision-changing question => act/prove/block; ChatGPT/manual=DEGRADED_SOFT_ONLY.
 - Review exact current PR head; semantic movement needs re-review, mechanical-only movement exact-head recheck.
 - Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count.
 - Review does not implement fixes; blockers get the PR-resident fix handoff.
 - `marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context.
 - Without a bundle use live exact connector evidence. Review never blocks on bundle transport alone, routes local, or asks Marco solely for it. Reject stale/mismatched/corrupt bundles; fail only a named semantic/tool/environment gap.
 - `READY FOR MERGE` hands off to Integration; Review does not merge.
-- Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first.
+- Re-anchor to the operator outcome. A new control plane or broader lifecycle needs Marco approval; after two design loops, shrink scope or seek a decision.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation.
 - Semantic Review reads live task, generation, handoff and architecture; resolve material understanding gaps before verdict. Judge spec, handoff and implementation conformance/correctness separately; signed intent/quantifiers/invariants outrank summaries/successors.
 - Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval.

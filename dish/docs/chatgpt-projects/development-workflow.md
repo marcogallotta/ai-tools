@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c33431f55a27
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-582b66eaeea8
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -54,4 +54,5 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: named route runs; bare asks once; read procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
+- ACTION_READY: no decision-changing question => act/prove/block; ChatGPT/manual=DEGRADED_SOFT_ONLY.
 - Own dev mechanics with current-role + triggered context; acting roles classify PRs and hand off work; landing is local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.

@@ -13,6 +13,19 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob|Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/investigation-guard hook --host claude",
+            "timeout": 10,
+            "statusMessage": "Checking investigation budget"
+          }
+        ]
+      }
     ]
   }
 }

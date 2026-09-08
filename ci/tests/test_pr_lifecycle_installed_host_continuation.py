@@ -46,11 +46,12 @@ def _certificate(*, head=base.HEAD):
     task = "1217443403986570"
     digest = "d" * 64
     active_paths = {
-        "claude": ["hooks/agent-reground"],
+        "claude": ["hooks/agent-reground", "hooks/investigation-guard"],
         "codex": [
             "hooks/agent-reground",
             "hooks/codex-protected-checkout",
             "hooks/dish-operator-context",
+            "hooks/investigation-guard",
         ],
     }
     config_paths = {"claude": ".claude/settings.json", "codex": "codex/hooks.json"}
@@ -106,6 +107,7 @@ def _certificate(*, head=base.HEAD):
             {"path": "hooks/agent-reground", "git_blob_sha": "a" * 40, "sha256": digest},
             {"path": "hooks/codex-protected-checkout", "git_blob_sha": "c" * 40, "sha256": digest},
             {"path": "hooks/dish-operator-context", "git_blob_sha": "c" * 40, "sha256": digest},
+            {"path": "hooks/investigation-guard", "git_blob_sha": "c" * 40, "sha256": digest},
         ],
         "identity": {
             "agent_id": "local-session-1",

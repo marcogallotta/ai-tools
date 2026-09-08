@@ -1,7 +1,7 @@
 # Dish — Workflow Specialist
 
 PROJECT_ROLE: Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c33431f55a27
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-582b66eaeea8
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/workflow.md
@@ -45,6 +45,7 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: named route runs; bare asks once; read procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
+- ACTION_READY: no decision-changing question => act/prove/block; ChatGPT/manual=DEGRADED_SOFT_ONLY.
 - `Dish — Workflow` is this lane’s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana.
 - Own Workflow product/operator/connected-agent semantics; cross-lane ordering and production/cutover authority remain with Coordinator.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation.

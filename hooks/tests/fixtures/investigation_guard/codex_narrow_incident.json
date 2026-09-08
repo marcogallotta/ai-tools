@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "host": "codex",
+  "task_class": "narrow-fix",
+  "kind": "incident",
+  "role": "implementation",
+  "stop_before_investigation_count": 3,
+  "intercepted_tools": ["Bash"],
+  "events": [
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "git rev-parse HEAD"}}, "expected_category": "mandatory"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "rg -n policy ."}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "find dish/docs -type f"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "git log --oneline -100"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "grep -R history dish/docs"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "ls -R hooks"}}, "expected_category": "investigation"}
+  ]
+}

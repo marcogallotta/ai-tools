@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "host": "claude",
+  "task_class": "narrow-fix",
+  "kind": "legitimate",
+  "role": "implementation",
+  "intercepted_tools": ["Read", "Grep", "Glob", "Bash", "Edit", "Write"],
+  "events": [
+    {"payload": {"tool_name": "Read", "tool_input": {"file_path": "/repo/CLAUDE.md"}}, "expected_category": "mandatory"},
+    {"payload": {"tool_name": "Read", "tool_input": {"file_path": "/repo/dish/docs/agents/index.md"}}, "expected_category": "mandatory"},
+    {"payload": {"tool_name": "Read", "tool_input": {"file_path": "/repo/dish/docs/agents/implementation.md"}}, "expected_category": "mandatory"},
+    {"payload": {"tool_name": "Grep", "tool_input": {"pattern": "PreToolUse", "path": "/repo/hooks"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Read", "tool_input": {"file_path": "/repo/codex/hooks.json"}}, "expected_category": "investigation"},
+    {"payload": {"tool_name": "Edit", "tool_input": {"file_path": "/repo/hooks/investigation-guard"}}, "expected_category": "action"},
+    {"payload": {"tool_name": "Bash", "tool_input": {"command": "pytest -q hooks/tests/test_investigation_guard.py"}}, "expected_category": "proof"}
+  ]
+}
