@@ -169,6 +169,13 @@ class RecommendationEvidence:
                 raise ValueError("clear events do not carry eligibility effects")
         if self.evidence_kind is EvidenceKind.DERIVED and (self.clears or self.supersedes):
             raise ValueError("derived evidence cannot clear or supersede authoritative state")
+        explicit_sources = {
+            EvidenceSource.EXPLICIT_MARCO,
+            EvidenceSource.SCRATCHPAD_AUTHORITY,
+            EvidenceSource.PROFILE_AUTHORITY,
+        }
+        if self.evidence_kind is EvidenceKind.EXPLICIT and self.source not in explicit_sources:
+            raise ValueError("explicit evidence requires an explicit source authority")
         _validate_eligibility_effect(self)
 
 
