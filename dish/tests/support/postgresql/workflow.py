@@ -71,6 +71,71 @@ def _register_run(
     )
 
 
+def _simulate_future_unarchive(
+    session: Session,
+    ids: Iterator[uuid.UUID],
+    context: dict[str, uuid.UUID],
+    task_id: uuid.UUID,
+) -> None:
+    """Expose an unarchived state through the existing scalar-authority contract."""
+    run_id = _next(ids)
+    request_id = _next(ids)
+    execution_id = _next(ids)
+    occurred_at = NOW + timedelta(microseconds=1)
+    _register_run(
+        session,
+        generation_id=context["generation_id"],
+        run_id=run_id,
+        owner="Marco",
+    )
+    service = WorkflowAuthorityService(session)
+    _admit(
+        service,
+        request_id=request_id,
+        generation_id=context["generation_id"],
+        run_id=run_id,
+        command="future-unarchive-fixture",
+        payload={"task_id": str(task_id)},
+        owner="Marco",
+        principal="admin",
+    )
+    execution = _execution(
+        service,
+        execution_id=execution_id,
+        request_id=request_id,
+        generation_id=context["generation_id"],
+        task_id=task_id,
+        binding_id=context["binding_id"],
+        command="future-unarchive-fixture",
+    )
+    execution.status = "committed"
+    execution.terminal_at = occurred_at
+
+    state = session.get(models.DishState, (context["generation_id"], task_id))
+    assert state is not None and state.archived_at is not None
+    next_version = state.dish_version + 1
+    session.add(
+        models.DishMutationReceipt(
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            dish_version=next_version,
+            source_route="command_execution",
+            import_run_id=None,
+            command_execution_id=execution_id,
+            content_changed=False,
+            placement_changed=False,
+            completion_changed=False,
+            archive_changed=True,
+            occurred_at=occurred_at,
+        )
+    )
+    session.flush()
+    state.dish_version = next_version
+    state.archived_at = None
+    state.updated_at = occurred_at
+    session.flush()
+
+
 def _admit(
     service: WorkflowAuthorityService,
     *,
@@ -160,4 +225,3 @@ def _claimed_execution(
         ttl=timedelta(minutes=2),
     )
     return execution_id
-

@@ -23,7 +23,7 @@ from tests.support.postgresql.concurrency import (
 )
 from tests.support.postgresql.core import core_db
 from tests.support.postgresql.projection_attempts import native_workflow_db
-from tests.support.postgresql.workflow import NOW, _register_run
+from tests.support.postgresql.workflow import NOW, _register_run, _simulate_future_unarchive
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
 SECRET = b"native-archive-registration-secret"
@@ -109,7 +109,7 @@ def _register_with_timestamp(session, *, generation_id, run_id, registered_at) -
 
 
 def test_registration_wins_and_is_inside_archive_tombstone_boundary(core_db) -> None:
-    factory, _ids, context, task_id = native_workflow_db(core_db)
+    factory, ids, context, task_id = native_workflow_db(core_db)
     admin_run = uuid.uuid4()
     registration_run = uuid.uuid4()
     with session_scope(factory) as session:
@@ -169,16 +169,14 @@ def test_registration_wins_and_is_inside_archive_tombstone_boundary(core_db) -> 
                 models.DishMutationReceipt.archive_changed.is_(True),
             )
         ) == 1
-        state = session.get(models.DishState, (context["generation_id"], task_id))
-        state.archived_at = None
-        session.flush()
+        _simulate_future_unarchive(session, ids, context, task_id)
         stale = _port(session).execute(_start_call(run_id=registration_run, task_id=task_id))
         assert stale.ok is False
         assert stale.code == "AUTHORITY_MISMATCH"
 
 
 def test_archive_wins_and_late_registration_is_fresh_after_boundary(core_db) -> None:
-    factory, _ids, context, task_id = native_workflow_db(core_db)
+    factory, ids, context, task_id = native_workflow_db(core_db)
     admin_run = uuid.uuid4()
     late_run = uuid.uuid4()
     with session_scope(factory) as session:
@@ -251,8 +249,6 @@ def test_archive_wins_and_late_registration_is_fresh_after_boundary(core_db) -> 
                 models.DishMutationReceipt.archive_changed.is_(True),
             )
         ) == 1
-        state = session.get(models.DishState, (context["generation_id"], task_id))
-        state.archived_at = None
-        session.flush()
+        _simulate_future_unarchive(session, ids, context, task_id)
         fresh = _port(session).execute(_start_call(run_id=late_run, task_id=task_id))
         assert fresh.ok, fresh

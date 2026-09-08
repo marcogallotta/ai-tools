@@ -103,18 +103,52 @@ def _move_operation_to_retired_generation(session, ids, operation):
 def _install_native_planning_catalog(
     session, ids, context, *, establish_runtime: bool
 ) -> uuid.UUID:
-    section_id = _next(ids)
     catalog = CatalogRepository(session)
-    catalog.add_section(
-        models.Section(
-            section_id=section_id,
-            logical_name="Sichuan",
-            lifecycle="active",
-            created_at=NOW,
-            retired_at=None,
-        )
-    )
     version_id = _next(ids)
+    if establish_runtime:
+        registry_entries = tuple(
+            session.scalars(
+                select(models.SectionRegistryEntry).where(
+                    models.SectionRegistryEntry.registry_version_id
+                    == context["registry_version_id"]
+                )
+            )
+        )
+        section_id = next(
+            entry.section_id
+            for entry in registry_entries
+            if entry.display_name == "Sichuan"
+        )
+        catalog_entries = tuple(
+            models.SectionCatalogEntry(
+                catalog_version_id=version_id,
+                section_id=entry.section_id,
+                ordinal=entry.ordinal,
+                display_name=entry.display_name,
+                workflow_role=entry.workflow_role,
+            )
+            for entry in registry_entries
+        )
+    else:
+        section_id = _next(ids)
+        catalog.add_section(
+            models.Section(
+                section_id=section_id,
+                logical_name="Sichuan",
+                lifecycle="active",
+                created_at=NOW,
+                retired_at=None,
+            )
+        )
+        catalog_entries = (
+            models.SectionCatalogEntry(
+                catalog_version_id=version_id,
+                section_id=section_id,
+                ordinal=0,
+                display_name="Sichuan",
+                workflow_role="native_destination",
+            ),
+        )
     activation_id = _next(ids)
     active = catalog.install_catalog_revision(
         version=models.SectionCatalogVersion(
@@ -127,15 +161,7 @@ def _install_native_planning_catalog(
             transform_sha256=None,
             created_at=NOW,
         ),
-        entries=(
-            models.SectionCatalogEntry(
-                catalog_version_id=version_id,
-                section_id=section_id,
-                ordinal=0,
-                display_name="Sichuan",
-                workflow_role="native_destination",
-            ),
-        ),
+        entries=catalog_entries,
         activation=models.SectionCatalogActivation(
             catalog_activation_id=activation_id,
             generation_id=context["generation_id"],
@@ -166,7 +192,21 @@ def _install_native_planning_catalog(
             outcome="applied",
             started_at=NOW,
             terminal_at=NOW,
-            details={"source_commit_sha": "c" * 40},
+            details={
+                "authority_transition": "native_section_runtime_root_v1",
+                "source_commit_sha": "c" * 40,
+                "catalog_activation_id": str(
+                    active.catalog_activation.catalog_activation_id
+                ),
+                "catalog_version_id": str(
+                    active.catalog_version.catalog_version_id
+                ),
+                "honest_contract_binding_id": str(context["binding_id"]),
+                "inventory_gate": {
+                    "decision": "carry_forward_completed",
+                    "generation_id": str(context["generation_id"]),
+                },
+            },
         )
     )
     attestation_id = _next(ids)
@@ -206,6 +246,33 @@ def _install_native_planning_catalog(
             updated_at=NOW,
         )
     )
+    for state in session.scalars(
+        select(models.DishState).where(
+            models.DishState.generation_id == context["generation_id"]
+        )
+    ):
+        next_version = state.dish_version + 1
+        session.add(
+            models.DishMutationReceipt(
+                generation_id=state.generation_id,
+                task_id=state.task_id,
+                dish_version=next_version,
+                source_route="import",
+                import_run_id=context["import_run_id"],
+                command_execution_id=None,
+                content_changed=False,
+                placement_changed=True,
+                completion_changed=False,
+                archive_changed=False,
+                occurred_at=NOW,
+            )
+        )
+        session.flush()
+        state.catalog_version_id = active.catalog_version.catalog_version_id
+        state.dish_version = next_version
+        state.placement_version = next_version
+        state.updated_at = NOW
+        session.flush()
     session.flush()
     return section_id
 
@@ -446,9 +513,11 @@ def test_task_reference_from_dish_reduces_known_shapes(dish_value, expected) -> 
     assert _task_reference_from_dish(dish_value) == expected
 
 
-def _signed_ready_baseline(session, ids, context, task_id):
+def _signed_ready_baseline(
+    session, ids, context, task_id, *, native_destination: bool = False
+):
     _add_verification_queue(session, ids, context)
-    _add_destination_section(session, ids, context)
+    destination_section_id = _add_destination_section(session, ids, context)
     author_run = _next(ids)
     verifier_run = _next(ids)
     _register_run(session, generation_id=context["generation_id"], run_id=author_run)
@@ -461,13 +530,33 @@ def _signed_ready_baseline(session, ids, context, task_id):
     )
     port = _port(session, ids)
     started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
-    prepared = _prepare_for_verification(
-        port,
-        ids,
-        task_id=task_id,
-        operation_id=started.data["operation_id"],
-        run_id=author_run,
-    )
+    if native_destination:
+        prepared = port.execute(
+            _call(
+                "prepare",
+                run_id=author_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": TASK.replace(
+                        "Destination section: Sichuan — 12345",
+                        f"Destination section: Sichuan — section:{destination_section_id}",
+                    ),
+                    "agent": "claude",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert prepared.ok, (prepared.code, prepared.http_status, prepared.data)
+    else:
+        prepared = _prepare_for_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=author_run,
+        )
     _start_verification(
         port,
         ids,
@@ -521,6 +610,21 @@ def _signed_ready_baseline(session, ids, context, task_id):
         models.ContentVersion, uuid.UUID(approved.data["signed_content_version_id"])
     )
     return port, signed
+
+
+def test_submit_resolves_native_destination_from_signed_document(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _port_instance, signed = _signed_ready_baseline(
+            session, ids, context, task_id, native_destination=True
+        )
+        state = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        parsed = parse_canonical_document(
+            title=signed.title, body=signed.body, expected_status="ready"
+        )
+        assert state.section_id == destination_section_id(parsed.document)
 
 
 def test_read_resting_checked_in_task_offers_change_continuation(workflow_db) -> None:

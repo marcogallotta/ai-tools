@@ -47,7 +47,9 @@ Day-one branch rules:
 - another agent must not push semantic changes to that branch without an explicit handoff of ownership;
 - Claude Code/Codex local implementation uses the shared `tools/agent-worktree` lifecycle so one task attempt has one durable external linked worktree, one owned branch, and task-keyed recoverability state under `~/.local/state/dish/worktrees/`; do not create a competing host-specific lifecycle;
 - replacement local agents resume the same task record/branch/worktree after explicit orchestration handoff; takeover changes local provenance only and does not infer agent liveness;
-- ChatGPT uses the connected GitHub integration as repository source/history authority and may perform the branch/commit/PR flow through connector-native GitHub operations;
+- ChatGPT uses only the authorized GitHub connector defined in
+  [`repository-routing.md`](repository-routing.md#github-connector-routing) as repository
+  source/history authority and may perform the branch/commit/PR flow through it;
 - do not reuse a branch whose PR was merged, closed, abandoned, or superseded for unrelated work;
 - local worktree cleanup goes through the shared lifecycle only after disposition is established by GitHub/Asana authority; it must refuse dirty, ambiguous, or unrecoverable state and must not remove the only recovery pointer.
 
@@ -57,7 +59,7 @@ Marco may explicitly authorize an emergency direct-to-`main` commit. That overri
 
 When a PR exists and implementation/fix work is actively owned, agents may publish the structured exact-head advisory lease `<!-- dish-agent-lease:v1 phase=implementation head=<sha> lease=<uuid> -->` or `phase=fix`. Renew it with the same UUID when visible progress needs to keep the lease fresh; release it explicitly when yielding. A head change or 60 minutes without structured renewal/activity makes it inactive. The lease is visibility only and never source-authority or branch-ownership authority.
 
-After the PR becomes review-ready, Implementation stops and hands the exact PR/head to a fresh independent Reviewer through the durable PR/task context. Review discovery and handoff are manual; do not imply that an automated lifecycle observer will pick the PR up. Under the manual Worker procedure, an exact-head formal `VERDICT: BLOCK` that Review has already classified as resolvable within the accepted design — or, on a pilot lineage (see `review.md`), `BLOCKER × S0 LOCAL` — may deterministically return the same Worker to bounded Implementation on the existing lineage; otherwise a fix requires an explicit current handoff. A blocker that requires a new or changed design requirement, or a pilot `S1`/`S2`/material-unknown remedy, returns to Design before Implementation dispatch. A new semantic commit creates a new review identity.
+After the PR becomes review-ready, Implementation stops semantic authorship and hands the exact PR/head to a fresh independent Reviewer through the durable PR/task context. On a local Claude Code/Codex host with subagents available, the acting worker immediately dispatches that Reviewer and retains ownership of the routine outer loop; it does not stop for Marco to relay the handoff, ask for another `go`, or wait for an imagined background observer. After an exact-head `VERDICT: MERGE`, the same outer loop proceeds directly to the separately authorized local Integration path. Under the manual Worker procedure, an exact-head formal `VERDICT: BLOCK` that Review has already classified as resolvable within the accepted design — or, on a pilot lineage (see `review.md`), `BLOCKER × S0 LOCAL` — may deterministically return the same Worker to bounded Implementation on the existing lineage; otherwise a fix requires an explicit current handoff. A blocker that requires a new or changed design requirement, or a pilot `S1`/`S2`/material-unknown remedy, returns to Design before Implementation dispatch. A new semantic commit creates a new review identity.
 
 A Review BLOCK fix round remains bound to the exact current `(head, formal BLOCK review id)`. Old/pre-BLOCK authoring state, stale leases, an older BLOCK, or repository write permission cannot become current fix authority. For PR-owned CI fixes, failed-CI ownership must first be classified as `PR_OWNED`; proven current-main, infrastructure, or ambiguous failures do not authorize semantic mutation of the candidate. Immediately before dispatch and publication, re-read the live task, PR, branch, head, and current Review/CI ownership. A moved or stale identity performs zero continuation mutation and returns to current-state classification. Advisory leases reduce duplicate work but never replace branch/worktree ownership or non-force expected-head publication protection.
 
@@ -116,7 +118,9 @@ If the task has moved projects or its live Asana URL is available, prefer the cu
 
 Host tooling differs, but the artifact contract does not:
 
-- **ChatGPT:** use the connected GitHub integration as source/history authority and use connector-native branch/commit/PR operations when available;
+- **ChatGPT:** use only the authorized GitHub connector defined in
+  [`repository-routing.md`](repository-routing.md#github-connector-routing) for source/history
+  and branch/commit/PR operations;
 - **Claude Code/Codex:** use the live checkout plus the repository-owned `tools/agent-worktree` lifecycle for local branch/worktree freshness, ownership, publication, and handoff verification, then open/update the GitHub PR.
 
 Regardless of host, the coordinator/reviewer/integrator must be able to identify the same branch, commit, PR URL, and exact PR head SHA.

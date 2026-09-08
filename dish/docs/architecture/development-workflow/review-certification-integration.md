@@ -18,7 +18,13 @@ Ordinary CI certifies the exact PR source head selected from the formal Review e
 
 Final landing is a separately authorized local Integration action bound by an explicit exact-head handoff and fresh GitHub/Asana reads. Mechanical reconciliation that changes the head still requires an exact-head recheck; any semantic choice returns to Implementation and substantive Review.
 
-The explicit per-change shortcut is the only standing exception to those default Review/Integration phase boundaries. For an exact `TRIVIAL` capability, guarded one-commit publication may fast-forward `main` directly, so formal Review and a separate Integration action do not occur for that exact change. For `FAST-TRACK`, the PR and Integration boundaries remain; only formal Review may be omitted, and only when the exact durable authorization records `skip_review=true`. Any shortcut fallback immediately restores the ordinary Review/certification/Integration requirements. Integration must verify the exact grant’s risk-selected validation before landing: meaningful readback is sufficient for non-executable/mechanical surfaces when tests add no evidence, while product/runtime/infrastructure/migration/persistence/service/config/deployment and comparable executable/high-consequence changes require focused executable proof of the intended invariant. Failed evidence remains failed regardless of shortcut authority.
+The explicit destination-driven fast-track procedure is the only standing exception. To-main omits
+PR, Review, and separate Integration. To-PR preserves fresh exact-head semantic Review and
+Integration but records `PRE-INTEGRATION TESTS TO RUN: NONE` unless Marco requested a pre-landing
+test; ordinary CI is observed immediately after landing. To-testing creates no source landing until
+the tested delta enters the PR route. Durable route evidence is agent-produced after the requested
+artifact and cannot become a pre-action Marco gate. Failed evidence remains failed; only failures
+attributable to the fast-tracked candidate return to it for a focused repair.
 
 ## Invariants
 

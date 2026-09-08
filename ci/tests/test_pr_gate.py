@@ -21,8 +21,8 @@ NEW_HEAD = "b" * 40
 REVIEWED_AT = "2026-08-14T08:00:00Z"
 
 
-def pr(*, draft: bool = False, head: str = HEAD, number: int = 31):
-    return {"number": number, "state": "open", "draft": draft, "head": {"sha": head}}
+def pr(*, draft: bool = False, head: str = HEAD, number: int = 31, body: str = ""):
+    return {"number": number, "state": "open", "draft": draft, "head": {"sha": head}, "body": body}
 
 
 def statuses(
@@ -139,6 +139,25 @@ def test_gate_uses_formal_review_freshness_and_pr_number_not_workflow_head_sha()
     assert result["ok"] is True
     assert result["certified_sha"] == HEAD
     assert result["required_workflow_run_id"] == 123
+
+
+def test_exact_fast_track_pr_grant_moves_ci_after_landing():
+    marker = f"<!-- dish-fast-track-route:v1 route=pr head={HEAD} -->"
+    result = pr_gate.evaluate_integration_gate(
+        pr(body=marker), reviewed_head=HEAD, reviewed_at=REVIEWED_AT,
+        combined_status={}, workflow_runs={},
+    )
+    assert result["ok"] is True
+    assert result["ci_admission"] == "waived-by-fast-track-pr"
+
+
+def test_fast_track_pr_grant_is_exact_head_and_unambiguous():
+    stale = f"<!-- dish-fast-track-route:v1 route=pr head={NEW_HEAD} -->"
+    with pytest.raises(pr_gate.GateError, match="not reviewed head"):
+        evaluate(candidate_pr=pr(body=stale), combined={}, workflow_runs={})
+    malformed = "<!-- dish-fast-track-route:v1 route=main head=" + HEAD + " -->"
+    with pytest.raises(pr_gate.GateError, match="malformed or ambiguous"):
+        evaluate(candidate_pr=pr(body=malformed), combined={}, workflow_runs={})
 
 
 def test_moved_head_fails():

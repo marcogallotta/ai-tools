@@ -29,7 +29,7 @@ Before any merge/integration action, resolve the PR from GitHub and verify that 
 
 Final Integration landing is executable only on a local Claude Code/Codex host with a live checkout and real Git/worktree tooling. ChatGPT connector-native merge and GitHub Actions Integration consumers are unavailable for V1-A even when their underlying credentials could technically write. Remote ChatGPT remains valid upstream for authorized Implementation/fix/Review work.
 
-The acting Coordinator manually classifies `INTEGRATION READY` from live authority and persists an explicit exact-head local handoff. The local Integration agent accepts that handoff directly; no dispatcher or launcher service is assumed. If the required local host is unavailable, the candidate remains `INTEGRATION READY` and is not redirected to a remote/connector landing route.
+The acting Coordinator classifies `INTEGRATION READY` from live authority and persists an explicit exact-head local handoff. When the acting worker is already on a local Claude Code/Codex host, it immediately enters the Integration role against that handoff and carries the candidate through the expected-head merge; Marco is not a routine relay or restart gate. This is an in-session dispatch rule, not an assumed background service. If the required local host is unavailable, the candidate remains `INTEGRATION READY` and is not redirected to a remote/connector landing route.
 
 Before the first mutation and again immediately before the irreversible merge boundary, the local Integrator must re-read the live GitHub PR/head/base/Review/certification/current-main state and the explicit owning Asana task. Expected-head/current-state protection and local worktree/source-ownership protections remain mandatory. A head-changing reconciliation stops for fresh independent Review; the old verdict never transfers. A replacement Integrator requires a fresh explicit handoff and reconstructs only from durable GitHub/Asana/Git state.
 
@@ -41,7 +41,7 @@ The role contract is host-independent even though tooling differs.
 
 ### ChatGPT
 
-Use the connected GitHub integration as source/history authority for read-only Integration diagnosis and upstream repository/review context. Under V1-A, ChatGPT must not execute final Integration landing or merge through connector-native writes. If a reviewed candidate is ready but no authorized local launcher is available, leave it `INTEGRATION READY`; connector capability is not a fallback.
+Use only the authorized GitHub connector defined in [`repository-routing.md`](repository-routing.md#github-connector-routing) as source/history authority for read-only Integration diagnosis and upstream repository/review context. Under V1-A, ChatGPT must not execute final Integration landing or merge through connector-native writes. If a reviewed candidate is ready but no authorized local launcher is available, leave it `INTEGRATION READY`; connector capability is not a fallback.
 
 ### Claude Code and Codex
 
@@ -89,6 +89,8 @@ When the reviewed exact PR head already carries a complete durable PR-local cert
 
 For ordinary PR certification, fail closed unless the exact reviewed PR head has the repository-owned status context `Dish / exact-head certification` in `success` state. The one narrow exception is a mechanically validated `MERGEABLE_WITH_BASELINE_DEBT` disposition that keeps the required status and raw gate outcome visibly failed while separately proving: the same material failure on exact current main; candidate-specific evidence excluding candidate ownership; current exact-head Review `MERGE`; semantic non-interaction; and one active, exact-head-bound, deduplicated repair owner. `LIKELY_NON_PR_OWNED` never satisfies this landing exception. Additional main-plus-candidate execution is required only for a named unresolved merge-composition interaction and must target that interaction; do not rerun a whole lane merely for confidence. Missing, stale, contradictory, owner-unreadable, or interaction-ambiguous evidence blocks.
 
+Local Claude Code/Codex workers observe Review and CI concurrently and continue the authorized outer loop without waiting for Marco. A candidate-caused failure returns to the fix path. A red check that is mechanically proven to be unrelated current-main/baseline debt may proceed only through the typed exception above; after landing, perform a bounded investigation of that failure. If the selector or setup runs work materially disproportionate to the changed invariant, dedupe and log Development Workflow Friction, then continue rather than turning the friction report into a new gate.
+
 The certification workflow starts from the formal Review `commit_id`, computes the exact merge-base changed-path set, and runs only the execution groups required by the governed repository planner plus any validated additive Review lanes. Unknown/self-governance/control-plane uncertainty deliberately expands to broad/full. Unselected groups are not required. A green specialized workflow, periodic full regression, or repository-bundle publication is not a substitute.
 
 Use `scripts/pr_gate.py integration` or the lifecycle's equivalent typed baseline-debt admission against current PR metadata, the exact reviewed head SHA and Review submission time, the combined commit-status payload for that exact SHA, current `pull_request_review` Actions runs, and—only for the exception—the current ownership/repair-owner evidence. The ordinary gate never derives candidate identity from workflow `head_sha`; it binds the run to the PR number and formal Review generation, chooses the newest `.github/workflows/ci.yml` attempt at or after that Review, requires the workflow attempt itself to complete successfully, and requires the accepted status `target_url` to identify that exact Actions run. GitHub reruns reuse a workflow run ID, so terminal status must also be strictly newer than both the formal Review and the newest attempt's `run_started_at`. A moved head, newer same-head Review without fresh certification, stale rerun status, missing/failed required group, wrong status SHA, or draft PR fails closed unless the exact typed baseline-debt exception above is fully established.
@@ -131,6 +133,8 @@ Implementation fixes belong to the implementation/fix role. Semantic acceptance 
 
 After a formal exact-head `VERDICT: MERGE`, the acting Coordinator re-evaluates the current head, required local work, exact-head selector certification, ordering, and mergeability. If the candidate is ready, it creates and re-reads the durable `dish-local-integration-handoff:v1` record before handing the exact PR/head to a local Claude/Codex Integrator. Existing or historical advisory `phase=integration` leases are visibility only and do not authorize Integration.
 
+When that acting worker is already local Claude Code/Codex, handoff creation is followed immediately by the Integration role transition and merge attempt in the same operator request. Do not stop merely to tell Marco that Review passed or ask him to launch/approve the next routine agent step.
+
 The local Integrator owns the bounded mechanical reconciliation/evidence/merge and must re-read live GitHub plus owning Asana authority at the irreversible boundary. It does not resolve semantic conflicts, author fixes, weaken evidence, or substitute a remote consumer. If any semantic choice is required, return to Implementation and then exact-head Review. If reconciliation changes the head, publish that new head and stop for fresh independent Review.
 
 After the local Integrator returns, the acting Coordinator re-reads GitHub. It reports `MERGED` only from authoritative PR readback, then performs the separately authorized scoped Asana reconciliation and safe cleanup. If the PR remains on the same unmerged head, or the local host is unavailable, it remains `INTEGRATION READY` with the exact residual reason and zero remote fallback mutation.
@@ -143,7 +147,14 @@ Normal landing happens through the approved PR and must leave that PR in GitHub'
 
 Do not force-push `main`.
 
-Marco may explicitly authorize an emergency direct-to-`main` commit. That override must name the exceptional action. State which normal gate is being bypassed, and do not infer that validation/review requirements are waived unless Marco explicitly says so.
+Marco's explicit fast-track-to-main destination authorizes the exact bounded direct-to-`main`
+publication and waives PR, Review, pre-landing tests, and CI wait for that change. Fast-track-to-PR
+instead preserves exact-head Review and Integration while waiving ordinary CI as a merge-admission
+gate when the PR body contains exactly one valid exact-head
+`<!-- dish-fast-track-route:v1 route=pr head=<40-hex-head> -->` marker. `scripts/pr_gate.py
+integration` validates this marker and admits the reviewed head without status/run inputs. In both
+cases use non-force expected-head protection, read back the landing, observe CI
+afterward, and route only attributable repair off `main`. Do not infer either route from bare urgency.
 
 Before reporting completion, re-resolve the PR and require GitHub to report it merged. If an exceptional out-of-band landing already put the reviewed change on the target branch, first verify the authoritative target contains the equivalent reviewed result, comment on the stale PR with the landed identity and exception, then close it. Report that outcome as `landed out-of-band and closed`, never as `PR merged`; it is recovery, not precedent. Deployment/runtime state remains separate and must never be inferred from source state. For a PostgreSQL-backed TEST/PROD deployment, source integration is not a service-promotion gate: follow `docs/postgresql-routine-migration.md` to bind the exact release/source commit, run environment-specific `dish-pg-migrate` preflight, apply any pending migration only under that environment's mutation authority, re-verify the exact Alembic head, and only then perform the separately authorized restart/promotion. Keep TEST and PROD migration evidence separate. A failed or unverifiable migration stops deployment; do not restart/promote or infer an automatic downgrade. Production migration and restart remain Marco-only.
 

@@ -58,7 +58,7 @@ def test_manifest_source_identity_topology_and_metadata():
  m,s=kernels.load_canonical(); kernels.validate_topology(s)
  assert m['canonical_version'].endswith(m['kernel_identity_sha256'][:12])
  assert kernels.kernel_identity(s)==m['kernel_identity_sha256']
- assert kernels.repository_config(s)==('marcogallotta/ai-tools','main','connected GitHub connector')
+ assert kernels.repository_config(s)==('marcogallotta/ai-tools','main','GitHub Connector selected via api_tool')
  for role in s['roles']:
   for r in kernels.effective_rules(s,role):
    assert r['impact'] in {'breaking','additive','compatible'} and r['surface'] and r['action_boundaries']
@@ -68,6 +68,26 @@ def test_missing_repository_bootstrap_fails_closed():
  for field in ('repository_full_name','default_branch','github_transport'):
   bad=copy.deepcopy(s); bad.pop(field)
   with pytest.raises(kernels.KernelError,match=field): kernels.kernel_identity(bad)
+
+def test_every_kernel_selects_connector_and_rejects_mcp_app():
+ m,s=kernels.load_canonical()
+ for role in s['roles']:
+  text=kernels.render_role_with_version(s,role,m['canonical_version'])
+  assert 'in `api_tool`, select the installed GitHub Connector' in text
+  assert 'never the separate GitHub MCP app' in text
+  assert '`api_tool` is allowed' in text
+  assert 'authorization follows the selected integration identity' in text
+  assert 'If they cannot be distinguished, tell Marco and stop' in text
+  assert 'plugin_connector_*' not in text
+  assert 'plugin_asdk_app_*' not in text
+ worker=kernels.generated_profile_paths(m,s)['worker'].read_text()
+ assert 'in `api_tool`, select the installed GitHub Connector' in worker
+ assert 'never the separate GitHub MCP app' in worker
+ assert '`api_tool` is allowed' in worker
+ assert 'authorization follows the selected integration identity' in worker
+ assert 'If they cannot be distinguished, tell Marco and stop' in worker
+ assert 'plugin_connector_*' not in worker
+ assert 'plugin_asdk_app_*' not in worker
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
@@ -809,23 +829,34 @@ def test_refresh_reconciles_renders_checks_and_reports_paste_ready_paths(tmp_pat
  project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}')
  manifest=project/'manifest.json'; review=project/'review.md'; calls=[]
  monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',manifest)
- monkeypatch.setattr(kernels,'command_reconcile',lambda *args: calls.append(('reconcile',args[2])))
- monkeypatch.setattr(kernels,'render_all',lambda *,check: calls.append(('render',check)))
+ def reconcile(*args): args[2].write_text('{}'); calls.append(('reconcile','staged'))
+ def render(*,check):
+  calls.append(('render',check))
+  if not check: (kernels.PROJECT_DIR/'review.md').write_text('review')
+ monkeypatch.setattr(kernels,'command_reconcile',reconcile)
+ monkeypatch.setattr(kernels,'render_all',render)
  monkeypatch.setattr(kernels,'command_check',lambda: calls.append(('check',)))
  monkeypatch.setattr(kernels,'load_canonical',lambda: ({'canonical_version':'v2'},{'roles':{'review':{}}}))
  monkeypatch.setattr(kernels,'generated_paths',lambda manifest,source: {'review':review})
  kernels.command_refresh(tmp_path/'base.json',source)
- assert calls==[('reconcile',manifest),('render',False),('check',)]
+ assert calls==[('reconcile','staged'),('render',False),('check',)]
+ assert manifest.read_text()=='{}' and review.read_text()=='review'
  assert f'review: {review}' in capsys.readouterr().out
 
 def test_refresh_does_not_report_paste_ready_paths_when_check_fails(tmp_path,monkeypatch,capsys):
- project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}')
- monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',project/'manifest.json')
- monkeypatch.setattr(kernels,'command_reconcile',lambda *args: None)
+ project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}'); (project/'manifest.json').write_text('before')
+ manifest=project/'manifest.json'; manifest.write_text('before')
+ role_index=tmp_path/'index.md'; root=tmp_path/'CLAUDE.md'; style=tmp_path/'dish-operator.md'
+ for path in (role_index,root,style): path.write_text('before')
+ monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',manifest)
+ monkeypatch.setattr(kernels,'ROLE_INDEX_PATH',role_index); monkeypatch.setattr(kernels,'ROOT_INSTRUCTIONS_PATH',root); monkeypatch.setattr(kernels,'CLAUDE_OPERATOR_STYLE_PATH',style)
+ monkeypatch.setattr(kernels,'command_reconcile',lambda *args: args[2].write_text('candidate'))
  monkeypatch.setattr(kernels,'render_all',lambda *,check: None)
  monkeypatch.setattr(kernels,'command_check',lambda: (_ for _ in ()).throw(kernels.KernelError('check failed')))
  with pytest.raises(kernels.KernelError,match='check failed'):
   kernels.command_refresh(tmp_path/'base.json',source)
+ assert manifest.read_text()=='before'
+ assert all(path.read_text()=='before' for path in (role_index,root,style))
  assert 'PASTE-READY' not in capsys.readouterr().out
 
 def test_design_principles_projection_is_derived_and_present_everywhere():

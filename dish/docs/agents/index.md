@@ -65,7 +65,7 @@ Design Principles (design-principles.md): DP-01 Parallel work; serialize authori
 
 For any requested Five Whys / root-cause Five Whys analysis, read and follow [`five-whys.md`](five-whys.md) before presenting conclusions. The shared procedure is an analysis method only and does not change role authority.
 
-For an explicit Marco `TRIVIAL`/`FAST-TRACK` per-change lifecycle shortcut, read and follow [`trivial-fast-track.md`](trivial-fast-track.md). Agents never self-authorize either path.
+For `fastrack`, `fast-track`, `fast track`, `direct to main`, or `right to main`, read and follow [`trivial-fast-track.md`](trivial-fast-track.md). The agent recommends the destination when Marco did not name one; an explicit destination is complete route authority.
 
 ## ChatGPT Project kernels
 
@@ -74,6 +74,10 @@ Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatg
 ## Shared repository lifecycle
 
 For unqualified Dish PR/issue references, use [`repository-routing.md`](repository-routing.md) when the trigger applies.
+
+Every ChatGPT GitHub operation uses the integration-identity rule in
+[`repository-routing.md`](repository-routing.md#github-connector-routing). `api_tool` is permitted
+to select the installed GitHub Connector; never select the separate GitHub MCP app.
 
 
 Ratified cross-Project standing invariants that must survive Project regeneration/reconciliation are governed by [`standing-invariants.md`](standing-invariants.md) and its independent machine-readable registry.
@@ -123,7 +127,11 @@ Do not add this footer to ordinary commit-message prose. Commit authorship/signi
 
 Role and execution host are separate concerns. The same Dish role may run under ChatGPT, Claude Code, or Codex, but host-specific transport/bootstrap policy does not transfer with the role.
 
-- **ChatGPT agents** use the connected GitHub integration as source/history authority and may perform branch, commit, PR, and Review operations through connector-native GitHub actions when the standing role authorizes them. Integration V1-A final landing is the explicit exception: only the local Claude/Codex Integration host may perform reconciliation/merge, as defined by `integration.md`.
+- **ChatGPT agents** enter through the authorized GitHub Connector route defined in
+  [`repository-routing.md`](repository-routing.md#github-connector-routing) and may perform branch,
+  commit, PR, and Review operations through it when the standing role authorizes them. Integration
+  V1-A final landing is the explicit exception: only the local Claude/Codex Integration host may
+  perform reconciliation/merge, as defined by `integration.md`.
 - **Claude Code and Codex** do **not** inherit ChatGPT-only connector/bundle instructions. They use their live checkout and host-native `git`/worktree tooling/environment unless Marco gives an explicit task-specific override.
 - Local worktrees are an execution-isolation mechanism, not a different artifact contract. The branch, commit SHA, PR URL, and exact PR head SHA are the shared identities across hosts.
 - Do not copy ChatGPT connector setup or dependency-bundle bootstrap into a Claude Code/Codex handoff merely because the same standing Dish role is being delegated.
