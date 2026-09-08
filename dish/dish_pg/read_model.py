@@ -451,6 +451,14 @@ class PostgresReadModel:
             raise ReadModelError("page_size must be between 1 and 100")
         if status not in {"incomplete", "cooked"}:
             raise ReadModelError("status must be incomplete or cooked")
+        completion_filter = (
+            and_(
+                models.DishState.completed.is_(True),
+                models.DishState.completion_reason == "cooked",
+            )
+            if status == "cooked"
+            else models.DishState.completed.is_(False)
+        )
         generation = self.active_generation()
         native = self._native_read_authority(generation.generation_id)
         if native is None:
@@ -528,7 +536,7 @@ class PostgresReadModel:
             .where(
                 models.DishState.section_id == section.section_id,
                 placement_currentness,
-                models.DishState.completed.is_(status == "cooked"),
+                completion_filter,
                 models.DishState.archived_at.is_(None),
                 models.DishTask.existence_state != "retired",
             )
