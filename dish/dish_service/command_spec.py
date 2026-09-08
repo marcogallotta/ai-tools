@@ -176,6 +176,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                     "next page. A null next_cursor means there are no more tasks."
                 ),
             },
+            "status": {"type": "string", "enum": ["incomplete", "cooked"]},
         },
     },
     READ_COMMAND.name: {

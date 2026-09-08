@@ -70,6 +70,7 @@ class PostgresCommandReadMixin:
                 section_reference=str(reference),
                 cursor=call.arguments.get("cursor"),
                 page_size=int(call.arguments.get("page_size", 50)),
+                status=str(call.arguments.get("status", "incomplete")),
             )
             data = {
                 "tasks": [

@@ -802,6 +802,10 @@ def test_cooked_uses_completion_authority_and_replay_idempotently(workflow_db) -
             section_reference=context["section_id"]
         )
         assert after_page.items == ()
+        cooked_page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
+            section_reference=context["section_id"], status="cooked"
+        )
+        assert [item.task_id for item in cooked_page.items] == [task_id]
 
 
 def test_archive_alone_accepts_private_admin_principal_without_projection(workflow_db) -> None:
