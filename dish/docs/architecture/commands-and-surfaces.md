@@ -77,7 +77,7 @@ for its retained product paths:
 - operation/submission/lease targets remain canonical Dish UUIDs and do not require an Asana task
   identity.
 
-The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `search`, `read`,
+The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `search`, `query`, `read`,
 `proposals`, `apply-proposal`, `safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`,
 `submit`, `renew-lease`, and `cooked`. `cooked` marks only an active resting Dish complete through
 PostgreSQL authority; it does not terminate an open workflow operation or project an Asana effect.

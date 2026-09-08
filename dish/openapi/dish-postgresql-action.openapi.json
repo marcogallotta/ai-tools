@@ -39,6 +39,7 @@
                 "sections",
                 "section-tasks",
                 "search",
+                "query",
                 "cook-logs",
                 "record-cook-log",
                 "read",
@@ -67,6 +68,7 @@
               "sections",
               "section-tasks",
               "search",
+              "query",
               "cook-logs",
               "record-cook-log",
               "read",
@@ -1022,6 +1024,146 @@
           }
         ],
         "summary": "Run PostgreSQL-backed dish proposals",
+        "x-openai-isConsequential": false
+      }
+    },
+    "/v1/action/query": {
+      "post": {
+        "description": "Consistent authoritative query; request_id is not accepted.",
+        "operationId": "dish_postgresql_query",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "cooked_before": {
+                        "description": "ISO 8601 date or timezone-aware timestamp.",
+                        "type": "string"
+                      },
+                      "cooked_from": {
+                        "description": "ISO 8601 date or timezone-aware timestamp.",
+                        "type": "string"
+                      },
+                      "created_before": {
+                        "description": "ISO 8601 date or timezone-aware timestamp.",
+                        "type": "string"
+                      },
+                      "created_from": {
+                        "description": "ISO 8601 date or timezone-aware timestamp.",
+                        "type": "string"
+                      },
+                      "cursor": {
+                        "description": "Opaque continuation from a prior query page.",
+                        "type": "string"
+                      },
+                      "page_size": {
+                        "default": 50,
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "query": {
+                        "description": "Case-insensitive literal substring matched against canonical title and body.",
+                        "maxLength": 160,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "section_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "status": {
+                        "default": "both",
+                        "enum": [
+                          "active",
+                          "cooked",
+                          "both"
+                        ],
+                        "type": "string"
+                      },
+                      "updated_before": {
+                        "description": "ISO 8601 date or timezone-aware timestamp.",
+                        "type": "string"
+                      },
+                      "updated_from": {
+                        "description": "ISO 8601 date or timezone-aware timestamp.",
+                        "type": "string"
+                      },
+                      "workflow_role": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish query",
         "x-openai-isConsequential": false
       }
     },

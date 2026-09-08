@@ -16,6 +16,7 @@ from dish_pg.command_contract import (
     POSTGRES_DISH_ID_SCHEMA,
     POSTGRESQL_ACTION_ADDED_COMMANDS,
     POSTGRESQL_ACTION_RETIRED_COMMANDS,
+    QUERY_COMMAND,
     SEARCH_COMMAND,
     SEARCH_PAGE_SIZE_DEFAULT,
     SEARCH_PAGE_SIZE_MAX,
@@ -225,6 +226,43 @@ def test_postgresql_search_action_is_read_only_bounded_and_reuses_stable_run_id(
     assert client == {"run_id": DISCOVERY_RUN_ID}
     assert arguments == {"query": "Potato", "agent": "gpt", "page_size": 2}
     assert "request_id" not in client
+
+
+def test_postgresql_query_action_exposes_bounded_catalog_filters() -> None:
+    assert QUERY_COMMAND in POSTGRESQL_ACTION_ADDED_COMMANDS
+    definition = COMMAND_DEFINITIONS[QUERY_COMMAND]
+    assert definition.profile == "Q" and definition.request_replay is False
+    schema = postgres_action_argument_schema(QUERY_COMMAND)
+    assert schema["required"] == ["agent"]
+    assert schema["properties"]["status"]["enum"] == ["active", "cooked", "both"]
+    assert schema["properties"]["section_id"]["format"] == "uuid"
+    client, arguments = validate_postgres_action_request(
+        QUERY_COMMAND,
+        {
+            "client": {"run_id": DISCOVERY_RUN_ID},
+            "arguments": {
+                "agent": "gpt", "query": "  aubergine  ", "status": "cooked",
+                "created_from": "2026-09-01", "page_size": 20,
+            },
+        },
+    )
+    assert client == {"run_id": DISCOVERY_RUN_ID}
+    assert arguments == {
+        "agent": "gpt", "query": "aubergine", "status": "cooked",
+        "created_from": "2026-09-01T00:00:00+00:00", "page_size": 20,
+    }
+
+
+def test_postgresql_query_action_rejects_ambiguous_dates_and_unknown_fields() -> None:
+    base = {"client": {"run_id": DISCOVERY_RUN_ID}}
+    for arguments, rule in (
+        ({"agent": "gpt", "updated_from": "2026-01-02", "updated_before": "2026-01-01"}, "argument_range_invalid"),
+        ({"agent": "gpt", "created_from": "2026-01-01T12:00:00"}, "argument_value_invalid"),
+        ({"agent": "gpt", "sort": "updated"}, "argument_field_forbidden"),
+    ):
+        with pytest.raises(DishRuleError) as error:
+            validate_postgres_action_request(QUERY_COMMAND, {**base, "arguments": arguments})
+        assert error.value.rule == rule
 
 
 def test_postgresql_cooked_action_is_replay_bound_and_canonical_only() -> None:

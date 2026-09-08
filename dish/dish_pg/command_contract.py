@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import date, datetime, time, timezone
 from typing import Any, Literal, Mapping
 
 from dish_service.command_spec import (
@@ -40,6 +41,7 @@ Profile = Literal["Q", "E", "L", "R", "P", "X"]
 Principal = Literal["reader", "agent", "verification", "admin", "historical"]
 
 SEARCH_COMMAND = "search"
+QUERY_COMMAND = "query"
 COOKED_COMMAND = "cooked"
 RECORD_COOK_LOG_COMMAND = "record-cook-log"
 COOK_LOGS_COMMAND = "cook-logs"
@@ -47,6 +49,7 @@ COOK_LOG_TEXT_MAX_LENGTH = 8000
 SEARCH_QUERY_MAX_LENGTH = 160
 SEARCH_PAGE_SIZE_DEFAULT = 50
 SEARCH_PAGE_SIZE_MAX = 100
+QUERY_TEXT_MAX_LENGTH = 160
 _SEARCH_AGENT_VALUES = ("claude", "gpt", "codex")
 
 
@@ -103,6 +106,16 @@ COMMAND_DEFINITIONS = {
             False,
             action_exposed=True,
             description="Search current active Dish titles through canonical PostgreSQL authority.",
+        ),
+        CommandDefinition(
+            QUERY_COMMAND,
+            "Q",
+            "reader",
+            False,
+            False,
+            False,
+            action_exposed=True,
+            description="Query the current active and cooked Dish catalog through PostgreSQL authority.",
         ),
         CommandDefinition(
             COOK_LOGS_COMMAND, "Q", "reader", False, True, False,
@@ -202,6 +215,7 @@ CONNECTED_COMMAND_DISPOSITIONS: dict[str, str] = {
 }
 POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (
     SEARCH_COMMAND,
+    QUERY_COMMAND,
     COOKED_COMMAND,
     COOK_LOGS_COMMAND,
     RECORD_COOK_LOG_COMMAND,
@@ -283,6 +297,38 @@ def _search_argument_schema() -> dict[str, Any]:
     }
 
 
+def _query_argument_schema() -> dict[str, Any]:
+    timestamp = {
+        "type": "string",
+        "description": "ISO 8601 date or timezone-aware timestamp.",
+    }
+    return {
+        "type": "object",
+        "required": ["agent"],
+        "additionalProperties": False,
+        "properties": {
+            "agent": {"type": "string", "enum": list(_SEARCH_AGENT_VALUES)},
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": QUERY_TEXT_MAX_LENGTH,
+                "description": "Case-insensitive literal substring matched against canonical title and body.",
+            },
+            "section_id": dict(CANONICAL_DISH_UUID_SCHEMA),
+            "workflow_role": {"type": "string", "minLength": 1, "maxLength": 64},
+            "status": {"type": "string", "enum": ["active", "cooked", "both"], "default": "both"},
+            "created_from": deepcopy(timestamp),
+            "created_before": deepcopy(timestamp),
+            "updated_from": deepcopy(timestamp),
+            "updated_before": deepcopy(timestamp),
+            "cooked_from": deepcopy(timestamp),
+            "cooked_before": deepcopy(timestamp),
+            "cursor": {"type": "string", "description": "Opaque continuation from a prior query page."},
+            "page_size": {"type": "integer", "minimum": 1, "maximum": SEARCH_PAGE_SIZE_MAX, "default": SEARCH_PAGE_SIZE_DEFAULT},
+        },
+    }
+
+
 def _cook_log_argument_schema(*, mutation: bool) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "dish_id": dict(CANONICAL_DISH_UUID_SCHEMA),
@@ -308,6 +354,8 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
 
     if command == SEARCH_COMMAND:
         return _search_argument_schema()
+    if command == QUERY_COMMAND:
+        return _query_argument_schema()
     if command == COOKED_COMMAND:
         return {
             "type": "object",
@@ -441,6 +489,84 @@ def normalize_postgres_search_arguments(arguments: Mapping[str, Any]) -> dict[st
     }
 
 
+def _query_timestamp(value: Any, *, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise DishRuleError("INVALID_ARGUMENT", f"{field} must be an ISO 8601 date or timestamp", rule="argument_type_invalid", details={"field": field})
+    clean = value.strip()
+    try:
+        if len(clean) == 10:
+            parsed = datetime.combine(date.fromisoformat(clean), time.min, tzinfo=timezone.utc)
+        else:
+            parsed = datetime.fromisoformat(clean.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                raise ValueError
+            parsed = parsed.astimezone(timezone.utc)
+    except ValueError as exc:
+        raise DishRuleError("INVALID_ARGUMENT", f"{field} must be an ISO 8601 date or timezone-aware timestamp", rule="argument_value_invalid", details={"field": field}) from exc
+    return parsed.isoformat()
+
+
+def normalize_postgres_query_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize the connected catalog query contract for every transport."""
+    if not isinstance(arguments, Mapping):
+        raise DishRuleError("INVALID_ARGUMENT", "arguments must be an object", rule="argument_object_required")
+    date_fields = {
+        "created_from", "created_before", "updated_from", "updated_before",
+        "cooked_from", "cooked_before",
+    }
+    allowed = {"agent", "query", "section_id", "workflow_role", "status", "cursor", "page_size"} | date_fields
+    unknown = sorted(set(arguments) - allowed)
+    if unknown:
+        raise DishRuleError("INVALID_ARGUMENT", "query arguments contain unsupported fields", rule="argument_field_forbidden", details={"fields": unknown})
+    agent = arguments.get("agent")
+    if not isinstance(agent, str) or agent not in _SEARCH_AGENT_VALUES:
+        raise DishRuleError("INVALID_ARGUMENT", "agent must name a supported agent family", rule="argument_value_invalid", details={"field": "agent", "allowed": list(_SEARCH_AGENT_VALUES)})
+    normalized: dict[str, Any] = {"agent": agent}
+    query = arguments.get("query")
+    if query is not None:
+        if not isinstance(query, str) or not query.strip() or len(query.strip()) > QUERY_TEXT_MAX_LENGTH:
+            raise DishRuleError("INVALID_ARGUMENT", "query must contain 1 to 160 characters", rule="argument_value_invalid", details={"field": "query", "maximum": QUERY_TEXT_MAX_LENGTH})
+        normalized["query"] = query.strip()
+    section_id = arguments.get("section_id")
+    if section_id is not None:
+        normalized["section_id"] = require_dish_uuid(section_id, field="section_id")
+    workflow_role = arguments.get("workflow_role")
+    if workflow_role is not None:
+        if not isinstance(workflow_role, str) or not workflow_role.strip() or len(workflow_role.strip()) > 64:
+            raise DishRuleError("INVALID_ARGUMENT", "workflow_role must contain 1 to 64 characters", rule="argument_value_invalid", details={"field": "workflow_role"})
+        normalized["workflow_role"] = workflow_role.strip()
+    status = arguments.get("status", "both")
+    if status not in {"active", "cooked", "both"}:
+        raise DishRuleError("INVALID_ARGUMENT", "status must be active, cooked, or both", rule="argument_value_invalid", details={"field": "status"})
+    normalized["status"] = status
+    cursor = arguments.get("cursor")
+    if cursor is not None:
+        if not isinstance(cursor, str) or not cursor:
+            raise DishRuleError("INVALID_ARGUMENT", "cursor must be a non-empty string when provided", rule="argument_type_invalid", details={"field": "cursor"})
+        normalized["cursor"] = cursor
+    page_size = arguments.get("page_size", SEARCH_PAGE_SIZE_DEFAULT)
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= SEARCH_PAGE_SIZE_MAX:
+        raise DishRuleError("INVALID_ARGUMENT", "page_size must be an integer between 1 and 100", rule="argument_range_invalid", details={"field": "page_size", "minimum": 1, "maximum": SEARCH_PAGE_SIZE_MAX})
+    normalized["page_size"] = page_size
+    for field in date_fields:
+        if arguments.get(field) is not None:
+            normalized[field] = _query_timestamp(arguments[field], field=field)
+    for prefix in ("created", "updated", "cooked"):
+        start, end = normalized.get(f"{prefix}_from"), normalized.get(f"{prefix}_before")
+        if start is not None and end is not None and start >= end:
+            raise DishRuleError("INVALID_ARGUMENT", f"{prefix}_from must be earlier than {prefix}_before", rule="argument_range_invalid", details={"fields": [f"{prefix}_from", f"{prefix}_before"]})
+    return normalized
+
+
+def _validate_query_action_request(request: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw_arguments = request.get("arguments") if isinstance(request, Mapping) else None
+    adapted = dict(request) if isinstance(request, Mapping) else request
+    if isinstance(adapted, dict):
+        adapted["arguments"] = {"agent": "gpt"}
+    client, _ = validate_legacy_action_request(SECTIONS_COMMAND.name, adapted)
+    return client, normalize_postgres_query_arguments(raw_arguments)
+
+
 def _validate_search_action_request(
     request: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -548,6 +674,8 @@ def validate_postgres_action_request(
         )
     if command == SEARCH_COMMAND:
         return _validate_search_action_request(request)
+    if command == QUERY_COMMAND:
+        return _validate_query_action_request(request)
     if command == COOKED_COMMAND:
         return _validate_cooked_action_request(request)
     if command in {RECORD_COOK_LOG_COMMAND, COOK_LOGS_COMMAND}:

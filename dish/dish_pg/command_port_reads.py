@@ -86,6 +86,13 @@ class PostgresCommandReadMixin:
                 "next_cursor": page.next_cursor,
                 **page.read_authority,
             }
+        elif call.command_name == "query":
+            try:
+                data = self.reads.query_catalog(**{
+                    key: value for key, value in call.arguments.items() if key != "agent"
+                })
+            except ReadModelError as exc:
+                raise CommandRuleError("INVALID_ARGUMENT", str(exc), http_status=400) from exc
         elif call.command_name == "proposals":
             data = self._proposals()
         elif call.command_name == "queue":

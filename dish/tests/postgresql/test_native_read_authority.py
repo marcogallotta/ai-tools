@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from datetime import timedelta
 
 import pytest
 
@@ -11,7 +12,7 @@ from dish_pg.read_model import ReadModelError
 from dish_pg.repositories import CatalogRepository
 from dish_tool.content_versions import content_identity
 from tests.support.postgresql.command import _call, _port
-from tests.support.postgresql.workflow import NOW, _next, workflow_db
+from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 
 
 def _install_native_read_authority(
@@ -154,10 +155,11 @@ def _add_native_task(
     section_id: uuid.UUID,
     catalog_version_id: uuid.UUID,
     title: str,
+    body: str = "Native read fixture\n",
+    membership_head: bool = False,
 ) -> uuid.UUID:
     task_id = _next(ids)
     content_version_id = _next(ids)
-    body = "Native read fixture\n"
     session.add(
         models.DishTask(
             task_id=task_id,
@@ -222,8 +224,76 @@ def _add_native_task(
             updated_at=NOW,
         )
     )
+    if membership_head:
+        session.add(
+            models.TaskMembershipHead(
+                generation_id=context["generation_id"],
+                task_id=task_id,
+                membership_revision=0,
+                updated_at=NOW,
+            )
+        )
     session.flush()
     return task_id
+
+
+def test_catalog_query_searches_body_filters_cooked_and_pages_deterministically(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        native = _install_native_read_authority(
+            session, ids, context, section_ids=(context["section_id"],)
+        )
+        active_id = _add_native_task(
+            session, ids, context, section_id=context["section_id"],
+            catalog_version_id=native["catalog_version_id"], title="Alpha Dish",
+            body="Canonical aubergine instructions\n",
+            membership_head=True,
+        )
+        cooked_id = _add_native_task(
+            session, ids, context, section_id=context["section_id"],
+            catalog_version_id=native["catalog_version_id"], title="Zulu Dish",
+            body="Canonical body\n",
+            membership_head=True,
+        )
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        cooked = port.execute(_call(
+            "cooked", run_id=run_id, request_id=_next(ids),
+            arguments={"task_id": str(cooked_id)},
+        ))
+        assert cooked.ok
+
+        body_match = port.execute(_call(
+            "query", run_id=_next(ids),
+            arguments={"agent": "gpt", "query": "AUBERGINE", "status": "both"},
+        ))
+        assert body_match.ok
+        assert [row["dish_id"] for row in body_match.data["results"]] == [str(active_id)]
+
+        first = port.execute(_call(
+            "query", run_id=_next(ids),
+            arguments={"agent": "gpt", "status": "both", "page_size": 1},
+        ))
+        assert first.ok and first.data["results"][0]["dish_id"] == str(active_id)
+        second = port.execute(_call(
+            "query", run_id=_next(ids), arguments={
+                "agent": "gpt", "status": "both", "page_size": 1,
+                "cursor": first.data["next_cursor"],
+            },
+        ))
+        assert second.ok and second.data["results"][0]["dish_id"] == str(cooked_id)
+        assert second.data["results"][0]["status"] == "cooked"
+        assert second.data["results"][0]["cooked_at"] is not None
+
+        cooked_only = port.execute(_call(
+            "query", run_id=_next(ids), arguments={
+                "agent": "gpt", "status": "cooked", "workflow_role": "native_role_0",
+                "updated_from": (NOW - timedelta(days=1)).isoformat(),
+            },
+        ))
+        assert cooked_only.ok
+        assert [row["dish_id"] for row in cooked_only.data["results"]] == [str(cooked_id)]
 
 
 def test_native_pointer_moves_ordinary_reads_to_native_catalog(workflow_db) -> None:

@@ -657,6 +657,135 @@ class PostgresReadModel:
         return {"query": query, "results": results, "next_cursor": next_cursor,
                 "page_size": page_size, "generation_id": str(generation.generation_id), **native.identity}
 
+    def query_catalog(
+        self,
+        *,
+        query: str | None = None,
+        section_id: str | None = None,
+        workflow_role: str | None = None,
+        status: str = "both",
+        created_from: str | None = None,
+        created_before: str | None = None,
+        updated_from: str | None = None,
+        updated_before: str | None = None,
+        cooked_from: str | None = None,
+        cooked_before: str | None = None,
+        cursor: str | None = None,
+        page_size: int = 50,
+    ) -> Mapping[str, Any]:
+        """Query canonical active/cooked Dish state under the native catalog pointer."""
+        generation = self.active_generation()
+        native = self._native_read_authority(generation.generation_id)
+        if native is None:
+            raise ReadModelError("catalog query requires native PostgreSQL read authority")
+        if status not in {"active", "cooked", "both"} or not 1 <= page_size <= 100:
+            raise ReadModelError("invalid catalog query status or page size")
+        filters = {
+            key: value for key, value in {
+                "query": query.lower() if query else None,
+                "section_id": section_id,
+                "workflow_role": workflow_role,
+                "status": status,
+                "created_from": created_from, "created_before": created_before,
+                "updated_from": updated_from, "updated_before": updated_before,
+                "cooked_from": cooked_from, "cooked_before": cooked_before,
+            }.items() if value is not None
+        }
+        identity = {
+            "kind": "catalog-query-v1",
+            "generation_id": str(generation.generation_id),
+            **native.identity,
+            "filters": filters,
+            "page_size": page_size,
+        }
+        after_title: str | None = None
+        after_task: uuid.UUID | None = None
+        if cursor is not None:
+            payload = self.cursor_codec.decode(cursor)
+            if any(payload.get(key) != value for key, value in identity.items()):
+                raise InvalidCursor("cursor is stale or belongs to another catalog query")
+            try:
+                after_title = str(payload["after_title"])
+                after_task = uuid.UUID(str(payload["after_task_id"]))
+            except (KeyError, ValueError) as exc:
+                raise InvalidCursor("cursor page boundary is invalid") from exc
+
+        title_key = func.lower(models.ContentVersion.title)
+        statement = (
+            select(
+                models.DishTask.task_id, models.ContentVersion.title,
+                models.DishState.section_id, models.SectionCatalogEntry.display_name,
+                models.SectionCatalogEntry.workflow_role, models.TaskExternalAlias.external_id,
+                models.DishTask.created_at, models.DishState.updated_at,
+                models.DishState.completed, models.DishState.completion_reason,
+            )
+            .select_from(models.DishTask)
+            .join(models.DishState, and_(
+                models.DishState.generation_id == generation.generation_id,
+                models.DishState.task_id == models.DishTask.task_id,
+            ))
+            .join(models.ContentVersion, models.ContentVersion.content_version_id == models.DishState.current_content_version_id)
+            .join(models.SectionCatalogEntry, and_(
+                models.SectionCatalogEntry.catalog_version_id == native.pointer.catalog_version_id,
+                models.SectionCatalogEntry.section_id == models.DishState.section_id,
+            ))
+            .outerjoin(models.TaskExternalAlias, and_(
+                models.TaskExternalAlias.task_id == models.DishTask.task_id,
+                models.TaskExternalAlias.external_system == "asana",
+                models.TaskExternalAlias.state == "active",
+            ))
+            .where(
+                models.DishState.catalog_version_id == native.pointer.catalog_version_id,
+                models.DishState.archived_at.is_(None),
+                models.DishTask.existence_state.in_(("ordinary", "isolated")),
+                or_(models.DishState.completed.is_(False), models.DishState.completion_reason == "cooked"),
+            )
+        )
+        if query:
+            needle = query.lower()
+            statement = statement.where(or_(title_key.contains(needle, autoescape=True), func.lower(models.ContentVersion.body).contains(needle, autoescape=True)))
+        if section_id:
+            statement = statement.where(models.DishState.section_id == uuid.UUID(section_id))
+        if workflow_role:
+            statement = statement.where(models.SectionCatalogEntry.workflow_role == workflow_role)
+        if status == "active":
+            statement = statement.where(models.DishState.completed.is_(False))
+        elif status == "cooked":
+            statement = statement.where(models.DishState.completed.is_(True), models.DishState.completion_reason == "cooked")
+        bounds = (
+            (models.DishTask.created_at, created_from, created_before),
+            (models.DishState.updated_at, updated_from, updated_before),
+        )
+        for column, start, end in bounds:
+            if start:
+                statement = statement.where(column >= datetime.fromisoformat(start))
+            if end:
+                statement = statement.where(column < datetime.fromisoformat(end))
+        if cooked_from or cooked_before:
+            statement = statement.where(models.DishState.completion_reason == "cooked")
+            if cooked_from:
+                statement = statement.where(models.DishState.updated_at >= datetime.fromisoformat(cooked_from))
+            if cooked_before:
+                statement = statement.where(models.DishState.updated_at < datetime.fromisoformat(cooked_before))
+        if after_title is not None and after_task is not None:
+            statement = statement.where(or_(title_key > after_title, and_(title_key == after_title, models.DishTask.task_id > after_task)))
+        rows = list(self.session.execute(statement.order_by(title_key, models.DishTask.task_id).limit(page_size + 1)))
+        visible = rows[:page_size]
+        results = [{
+            "dish_id": str(row.task_id), "title": row.title,
+            "section_id": str(row.section_id), "section_label": row.display_name,
+            "workflow_role": row.workflow_role, "status": "cooked" if row.completed else "active",
+            "created_at": row.created_at.isoformat(), "updated_at": row.updated_at.isoformat(),
+            "cooked_at": row.updated_at.isoformat() if row.completion_reason == "cooked" else None,
+            **({"task_gid": row.external_id} if row.external_id else {}),
+        } for row in visible]
+        next_cursor = None
+        if len(rows) > page_size and visible:
+            last = visible[-1]
+            next_cursor = self.cursor_codec.encode(identity | {"after_title": last.title.lower(), "after_task_id": str(last.task_id)})
+        return {"results": results, "next_cursor": next_cursor, "page_size": page_size,
+                "generation_id": str(generation.generation_id), **native.identity}
+
     def _workflow_snapshot(
         self,
         *,

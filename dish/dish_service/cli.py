@@ -57,6 +57,7 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 TOPIC_COMMANDS = ("planning", "research", "verification")
 SEARCH_COMMAND = "search"
+QUERY_COMMAND = "query"
 COOKED_COMMAND = "cooked"
 RECORD_COOK_LOG_COMMAND = "record-cook-log"
 COOK_LOGS_COMMAND = "cook-logs"
@@ -217,6 +218,17 @@ def build_parser() -> JsonArgumentParser:
     )
     search.add_argument("--cursor", default=None, help="opaque next_cursor from a prior search page")
     search.add_argument("--page-size", type=int, default=SEARCH_PAGE_SIZE_DEFAULT)
+
+    query = subparsers.add_parser(QUERY_COMMAND, help="query the active and cooked Dish catalog")
+    query.add_argument("--agent", required=True, choices=_canonical_enum_choices(SECTIONS_COMMAND, "agent"))
+    query.add_argument("--query")
+    query.add_argument("--section-id")
+    query.add_argument("--workflow-role")
+    query.add_argument("--status", choices=("active", "cooked", "both"), default="both")
+    for field in ("created-from", "created-before", "updated-from", "updated-before", "cooked-from", "cooked-before"):
+        query.add_argument(f"--{field}")
+    query.add_argument("--cursor")
+    query.add_argument("--page-size", type=int, default=SEARCH_PAGE_SIZE_DEFAULT)
 
     record_cook_log = subparsers.add_parser(
         RECORD_COOK_LOG_COMMAND, help="append an immutable note to a Dish's cook log"
