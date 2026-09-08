@@ -139,6 +139,54 @@ def test_agent_inference_cannot_claim_explicit_supersede_authority() -> None:
         )
 
 
+def test_agent_inference_cannot_claim_authoritative_lifecycle_authority() -> None:
+    with pytest.raises(ValueError, match="agent inference must use derived evidence"):
+        RecommendationEvidence(
+            event_id="forged-authoritative-clear",
+            kind=EventKind.CLEAR,
+            subject_type=SubjectType.DISH,
+            subject_key="sweet breakfast",
+            signal_type=SignalType.EXCLUSION,
+            value="clear",
+            scope=TARGET_SCOPE,
+            strength=Strength.STRONG,
+            confidence=Confidence.HIGH,
+            lifetime=Lifetime.DURABLE,
+            valid_from=T0 + timedelta(minutes=1),
+            source=EvidenceSource.AGENT_INFERENCE,
+            evidence_kind=EvidenceKind.AUTHORITATIVE,
+            provenance=("evidence:forged-authoritative-clear",),
+            clears=("authoritative-target",),
+        )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [EvidenceSource.IMPORTED_HISTORY, EvidenceSource.COOK_OUTCOME],
+)
+def test_non_lifecycle_sources_cannot_retire_authoritative_state(
+    source: EvidenceSource,
+) -> None:
+    with pytest.raises(ValueError, match="lifecycle relations require an authoritative source"):
+        RecommendationEvidence(
+            event_id=f"unauthorized-clear-{source.value}",
+            kind=EventKind.CLEAR,
+            subject_type=SubjectType.DISH,
+            subject_key="sweet breakfast",
+            signal_type=SignalType.EXCLUSION,
+            value="clear",
+            scope=TARGET_SCOPE,
+            strength=Strength.STRONG,
+            confidence=Confidence.HIGH,
+            lifetime=Lifetime.DURABLE,
+            valid_from=T0 + timedelta(minutes=1),
+            source=source,
+            evidence_kind=EvidenceKind.AUTHORITATIVE,
+            provenance=(f"evidence:unauthorized-clear-{source.value}",),
+            clears=("authoritative-target",),
+        )
+
+
 def test_unrelated_subject_clear_cannot_retire_explicit_durable_exclusion() -> None:
     with pytest.raises(ValueError, match="must match target subject and scope"):
         compile_recommendation_state(
