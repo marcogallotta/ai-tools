@@ -527,6 +527,34 @@ def _advance_post_refresh_worktree(
     return updated
 
 
+def _restore_unaccepted_post_refresh_transition(
+    runner: GitRunner,
+    *,
+    refresh_rollback: tuple[Path, dict[str, Any], str] | None,
+    resolved_owner: str | None,
+    replacement_agent_id: str,
+) -> None:
+    """Restore refresh effects when failed claim settlement kept the prior owner."""
+    if refresh_rollback is None or resolved_owner == replacement_agent_id:
+        return
+    replacement_state_path, old_state, old_head = refresh_rollback
+    worktree = Path(str(old_state["worktree_path"]))
+    rollback = runner.run(worktree, "reset", "--hard", old_head, check=False)
+    if rollback.returncode != 0:
+        fail(
+            "REFRESH_BLOCK_ROLLBACK_FAILED",
+            "replacement ownership was not accepted and exact worktree rollback failed",
+        )
+    atomic_write_json(replacement_state_path, old_state)
+    restored_repo = resolve_repository_from_state(runner, old_state)
+    restored = verify_owned_worktree(runner, restored_repo, old_state)
+    if restored.head != old_head or restored.dirty:
+        fail(
+            "REFRESH_BLOCK_ROLLBACK_FAILED",
+            "replacement ownership was not accepted and restored worktree verification failed",
+        )
+
+
 def _reconcile_existing(
     *,
     runner: GitRunner,
@@ -879,6 +907,12 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             completed = subprocess.run(argv, cwd=repo.source_top, env=env, check=False, pass_fds=tuple(locks.fds))
         except OSError as exc:
             resolved_owner = _settle_failed_claim(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
+            _restore_unaccepted_post_refresh_transition(
+                runner,
+                refresh_rollback=refresh_rollback,
+                resolved_owner=resolved_owner,
+                replacement_agent_id=agent_id,
+            )
             if launch_identity_bound:
                 restore_identity(agent_id, prior_identity)
             if pr_registry_acquired:
@@ -887,6 +921,12 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             fail("CLAIM_COMMAND_FAILED", f"could not launch claimed local-agent command: {exc}")
         if completed.returncode != 0:
             resolved_owner = _settle_failed_claim(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
+            _restore_unaccepted_post_refresh_transition(
+                runner,
+                refresh_rollback=refresh_rollback,
+                resolved_owner=resolved_owner,
+                replacement_agent_id=agent_id,
+            )
             if launch_identity_bound:
                 state_file = state_path_for_branch(task_gid, branch)
                 durable_state = read_json_object(state_file, "task worktree state") if state_file is not None else None

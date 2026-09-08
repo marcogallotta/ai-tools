@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import time
@@ -962,6 +963,67 @@ pathlib.Path({str(readback)!r}).write_text(result.stdout, encoding="utf-8")
     assert transition["refresh_head"] == refreshed
     assert transition["to_review_id"] == review_id
     assert claim_record["assignment_authority_transitions"][-1] == transition
+
+
+@pytest.mark.parametrize("failure", ("nonzero", "launch"))
+def test_post_refresh_failed_different_owner_restores_exact_prior_lifecycle(
+    h: Harness, failure: str,
+) -> None:
+    task = "3150" if failure == "nonzero" else "3151"
+    branch, old_agent, replacement, pr, review_id = (
+        f"agent/refresh-failed-{failure}",
+        f"old-{task}",
+        f"replacement-{task}",
+        int(task),
+        f"91{task}",
+    )
+    preserved, refreshed, prior_token, _ = _prepare_refreshed_block(
+        h, task=task, branch=branch, agent=old_agent, pr=pr, review_id=review_id
+    )
+    replacement_identity_path = h.agent_file(replacement, owning_task_gid=task)
+    prior_identity = json.loads(replacement_identity_path.read_text(encoding="utf-8"))
+    provenance = _write_launch_provenance(
+        h, agent=replacement, task=task, branch=branch, pr=pr, head=refreshed,
+        block_review_id=review_id,
+    )
+    claim_path, prior_claim = record(h, task)
+    prior_state = h.state(task)
+    child = (
+        ["python3", "-c", "raise SystemExit(9)"]
+        if failure == "nonzero"
+        else ["definitely-not-an-agent-worktree-command"]
+    )
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", replacement,
+        "--takeover", "--expected-claim", prior_token,
+        "--pr-number", str(pr), "--pr-head", refreshed, "--pr-lease-state", "none",
+        "--launch-provenance", str(provenance), "--require-launch-provenance",
+        "--", *child,
+        env={"TEST_ASANA_NO_HANDOFF": "1", "TEST_GITHUB_PRESERVE_PR": "1"},
+        check=False,
+    )
+    if failure == "nonzero":
+        assert result.returncode == 9
+    else:
+        assert_error(result, "CLAIM_COMMAND_FAILED")
+
+    assert json.loads(claim_path.read_text(encoding="utf-8")) == prior_claim
+    assert h.state(task) == prior_state
+    assert git_out(h.wt(task), "rev-parse", "HEAD") == preserved
+    assert json.loads(replacement_identity_path.read_text(encoding="utf-8")) == prior_identity
+
+    branch_digest = hashlib.sha256(branch.encode("utf-8")).hexdigest()[:24]
+    branch_marker = json.loads(git_out(
+        h.origin, "show", "-s", "--format=%B",
+        f"refs/heads/dish-agent-lineage-registry/{branch_digest}",
+    ))
+    pr_marker = json.loads(git_out(
+        h.origin, "show", "-s", "--format=%B",
+        f"refs/heads/dish-agent-pr-registry/{pr}",
+    ))
+    assert branch_marker["claim_active"] is False
+    assert branch_marker["owner_agent_id"] == old_agent
+    assert pr_marker["claim_active"] is False
 
 
 @pytest.mark.parametrize(
