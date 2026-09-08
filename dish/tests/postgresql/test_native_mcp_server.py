@@ -121,9 +121,10 @@ def _adapter(
     )
 
 
-def test_connected_registry_is_exact_19_command_product_contract() -> None:
+def test_connected_registry_is_exact_20_command_product_contract() -> None:
     assert CONNECTED_COMMANDS == ACTION_COMMANDS
-    assert len(CONNECTED_COMMANDS) == 19
+    assert len(CONNECTED_COMMANDS) == 20
+    assert TOOL_COMMANDS["dish_query"] == "query"
     assert tuple(spec.name for spec in CONNECTED_COMMAND_SPECS) == CONNECTED_COMMANDS
     assert tuple(TOOL_COMMANDS.values()) == CONNECTED_COMMANDS
     assert tuple(mcp_server.TOOL_COMMANDS.values()) == CONNECTED_COMMANDS

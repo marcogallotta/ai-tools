@@ -57,6 +57,7 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 TOPIC_COMMANDS = ("planning", "research", "verification")
 SEARCH_COMMAND = "search"
+QUERY_COMMAND = "query"
 COOKED_UPDATES_COMMAND = "cooked-updates"
 COOKED_COMMAND = "cooked"
 RECORD_COOK_LOG_COMMAND = "record-cook-log"
@@ -221,6 +222,7 @@ def build_parser() -> JsonArgumentParser:
 
     cooked_updates = subparsers.add_parser(
         COOKED_UPDATES_COMMAND,
+        aliases=[QUERY_COMMAND],
         help="list current cooked-history updates from a generation-fenced PostgreSQL window",
     )
     cooked_updates.add_argument("since")
