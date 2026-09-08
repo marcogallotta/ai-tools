@@ -1,5 +1,14 @@
 # tools/
 
+## `tools/fast-track`
+
+The destination-driven emergency path. `main` commits explicit paths through `tools/git-commit`,
+pushes only from an exact current `main`, and reads back the remote head. `pr` commits explicit
+paths on an isolated branch, publishes without force, and returns the exact PR-body route marker.
+`testing-start`, `testing-finish`, and `testing-apply` preserve an exact regular-file candidate,
+restore the primary testing surface, and reapply the tested bytes in an isolated checkout. The
+helper accepts Marco's exact words and refuses a command whose destination does not match them.
+
 ## `tools/git-commit`
 
 A stdlib-only Python script (no venv needed to run it directly). It shells out to `git` via

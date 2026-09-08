@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-15791c7182a9
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c33431f55a27
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
@@ -16,7 +16,7 @@ Triggered policy reads (before the governed action):
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
 - execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
 - external/current-main defect while pursuing an existing objective -> `dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission`
-- fast-track -> `dish/docs/agents/trivial-fast-track.md#Procedure`
+- fastrack / fast-track / fast track / direct or right to main -> `dish/docs/agents/trivial-fast-track.md#Procedure`
 - task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - `check everything` sweep -> `dish/docs/agents/coordinator.md#Live-grounded `check everything` sweep`
@@ -47,7 +47,7 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
-- Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`.
+- Fast-track: named route runs; bare asks once; read procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Coordinator does not become semantic Implementation or Integration through tool access.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation.

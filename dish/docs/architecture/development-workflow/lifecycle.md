@@ -33,11 +33,18 @@ Integration uses the exact reviewed candidate and performs only authorized mecha
 
 ### Explicit per-change lifecycle shortcuts
 
-The normal lifecycle above remains the default. [`trivial-fast-track.md`](../../agents/trivial-fast-track.md) defines one narrow capability-based exception when Marco explicitly authorizes the exact change and that grant has been durably bound to task, owned branch, current-main base, exact path set, and Marco's exact words. This is not another lifecycle state machine or ownership system.
+The normal lifecycle above remains the default. [`trivial-fast-track.md`](../../agents/trivial-fast-track.md)
+defines Marco's explicit destination-driven exception for one bounded correction. The phrase itself
+is route authority; agent-produced metadata must not become a pre-action operator gate.
 
-- `TRIVIAL` uses the existing isolated worktree/claim/commit primitives, requires one bounded commit from the recorded current-main base, and may non-force fast-forward `main` directly after guarded readback. For that exact authorized change only, PR, formal Review, and separate Integration are omitted.
-- `FAST-TRACK` still publishes the owned branch and PR normally. Formal Review is omitted only when the exact durable grant says `skip_review=true`; final Integration remains separately authorized. The exact grant also records the risk-selected validation class: meaningful readback when executable tests add no evidence, or focused executable proof for product/runtime and comparable high-consequence behavior before landing.
-- Missing/stale authorization, base movement, primary-checkout use, path escape, or ambiguity invalidates either shortcut and returns the work to the full normal lifecycle. `TRIVIAL` additionally rejects protected/high-consequence scope. `FAST-TRACK` may cover executable/high-consequence scope only when the exact grant selects focused `executable-proof` and that proof is obtained before landing.
+- to main: bounded compare-and-set publication and readback happen immediately; PR, Review,
+  pre-landing tests, and CI admission do not.
+- to PR: publication and fresh exact-head Review remain, but ordinary CI is observed after landing
+  rather than awaited before Integration.
+- to testing: the primary local surface may temporarily carry an uncommitted reversible candidate;
+  its exact tested delta is later captured into the PR route and the primary pre-state restored.
+- agentic/generated documents are coherent only when canonical source and all owned projections are
+  regenerated, regardless of route. Post-landing tests and cleanup stay off `main`.
 
 ## Invariants
 

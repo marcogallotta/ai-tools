@@ -829,23 +829,34 @@ def test_refresh_reconciles_renders_checks_and_reports_paste_ready_paths(tmp_pat
  project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}')
  manifest=project/'manifest.json'; review=project/'review.md'; calls=[]
  monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',manifest)
- monkeypatch.setattr(kernels,'command_reconcile',lambda *args: calls.append(('reconcile',args[2])))
- monkeypatch.setattr(kernels,'render_all',lambda *,check: calls.append(('render',check)))
+ def reconcile(*args): args[2].write_text('{}'); calls.append(('reconcile','staged'))
+ def render(*,check):
+  calls.append(('render',check))
+  if not check: (kernels.PROJECT_DIR/'review.md').write_text('review')
+ monkeypatch.setattr(kernels,'command_reconcile',reconcile)
+ monkeypatch.setattr(kernels,'render_all',render)
  monkeypatch.setattr(kernels,'command_check',lambda: calls.append(('check',)))
  monkeypatch.setattr(kernels,'load_canonical',lambda: ({'canonical_version':'v2'},{'roles':{'review':{}}}))
  monkeypatch.setattr(kernels,'generated_paths',lambda manifest,source: {'review':review})
  kernels.command_refresh(tmp_path/'base.json',source)
- assert calls==[('reconcile',manifest),('render',False),('check',)]
+ assert calls==[('reconcile','staged'),('render',False),('check',)]
+ assert manifest.read_text()=='{}' and review.read_text()=='review'
  assert f'review: {review}' in capsys.readouterr().out
 
 def test_refresh_does_not_report_paste_ready_paths_when_check_fails(tmp_path,monkeypatch,capsys):
- project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}')
- monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',project/'manifest.json')
- monkeypatch.setattr(kernels,'command_reconcile',lambda *args: None)
+ project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}'); (project/'manifest.json').write_text('before')
+ manifest=project/'manifest.json'; manifest.write_text('before')
+ role_index=tmp_path/'index.md'; root=tmp_path/'CLAUDE.md'; style=tmp_path/'dish-operator.md'
+ for path in (role_index,root,style): path.write_text('before')
+ monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',manifest)
+ monkeypatch.setattr(kernels,'ROLE_INDEX_PATH',role_index); monkeypatch.setattr(kernels,'ROOT_INSTRUCTIONS_PATH',root); monkeypatch.setattr(kernels,'CLAUDE_OPERATOR_STYLE_PATH',style)
+ monkeypatch.setattr(kernels,'command_reconcile',lambda *args: args[2].write_text('candidate'))
  monkeypatch.setattr(kernels,'render_all',lambda *,check: None)
  monkeypatch.setattr(kernels,'command_check',lambda: (_ for _ in ()).throw(kernels.KernelError('check failed')))
  with pytest.raises(kernels.KernelError,match='check failed'):
   kernels.command_refresh(tmp_path/'base.json',source)
+ assert manifest.read_text()=='before'
+ assert all(path.read_text()=='before' for path in (role_index,root,style))
  assert 'PASTE-READY' not in capsys.readouterr().out
 
 def test_design_principles_projection_is_derived_and_present_everywhere():

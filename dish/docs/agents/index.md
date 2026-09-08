@@ -65,7 +65,7 @@ Design Principles (design-principles.md): DP-01 Parallel work; serialize authori
 
 For any requested Five Whys / root-cause Five Whys analysis, read and follow [`five-whys.md`](five-whys.md) before presenting conclusions. The shared procedure is an analysis method only and does not change role authority.
 
-For an explicit Marco `TRIVIAL`/`FAST-TRACK` per-change lifecycle shortcut, read and follow [`trivial-fast-track.md`](trivial-fast-track.md). Agents never self-authorize either path.
+For `fastrack`, `fast-track`, `fast track`, `direct to main`, or `right to main`, read and follow [`trivial-fast-track.md`](trivial-fast-track.md). The agent recommends the destination when Marco did not name one; an explicit destination is complete route authority.
 
 ## ChatGPT Project kernels
 

@@ -232,6 +232,11 @@ If Review requires evidence beyond the governed selector/implementation record, 
 
 Once either new-format line is present, both are required; partial new-format metadata fails closed and does not fall back to `TESTS TO RUN`. Legacy exact-head reviews containing only `TESTS TO RUN` retain their existing fail-closed pre-Integration meaning for compatibility. Review may report an existing post-merge gate, but it may not move that gate earlier in the lifecycle. When no additional pre-Integration local/environment certification is missing, record `PRE-INTEGRATION TESTS TO RUN: NONE`; do not request a broad/full suite as a generic safety ritual.
 
+For an exact fast-track-to-PR grant, independent semantic Review remains mandatory, but ordinary CI
+and unrequested pre-landing tests are explicitly outside merge admission. Record
+`PRE-INTEGRATION TESTS TO RUN: NONE` unless Marco requested a specific pre-landing test. Review the
+candidate semantics normally; do not convert fast-track into reduced scrutiny or process ceremony.
+
 Ordinary CI must certify the exact source PR head SHA. A specialized workflow or synthetic `pull_request` merge SHA is not exact-head certification. Missing, pending, or failed ordinary CI is Integration evidence/ownership state, not a reason to delay substantive Review or rewrite the semantic verdict. Review does not require the branch to be synchronized with current `main` before reviewing the exact current PR head merely because `main` moved. Require a newer base first only when the movement creates a known semantic dependency that makes the current review question invalid.
 
 After Review, Integration reconciles the reviewed candidate with then-current `main` as needed. If that movement is demonstrably mechanical and preserves reviewed semantics, the new exact head needs only the normal mechanical recheck. Conflict resolution or any other semantic movement requires substantive re-review.
