@@ -33,6 +33,11 @@ Concurrency is chosen from concrete landing relationships:
 - A verified exact-head Review BLOCK may replace prior assignment authority only
   inside the same task, branch, authoring-base, PR, and lineage after publication
   has durably closed the prior semantic writer claim.
+- When Integration has conflict-free refreshed that closed successor onto the exact
+  current target head, a later exact-head Review BLOCK may advance the same lineage
+  only after the tool verifies the two exact merge parents and mechanically
+  reproduces the merge tree. The current claim generation, clean preserved
+  worktree head, and all stable assignment fields remain compare-and-set fences.
 - Local first claim consumes one current exact Implementation handoff from the owning task; Ready,
   a local identity file, or a claim file cannot independently authorize repository mutation.
 - Worktree admission accepts exactly one owning membership from the registered V2 project
