@@ -75,9 +75,9 @@ Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatg
 
 For unqualified Dish PR/issue references, use [`repository-routing.md`](repository-routing.md) when the trigger applies.
 
-Every ChatGPT GitHub operation uses the Connector-route provenance rule in
-[`repository-routing.md`](repository-routing.md#github-connector-routing). A `Github.*` namespace
-or “GitHub MCP Server” description neither proves nor disproves Connector provenance.
+Every ChatGPT GitHub operation uses the integration-identity rule in
+[`repository-routing.md`](repository-routing.md#github-connector-routing). `api_tool` is permitted
+to select the installed GitHub Connector; never select the separate GitHub MCP app.
 
 
 Ratified cross-Project standing invariants that must survive Project regeneration/reconciliation are governed by [`standing-invariants.md`](standing-invariants.md) and its independent machine-readable registry.

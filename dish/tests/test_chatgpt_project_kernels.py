@@ -58,7 +58,7 @@ def test_manifest_source_identity_topology_and_metadata():
  m,s=kernels.load_canonical(); kernels.validate_topology(s)
  assert m['canonical_version'].endswith(m['kernel_identity_sha256'][:12])
  assert kernels.kernel_identity(s)==m['kernel_identity_sha256']
- assert kernels.repository_config(s)==('marcogallotta/ai-tools','main','GitHub Connector via api_tool')
+ assert kernels.repository_config(s)==('marcogallotta/ai-tools','main','GitHub Connector selected via api_tool')
  for role in s['roles']:
   for r in kernels.effective_rules(s,role):
    assert r['impact'] in {'breaking','additive','compatible'} and r['surface'] and r['action_boundaries']
@@ -69,27 +69,23 @@ def test_missing_repository_bootstrap_fails_closed():
   bad=copy.deepcopy(s); bad.pop(field)
   with pytest.raises(kernels.KernelError,match=field): kernels.kernel_identity(bad)
 
-def test_every_kernel_requires_connector_route_provenance_and_rejects_app_substitution():
+def test_every_kernel_selects_connector_and_rejects_mcp_app():
  m,s=kernels.load_canonical()
  for role in s['roles']:
   text=kernels.render_role_with_version(s,role,m['canonical_version'])
-  assert 'Connector via `api_tool`' in text
-  assert 'Its `Github.*` tools remain authorized' in text
-  assert 'labeled “GitHub MCP Server”' in text
-  assert 'Never select the separate GitHub MCP app' in text
-  assert 'Namespace/MCP labels are not app identity' in text
-  assert 'Unknown Connector provenance' in text
-  assert 'tell Marco and stop; no substitute' in text
+  assert 'in `api_tool`, select the installed GitHub Connector' in text
+  assert 'never the separate GitHub MCP app' in text
+  assert '`api_tool` is allowed' in text
+  assert 'authorization follows the selected integration identity' in text
+  assert 'If they cannot be distinguished, tell Marco and stop' in text
   assert 'plugin_connector_*' not in text
   assert 'plugin_asdk_app_*' not in text
  worker=kernels.generated_profile_paths(m,s)['worker'].read_text()
- assert 'Connector via `api_tool`' in worker
- assert 'Its `Github.*` tools remain authorized' in worker
- assert 'labeled “GitHub MCP Server”' in worker
- assert 'Never select the separate GitHub MCP app' in worker
- assert 'Namespace/MCP labels are not app identity' in worker
- assert 'Unknown Connector provenance' in worker
- assert 'tell Marco and stop; no substitute' in worker
+ assert 'in `api_tool`, select the installed GitHub Connector' in worker
+ assert 'never the separate GitHub MCP app' in worker
+ assert '`api_tool` is allowed' in worker
+ assert 'authorization follows the selected integration identity' in worker
+ assert 'If they cannot be distinguished, tell Marco and stop' in worker
  assert 'plugin_connector_*' not in worker
  assert 'plugin_asdk_app_*' not in worker
 
