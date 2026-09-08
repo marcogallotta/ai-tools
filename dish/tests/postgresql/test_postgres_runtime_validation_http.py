@@ -646,6 +646,61 @@ def test_postgresql_agent_search_rejects_invalid_pagination_before_execution(
             stop_server(server, thread)
 
 
+def test_postgresql_cli_query_uses_connected_normalization(
+    workflow_db, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    factory, ids, _context, _task_id = workflow_db
+    normalized = []
+    calls = []
+    original = postgres_service_module.normalize_postgres_query_arguments
+
+    def capture(arguments):
+        result = original(arguments)
+        normalized.append(result)
+        return result
+
+    monkeypatch.setattr(postgres_service_module, "normalize_postgres_query_arguments", capture)
+    monkeypatch.setattr(
+        postgres_service_module.PostgresCommandPort,
+        "execute",
+        lambda _self, call: calls.append(call)
+        or CommandResult(True, "query", "OK", 200, {"results": []}),
+    )
+    service = runtime_service(factory, tmp_path)
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-query-cli-http")
+        host, port = server.server_address
+        client = DishServiceClient(
+            f"http://{host}:{port}",
+            token="postgres-agent-token",
+            run_id=str(_next(ids)),
+        )
+        try:
+            assert cli.main([
+                "query", "--agent", "gpt", "--query", " Imported ",
+                "--created-from", "2025-01-01",
+            ], application=client) == 0
+            assert json.loads(capsys.readouterr().out)["ok"] is True
+            assert normalized[-1]["query"] == "Imported"
+            assert normalized[-1]["created_from"] == "2025-01-01T00:00:00+00:00"
+            assert calls[-1].request_id is None
+
+            assert cli.main([
+                "query", "--agent", "gpt", "--created-from", "not-a-date",
+            ], application=client) != 0
+            rejected = json.loads(capsys.readouterr().out)
+            assert (rejected["code"], rejected["data"]["field"]) == (
+                "INVALID_ARGUMENT", "created_from",
+            )
+            replayed = client.execute(
+                "query", {"agent": "gpt"}, request_id=str(_next(ids))
+            )
+            assert replayed["code"] == "INVALID_ARGUMENT"
+            assert len(calls) == 1
+        finally:
+            stop_server(server, thread)
+
+
 def test_postgresql_runtime_exposes_only_implemented_action_commands(
     workflow_db, tmp_path: Path
 ) -> None:

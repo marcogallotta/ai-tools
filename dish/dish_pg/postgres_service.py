@@ -29,8 +29,10 @@ from .command_contract import (
     ACTION_COMMANDS,
     ADMIN_COMMANDS,
     COMMAND_DEFINITIONS,
+    QUERY_COMMAND,
     SEARCH_COMMAND,
     SEARCH_PAGE_SIZE_DEFAULT,
+    normalize_postgres_query_arguments,
     normalize_postgres_search_arguments,
     validate_postgres_action_request,
 )
@@ -746,38 +748,54 @@ class PostgresRuntimeService:
                         else:
                             result = self._execute_search(session, search_arguments)
                 else:
-                    definition = COMMAND_DEFINITIONS[command]
-                    if definition.retained and definition.profile != "Q":
-                        generation_id = session.scalar(
-                            select(models.AuthorityGeneration.generation_id).where(
-                                models.AuthorityGeneration.status == "active"
+                    command_arguments = dict(arguments)
+                    result = None
+                    if command == QUERY_COMMAND:
+                        try:
+                            if parsed_request_id is not None:
+                                raise DishRuleError(
+                                    "INVALID_ARGUMENT",
+                                    "read-only Query does not accept request_id",
+                                )
+                            command_arguments = normalize_postgres_query_arguments(arguments)
+                        except DishRuleError as exc:
+                            result = CommandResult(
+                                False, QUERY_COMMAND, exc.code, 400,
+                                {"message": str(exc), **dict(exc.details)},
+                            )
+                    if result is None:
+                        definition = COMMAND_DEFINITIONS[command]
+                        if definition.retained and definition.profile != "Q":
+                            generation_id = session.scalar(
+                                select(models.AuthorityGeneration.generation_id).where(
+                                    models.AuthorityGeneration.status == "active"
+                                )
+                            )
+                            if generation_id is None:
+                                raise WorkflowAuthorityError("no active authority generation")
+                            WorkflowAuthorityService(session).ensure_initial_cutover_run(
+                                generation_id=generation_id,
+                                run_id=run_id,
+                                owner_id=principal.owner_id,
+                                agent=self._bootstrap_agent(
+                                    principal_class=principal_class, arguments=arguments
+                                ),
+                                registered_at=datetime.now(timezone.utc),
+                            )
+                        result = PostgresCommandPort(
+                            session,
+                            cursor_secret=self._cursor_secret,
+                        ).execute(
+                            CommandCall(
+                                command_name=command,
+                                arguments=command_arguments,
+                                owner_id=principal.owner_id,
+                                principal_class=principal_class,
+                                run_id=run_id,
+                                request_id=parsed_request_id,
+                                now=datetime.now(timezone.utc),
                             )
                         )
-                        if generation_id is None:
-                            raise WorkflowAuthorityError("no active authority generation")
-                        WorkflowAuthorityService(session).ensure_initial_cutover_run(
-                            generation_id=generation_id,
-                            run_id=run_id,
-                            owner_id=principal.owner_id,
-                            agent=self._bootstrap_agent(
-                                principal_class=principal_class, arguments=arguments
-                            ),
-                            registered_at=datetime.now(timezone.utc),
-                        )
-                    result = PostgresCommandPort(
-                        session,
-                        cursor_secret=self._cursor_secret,
-                    ).execute(
-                        CommandCall(
-                            command_name=command,
-                            arguments=dict(arguments),
-                            owner_id=principal.owner_id,
-                            principal_class=principal_class,
-                            run_id=run_id,
-                            request_id=parsed_request_id,
-                            now=datetime.now(timezone.utc),
-                        )
-                    )
                 session.flush()
                 _section4_control_point(
                     point="after_execute_before_commit",
