@@ -8,6 +8,10 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import create_engine, func, inspect, select, update
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session, sessionmaker
+
 from dish_pg import models
 from dish_pg.database import session_scope
 from dish_pg.native_catalog_runtime_finalizer import (
@@ -31,20 +35,18 @@ from dish_pg.native_section_content_materializer import (
     materialized_content_version_id,
 )
 from dish_pg.repositories import CatalogRepository
-from dish_pg.workflow import WorkflowAuthorityService
 from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
-from sqlalchemy import create_engine, func, inspect, select, update
-from sqlalchemy.engine import make_url
-from sqlalchemy.orm import Session, sessionmaker
-
-from tests.postgresql.test_native_section_content_carry_forward import (
+from tests.support.postgresql.core import _next
+from tests.support.postgresql.native_section_content_fixtures import (
     NOW,
     SOURCE_COMMIT,
     SOURCE_TREE,
     _fixture,
 )
-from tests.support.postgresql.core import _next
-from tests.support.postgresql.workflow import _admit, _execution, _register_run
+from tests.support.postgresql.native_section_content_materializer_fixtures import (
+    _complete_after_staging,
+    _stage_pr3,
+)
 
 pytestmark = pytest.mark.database_boundary
 pytest_plugins = ("tests.support.postgresql.core",)
@@ -58,95 +60,6 @@ def _verified_repository_identity(monkeypatch) -> None:
         "dish_pg.native_section_carry_forward._verified_repository_identity",
         lambda: RepositoryIdentity(commit_sha=SOURCE_COMMIT, tree_sha=SOURCE_TREE),
     )
-
-
-def _stage_pr3(session: Session, ids: Iterator[uuid.UUID], **fixture_kwargs):
-    seeded, expectation, source_rows = _fixture(session, ids, **fixture_kwargs)
-    plan = build_carry_forward_plan(session, expectation=expectation)
-    receipt = apply_carry_forward(
-        session,
-        expected_snapshot_sha256=plan.source_snapshot_sha256,
-        source_commit=SOURCE_COMMIT,
-        expectation=expectation,
-        now=NOW,
-    )
-    occurrences = tuple(
-        session.scalars(
-            select(models.NativeSectionContentCarryForwardOccurrence).order_by(
-                models.NativeSectionContentCarryForwardOccurrence.task_id
-            )
-        )
-    )
-    return (
-        seeded,
-        expectation,
-        source_rows,
-        uuid.UUID(receipt["migration_event_id"]),
-        occurrences,
-    )
-
-
-def _complete_after_staging(
-    session: Session, ids: Iterator[uuid.UUID], seeded, task_id: uuid.UUID
-) -> int:
-    state = session.get(models.DishState, (seeded["generation_id"], task_id))
-    assert state is not None
-    run_id, request_id, execution_id = _next(ids), _next(ids), _next(ids)
-    _register_run(session, generation_id=seeded["generation_id"], run_id=run_id)
-    workflow = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
-    _admit(
-        workflow,
-        request_id=request_id,
-        generation_id=seeded["generation_id"],
-        run_id=run_id,
-        command="cooked",
-        payload={"dish_id": str(task_id)},
-    )
-    _execution(
-        workflow,
-        execution_id=execution_id,
-        request_id=request_id,
-        generation_id=seeded["generation_id"],
-        task_id=task_id,
-        binding_id=seeded["binding_id"],
-        command="cooked",
-    )
-    next_version = state.dish_version + 1
-    session.add(
-        models.DishMutationReceipt(
-            generation_id=seeded["generation_id"],
-            task_id=task_id,
-            dish_version=next_version,
-            source_route="command_execution",
-            import_run_id=None,
-            command_execution_id=execution_id,
-            content_changed=False,
-            placement_changed=False,
-            completion_changed=True,
-            archive_changed=False,
-            occurred_at=NOW + timedelta(minutes=1),
-        )
-    )
-    session.flush()
-    changed = session.execute(
-        update(models.DishState)
-        .where(
-            models.DishState.generation_id == seeded["generation_id"],
-            models.DishState.task_id == task_id,
-            models.DishState.dish_version == state.dish_version,
-        )
-        .values(
-            completed=True,
-            completion_reason="cooked",
-            dish_version=next_version,
-            completion_version=next_version,
-            updated_at=NOW + timedelta(minutes=1),
-        )
-        .execution_options(synchronize_session=False)
-    )
-    assert changed.rowcount == 1
-    session.flush()
-    return next_version
 
 
 def _install_successor_catalog(
