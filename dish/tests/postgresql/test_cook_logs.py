@@ -89,6 +89,9 @@ def test_cooked_updates_contract_cli_and_incremental_window() -> None:
     assert parsed.command == "cooked-updates"
     assert parsed.generation_id == generation_id
     assert parsed.page_size == 1
+    assert postgres_action_argument_schema("query") == schema
+    parsed = build_parser().parse_args(["query", "2026-08-01T20:00:01Z", "--agent", "gpt"])
+    assert parsed.command == "query"
 
 
 def test_cooked_updates_lists_current_cooked_state_by_fixed_event_window_and_keyset(

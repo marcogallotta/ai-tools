@@ -11,7 +11,7 @@ import json
 import os
 import socket
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
@@ -29,6 +29,8 @@ from .command_contract import (
     ACTION_COMMANDS,
     ADMIN_COMMANDS,
     COMMAND_DEFINITIONS,
+    COOKED_UPDATES_COMMAND,
+    QUERY_COMMAND,
     SEARCH_COMMAND,
     SEARCH_PAGE_SIZE_DEFAULT,
     normalize_postgres_search_arguments,
@@ -723,6 +725,7 @@ class PostgresRuntimeService:
 
         try:
             with session_scope(self._session_maker) as session:
+                execution_command = COOKED_UPDATES_COMMAND if command == QUERY_COMMAND else command
                 if command == SEARCH_COMMAND:
                     if parsed_request_id is not None:
                         result = CommandResult(
@@ -746,7 +749,7 @@ class PostgresRuntimeService:
                         else:
                             result = self._execute_search(session, search_arguments)
                 else:
-                    definition = COMMAND_DEFINITIONS[command]
+                    definition = COMMAND_DEFINITIONS[execution_command]
                     if definition.retained and definition.profile != "Q":
                         generation_id = session.scalar(
                             select(models.AuthorityGeneration.generation_id).where(
@@ -769,7 +772,7 @@ class PostgresRuntimeService:
                         cursor_secret=self._cursor_secret,
                     ).execute(
                         CommandCall(
-                            command_name=command,
+                            command_name=execution_command,
                             arguments=dict(arguments),
                             owner_id=principal.owner_id,
                             principal_class=principal_class,
@@ -778,6 +781,8 @@ class PostgresRuntimeService:
                             now=datetime.now(timezone.utc),
                         )
                     )
+                    if command == QUERY_COMMAND:
+                        result = replace(result, command=QUERY_COMMAND)
                 session.flush()
                 _section4_control_point(
                     point="after_execute_before_commit",

@@ -42,6 +42,7 @@ Profile = Literal["Q", "E", "L", "R", "P", "X"]
 Principal = Literal["reader", "agent", "verification", "admin", "historical"]
 
 SEARCH_COMMAND = "search"
+QUERY_COMMAND = "query"
 COOKED_COMMAND = "cooked"
 COOKED_UPDATES_COMMAND = "cooked-updates"
 RECORD_COOK_LOG_COMMAND = "record-cook-log"
@@ -108,6 +109,10 @@ COMMAND_DEFINITIONS = {
             False,
             action_exposed=True,
             description="Search current active Dish titles through canonical PostgreSQL authority.",
+        ),
+        CommandDefinition(
+            QUERY_COMMAND, "Q", "reader", False, False, False, action_exposed=True,
+            description="Query currently cooked Dishes through the cooked-updates contract.",
         ),
         CommandDefinition(
             COOKED_UPDATES_COMMAND, "Q", "reader", False, False, False,
@@ -215,6 +220,7 @@ CONNECTED_COMMAND_DISPOSITIONS: dict[str, str] = {
 }
 POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (
     SEARCH_COMMAND,
+    QUERY_COMMAND,
     COOKED_COMMAND,
     COOKED_UPDATES_COMMAND,
     COOK_LOGS_COMMAND,
@@ -462,7 +468,7 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
 
     if command == SEARCH_COMMAND:
         return _search_argument_schema()
-    if command == COOKED_UPDATES_COMMAND:
+    if command in {QUERY_COMMAND, COOKED_UPDATES_COMMAND}:
         return _cooked_updates_argument_schema()
     if command == COOKED_COMMAND:
         return {
@@ -704,7 +710,7 @@ def validate_postgres_action_request(
         )
     if command == SEARCH_COMMAND:
         return _validate_search_action_request(request)
-    if command == COOKED_UPDATES_COMMAND:
+    if command in {QUERY_COMMAND, COOKED_UPDATES_COMMAND}:
         return _validate_cooked_updates_action_request(request)
     if command == COOKED_COMMAND:
         return _validate_cooked_action_request(request)
