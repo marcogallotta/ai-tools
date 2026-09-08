@@ -27,6 +27,12 @@ reported as hard-closed. A separately calibrated deep-research class must be sel
 (e.g. by the session launcher/environment); the model cannot renew or self-promote the ordinary
 investigation envelope.
 
+The installed executable resolves the checked-in
+`hooks/investigation-guard-calibration.json` beside itself. That policy is mechanically derived
+from the repository trace fixtures, so a fresh symlink installation activates the qualifying
+Claude/Codex narrow-fix caps as the ordinary default without a separate per-user calibration step. An explicit
+`DISH_INVESTIGATION_CALIBRATION` path remains available for controlled calibration tests.
+
 The shared `hooks/protected_checkout.py` classifier denies direct and visibly
 nested `git checkout`/`git switch` branch changes against the primary
 `~/ai-tools` worktree. It resolves real Git worktree identity, command-line and

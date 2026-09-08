@@ -34,6 +34,7 @@ MANDATORY_PATH_SUFFIXES = (
     "CLAUDE.md",
     "dish/docs/agents/index.md",
     "dish/docs/agents/contributor-base.md",
+    "dish/docs/architecture/index.md",
     "dish/docs/chatgpt-projects/manifest.json",
 )
 ROLE_CONTRACTS = {
@@ -59,7 +60,7 @@ PROOF_BASH = re.compile(
     r"(?:pytest\b|python(?:3)?\s+-m\s+pytest\b|dish-test-plan\b|dish-test-lane\b|ruff\b|mypy\b|pyright\b|npm\s+test\b|pnpm\s+test\b|git\s+(?:diff|status)\b)"
 )
 MANDATORY_BASH = re.compile(
-    r"(?:git\s+(?:rev-parse|branch\s+--show-current|remote\s+get-url)|(?:cat|sed\s+-n|head|tail|rg|grep)[^;&|]*(?:CLAUDE\.md|dish/docs/agents/index\.md|dish/docs/agents/(?:implementation|review|development-workflow|workflow|integration|audit|coordinator|postgresql-dark-launch)\.md|dish/docs/chatgpt-projects/(?:worker|implementation|review|development-workflow|workflow|integration|audit|coordinator|postgresql-dark-launch)\.md|dish/docs/chatgpt-projects/manifest\.json)|asana\s+raw\s+GET\s+/tasks/)"
+    r"(?:git\s+(?:rev-parse|branch\s+--show-current|remote\s+get-url)|gh\s+pr\s+view\b|(?:[^;&|]*/)?asana\s+(?:get|notes|comments)\s+[0-9]+\b|(?:[^;&|]*/)?asana\s+raw\s+GET\s+['\"]?/tasks/|(?:cat|sed\s+-n|head|tail|rg|grep)[^;&|]*(?:CLAUDE\.md|dish/docs/architecture/index\.md|dish/docs/agents/index\.md|dish/docs/agents/(?:implementation|review|development-workflow|workflow|integration|audit|coordinator|postgresql-dark-launch)\.md|dish/docs/chatgpt-projects/(?:worker|implementation|review|development-workflow|workflow|integration|audit|coordinator|postgresql-dark-launch)\.md|dish/docs/chatgpt-projects/manifest\.json))"
 )
 
 
@@ -162,7 +163,7 @@ def load_state(host: str, sid: str, task: str | None, role: str | None) -> dict[
             "session_id": sid,
             "task_gid": task,
             "role": role,
-            "task_class": os.environ.get("DISH_INVESTIGATION_CLASS", "standard"),
+            "task_class": os.environ.get("DISH_INVESTIGATION_CLASS", "narrow-fix"),
             "started_at": utcnow(),
             "grounding_completed_at": None,
             "first_action_at": None,
@@ -182,7 +183,9 @@ def load_state(host: str, sid: str, task: str | None, role: str | None) -> dict[
 
 def calibration_path() -> Path:
     configured = os.environ.get("DISH_INVESTIGATION_CALIBRATION")
-    return Path(configured).expanduser().resolve() if configured else guard_root() / "calibration.json"
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path(__file__).resolve().with_name("investigation-guard-calibration.json")
 
 
 def load_policy(host: str, task_class: str) -> dict[str, Any] | None:
@@ -239,6 +242,27 @@ def _bash_command(payload: dict[str, Any]) -> str:
     return str(value) if value is not None else ""
 
 
+def mandatory_bash_anchor(command: str, role: str | None) -> str | None:
+    """Return one non-renewable anchor for each required live/startup read."""
+    if re.search(r"\bgh\s+pr\s+view\b", command):
+        return "bash-live-pr"
+    if re.search(r"(?:^|\s)(?:[^;&|]*/)?asana\s+(?:get|notes|comments)\s+[0-9]+\b", command):
+        return "bash-live-task"
+    if re.search(r"(?:^|\s)(?:[^;&|]*/)?asana\s+raw\s+GET\s+['\"]?/tasks/", command):
+        return "bash-live-task"
+    if "dish/docs/architecture/index.md" in command:
+        return "bash-architecture-index"
+    suffixes = list(MANDATORY_PATH_SUFFIXES)
+    if role and role in ROLE_CONTRACTS:
+        suffixes.append(ROLE_CONTRACTS[role])
+    for suffix in suffixes:
+        if suffix in command:
+            return f"path:{suffix}"
+    if MANDATORY_BASH.search(command):
+        return "bash-mandatory:" + hashlib.sha256(command.encode()).hexdigest()[:20]
+    return None
+
+
 def classify(payload: dict[str, Any], state: dict[str, Any]) -> tuple[str, str]:
     tool = str(payload.get("tool_name") or payload.get("toolName") or "")
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
@@ -274,10 +298,9 @@ def classify(payload: dict[str, Any], state: dict[str, Any]) -> tuple[str, str]:
             return "action", f"Bash:{command[:180]}"
         if PROOF_BASH.search(command):
             return "proof", f"Bash:{command[:180]}"
-        if MANDATORY_BASH.search(command):
-            signature = "bash-mandatory:" + hashlib.sha256(command.encode()).hexdigest()[:20]
-            if signature not in state.get("mandatory_seen", []):
-                return "mandatory", signature
+        anchor = mandatory_bash_anchor(command, role)
+        if anchor and anchor not in state.get("mandatory_seen", []):
+            return "mandatory", anchor
         if READ_ONLY_BASH.search(command) or command:
             return "investigation", f"Bash:{command[:180]}"
 
@@ -350,7 +373,9 @@ def process(payload: dict[str, Any], host: str) -> dict[str, Any] | None:
         hard_qualified = bool(task and policy and tool in set(policy.get("qualified_tools") or []))
         decision: dict[str, Any] | None = None
 
-        if category == "investigation":
+        if category == "investigation" and not state.get("grounding_completed_at"):
+            pass
+        elif category == "investigation":
             if hard_qualified:
                 cap = int(policy["investigation_cap"])
                 early = bool(policy.get("early_action_ready", False))

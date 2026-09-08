@@ -7,6 +7,12 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolate_ambient_codex_identity(monkeypatch):
+    """Synthetic reground fixtures, not the invoking Codex session, own test identity."""
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+
+
 def test_root_guidance_preserves_fail_closed_post_compaction_fallback(hooks_dir):
     guidance = (hooks_dir.parent / "CLAUDE.md").read_text(encoding="utf-8")
 

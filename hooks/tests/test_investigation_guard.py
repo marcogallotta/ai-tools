@@ -3,8 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "investigation_guard"
+
+
+@pytest.fixture(autouse=True)
+def isolate_ambient_codex_identity(monkeypatch):
+    """Synthetic guard payloads, not the invoking Codex session, own test identity."""
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
 
 
 def _identity(root: Path, session: str = "session-1", task: str = "1234567890", role: str = "implementation") -> None:
@@ -43,13 +51,16 @@ def _payload(tool: str, **tool_input):
     }
 
 
-def _setup(monkeypatch, tmp_path, *, task_class="standard", **policy_kwargs):
+def _setup(investigation_guard, monkeypatch, tmp_path, *, task_class="standard", grounded=True, **policy_kwargs):
     root = tmp_path / "state"
     _identity(root)
     policy = _policy(root, task_class=task_class, **policy_kwargs)
     monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(root))
     monkeypatch.setenv("DISH_INVESTIGATION_CALIBRATION", str(policy))
     monkeypatch.setenv("DISH_INVESTIGATION_CLASS", task_class)
+    if grounded:
+        for path in ("/repo/CLAUDE.md", "/repo/dish/docs/agents/index.md", "/repo/dish/docs/agents/implementation.md"):
+            assert investigation_guard.process(_payload("Read", file_path=path), policy_kwargs.get("host", "claude")) is None
     return root
 
 
@@ -59,7 +70,7 @@ def _state(module, root, host="claude"):
 
 
 def test_hard_cap_stops_narrow_known_fix_before_runaway(investigation_guard, monkeypatch, tmp_path):
-    root = _setup(monkeypatch, tmp_path, cap=2)
+    root = _setup(investigation_guard, monkeypatch, tmp_path, cap=2)
     assert investigation_guard.process(_payload("Grep", pattern="a", path="/repo"), "claude") is None
     assert investigation_guard.process(_payload("Read", file_path="/repo/codex/README.md"), "claude") is None
     denied = investigation_guard.process(_payload("Glob", pattern="**/*.md", path="/repo"), "claude")
@@ -71,13 +82,13 @@ def test_hard_cap_stops_narrow_known_fix_before_runaway(investigation_guard, mon
 
 
 def test_material_unknown_targeted_investigation_remains_allowed_inside_cap(investigation_guard, monkeypatch, tmp_path):
-    _setup(monkeypatch, tmp_path, cap=3)
+    _setup(investigation_guard, monkeypatch, tmp_path, cap=3)
     assert investigation_guard.process(_payload("Grep", pattern="responsible_symbol", path="/repo/module.py"), "claude") is None
 
 
 def test_mandatory_authority_read_is_exempt_once_but_not_renewable(investigation_guard, monkeypatch, tmp_path):
-    root = _setup(monkeypatch, tmp_path, cap=2)
-    p = _payload("Read", file_path="/repo/CLAUDE.md")
+    root = _setup(investigation_guard, monkeypatch, tmp_path, cap=2)
+    p = _payload("Bash", command="gh pr view 389 --json headRefOid")
     assert investigation_guard.process(p, "claude") is None
     state = _state(investigation_guard, root)
     assert state["investigation_count"] == 0
@@ -86,8 +97,59 @@ def test_mandatory_authority_read_is_exempt_once_but_not_renewable(investigation
     assert state["investigation_count"] == 1
 
 
+def test_smallest_cap_starts_only_after_full_required_grounding(investigation_guard, monkeypatch, tmp_path):
+    root = _setup(investigation_guard, monkeypatch, tmp_path, cap=1, grounded=False)
+    required = (
+        _payload("Read", file_path="/repo/CLAUDE.md"),
+        _payload("Read", file_path="/repo/dish/docs/agents/index.md"),
+        _payload("Read", file_path="/repo/dish/docs/agents/implementation.md"),
+        _payload("Read", file_path="/repo/dish/docs/architecture/index.md"),
+        _payload("Bash", command="gh pr view 389 --json headRefOid"),
+        _payload("Bash", command="/home/marco/.local/bin/asana comments 1234567890"),
+    )
+    for payload in required:
+        assert investigation_guard.process(payload, "claude") is None
+    state = _state(investigation_guard, root)
+    assert state["grounding_completed_at"] is not None
+    assert state["investigation_count"] == 0
+
+    assert investigation_guard.process(_payload("Grep", pattern="first", path="/repo"), "claude") is None
+    denied = investigation_guard.process(_payload("Grep", pattern="second", path="/repo"), "claude")
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_pre_grounding_discovery_cannot_exhaust_narrow_cap(investigation_guard, monkeypatch, tmp_path):
+    root = _setup(investigation_guard, monkeypatch, tmp_path, cap=1, grounded=False)
+    assert investigation_guard.process(_payload("Read", file_path="/repo/CLAUDE.md"), "claude") is None
+    for term in ("role", "task", "architecture"):
+        assert investigation_guard.process(_payload("Grep", pattern=term, path="/repo"), "claude") is None
+    assert _state(investigation_guard, root)["investigation_count"] == 0
+
+
+def test_repository_default_policy_hard_closes_fresh_codex_host(investigation_guard, monkeypatch, tmp_path):
+    root = tmp_path / "state"
+    _identity(root)
+    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(root))
+    monkeypatch.delenv("DISH_INVESTIGATION_CALIBRATION", raising=False)
+    monkeypatch.delenv("DISH_INVESTIGATION_CLASS", raising=False)
+    monkeypatch.setattr(investigation_guard, "codex_applies", lambda payload: True)
+
+    for path in ("/repo/CLAUDE.md", "/repo/dish/docs/agents/index.md", "/repo/dish/docs/agents/implementation.md"):
+        assert investigation_guard.process(_payload("Bash", command=f"cat {path}"), "codex") is None
+    assert investigation_guard.process(_payload("Bash", command="rg first /repo"), "codex") is None
+    denied = investigation_guard.process(_payload("Bash", command="rg second /repo"), "codex")
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert _state(investigation_guard, root, host="codex")["task_class"] == "narrow-fix"
+
+
+def test_repository_default_policy_matches_current_trace_derivation(investigation_guard):
+    derived = investigation_guard.calibrate(investigation_guard.read_traces(sorted(FIXTURES.glob("*.json"))))
+    installed = json.loads(investigation_guard.calibration_path().read_text())
+    assert installed["calibrations"] == derived["calibrations"]
+
+
 def test_checkpoint_keeps_finite_focused_proof_tail(investigation_guard, monkeypatch, tmp_path):
-    _setup(monkeypatch, tmp_path, cap=1, proof=1)
+    _setup(investigation_guard, monkeypatch, tmp_path, cap=1, proof=1)
     assert investigation_guard.process(_payload("Grep", pattern="x", path="/repo"), "claude") is None
     assert investigation_guard.process(_payload("Bash", command="pytest -q hooks/tests/test_investigation_guard.py"), "claude") is None
     denied = investigation_guard.process(_payload("Bash", command="pytest -q hooks/tests/test_investigation_guard.py"), "claude")
@@ -96,7 +158,7 @@ def test_checkpoint_keeps_finite_focused_proof_tail(investigation_guard, monkeyp
 
 
 def test_action_ready_early_mode_denies_archaeology_but_allows_action_and_proof(investigation_guard, monkeypatch, tmp_path):
-    _setup(monkeypatch, tmp_path, cap=5, proof=2, early=True)
+    _setup(investigation_guard, monkeypatch, tmp_path, cap=5, proof=2, early=True)
     action = _payload("Edit", file_path="/repo/hooks/investigation-guard", old_string="a", new_string="b")
     assert investigation_guard.process(action, "claude") is None
     denied = investigation_guard.process(_payload("Grep", pattern="history", path="/repo/dish/docs"), "claude")
@@ -106,7 +168,7 @@ def test_action_ready_early_mode_denies_archaeology_but_allows_action_and_proof(
 
 
 def test_cap_has_no_broad_read_renewal(investigation_guard, monkeypatch, tmp_path):
-    root = _setup(monkeypatch, tmp_path, cap=1)
+    root = _setup(investigation_guard, monkeypatch, tmp_path, cap=1)
     assert investigation_guard.process(_payload("Grep", pattern="x", path="/repo"), "claude") is None
     for term in ("y", "z"):
         denied = investigation_guard.process(_payload("Grep", pattern=term, path="/repo"), "claude")
@@ -115,7 +177,7 @@ def test_cap_has_no_broad_read_renewal(investigation_guard, monkeypatch, tmp_pat
 
 
 def test_checkpoint_reason_routes_to_action_or_one_exact_blocker(investigation_guard, monkeypatch, tmp_path):
-    _setup(monkeypatch, tmp_path, cap=1)
+    _setup(investigation_guard, monkeypatch, tmp_path, cap=1)
     investigation_guard.process(_payload("Grep", pattern="x", path="/repo"), "claude")
     denied = investigation_guard.process(_payload("Grep", pattern="y", path="/repo"), "claude")
     reason = denied["hookSpecificOutput"]["permissionDecisionReason"]
@@ -148,7 +210,7 @@ def test_codex_hard_scope_is_bash_only_and_other_paths_remain_degraded(hooks_dir
 
 
 def test_unqualified_tool_surface_is_observe_only_never_false_hard_closed(investigation_guard, monkeypatch, tmp_path):
-    root = _setup(monkeypatch, tmp_path, cap=1, tools=("Bash",))
+    root = _setup(investigation_guard, monkeypatch, tmp_path, cap=1, tools=("Bash",))
     for _ in range(3):
         assert investigation_guard.process(_payload("Grep", pattern="x", path="/repo"), "claude") is None
     state = _state(investigation_guard, root)
@@ -161,6 +223,8 @@ def test_missing_calibration_is_observe_only_and_never_denies(investigation_guar
     monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(root))
     monkeypatch.setenv("DISH_INVESTIGATION_CALIBRATION", str(tmp_path / "missing-calibration.json"))
     monkeypatch.setenv("DISH_INVESTIGATION_CLASS", "narrow-fix")
+    for path in ("/repo/CLAUDE.md", "/repo/dish/docs/agents/index.md", "/repo/dish/docs/agents/implementation.md"):
+        assert investigation_guard.process(_payload("Read", file_path=path), "claude") is None
     for term in ("a", "b", "c"):
         assert investigation_guard.process(_payload("Grep", pattern=term, path="/repo"), "claude") is None
     state = _state(investigation_guard, root)
@@ -192,7 +256,7 @@ def test_calibration_chooses_lowest_observed_safe_cap(investigation_guard):
     policy = investigation_guard.calibrate(traces)
     assert policy["calibrations"]["claude:narrow-fix"]["investigation_cap"] == 2
     assert policy["calibrations"]["codex:narrow-fix"]["investigation_cap"] == 1
-    assert policy["calibrations"]["claude:deep-research"]["investigation_cap"] == 5
+    assert policy["calibrations"]["claude:deep-research"]["investigation_cap"] == 4
 
 
 def test_calibration_refuses_hard_activation_when_no_cap_separates_legit_and_incident(investigation_guard):
@@ -213,7 +277,7 @@ def test_calibration_refuses_hard_activation_when_no_cap_separates_legit_and_inc
 
 
 def test_codex_guard_is_silent_outside_ai_tools_scope(investigation_guard, monkeypatch, tmp_path):
-    root = _setup(monkeypatch, tmp_path, host="codex", cap=1, tools=("Bash",))
+    root = _setup(investigation_guard, monkeypatch, tmp_path, host="codex", cap=1, tools=("Bash",))
     payload = _payload("Bash", command="grep -R thing .")
     payload["cwd"] = str(tmp_path / "unrelated-repository")
     assert investigation_guard.process(payload, "codex") is None
@@ -221,7 +285,7 @@ def test_codex_guard_is_silent_outside_ai_tools_scope(investigation_guard, monke
 
 
 def test_model_tool_input_cannot_self_promote_to_deep_research(investigation_guard, monkeypatch, tmp_path):
-    root = _setup(monkeypatch, tmp_path, task_class="standard", cap=1)
+    root = _setup(investigation_guard, monkeypatch, tmp_path, task_class="standard", cap=1)
     policy_path = root / "policy.json"
     policy = json.loads(policy_path.read_text())
     policy["calibrations"]["claude:deep-research"] = {
