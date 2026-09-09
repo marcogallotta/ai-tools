@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 
-from fastmcp.server.auth.providers.github import GitHubProvider
-from mcp.server.auth.provider import AccessToken
 import pytest
-
 from dish_pg.command_contract import ACTION_COMMANDS, COMMAND_DEFINITIONS
 from dish_pg.openapi import postgres_action_openapi
 from dish_service import mcp_server
-
+from fastmcp.server.auth.providers.github import GitHubProvider
+from mcp.server.auth.provider import AccessToken
 
 EXPECTED_COMMANDS = (
     "create",
@@ -126,6 +125,43 @@ def test_mcp_tool_inventory_is_exact_postgresql_connected_contract():
     assert "dish_qualify_file_transport" not in mcp_server.TOOL_COMMANDS
     assert "dish_queue" not in mcp_server.TOOL_COMMANDS
     assert "dish_archive" not in mcp_server.TOOL_COMMANDS
+
+
+def test_honest_tool_is_added_outside_connected_command_contract():
+    tool = mcp_server.build_honest_tool(Path("/tmp/honest"))
+    assert tool.name == "dish_honest_read"
+    assert tool.annotations.read_only_hint is True
+
+
+def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    checkout = tmp_path / "checkout"
+    subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
+    subprocess.run(["git", "clone", str(origin), str(source)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(source), "checkout", "-b", "main"], check=True, capture_output=True)
+    (source / "CLAUDE.md").write_text("current instructions\n")
+    subprocess.run(["git", "-C", str(source), "add", "CLAUDE.md"], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-m", "initial"], check=True, capture_output=True,
+    )
+    subprocess.run(["git", "-C", str(source), "push", "-u", "origin", "main"], check=True, capture_output=True)
+    subprocess.run(["git", "clone", "-b", "main", str(origin), str(checkout)], check=True, capture_output=True)
+
+    result = mcp_server.read_honest_files(checkout, ["CLAUDE.md"])
+
+    assert result["sha"] == subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert result["files"] == [{"path": "CLAUDE.md", "text": "current instructions\n"}]
+
+
+def test_honest_read_fails_without_serving_when_pull_fails(tmp_path):
+    checkout = tmp_path / "checkout"
+    subprocess.run(["git", "init", "-b", "main", str(checkout)], check=True, capture_output=True)
+    with pytest.raises(RuntimeError, match="no files were served"):
+        mcp_server.read_honest_files(checkout, ["CLAUDE.md"])
 
 
 def test_mcp_tool_schemas_project_postgresql_action_openapi():
