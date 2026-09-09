@@ -16,7 +16,7 @@ UMask=0077
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/marco/.local/share/fastmcp
+ReadWritePaths=/home/marco/.local/share/fastmcp /home/marco/honest-pantry
 
 [Install]
 WantedBy=default.target

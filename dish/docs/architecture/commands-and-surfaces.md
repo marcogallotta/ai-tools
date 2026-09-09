@@ -14,6 +14,10 @@ Current anchors include `dish_service/cli.py`, `dish_service/admin_cli.py`, `dis
 
 Stable connected-agent command names are owned below transport composition by `dish_tool/command_identity.py`. `ACTION_COMMAND_DEFINITIONS` in `dish_service/command_spec.py` must cover that identity set exactly and remains authoritative for Action-specific principal, request-ID/replay, route, workflow-link, validation, and schema metadata. The generated Action schema derives from those service definitions. A command existing elsewhere in CLI/application code does not by itself mean that the connected GPT can call it.
 
+The MCP app additionally exposes `dish_honest_read` as a transport-local, read-only repository
+context tool. It updates the single host Honest Pantry checkout before returning bounded text files;
+it is not a Dish workflow command and does not join the connected command identity set.
+
 ## Actors, processes, and stores
 
 Agent CLI, admin CLI, GPT Action, and frontend are caller surfaces. They may expose overlapping capabilities with different authentication, presentation, or context.
