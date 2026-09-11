@@ -816,9 +816,16 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
     properties = schema["properties"]
     missing = [field for field in schema.get("required", []) if field not in arguments]
     if missing:
-        raise _argument_error(
-            f"{missing[0]} is required", "argument_required", field=missing[0]
-        )
+        message = f"{missing[0]} is required"
+        if command == SUBMIT_COMMAND.name and missing[0] == "agent":
+            # `agent` became required on submit after Custom GPT Actions had already
+            # imported the schema, and ChatGPT does not re-fetch it on its own.
+            message = (
+                "agent is required for submit because Dish records the submitting agent's "
+                "identity on the service run. If the connected GPT Action schema does not "
+                "expose agent for submit, refresh or re-import the Dish Action schema."
+            )
+        raise _argument_error(message, "argument_required", field=missing[0])
     extras = sorted(set(arguments) - set(properties))
     if extras:
         raise _argument_error(
