@@ -237,6 +237,13 @@
                       "cursor": {
                         "type": "string",
                         "description": "Opaque next_cursor returned by a prior section-tasks call. Omit for the first page; repeat the call with the returned next_cursor to fetch the next page. A null next_cursor means there are no more tasks."
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "incomplete",
+                          "cooked"
+                        ]
                       }
                     },
                     "type": "object",
@@ -1690,7 +1697,8 @@
                   },
                   "arguments": {
                     "required": [
-                      "submission_id"
+                      "submission_id",
+                      "agent"
                     ],
                     "properties": {
                       "submission_id": {
@@ -1699,6 +1707,14 @@
                         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "minLength": 36,
                         "maxLength": 36
+                      },
+                      "agent": {
+                        "type": "string",
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ]
                       }
                     },
                     "type": "object",
@@ -1783,6 +1799,14 @@
                         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "minLength": 36,
                         "maxLength": 36
+                      },
+                      "agent": {
+                        "type": "string",
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ]
                       }
                     },
                     "type": "object",
