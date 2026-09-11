@@ -409,12 +409,22 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
         },
     },
     SUBMIT_COMMAND.name: {
-        "required": ["submission_id"],
-        "properties": {"submission_id": dict(DISH_UUID_SCHEMA)},
+        "required": ["submission_id", "agent"],
+        "properties": {
+            "submission_id": dict(DISH_UUID_SCHEMA),
+            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
+        },
     },
     RENEW_LEASE_COMMAND.name: {
+        # `agent` is optional here, unlike every other run-bootstrapping command:
+        # expired-lease guidance in application.py emits agent_action arguments of
+        # {"operation_id": ...} for the client to replay verbatim, so requiring
+        # `agent` would invalidate Dish's own recovery instructions.
         "required": ["operation_id"],
-        "properties": {"operation_id": dict(DISH_UUID_SCHEMA)},
+        "properties": {
+            "operation_id": dict(DISH_UUID_SCHEMA),
+            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
+        },
     },
     QUALIFY_FILE_TRANSPORT_COMMAND.name: {
         "required": ["expected_sha256", "expected_bytes"],

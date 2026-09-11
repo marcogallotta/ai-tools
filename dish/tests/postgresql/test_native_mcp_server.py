@@ -10,6 +10,7 @@ from dish_pg.connected_command_spec import (
     CONNECTED_COMMANDS,
     CONNECTED_COMMAND_SPECS,
     TOOL_COMMANDS,
+    connected_argument_schema,
     result_envelope_schema,
 )
 from dish_pg.openapi import postgres_action_openapi
@@ -380,3 +381,36 @@ def test_runtime_uses_authenticated_owner_without_action_credentials(
     assert captured["expected_generation_id"] == __import__("uuid").UUID(generation)
     assert captured["config"].action_token is None
     assert captured["config"].action_client_id == OWNER_ID
+
+
+def _schema_exposes_agent(schema: Any) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    if "agent" in (schema.get("properties") or {}):
+        return True
+    return any(_schema_exposes_agent(variant) for variant in schema.get("oneOf") or ())
+
+
+def test_run_bootstrapping_commands_all_expose_agent_identity() -> None:
+    """Every command that can bootstrap a service run must carry agent identity.
+
+    ``PostgresRuntimeService._execute_command`` calls ``ensure_initial_cutover_run``
+    for each retained non-``Q`` command, and ``_bootstrap_agent`` can only resolve
+    that identity from an ``agent`` argument. A gate-triggering command without one
+    fails closed on the first command of a fresh ``run_id``.
+
+    This asserts exposure, not that ``agent`` is required: ``renew-lease`` exposes
+    it optionally because the expired-lease guidance in ``application.py`` emits
+    replayable arguments that omit it.
+    """
+
+    missing = sorted(
+        command
+        for command in TOOL_COMMANDS.values()
+        for definition in (COMMAND_DEFINITIONS[command],)
+        if definition.retained
+        and definition.profile != "Q"
+        and not _schema_exposes_agent(connected_argument_schema(command))
+    )
+
+    assert missing == []
