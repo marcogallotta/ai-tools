@@ -175,7 +175,7 @@ def test_authenticated_native_read_dispatches_directly_to_connected_service() ->
 
     result = adapter.call(
         "dish_sections",
-        {"client": {"run_id": RUN_ID}, "arguments": {}},
+        {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
         caller=CALLER,
     )
 
@@ -185,7 +185,7 @@ def test_authenticated_native_read_dispatches_directly_to_connected_service() ->
         (
             "execute",
             "sections",
-            {},
+            {"agent": "gpt"},
             ServicePrincipal(owner_id=OWNER_ID, run_id=RUN_ID),
             None,
         )
@@ -286,7 +286,7 @@ def test_normal_dish_failure_is_structured_not_mcp_transport_error() -> None:
     )
     result = _adapter(service).call(
         "dish_sections",
-        {"client": {"run_id": RUN_ID}, "arguments": {}},
+        {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
         caller=CALLER,
     )
     assert result["ok"] is False
@@ -309,9 +309,32 @@ def test_backend_unavailability_becomes_transport_failure() -> None:
     with pytest.raises(native_mcp_server.NativeMCPRuntimeError):
         _adapter(service).call(
             "dish_sections",
-            {"client": {"run_id": RUN_ID}, "arguments": {}},
+            {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
             caller=CALLER,
         )
+
+
+def test_unauthenticated_caller_is_refused_before_argument_validation() -> None:
+    """An unauthenticated caller must be refused even when its arguments are invalid.
+
+    Argument validation used to run first, so an unauthenticated caller sending
+    invalid arguments received a structured validation envelope instead of being
+    refused: the read path returns early from `_record_validation_failure` and
+    never reaches `_principal`. Identity is checked before validation now.
+    """
+
+    service = FakeService()
+    adapter = _adapter(service)
+
+    for caller in (None, {"subject": "someone-else"}):
+        with pytest.raises(native_mcp_server.NativeMCPRuntimeError):
+            adapter.call(
+                "dish_sections",
+                {"client": {"run_id": RUN_ID}, "arguments": {}},
+                caller=caller,
+            )
+
+    assert service.calls == []
 
 
 def test_non_connected_tool_is_rejected_before_service_dispatch() -> None:
