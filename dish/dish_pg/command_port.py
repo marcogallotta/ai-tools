@@ -27,7 +27,7 @@ from .command_effect_runtime import (
     external_projection_required,
     record_projection_intent,
 )
-from .legacy_history_import import RESOLUTION_EVENT, unresolved_legacy_attention
+from .legacy_attention import RESOLUTION_EVENT, unresolved_legacy_attention
 from .document_authority import (
     CanonicalDocumentError,
     destination_gid,
