@@ -51,8 +51,17 @@ HONEST_MAX_FILES = 16
 HONEST_MAX_BYTES = 512 * 1024
 HONEST_LOCK = threading.Lock()
 LOG = logging.getLogger("dish.mcp")
+HONEST_PLANNING_START_PATHS = (
+    "dish-planning-protocol.md",
+    "planning/index.md",
+    "dish-classes.md",
+    "planning/blocks/index.md",
+)
 SERVER_INSTRUCTIONS = (
-    "Dish PostgreSQL workflow authority is behind these tools. Keep one stable client.run_id "
+    "Dish PostgreSQL workflow authority is behind these tools. Before any Dish MCP use or "
+    "unavailable claim, select the installed Dish app in the current turn. After Marco attaches "
+    "@Dish or asks to retry, re-check the current tool registry; an earlier missing dish_query is "
+    "not current availability evidence. Keep one stable client.run_id "
     "for the logical agent run/stage. For every replay-bound mutation, create one fresh canonical "
     "client.request_id for the logical request and reuse that exact run_id, request_id, command, "
     "and arguments only when retrying after no Dish envelope was received. Once any Dish envelope "
@@ -62,7 +71,10 @@ SERVER_INSTRUCTIONS = (
     "different run from the run that authored or materially edited the candidate. An ok:false Dish "
     "envelope is an authoritative normal tool result, not an MCP transport failure. "
     "Use dish_honest_read to read current Honest Pantry files; it updates main first and serves "
-    "nothing if that update fails."
+    "nothing if that update fails. Start with current CLAUDE.md and follow its routed stage "
+    "protocol. Dish Planning must read dish-planning-protocol.md, planning/index.md, "
+    "dish-classes.md, and planning/blocks/index.md, then use Dish cooked discovery and immutable "
+    "cook logs as that protocol directs."
 )
 
 
@@ -115,12 +127,36 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
             except UnicodeDecodeError as exc:
                 raise ValueError(f"file is not UTF-8 text: {path}") from exc
             files.append({"path": path, "text": text})
-        return {"repository": "marcogallotta/honest-pantry", "sha": sha, "files": files}
+        requested = set(paths)
+        planning_requested = bool(
+            requested.intersection(HONEST_PLANNING_START_PATHS)
+            or any(path.startswith("planning/") for path in requested)
+        )
+        recommended = ["CLAUDE.md"]
+        if planning_requested:
+            recommended.extend(HONEST_PLANNING_START_PATHS)
+        missing = [path for path in recommended if path not in requested]
+        return {
+            "repository": "marcogallotta/honest-pantry",
+            "sha": sha,
+            "files": files,
+            "reading_guidance": {
+                "instructions": [
+                    "Read current CLAUDE.md first, then follow the stage protocol it routes.",
+                    (
+                        "For Dish Planning, read the planning protocol plus the compact cuisine, "
+                        "class, and block indexes before opening conditional detail."
+                    ),
+                ],
+                "recommended_paths": recommended,
+                "missing_recommended_paths": missing,
+            },
+        }
 
 
 def build_honest_tool(checkout: Path = HONEST_CHECKOUT) -> FunctionTool:
     def dish_honest_read(paths: list[str]) -> dict[str, Any]:
-        """Pull Honest Pantry main, then return the requested current repository files."""
+        """Read current Honest Pantry files and return guidance about required routed context."""
         return read_honest_files(checkout, paths)
 
     return FunctionTool.from_function(

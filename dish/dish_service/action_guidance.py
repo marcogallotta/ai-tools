@@ -196,6 +196,32 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "next page; never invent or cross-reuse a cursor."
             )
 
+        if command in {"query", "cooked-updates"}:
+            next_cursor = _text(data.get("next_cursor"))
+            if next_cursor:
+                if command == "cooked-updates":
+                    instructions.append(
+                        "Cooked-history discovery is not complete. Request the next page with "
+                        "data.next_cursor exactly as returned, preserve the original since and "
+                        "page_size plus the returned generation_id, and do not invent, decode, "
+                        "or cross-reuse a cursor. The cursor preserves the through boundary."
+                    )
+                else:
+                    instructions.append(
+                        "Cooked-Dish discovery is not complete. Request the next page with "
+                        "data.next_cursor exactly as returned and preserve the same filters and "
+                        "page_size; do not invent, decode, or cross-reuse a cursor."
+                    )
+            else:
+                instructions.append(
+                    "This result page is exhausted. If it supports Dish Planning, read immutable "
+                    "cook logs for recent related cooks and for every matching finalist or plausible "
+                    "alias. Treat update/import timestamps only as discovery metadata; count recent "
+                    "momentum only when a cook log establishes an actual cook in the window. Then "
+                    "apply the current Honest Pantry class and block guidance before claiming the "
+                    "recommendation is history-grounded."
+                )
+
         if command == "start" and "inspect" in actions:
             instructions.append(
                 "Inspect this Verification candidate before making any semantic approval or rejection decision. "

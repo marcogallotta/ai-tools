@@ -125,12 +125,21 @@ def test_mcp_tool_inventory_is_exact_postgresql_connected_contract():
     assert "dish_qualify_file_transport" not in mcp_server.TOOL_COMMANDS
     assert "dish_queue" not in mcp_server.TOOL_COMMANDS
     assert "dish_archive" not in mcp_server.TOOL_COMMANDS
+    assert "complete currently cooked Dish inventory" in _tool("query")["description"]
+    assert "cook logs determine actual cook timing" in _tool("cooked-updates")["description"]
+
+
+def test_server_instructions_require_current_turn_dish_discovery():
+    assert "Before any Dish MCP use or unavailable claim" in mcp_server.SERVER_INSTRUCTIONS
+    assert "After Marco attaches @Dish or asks to retry" in mcp_server.SERVER_INSTRUCTIONS
+    assert "earlier missing dish_query is not current availability evidence" in mcp_server.SERVER_INSTRUCTIONS
 
 
 def test_honest_tool_is_added_outside_connected_command_contract():
     tool = mcp_server.build_honest_tool(Path("/tmp/honest"))
     assert tool.name == "dish_honest_read"
     assert tool.annotations.read_only_hint is True
+    assert "required routed context" in tool.description
 
 
 def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
@@ -155,6 +164,38 @@ def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
     ).stdout.strip()
     assert result["files"] == [{"path": "CLAUDE.md", "text": "current instructions\n"}]
+    assert result["reading_guidance"]["recommended_paths"] == ["CLAUDE.md"]
+    assert result["reading_guidance"]["missing_recommended_paths"] == []
+
+
+def test_honest_read_reports_missing_planning_start_paths(tmp_path):
+    checkout = tmp_path / "checkout"
+    subprocess.run(["git", "init", "-b", "main", str(checkout)], check=True, capture_output=True)
+    for path in ("dish-planning-protocol.md", *mcp_server.HONEST_PLANNING_START_PATHS[1:]):
+        target = checkout / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"{path}\n")
+    subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(checkout), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-m", "initial"], check=True, capture_output=True,
+    )
+    subprocess.run(["git", "init", "--bare", str(tmp_path / "origin.git")], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", str(tmp_path / "origin.git")], check=True)
+    subprocess.run(["git", "-C", str(checkout), "push", "-u", "origin", "main"], check=True, capture_output=True)
+
+    result = mcp_server.read_honest_files(checkout, ["dish-planning-protocol.md"])
+
+    assert result["reading_guidance"]["recommended_paths"] == [
+        "CLAUDE.md",
+        *mcp_server.HONEST_PLANNING_START_PATHS,
+    ]
+    assert result["reading_guidance"]["missing_recommended_paths"] == [
+        "CLAUDE.md",
+        "planning/index.md",
+        "dish-classes.md",
+        "planning/blocks/index.md",
+    ]
 
 
 def test_honest_read_fails_without_serving_when_pull_fails(tmp_path):

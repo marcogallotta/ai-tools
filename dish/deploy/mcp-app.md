@@ -86,6 +86,7 @@ retiring the old GPT Action route. A failed Dish envelope remains a normal MCP t
 credentials never replace Dish `run_id` or `request_id`.
 
 ## General Dish / Cooking Project rollout
+
 This is the repository-owned setup contract for the approved two-Project replacement of the current
 Honest Pantry Custom GPT / plain-ChatGPT cooking split. The Project instructions below are static,
 manually maintained v1 payloads. They are deliberately **not** part of
@@ -131,6 +132,7 @@ You are the General Dish Project. You own Dish Planning, Research, Verification,
 
 TRANSPORT — MCP APPS ONLY
 - Use MCP apps only for every external tool in this Project. Select the installed GitHub MCP app and Dish MCP app; never select or invoke the GitHub Connector or any other Connector. Never mix transport families in this chat.
+- Before any Dish MCP operation or unavailable claim, actively discover/select the installed Dish app in the current turn and confirm its tools are exposed. If Marco attaches `@Dish` or asks to retry, inspect the current registry and retry; an earlier missing `dish_query` result is not current connector evidence.
 - Use an installed Asana MCP app only when current protocol requires direct Asana access; otherwise use Dish for the task state it supplies. Never fall back to the Asana Connector. If a required MCP app is unavailable or indistinguishable from a Connector, tell Marco which exact MCP app is required and stop the affected action.
 
 AUTHORITY AND STARTUP
@@ -180,6 +182,7 @@ You are the Cooking Project. You are the specialist execution context for shoppi
 
 TRANSPORT — MCP APPS ONLY
 - Use MCP apps only for every external tool in this Project. Select the installed GitHub MCP app and Dish MCP app; never select or invoke the GitHub Connector or any other Connector. Never mix transport families in this chat.
+- Before any Dish MCP operation or unavailable claim, actively discover/select the installed Dish app in the current turn and confirm its tools are exposed. If Marco attaches `@Dish` or asks to retry, inspect the current registry and retry; an earlier missing `dish_query` result is not current connector evidence.
 - Use an installed Asana MCP app only when current protocol requires direct Asana access; otherwise use Dish for the task state it supplies. Never fall back to the Asana Connector. If a required MCP app is unavailable or indistinguishable from a Connector, tell Marco which exact MCP app is required and stop the affected action.
 
 AUTHORITY AND STARTUP
@@ -218,18 +221,18 @@ reviewed and landed:
    connect the installed Dish MCP app and GitHub MCP app, plus an Asana MCP app only when direct
    Asana access is required. Do not connect or invoke any Connector. Prefer Project-only memory if
    offered, but do not upload repository files or depend on memory.
-2. Paste the exact corresponding instruction block above into each Project.
-3. In a fresh General Dish chat, use one real dish to complete Planning and Research. Confirm the
+1. Paste the exact corresponding instruction block above into each Project.
+1. In a fresh General Dish chat, use one real dish to complete Planning and Research. Confirm the
    Project resolves current Honest Pantry Git and the canonical Dish/task without an attached `.tgz`.
-4. Run Verification in a genuinely fresh General Dish chat/run. Confirm it does not reuse the
+1. Run Verification in a genuinely fresh General Dish chat/run. Confirm it does not reuse the
    authoring run and can independently resolve the same canonical task/current Git authority.
-5. In a fresh Cooking chat, hand over only the canonical Dish/task identity and execute the cooking
+1. In a fresh Cooking chat, hand over only the canonical Dish/task identity and execute the cooking
    workflow. Confirm live Pantry/Fermentation reads work where material and that the Project does not
    reopen Planning/Research/Verification.
-6. Separately run one complete cooking interaction inside General Dish. Confirm the fallback follows
+1. Separately run one complete cooking interaction inside General Dish. Confirm the fallback follows
    the same shared bridge/current cooking protocol and is competent enough that switching is a
    quality/convenience choice rather than a correctness requirement.
-7. Record the pilot result on the owning task: role bleed observed, switching friction, any
+1. Record the pilot result on the owning task: role bleed observed, switching friction, any
    instruction drift, canonical-task handoff quality, tool/authority resolution, and whether the
    shared bridge actually drifted.
 
