@@ -685,6 +685,9 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     {"command": next_action, "arguments": arguments},
                 )
 
+        if result_operation is not None:
+            result_data.setdefault("operation_kind", result_operation.kind)
+
         return result_data, {
             "task_gid": None,
             "submission_id": submission_id,
