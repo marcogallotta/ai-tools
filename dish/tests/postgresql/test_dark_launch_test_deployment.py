@@ -6,12 +6,15 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from dish_pg.schema_identity import ALEMBIC_HEAD
+
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST_UNIT = ROOT / "deploy/systemd/dish-shadow-worker-test.service"
 TEST_POSTGRES_UNIT = ROOT / "deploy/systemd/dish-postgres-test.service"
 TEST_WORKER_ENV = ROOT / "deploy/systemd/dark-launch-test.env.example"
 TEST_SERVICE_ENV = ROOT / "deploy/systemd/service-test.env.example"
+PROD_SERVICE_ENV = ROOT / "deploy/systemd/postgres-prod.env.example"
 TEST_SERVICE_UNIT = ROOT / "deploy/systemd/dish-service-test.service"
 TEST_FRONTEND_CADDY_UNIT = ROOT / "deploy/systemd/dish-frontend-test-caddy.service"
 TEST_FRONTEND_CADDY_ENV = ROOT / "deploy/systemd/frontend-test-caddy.env.example"
@@ -89,7 +92,7 @@ def test_test_service_is_pg_authority_and_legacy_oracle_is_isolated() -> None:
     assert authority["DISH_SERVICE_PORT"] == "8765"
     assert authority["DISH_ACTION_PORT"] == "8766"
     assert authority["DISH_DARK_LAUNCH_MODE"] == "off"
-    assert authority["DISH_PG_EXPECTED_SCHEMA_HEAD"] == "0042_scalar_dish_state"
+    assert authority["DISH_PG_EXPECTED_SCHEMA_HEAD"] == ALEMBIC_HEAD
     assert authority["DISH_PG_EXPECTED_DATABASE_NAME"].endswith("_test")
     assert authority["DISH_PG_AUTHORITY_STATE_DIR"].startswith("/home/marco/.local/state/dish/test/")
     assert authority["DISH_FRONTEND_ENABLED"] == "1"
@@ -125,6 +128,11 @@ def test_test_service_is_pg_authority_and_legacy_oracle_is_isolated() -> None:
     assert "EnvironmentFile=/home/marco/.config/dish-service/test-legacy.env" in oracle_unit
     assert "ReadWritePaths=/home/marco/.local/state/dish/test-legacy" in oracle_unit
     assert "dish-service-test.service" not in oracle_unit.split("Conflicts=", 1)[-1].splitlines()[0]
+
+
+def test_current_postgresql_service_examples_pin_canonical_schema_head() -> None:
+    assert _assignments(TEST_SERVICE_ENV)["DISH_PG_EXPECTED_SCHEMA_HEAD"] == ALEMBIC_HEAD
+    assert _assignments(PROD_SERVICE_ENV)["DISH_PG_EXPECTED_SCHEMA_HEAD"] == ALEMBIC_HEAD
 
 
 def test_test_frontend_caddy_is_dedicated_to_existing_private_listener() -> None:
