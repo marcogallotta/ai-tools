@@ -83,7 +83,8 @@ frustrated.
 Ask context-dependent questions in plain prose; reserve multiple-choice interfaces for simple,
 self-explanatory choices. Inspect relevant material before changes, resolve routine details, and do
 not guess at meaningful ambiguity. Present only genuine decisions, with a recommendation and a
-concise trade-off when useful.
+concise trade-off when useful. Before refusing or escalating on safety/risk grounds, or when Marco
+disputes a risk finding without new information, follow `docs/agent-escalation-diligence.md`.
 
 When reviewing an artefact or agent output, inspect it fully but report only what helps Marco
 decide. Recall its purpose, group what is sound, and surface real judgment calls without turning
@@ -111,9 +112,10 @@ Use `~/.local/bin/git-commit <file> [file...] -m "message"` for every authorized
 and commits only the explicitly named files as one operation. Never use `git add .` or `git add -A`,
 and do not stage files separately.
 
-Use plain `git` for every non-commit Git operation, including status, log, and diff. Do not use an
+Use plain `git` for every non-commit Git operation, including status, log, and diff; write-
+authorization rules above still govern any such operation that changes state. Do not use an
 agent-specific Git integration for commits. Run `~/.local/bin/git-commit --help` when its flags are
-needed. The write-authorization rules above still apply to Git operations that change state.
+needed.
 
 On `main`, `git-commit` also pushes and may use its guarded, conflict-free auto-merge after a
 rejected push. Invoke it only when Marco has authorized the commit and push, and first verify `main`
@@ -139,8 +141,7 @@ review itself produced — not just the first pass. Treat the file as converged 
 read-through finds nothing left to change.
 
 Once converged, check the file's line count as a secondary sanity check via the shared commit
-wrapper, against this file's own band (loaded into every session, every project, so held to a
-stricter band than other repo docs): target 120-150 lines, explain-band 150-180, hard reject 200.
+wrapper, against this file's own band: target 120-150 lines, explain-band 150-180, hard reject 200.
 At the explain-band, explain in the commit why further simplification would weaken clarity,
 reliability, or a required protection; at the hard ceiling the wrapper hard-rejects with no override.
 Work handoffs carry this same constraint — move history or rationale into an incident log or other
