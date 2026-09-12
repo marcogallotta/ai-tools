@@ -24,7 +24,7 @@ from tests.support.postgresql.command import (
     _start_verification,
     _verification_ready,
 )
-from tests.support.postgresql.workflow import _next, _register_run, workflow_db
+from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 
 
 def test_approval_creates_ready_occurrence_and_submit_derives_destination(workflow_db) -> None:
@@ -297,3 +297,68 @@ def test_missing_approval_evidence_is_immutable_and_has_no_signoff(workflow_db) 
                 wf.VerificationSignoff.cycle_id == cycle.cycle_id
             )
         ) is None
+
+
+def test_abandoned_verifier_lease_does_not_permanently_lock_out_a_fresh_verifier(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, _author_run, verifier_run, started, _prepared, _inspection = _verification_ready(
+            session, ids, context, task_id
+        )
+        operation_id = started.data["operation_id"]
+
+        # Sanity: the inspecting verifier is correctly offered approve/reject.
+        assert set(port.reads.task_view(task_id).legal_actions) == {"approve", "reject"}
+
+        # Simulate the inspecting verifier abandoning (crash/timeout) before
+        # approve/reject: its lease is externally reaped without ever calling
+        # approve or reject, exactly as recover-lease/expire-lease would leave it.
+        abandoned_lease = session.scalar(
+            select(wf.ServiceLease).where(
+                wf.ServiceLease.operation_id == uuid.UUID(operation_id),
+                wf.ServiceLease.owner_id == "verifier-owner",
+                wf.ServiceLease.actor_role == "verification",
+                wf.ServiceLease.state == "active",
+            )
+        )
+        assert abandoned_lease is not None
+        abandoned_lease.state = "expired"
+        abandoned_lease.terminal_at = NOW
+        session.flush()
+
+        # A fresh, independent verifier must be offered `verify` (start) again,
+        # not stale approve/reject it cannot legally exercise.
+        assert tuple(port.reads.task_view(task_id).legal_actions) == ("verify",)
+
+        fresh_verifier_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=fresh_verifier_run,
+            owner="verifier-owner-2",
+            agent="codex",
+        )
+        _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=operation_id,
+            run_id=fresh_verifier_run,
+            owner="verifier-owner-2",
+        )
+
+        # The fresh actor's own `start` supersedes the abandoned verifier's stale
+        # inspection: it must inspect again before approve/reject become legal.
+        assert tuple(port.reads.task_view(task_id).legal_actions) == ("inspect",)
+
+        _inspect(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=operation_id,
+            run_id=fresh_verifier_run,
+            owner="verifier-owner-2",
+        )
+        assert set(port.reads.task_view(task_id).legal_actions) == {"approve", "reject"}
