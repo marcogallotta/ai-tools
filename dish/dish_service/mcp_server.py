@@ -121,7 +121,20 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
 def build_honest_tool(checkout: Path = HONEST_CHECKOUT) -> FunctionTool:
     def dish_honest_read(paths: list[str]) -> dict[str, Any]:
         """Pull Honest Pantry main, then return the requested current repository files."""
-        return read_honest_files(checkout, paths)
+        try:
+            result = read_honest_files(checkout, paths)
+        except (RuntimeError, ValueError) as exc:
+            LOG.warning("mcp_honest_read_failure error_type=%s", type(exc).__name__)
+            return {
+                "ok": False,
+                "code": "HONEST_READ_FAILED",
+                "message": str(exc),
+                "retryable": isinstance(exc, RuntimeError),
+                "repository": "marcogallotta/honest-pantry",
+                "sha": None,
+                "files": [],
+            }
+        return {"ok": True, "code": "OK", "retryable": False, **result}
 
     return FunctionTool.from_function(
         dish_honest_read,
