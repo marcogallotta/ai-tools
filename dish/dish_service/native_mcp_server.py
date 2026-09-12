@@ -15,7 +15,7 @@ from dish_pg.command_port import CommandCall, CommandPortError, PostgresCommandP
 from dish_pg.connected_command_spec import TOOL_COMMANDS, definition_for
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
-from dish_pg.release import ALEMBIC_HEAD
+from dish_pg.schema_identity import ALEMBIC_HEAD
 from dish_pg.workflow import RequestIdentityConflict, WorkflowAuthorityError
 from dish_service.action_guidance import attach_connected_agent_guidance
 from dish_service.config import ServiceConfig

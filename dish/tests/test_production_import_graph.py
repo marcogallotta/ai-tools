@@ -6,23 +6,85 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGES = {"dish_tool", "dish_service"}
+PACKAGES = {"dish_tool", "dish_service", "dish_pg"}
+
+# Existing reverse dependencies are explicit debt, not permission for new ones.
+# Stale entries are harmless: later cleanup may remove an edge without first editing
+# this allowlist, while any newly introduced edge still fails the ratchet.
+SERVICE_DEPENDENCY_DEBT = frozenset(
+    {
+        ("dish_tool.admin", "dish_service.leases"),
+        ("dish_tool.admin", "dish_service.request_replay"),
+        ("dish_pg.command_contract", "dish_service.command_spec"),
+        ("dish_pg.cutover_control", "dish_service.legacy_writer_fence"),
+        ("dish_pg.dark_launch", "dish_service.path_safety"),
+        ("dish_pg.dark_launch", "dish_service.shadow_spool"),
+        ("dish_pg.dark_launch_readiness", "dish_service.config"),
+        ("dish_pg.dark_launch_readiness", "dish_service.path_safety"),
+        ("dish_pg.dark_launch_readiness", "dish_service.shadow_spool"),
+        ("dish_pg.postgres_service", "dish_service.leases"),
+        ("dish_pg.shadow_worker", "dish_service.path_safety"),
+        ("dish_pg.shadow_worker", "dish_service.shadow_spool"),
+        ("dish_pg.test_discovery_qualifier", "dish_service.client"),
+        ("dish_pg.test_journey_qualifier", "dish_service.client"),
+    }
+)
 
 
 def _module_name(path: Path) -> str:
     return ".".join(path.relative_to(ROOT).with_suffix("").parts)
 
 
-def _resolve_relative(current: str, node: ast.ImportFrom) -> str | None:
+def _resolve_from_base(current: str, node: ast.ImportFrom) -> str | None:
+    if node.level == 0:
+        return node.module
+
     package = current.split(".")[:-1]
-    if node.level:
-        keep = len(package) - (node.level - 1)
-        if keep < 0:
-            return None
-        package = package[:keep]
+    keep = len(package) - (node.level - 1)
+    if keep < 0:
+        return None
+    package = package[:keep]
     if node.module:
         package.extend(node.module.split("."))
     return ".".join(package)
+
+
+def _package_names(modules: set[str]) -> set[str]:
+    return {module.split(".", 1)[0] for module in modules}
+
+
+def _import_targets(
+    current: str,
+    node: ast.Import | ast.ImportFrom,
+    modules: set[str],
+) -> set[str]:
+    packages = _package_names(modules)
+    current_package = current.split(".", 1)[0]
+
+    if isinstance(node, ast.Import):
+        return {
+            alias.name
+            for alias in node.names
+            if alias.name in modules
+            or (alias.name in packages and alias.name != current_package)
+        }
+
+    base = _resolve_from_base(current, node)
+    if not base:
+        return set()
+
+    targets = {base} if base in modules else set()
+    for alias in node.names:
+        if alias.name == "*":
+            if base in packages and base != current_package:
+                targets.add(base)
+            continue
+        candidate = f"{base}.{alias.name}"
+        if candidate in modules:
+            targets.add(candidate)
+        elif base in packages and base != current_package:
+            targets.add(base)
+    return targets
 
 
 def _graph() -> dict[str, set[str]]:
@@ -32,26 +94,19 @@ def _graph() -> dict[str, set[str]]:
         for path in (ROOT / package).rglob("*.py")
         if path.name != "__init__.py"
     ]
-    modules = {_module_name(path): path for path in paths}
-    graph = {module: set() for module in modules}
-    for module, path in modules.items():
+    module_paths = {_module_name(path): path for path in paths}
+    modules = set(module_paths)
+    graph = {module: set() for module in modules | _package_names(modules)}
+    for module, path in module_paths.items():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            targets: list[str] = []
-            if isinstance(node, ast.Import):
-                targets.extend(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                resolved = _resolve_relative(module, node)
-                if resolved:
-                    targets.append(resolved)
-            for target in targets:
-                candidates = [target]
-                candidates.extend(
-                    name for name in modules if name.startswith(target + ".")
-                )
-                for candidate in candidates:
-                    if candidate in modules and candidate != module:
-                        graph[module].add(candidate)
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            graph[module].update(
+                target
+                for target in _import_targets(module, node, modules)
+                if target != module
+            )
     return graph
 
 
@@ -83,19 +138,69 @@ def _cycles(graph: dict[str, set[str]]) -> list[tuple[str, ...]]:
     return sorted(found)
 
 
+def _service_dependency_edges(graph: dict[str, set[str]]) -> set[tuple[str, str]]:
+    return {
+        (module, target)
+        for module, targets in graph.items()
+        if module.startswith(("dish_tool.", "dish_pg."))
+        for target in targets
+        if target == "dish_service" or target.startswith("dish_service.")
+    }
+
+
+def test_absolute_from_import_resolves_from_repository_root():
+    modules = {"dish_tool.admin", "dish_service.leases"}
+    node = ast.parse("from dish_service.leases import ServicePrincipal").body[0]
+    assert isinstance(node, ast.ImportFrom)
+
+    assert _import_targets("dish_tool.admin", node, modules) == {"dish_service.leases"}
+
+
+def test_direct_package_import_resolves_cross_package_dependency():
+    modules = {"dish_tool.admin", "dish_service.config"}
+    node = ast.parse("import dish_service").body[0]
+    assert isinstance(node, ast.Import)
+
+    assert _import_targets("dish_tool.admin", node, modules) == {"dish_service"}
+
+
+def test_exported_package_symbol_resolves_cross_package_dependency():
+    modules = {"dish_tool.admin", "dish_service.config"}
+    node = ast.parse("from dish_service import ServiceConfig").body[0]
+    assert isinstance(node, ast.ImportFrom)
+
+    assert _import_targets("dish_tool.admin", node, modules) == {"dish_service"}
+
+
+def test_relative_package_import_resolves_only_named_submodule():
+    modules = {"dish_pg.release", "dish_pg.models", "dish_pg.workflow"}
+    node = ast.parse("from . import models").body[0]
+    assert isinstance(node, ast.ImportFrom)
+
+    assert _import_targets("dish_pg.release", node, modules) == {"dish_pg.models"}
+
+
+def test_absolute_package_import_ignores_non_module_symbols():
+    modules = {"dish_pg.release", "dish_pg.models"}
+    node = ast.parse("from dish_pg import models, ALEMBIC_HEAD").body[0]
+    assert isinstance(node, ast.ImportFrom)
+
+    assert _import_targets("dish_pg.release", node, modules) == {"dish_pg.models"}
+
+
+def test_package_level_service_import_counts_as_service_dependency():
+    graph = {"dish_tool.admin": {"dish_service"}}
+
+    assert _service_dependency_edges(graph) == {("dish_tool.admin", "dish_service")}
+
+
 def test_production_import_graph_is_acyclic():
     assert _cycles(_graph()) == []
 
 
-def test_dish_tool_does_not_depend_on_dish_service():
-    graph = _graph()
-    offenders = {
-        module: sorted(target for target in targets if target.startswith("dish_service."))
-        for module, targets in graph.items()
-        if module.startswith("dish_tool.")
-        and any(target.startswith("dish_service.") for target in targets)
-    }
-    assert offenders == {}
+def test_tool_and_pg_do_not_add_service_dependencies():
+    new_debt = _service_dependency_edges(_graph()) - SERVICE_DEPENDENCY_DEBT
+    assert new_debt == set()
 
 
 def test_dish_tool_does_not_depend_on_service_frontend_family():

@@ -25,7 +25,7 @@ from sqlalchemy import MetaData, Table, inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from .database import DatabaseSettings, create_database_engine
-from .release import ALEMBIC_HEAD
+from .schema_identity import ALEMBIC_HEAD
 
 FINGERPRINT_FORMAT = "dish-postgresql-database-fingerprint-v1"
 COMPARISON_FORMAT = "dish-postgresql-database-fingerprint-comparison-v1"

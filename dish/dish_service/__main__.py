@@ -309,7 +309,7 @@ def _postgresql_runtime_config(args) -> ServiceConfig:
 
 def _run_postgresql_test_runtime(args) -> int:
     from dish_pg.postgres_service import PostgresRuntimeService
-    from dish_pg.release import ALEMBIC_HEAD
+    from dish_pg.schema_identity import ALEMBIC_HEAD
 
     profile = _postgresql_runtime_profile()
     if args.postgresql_test_runtime and profile != "test":

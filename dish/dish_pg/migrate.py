@@ -22,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .native_catalog_runtime_finalizer import finalize_native_catalog_runtime_authority
-from .release import ALEMBIC_HEAD
+from .schema_identity import ALEMBIC_HEAD
 
 DISH_ROOT = Path(__file__).resolve().parents[1]
 _SYSTEM_DATABASES = frozenset({"postgres", "template0", "template1"})
@@ -147,7 +147,7 @@ def _repository_script() -> ScriptDirectory:
     if heads != (ALEMBIC_HEAD,):
         raise RoutineMigrationError(
             "repository_head_inconsistency",
-            "repository migration heads do not exactly match dish_pg.release.ALEMBIC_HEAD",
+            "repository migration heads do not exactly match dish_pg.schema_identity.ALEMBIC_HEAD",
             next_action="Fix/review repository migration authority before touching any database.",
         )
     return script
