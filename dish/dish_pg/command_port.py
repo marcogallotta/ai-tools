@@ -3508,17 +3508,17 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "SOURCE_LEASE_STILL_ACTIVE",
                 "safe-reclaim requires the exact source lease to be released or expired",
             )
+        caller_agent = str(call.arguments.get("agent", "")).strip()
+        bootstrap_agent = (
+            "marco"
+            if call.principal_class == "admin"
+            else caller_agent
+            if caller_agent in {"claude", "gpt", "codex"}
+            else None
+        )
         caller_run = self.session.get(wf.ServiceRun, call.run_id)
         if caller_run is None and allow_initial_cutover_bootstrap:
             generation = self.session.get(models.AuthorityGeneration, generation_id)
-            caller_agent = str(call.arguments.get("agent", "")).strip()
-            bootstrap_agent = (
-                "marco"
-                if call.principal_class == "admin"
-                else caller_agent
-                if caller_agent in {"claude", "gpt", "codex"}
-                else None
-            )
             if (
                 generation is None
                 or generation.status != "active"
@@ -3538,6 +3538,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 )
             except WorkflowAuthorityError as exc:
                 raise CommandRuleError("SAFE_RECLAIM_RUN_INACTIVE", str(exc)) from exc
+            if bootstrap_agent is None or caller_run.agent != bootstrap_agent:
+                raise CommandRuleError(
+                    "SAFE_RECLAIM_RUN_IDENTITY_MISMATCH",
+                    "safe-reclaim caller agent does not match the registered run identity",
+                )
 
         later_attempt = self.session.scalar(
             select(wf.ServiceLease.lease_id)

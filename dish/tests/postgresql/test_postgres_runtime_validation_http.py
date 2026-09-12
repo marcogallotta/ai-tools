@@ -116,12 +116,13 @@ def _post_json(
         return response.status, json.loads(response.read().decode("utf-8"))
 
 
-def test_fresh_action_run_can_follow_expired_verification_reclaim(
+def test_action_reclaim_rejects_agent_mismatch_and_bootstraps_fresh_run(
     workflow_db, tmp_path: Path
 ) -> None:
     factory, ids, context, task_id = workflow_db
     author_run = _next(ids)
     verifier_run = _next(ids)
+    mismatched_run = _next(ids)
     replacement_run = _next(ids)
     with session_scope(factory) as session:
         _add_verification_queue(session, ids, context)
@@ -137,6 +138,13 @@ def test_fresh_action_run_can_follow_expired_verification_reclaim(
             generation_id=context["generation_id"],
             run_id=verifier_run,
             owner="verifier-owner",
+            agent="codex",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=mismatched_run,
+            owner="gpt-action",
             agent="codex",
         )
         port = _port(session, ids)
@@ -169,8 +177,14 @@ def test_fresh_action_run_can_follow_expired_verification_reclaim(
     service = runtime_service(factory, tmp_path)
     service.config = replace(service.config, action_token="postgres-action-token")
 
-    def call(base: str, command: str, arguments: dict[str, object]) -> dict[str, object]:
-        client = {"run_id": str(replacement_run)}
+    def call(
+        base: str,
+        command: str,
+        arguments: dict[str, object],
+        *,
+        run_id=replacement_run,
+    ) -> dict[str, object]:
+        client = {"run_id": str(run_id)}
         if command != "read":
             client["request_id"] = str(_next(ids))
         status, result = _post_json(
@@ -188,6 +202,21 @@ def test_fresh_action_run_can_follow_expired_verification_reclaim(
         thread = start_server_thread(server, name="fresh-verifier-reclaim-http")
         base = f"http://127.0.0.1:{server.server_address[1]}"
         try:
+            mismatched = call(
+                base,
+                "read",
+                {"dish_id": str(task_id), "agent": "gpt"},
+                run_id=mismatched_run,
+            )
+            assert mismatched["allowed_actions"] == []
+            assert mismatched["data"]["service_access"] == {
+                "state": "recovery_required",
+                "operation_id": started.data["operation_id"],
+                "lease_id": verification.data["lease_id"],
+                "rule": "SAFE_RECLAIM_RUN_IDENTITY_MISMATCH",
+            }
+            assert "agent_action" not in mismatched["data"]
+
             read = call(
                 base,
                 "read",
