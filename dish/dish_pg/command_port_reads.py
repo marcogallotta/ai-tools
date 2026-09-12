@@ -20,7 +20,7 @@ from .command_port_common import (
     json_safe as _json_safe,
     task_reference_from_dish as _task_reference_from_dish,
 )
-from .legacy_history_import import unresolved_legacy_attention
+from .legacy_attention import unresolved_legacy_attention
 from .document_authority import (
     CanonicalDocumentError,
     parse_canonical_document,

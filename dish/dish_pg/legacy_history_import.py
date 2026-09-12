@@ -12,11 +12,10 @@ from sqlalchemy.orm import Session
 from dish_tool.admin import _durable_attention_items
 from . import models
 from . import stage3_models as wf
+from .legacy_attention import ATTENTION_EVENT
 from .repositories import RegistryRepository
 _NAMESPACE = uuid.UUID("53ca3493-f296-460f-947c-5394a391f6cb")
 HISTORY_EVENT = "legacy_history_imported"
-ATTENTION_EVENT = "legacy_attention_imported"
-RESOLUTION_EVENT = "legacy_attention_resolved"
 SNAPSHOT_EVENT = "legacy_history_snapshot_imported"
 RECEIPT_EVENT = "legacy_history_import_receipt"
 _EXPECTED_PENDING = frozenset((("1217832148041218", "e39a9346-b1bc-43bd-9c5b-abdb2172a1ff"), ("1217089887920602", "68ea7d3c-d540-46d7-8ba8-af0cee9e2ac4"), ("1217166788025562", "a153e5b2-7165-4063-baa8-f11d87660e45")))
@@ -167,18 +166,3 @@ def apply_legacy_source(session: Session, *, source: Mapping[str, Any], snapshot
     run.status, run.retired_at = "retired", now
     session.flush()
     return receipt | {"inserted": True}
-def unresolved_legacy_attention(session: Session, generation_id: uuid.UUID) -> list[dict[str, Any]]:
-    imports = session.scalars(select(wf.GovernedAuditEvent).where(wf.GovernedAuditEvent.generation_id == generation_id, wf.GovernedAuditEvent.event_type == ATTENTION_EVENT))
-    resolved = {str(event.payload.get("attention_id") or "") for event in session.scalars(select(wf.GovernedAuditEvent).where(wf.GovernedAuditEvent.generation_id == generation_id, wf.GovernedAuditEvent.event_type == RESOLUTION_EVENT))}
-    rows = []
-    for event in imports:
-        if str(event.audit_event_id) in resolved:
-            continue
-        item = dict(event.payload["record"])
-        item.update({"attention_id": str(event.audit_event_id), "dish_id": str(event.task_id), "task_id": str(event.task_id), "source_operation_id": item.pop("operation_id", None)})
-        signals = [dict(signal) for signal in item.get("signals", [])]
-        if signals:
-            signals[0]["shell_command"] = f"dish-admin resolve-legacy-attention {event.audit_event_id} --resolution TEXT"
-        item["signals"] = signals
-        rows.append(item)
-    return rows
