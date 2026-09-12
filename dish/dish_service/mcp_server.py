@@ -34,7 +34,7 @@ from pydantic import PrivateAttr
 from dish_service.client import DishActionClient
 
 SERVER_NAME = "dish-postgresql-mcp"
-SERVER_VERSION = "3"
+SERVER_VERSION = "4"
 ACTION_URL_ENV = "DISH_MCP_ACTION_URL"
 ACTION_TOKEN_ENV = "DISH_MCP_ACTION_TOKEN"
 BACKEND_ENV = "DISH_MCP_BACKEND"
