@@ -239,4 +239,49 @@ def test_plain_apply_refuses_before_native_placement_mutation(monkeypatch) -> No
 
     assert status == 1
     assert evidence["error"]["rule"] == "native_placement_sequence_required"
-    assert evidence["mutation_attempted"] is False
+
+
+def test_plain_apply_succeeds_when_native_placement_already_landed(monkeypatch) -> None:
+    calls = []
+    states = iter(
+        [
+            ("dish_rollout_test", ("0052_dish_state_section_not_null",)),
+            ("dish_rollout_test", (migrate.ALEMBIC_HEAD,)),
+            ("dish_rollout_test", (migrate.ALEMBIC_HEAD,)),
+        ]
+    )
+    monkeypatch.setattr(migrate, "_resolve_source_commit", lambda _value: "a" * 40)
+    monkeypatch.setattr(
+        migrate,
+        "_repository_script",
+        lambda: SimpleNamespace(
+            iterate_revisions=lambda _head, _base: [
+                SimpleNamespace(revision=migrate.ALEMBIC_HEAD),
+                SimpleNamespace(revision="0052_dish_state_section_not_null"),
+                SimpleNamespace(revision="0051_native_dish_state_placement"),
+                SimpleNamespace(revision="0050_native_catalog_runtime_authority_switch"),
+            ],
+            walk_revisions=lambda: (),
+        ),
+    )
+    monkeypatch.setattr(migrate, "_validate_target", lambda **_kwargs: None)
+    monkeypatch.setattr(migrate, "_read_database_state", lambda _url: next(states))
+    monkeypatch.setattr(
+        migrate.command, "upgrade", lambda _cfg, revision: calls.append(revision)
+    )
+    monkeypatch.setattr(
+        migrate,
+        "_finalize_native_placement",
+        lambda *_args: pytest.fail("plain apply must not run the native-placement finalizer"),
+    )
+
+    evidence, status = migrate.run(
+        _run_args(apply=True, apply_native_placement=False),
+        _Journal(),
+    )
+
+    assert status == 0
+    assert evidence["result"] == "applied"
+    assert calls == [migrate.ALEMBIC_HEAD]
+    assert [phase["phase"] for phase in evidence["phases"]] == ["final_revision"]
+    assert evidence["mutation_attempted"] is True
