@@ -1,5 +1,5 @@
 """Current PostgreSQL schema identity used by runtime and migration gates."""
 
-ALEMBIC_HEAD = "0052_dish_state_section_not_null"
+ALEMBIC_HEAD = "0053_native_section_lifecycle"
 
 __all__ = ["ALEMBIC_HEAD"]

@@ -10,6 +10,14 @@ from . import stage5_models as stage5_models  # register Stage 5 metadata
 from . import stage6_models as stage6_models  # register Stage 6 metadata
 from . import frontend_security_models as frontend_security_models  # register frontend security metadata
 from . import reservation_models as reservation_models  # register exact first-request authority
+from . import native_section_lifecycle_models as native_section_lifecycle_models  # register lifecycle audit metadata
+from .native_section_lifecycle_patch import (
+    install_command_contract as _install_native_section_command_contract,
+    install_port as _install_native_section_port,
+)
+
+_install_native_section_command_contract()
+
 from .services import CoreAuthorityService, ImportedTaskResult, ImportedTaskSpec
 from .command_port import CommandCall, CommandResult, PostgresCommandPort
 from .read_model import PostgresReadModel
@@ -28,6 +36,7 @@ from .workflow import (
 
 _install_resting_continuation_patch(PostgresCommandPort)
 _install_task_fence_snapshot_patch(WorkflowAuthorityRepository)
+_install_native_section_port(PostgresCommandPort)
 
 __all__ = [
     "CommandCall",
