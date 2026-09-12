@@ -54,14 +54,13 @@ from .release_evidence import (
     canonical_json,
     sha256_json,
 )
+from .schema_identity import ALEMBIC_HEAD
 from .release_status import (
     AcceptanceCheck,
     CandidateEvaluation,
     ReleaseCandidateStatus,
     WriterFenceStatus,
 )
-
-ALEMBIC_HEAD = "0052_dish_state_section_not_null"
 
 
 class ReleaseCandidateService(
