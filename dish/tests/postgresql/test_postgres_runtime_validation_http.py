@@ -26,6 +26,10 @@ from tests.support.canonical import TASK
 from tests.support.postgresql.command import (
     _add_destination_section,
     _add_verification_queue,
+    _port,
+    _prepare_for_verification,
+    _start_initial,
+    _start_verification,
 )
 from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.runtime_validation import (
@@ -112,6 +116,158 @@ def _post_json(
         return response.status, json.loads(response.read().decode("utf-8"))
 
 
+def test_action_reclaim_rejects_agent_mismatch_and_bootstraps_fresh_run(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    author_run = _next(ids)
+    verifier_run = _next(ids)
+    mismatched_run = _next(ids)
+    replacement_run = _next(ids)
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=author_run,
+            owner="owner-1",
+            agent="claude",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=mismatched_run,
+            owner="gpt-action",
+            agent="codex",
+        )
+        port = _port(session, ids)
+        started = _start_initial(
+            port,
+            ids,
+            task_id=task_id,
+            run_id=author_run,
+            agent="claude",
+        )
+        _prepare_for_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=author_run,
+            agent="claude",
+        )
+        verification = _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        assert session.get(wf.ServiceRun, replacement_run) is None
+
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(service.config, action_token="postgres-action-token")
+
+    def call(
+        base: str,
+        command: str,
+        arguments: dict[str, object],
+        *,
+        run_id=replacement_run,
+    ) -> dict[str, object]:
+        client = {"run_id": str(run_id)}
+        if command != "read":
+            client["request_id"] = str(_next(ids))
+        status, result = _post_json(
+            f"{base}/v1/action/{command}",
+            token="postgres-action-token",
+            body={
+                "client": client,
+                "arguments": arguments,
+            },
+        )
+        assert status == 200, result
+        return result
+
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="fresh-verifier-reclaim-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            mismatched = call(
+                base,
+                "read",
+                {"dish_id": str(task_id), "agent": "gpt"},
+                run_id=mismatched_run,
+            )
+            assert mismatched["allowed_actions"] == []
+            assert mismatched["data"]["service_access"] == {
+                "state": "recovery_required",
+                "operation_id": started.data["operation_id"],
+                "lease_id": verification.data["lease_id"],
+                "rule": "SAFE_RECLAIM_RUN_IDENTITY_MISMATCH",
+            }
+            assert "agent_action" not in mismatched["data"]
+
+            read = call(
+                base,
+                "read",
+                {"dish_id": str(task_id), "agent": "gpt"},
+            )
+            assert read["allowed_actions"] == ["safe-reclaim"], read
+            reclaim = read["data"]["agent_action"]
+            assert reclaim == {
+                "command": "safe-reclaim",
+                "arguments": {
+                    "submission_id": started.data["operation_id"],
+                    "lease_id": verification.data["lease_id"],
+                    "agent": "gpt",
+                },
+            }
+            with session_scope(factory) as session:
+                assert session.get(wf.ServiceRun, replacement_run) is None
+
+            reclaimed = call(base, reclaim["command"], reclaim["arguments"])
+            assert reclaimed["ok"] is True, reclaimed
+            successor = reclaimed["data"]["agent_action"]
+            assert successor["arguments"]["target_operation_id"] == reclaimed["data"][
+                "successor_operation_id"
+            ]
+            assert successor["arguments"]["target_cycle_id"] == reclaimed["data"][
+                "prepared_cycle_id"
+            ]
+            with session_scope(factory) as session:
+                bootstrapped = session.get(wf.ServiceRun, replacement_run)
+                assert bootstrapped is not None
+                assert (bootstrapped.owner_id, bootstrapped.agent) == (
+                    "gpt-action",
+                    "gpt",
+                )
+            successor["arguments"]["independence_attestation"] = (
+                "I independently inspected this exact reclaimed candidate."
+            )
+            successor_started = call(
+                base, successor["command"], successor["arguments"]
+            )
+            assert successor_started["ok"] is True, successor_started
+
+            inspect = successor_started["data"]["agent_action"]
+            inspect["arguments"]["agent"] = "gpt"
+            inspected = call(base, inspect["command"], inspect["arguments"])
+            assert inspected["ok"] is True, inspected
+            assert inspected["allowed_actions"] == ["approve", "reject"]
+        finally:
+            stop_server(server, thread)
+
+
 def test_postgresql_action_lifecycle_is_driven_by_each_immediate_response(
     workflow_db, tmp_path: Path
 ) -> None:
@@ -119,6 +275,7 @@ def test_postgresql_action_lifecycle_is_driven_by_each_immediate_response(
     planning_run = _next(ids)
     research_run = _next(ids)
     verification_run = _next(ids)
+    foreign_verification_run = _next(ids)
     with session_scope(factory) as session:
         _add_verification_queue(session, ids, context)
         _add_destination_section(session, ids, context)
@@ -148,6 +305,13 @@ def test_postgresql_action_lifecycle_is_driven_by_each_immediate_response(
             run_id=verification_run,
             owner="gpt-action",
             agent="codex",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=foreign_verification_run,
+            owner="gpt-action",
+            agent="gpt",
         )
 
     service = runtime_service(factory, tmp_path)
@@ -295,6 +459,19 @@ Destination section: Sichuan — 12345
             )
             assert inspected["allowed_actions"] == ["approve", "reject"]
 
+            foreign_read = call(
+                base,
+                "read",
+                run_id=foreign_verification_run,
+                arguments={
+                    "dish_id": research_prepared["data"]["dish_id"],
+                    "agent": "gpt",
+                },
+            )
+            assert foreign_read["allowed_actions"] == []
+            assert "reviewed_identity" not in foreign_read["data"]
+            assert "agent_action" not in foreign_read["data"]
+
             inspected_data = inspected["data"]
             assert isinstance(inspected_data, dict)
             approved = call(
@@ -311,9 +488,11 @@ Destination section: Sichuan — 12345
                     "provenance_complete": True,
                 },
             )
+            assert approved["ok"] is True, approved
 
             command, arguments = returned_action(approved)
             assert arguments == {"submission_id": approved["submission_id"]}
+            arguments["agent"] = "codex"
             submitted = call(
                 base, command, run_id=verification_run, arguments=arguments
             )

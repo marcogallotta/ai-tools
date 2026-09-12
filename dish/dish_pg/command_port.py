@@ -609,8 +609,25 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 result_operation = operation
 
         raw_actions: list[str]
+        verification_projection = None
+        if (
+            call.command_name == "read"
+            and task is not None
+            and result_operation is not None
+            and result_operation.phase == "await_verification"
+        ):
+            verification_projection = self._verification_continuation(
+                call=call,
+                task=task,
+                operation=result_operation,
+            )
+            if verification_projection is not None:
+                result_data.update(verification_projection[1])
+                result_data["legal_actions"] = tuple(verification_projection[0])
         supplied_actions = result_data.get("allowed_actions")
-        if isinstance(supplied_actions, list) and all(
+        if verification_projection is not None:
+            raw_actions = verification_projection[0]
+        elif isinstance(supplied_actions, list) and all(
             isinstance(item, str) for item in supplied_actions
         ):
             raw_actions = list(supplied_actions)
@@ -693,6 +710,186 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "submission_id": submission_id,
             "state": result_operation.phase if result_operation is not None else None,
             "allowed_actions": allowed_actions,
+        }
+
+    def _verification_continuation(
+        self,
+        *,
+        call: CommandCall,
+        task: models.DishTask,
+        operation: wf.WorkflowOperation,
+    ) -> tuple[list[str], dict[str, Any]] | None:
+        """Return the exact caller's continuation for the current verifier occurrence."""
+
+        cycle = self._latest_cycle(operation.operation_id)
+        lease = self.session.scalar(
+            select(wf.ServiceLease)
+            .where(
+                wf.ServiceLease.operation_id == operation.operation_id,
+                wf.ServiceLease.verification_cycle_id == cycle.cycle_id,
+                wf.ServiceLease.lease_kind == "actor",
+                wf.ServiceLease.actor_role == "verification",
+            )
+            .order_by(
+                wf.ServiceLease.actor_attempt_sequence.desc(),
+                wf.ServiceLease.issued_at.desc(),
+            )
+            .limit(1)
+        )
+        if lease is None or lease.run_id is None:
+            return None
+        actor = self.session.scalar(
+            select(wf.OperationActorFact)
+            .where(
+                wf.OperationActorFact.operation_id == operation.operation_id,
+                wf.OperationActorFact.actor_role == "verification",
+                wf.OperationActorFact.run_id == lease.run_id,
+                wf.OperationActorFact.owner_id == lease.owner_id,
+                wf.OperationActorFact.actor_attempt_sequence
+                == lease.actor_attempt_sequence,
+            )
+            .limit(1)
+        )
+        if actor is None:
+            return [], {
+                "verification_eligibility": {
+                    "eligible": False,
+                    "rule": "VERIFICATION_OCCURRENCE_INCOMPLETE",
+                }
+            }
+
+        caller_agent = str(call.arguments.get("agent", "")).strip()
+        caller_owns = (
+            lease.run_id == call.run_id
+            and lease.owner_id == call.owner_id
+            and caller_agent == actor.agent
+        )
+        expires_at = lease.expires_at
+        if expires_at.tzinfo is None and call.now.tzinfo is not None:
+            expires_at = expires_at.replace(tzinfo=call.now.tzinfo)
+        live = lease.state == "active" and expires_at > call.now
+
+        if not live:
+            if caller_owns:
+                return [], {
+                    "service_access": {
+                        "state": "same_run_recovery_required",
+                        "operation_id": str(operation.operation_id),
+                        "lease_id": str(lease.lease_id),
+                        "legal_next_step": (
+                            "The exact verifier run must recover its expired lease before continuing."
+                        ),
+                    }
+                }
+            try:
+                self._assert_safe_reclaimable(
+                    call=call,
+                    generation_id=operation.generation_id,
+                    task=task,
+                    operation=operation,
+                    lease=lease,
+                    exclude_execution_id=None,
+                    allow_initial_cutover_bootstrap=True,
+                )
+            except CommandRuleError as exc:
+                return [], {
+                    "service_access": {
+                        "state": "recovery_required",
+                        "operation_id": str(operation.operation_id),
+                        "lease_id": str(lease.lease_id),
+                        "rule": exc.code,
+                    }
+                }
+            return ["safe-reclaim"], {
+                "service_access": {
+                    "state": "safe_reclaim_available",
+                    "operation_id": str(operation.operation_id),
+                    "lease_id": str(lease.lease_id),
+                },
+                "agent_action": {
+                    "command": "safe-reclaim",
+                    "arguments": {
+                        "submission_id": str(operation.operation_id),
+                        "lease_id": str(lease.lease_id),
+                        "agent": caller_agent,
+                    },
+                },
+            }
+
+        if not caller_owns:
+            return [], {
+                "verification_eligibility": {
+                    "eligible": False,
+                    "rule": "VERIFICATION_OCCURRENCE_OWNED",
+                    "operation_id": str(operation.operation_id),
+                    "cycle_id": str(cycle.cycle_id),
+                }
+            }
+
+        inspection = self.session.scalar(
+            select(wf.VerificationInspectionOccurrence)
+            .where(
+                wf.VerificationInspectionOccurrence.cycle_id == cycle.cycle_id,
+                wf.VerificationInspectionOccurrence.verifier_actor_fact_id
+                == actor.actor_fact_id,
+            )
+            .order_by(wf.VerificationInspectionOccurrence.inspected_at.desc())
+            .limit(1)
+        )
+        if inspection is not None:
+            reviewed = self.session.get(
+                models.ContentVersion, inspection.reviewed_content_version_id
+            )
+            if reviewed is None:
+                return [], {
+                    "verification_eligibility": {
+                        "eligible": False,
+                        "rule": "REVIEWED_CONTENT_MISSING",
+                    }
+                }
+            return ["approve", "reject"], {
+                "inspection_id": str(inspection.inspection_id),
+                "cycle_id": str(cycle.cycle_id),
+                "lease_id": str(lease.lease_id),
+                "independence_attestation": inspection.attestation,
+                "reviewed_content_version_id": str(reviewed.content_version_id),
+                "reviewed_identity": reviewed.content_identity,
+            }
+
+        attestation = None
+        for step in self.session.scalars(
+            select(wf.OperationStep)
+            .where(wf.OperationStep.operation_id == operation.operation_id)
+            .order_by(wf.OperationStep.step_sequence.desc())
+        ):
+            evidence = dict(step.evidence or {})
+            if (
+                evidence.get("cycle_id") == str(cycle.cycle_id)
+                and evidence.get("actor_fact_id") == str(actor.actor_fact_id)
+                and evidence.get("lease_id") == str(lease.lease_id)
+            ):
+                attestation = str(
+                    evidence.get("independence_attestation") or ""
+                ).strip()
+                break
+        if not attestation:
+            return [], {
+                "verification_eligibility": {
+                    "eligible": False,
+                    "rule": "VERIFICATION_ATTESTATION_MISSING",
+                }
+            }
+        return ["inspect"], {
+            "cycle_id": str(cycle.cycle_id),
+            "lease_id": str(lease.lease_id),
+            "independence_attestation": attestation,
+            "agent_action": {
+                "command": "inspect",
+                "arguments": {
+                    "submission_id": str(operation.operation_id),
+                    "independence_attestation": attestation,
+                },
+            },
         }
 
     def _record_rule_failure(
@@ -1373,6 +1570,21 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                         "VERIFICATION_CYCLE_MISMATCH",
                         "Verification start does not target the current cycle",
                     )
+            existing_occurrence = self.session.scalar(
+                select(wf.ServiceLease.lease_id)
+                .where(
+                    wf.ServiceLease.operation_id == operation.operation_id,
+                    wf.ServiceLease.verification_cycle_id == cycle.cycle_id,
+                    wf.ServiceLease.lease_kind == "actor",
+                    wf.ServiceLease.actor_role == "verification",
+                )
+                .limit(1)
+            )
+            if existing_occurrence is not None:
+                raise CommandRuleError(
+                    "VERIFICATION_OCCURRENCE_EXISTS",
+                    "Verification start cannot bypass the existing verifier occurrence or its recovery lineage",
+                )
             attestation = str(
                 call.arguments.get("independence_attestation", "")
             ).strip()
@@ -3252,32 +3464,27 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         self.session.flush()
         return copied
 
-    def _safe_reclaim(
-        self, call, generation, _binding, execution, task, operation
-    ) -> dict[str, Any]:
-        assert task is not None and operation is not None
-        if operation.generation_id != generation.generation_id or operation.lifecycle != "open":
+    def _assert_safe_reclaimable(
+        self,
+        *,
+        call: CommandCall,
+        generation_id: uuid.UUID,
+        task: models.DishTask,
+        operation: wf.WorkflowOperation,
+        lease: wf.ServiceLease,
+        exclude_execution_id: uuid.UUID | None,
+        allow_initial_cutover_bootstrap: bool = False,
+    ) -> wf.VerificationCycle | None:
+        """Evaluate the complete read/admission predicate for different-run reclaim."""
+
+        if operation.generation_id != generation_id or operation.lifecycle != "open":
             raise CommandRuleError(
                 "OPEN_OPERATION_REQUIRED",
                 "safe-reclaim requires the exact open source operation",
             )
-        lease_id = call.arguments.get("lease_id")
-        if not lease_id:
-            raise CommandRuleError(
-                "SOURCE_LEASE_REQUIRED",
-                "safe-reclaim requires the exact prior actor lease",
-                http_status=400,
-            )
-        try:
-            lease_uuid = uuid.UUID(str(lease_id))
-        except ValueError as exc:
-            raise CommandRuleError(
-                "INVALID_LEASE_ID", "lease identifier must be a UUID", http_status=400
-            ) from exc
-        lease = self.session.get(wf.ServiceLease, lease_uuid)
         if (
             lease is None
-            or lease.generation_id != generation.generation_id
+            or lease.generation_id != generation_id
             or lease.task_id != task.task_id
             or lease.operation_id != operation.operation_id
             or lease.lease_kind != "actor"
@@ -3301,6 +3508,41 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "SOURCE_LEASE_STILL_ACTIVE",
                 "safe-reclaim requires the exact source lease to be released or expired",
             )
+        caller_agent = str(call.arguments.get("agent", "")).strip()
+        bootstrap_agent = (
+            "marco"
+            if call.principal_class == "admin"
+            else caller_agent
+            if caller_agent in {"claude", "gpt", "codex"}
+            else None
+        )
+        caller_run = self.session.get(wf.ServiceRun, call.run_id)
+        if caller_run is None and allow_initial_cutover_bootstrap:
+            generation = self.session.get(models.AuthorityGeneration, generation_id)
+            if (
+                generation is None
+                or generation.status != "active"
+                or generation.creation_reason != "initial_cutover"
+                or bootstrap_agent is None
+            ):
+                raise CommandRuleError(
+                    "SAFE_RECLAIM_RUN_INACTIVE",
+                    "fresh reclaim caller is not eligible for initial-cutover run bootstrap",
+                )
+        else:
+            try:
+                self.workflow.repo.require_active_run(
+                    generation_id=generation_id,
+                    run_id=call.run_id,
+                    owner_id=call.owner_id,
+                )
+            except WorkflowAuthorityError as exc:
+                raise CommandRuleError("SAFE_RECLAIM_RUN_INACTIVE", str(exc)) from exc
+            if bootstrap_agent is None or caller_run.agent != bootstrap_agent:
+                raise CommandRuleError(
+                    "SAFE_RECLAIM_RUN_IDENTITY_MISMATCH",
+                    "safe-reclaim caller agent does not match the registered run identity",
+                )
 
         later_attempt = self.session.scalar(
             select(wf.ServiceLease.lease_id)
@@ -3332,7 +3574,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         if self.session.scalar(
             select(wf.AbandonmentAttempt.abandonment_id)
             .where(
-                wf.AbandonmentAttempt.generation_id == generation.generation_id,
+                wf.AbandonmentAttempt.generation_id == generation_id,
                 wf.AbandonmentAttempt.task_id == task.task_id,
                 wf.AbandonmentAttempt.state.in_(
                     ("preparing", "published", "blocked", "reconciling")
@@ -3361,11 +3603,14 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "safe-reclaim cannot cross an unresolved governed semantic proposal",
             )
         unresolved_execution = self.session.scalar(
-            select(wf.CommandExecution.execution_id)
-            .where(
+            select(wf.CommandExecution.execution_id).where(
                 wf.CommandExecution.operation_id == operation.operation_id,
-                wf.CommandExecution.execution_id != execution.execution_id,
                 wf.CommandExecution.status.in_(("pending", "claimed", "uncertain")),
+                *(
+                    (wf.CommandExecution.execution_id != exclude_execution_id,)
+                    if exclude_execution_id is not None
+                    else ()
+                ),
             )
             .limit(1)
         )
@@ -3401,7 +3646,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             )
         try:
             self.workflow.repo.assert_operation_run_not_revoked(
-                generation_id=generation.generation_id,
+                generation_id=generation_id,
                 operation_id=operation.operation_id,
                 owner_id=call.owner_id,
                 run_id=call.run_id,
@@ -3422,8 +3667,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             creation_fence = self.session.get(
                 wf.TaskExecutionFence, operation.creation_execution_id
             )
-            state = self.session.get(models.DishState, (generation.generation_id, task.task_id))
-            membership = self.session.get(models.TaskMembershipHead, (generation.generation_id, task.task_id))
+            state = self.session.get(models.DishState, (generation_id, task.task_id))
+            membership = self.session.get(models.TaskMembershipHead, (generation_id, task.task_id))
             if creation_fence is None or state is None or membership is None:
                 raise CommandRuleError(
                     "SAFE_RECLAIM_BASELINE_MISSING",
@@ -3447,7 +3692,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         elif operation.phase == "await_verification":
             source_cycle = self._latest_cycle(operation.operation_id)
             self._assert_cycle_is_current(
-                generation.generation_id, task.task_id, source_cycle
+                generation_id, task.task_id, source_cycle
             )
             if (
                 lease.actor_role != "verification"
@@ -3459,10 +3704,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 )
             placement = self.session.get(
                 models.DishState,
-                (generation.generation_id, task.task_id),
+                (generation_id, task.task_id),
             )
             verification_section_id = self._section_for_role(
-                generation.generation_id,
+                generation_id,
                 "verification_queue",
                 missing_code="VERIFICATION_QUEUE_MISSING",
                 missing_message="active Section authority has no Verification Queue",
@@ -3480,6 +3725,39 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "SAFE_RECLAIM_NOT_CLEAN_FRONTIER",
                 "safe-reclaim is allowed only at a clean pre-prepare or awaiting-Verification frontier",
             )
+        return source_cycle
+
+    def _safe_reclaim(
+        self, call, generation, _binding, execution, task, operation
+    ) -> dict[str, Any]:
+        assert task is not None and operation is not None
+        lease_id = call.arguments.get("lease_id")
+        if not lease_id:
+            raise CommandRuleError(
+                "SOURCE_LEASE_REQUIRED",
+                "safe-reclaim requires the exact prior actor lease",
+                http_status=400,
+            )
+        try:
+            lease_uuid = uuid.UUID(str(lease_id))
+        except ValueError as exc:
+            raise CommandRuleError(
+                "INVALID_LEASE_ID", "lease identifier must be a UUID", http_status=400
+            ) from exc
+        lease = self.session.get(wf.ServiceLease, lease_uuid)
+        if lease is None:
+            raise CommandRuleError(
+                "SOURCE_LEASE_REQUIRED",
+                "safe-reclaim requires the exact prior PostgreSQL actor lease for this operation",
+            )
+        source_cycle = self._assert_safe_reclaimable(
+            call=call,
+            generation_id=generation.generation_id,
+            task=task,
+            operation=operation,
+            lease=lease,
+            exclude_execution_id=execution.execution_id,
+        )
 
         attempt = self.workflow.begin_abandonment(
             abandonment_id=self.uuid_factory(),
