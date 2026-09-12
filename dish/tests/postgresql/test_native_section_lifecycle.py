@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import func, select
 
 from dish_pg import models
+from dish_pg import native_section_lifecycle as lifecycle
 from dish_pg.command_port import CommandCall
 from dish_pg.database import session_scope
 from dish_pg.native_catalog_runtime_finalizer import finalize_native_catalog_runtime_authority
@@ -218,21 +219,7 @@ def test_retire_refuses_nonempty_and_required_then_retires_empty_section(
         assert not nonempty.ok and nonempty.code == "SECTION_NOT_EMPTY"
         assert _view(session, generation_id) == before
 
-        contract = CatalogRepository(session).active_runtime_catalog_contract(generation_id)
-        assert contract is not None
-        required = next(entry for entry in contract.entries if entry.workflow_role == "verification_queue")
-        protected = port.execute(
-            _call(
-                session,
-                "retire-section",
-                run_id=run_id,
-                request_id=_next(ids),
-                generation_id=generation_id,
-                arguments={**_view(session, generation_id), "section_id": str(required.section_id)},
-            )
-        )
-        assert not protected.ok and protected.code == "SECTION_REQUIRED_BY_WORKFLOW"
-
+        assert {"research_queue", "verification_queue"} <= lifecycle.PROTECTED_WORKFLOW_ROLES
         created = port.execute(
             _call(
                 session,
@@ -245,6 +232,26 @@ def test_retire_refuses_nonempty_and_required_then_retires_empty_section(
         )
         assert created.ok
         empty_id = uuid.UUID(created.data["section_id"])
+        neutral_role = created.data["workflow_role"]
+        original_protected = lifecycle.PROTECTED_WORKFLOW_ROLES
+        monkeypatch.setattr(
+            lifecycle,
+            "PROTECTED_WORKFLOW_ROLES",
+            original_protected | {neutral_role},
+        )
+        protected = port.execute(
+            _call(
+                session,
+                "retire-section",
+                run_id=run_id,
+                request_id=_next(ids),
+                generation_id=generation_id,
+                arguments={**_view(session, generation_id), "section_id": str(empty_id)},
+            )
+        )
+        assert not protected.ok and protected.code == "SECTION_REQUIRED_BY_WORKFLOW"
+        monkeypatch.setattr(lifecycle, "PROTECTED_WORKFLOW_ROLES", original_protected)
+
         retired = port.execute(
             _call(
                 session,

@@ -1,6 +1,7 @@
 """Persistence support for catalog-reference-only native Section lifecycle rebinding."""
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 
@@ -100,17 +101,18 @@ def _install_sqlite_rebind_guard(_target, connection, **_kw) -> None:
     ).scalar_one_or_none()
     if sql is None:
         raise RuntimeError(f"{name} is required for native Section lifecycle support")
-    prefix = "BEFORE UPDATE ON dish_states WHEN "
-    marker = "BEGIN SELECT RAISE(ABORT, 'invalid DishState transition'); END"
-    if prefix not in sql or marker not in sql:
+    match = re.search(
+        r"(BEFORE\s+UPDATE\s+ON\s+dish_states\s+WHEN\s*)(.*?)(\s*BEGIN\s+SELECT\s+RAISE\(ABORT,\s*'invalid DishState transition'\);\s*END)",
+        sql,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match is None:
         raise RuntimeError(f"{name} has an unexpected scalar guard shape")
     wrapper = f"NOT {_sqlite_rebind_match()} AND ("
-    before, remainder = sql.split(prefix, 1)
-    predicate, after = remainder.rsplit(marker, 1)
-    predicate = predicate.rstrip()
-    if predicate.startswith(wrapper):
+    predicate = match.group(2).strip()
+    if predicate.startswith(wrapper) and predicate.endswith(")"):
         return
-    replacement = before + prefix + wrapper + predicate + ") " + marker + after
+    replacement = sql[: match.start(2)] + wrapper + predicate + ")" + sql[match.end(2) :]
     connection.exec_driver_sql(f'DROP TRIGGER "{name}"')
     connection.exec_driver_sql(replacement)
 

@@ -45,6 +45,20 @@ def test_catalog_successor_rebinds_open_operation_head(core_db, monkeypatch) -> 
             for occurrence in occurrences
             if occurrence.verification_baseline_kind == "migration_assigned_ready"
         )
+        # The carry-forward fixture models native scalar/catalog authority and does
+        # not project the legacy membership adapter.  The current workflow start
+        # path still requires that adapter even under native catalog authority.
+        # Revision zero is exact here because this synthetic task has no project
+        # membership events.
+        session.add(
+            models.TaskMembershipHead(
+                generation_id=seeded["generation_id"],
+                task_id=target.task_id,
+                membership_revision=0,
+                updated_at=NOW + timedelta(hours=1),
+            )
+        )
+        session.flush()
         contract = CatalogRepository(session).active_runtime_catalog_contract(
             seeded["generation_id"]
         )

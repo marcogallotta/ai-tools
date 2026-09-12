@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlalchemy as sa
 from alembic import context, op
 
@@ -172,24 +173,25 @@ def _replace_sqlite_update_guard(*, catalog_rebind: bool) -> None:
     ).scalar_one_or_none()
     if sql is None:
         raise RuntimeError(f"{name} is required for native Section lifecycle migration")
-    prefix = "BEFORE UPDATE ON dish_states WHEN "
-    marker = "BEGIN SELECT RAISE(ABORT, 'invalid DishState transition'); END"
-    if prefix not in sql or marker not in sql:
+    match = re.search(
+        r"(BEFORE\s+UPDATE\s+ON\s+dish_states\s+WHEN\s*)(.*?)(\s*BEGIN\s+SELECT\s+RAISE\(ABORT,\s*'invalid DishState transition'\);\s*END)",
+        sql,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match is None:
         raise RuntimeError(f"{name} has an unexpected scalar guard shape")
     guard = _sqlite_rebind_match()
     wrapper = f"NOT {guard} AND ("
-    before, remainder = sql.split(prefix, 1)
-    predicate, after = remainder.rsplit(marker, 1)
-    predicate = predicate.rstrip()
+    predicate = match.group(2).strip()
     if catalog_rebind:
-        if predicate.startswith(wrapper):
+        if predicate.startswith(wrapper) and predicate.endswith(")"):
             return
-        sql = before + prefix + wrapper + predicate + ") " + marker + after
+        revised = wrapper + predicate + ")"
     else:
         if not predicate.startswith(wrapper) or not predicate.endswith(")"):
             raise RuntimeError(f"{name} has no lifecycle catalog-rebind wrapper")
-        predicate = predicate[len(wrapper) : -1].rstrip()
-        sql = before + prefix + predicate + " " + marker + after
+        revised = predicate[len(wrapper) : -1].strip()
+    sql = sql[: match.start(2)] + revised + sql[match.end(2) :]
     connection.exec_driver_sql(f'DROP TRIGGER "{name}"')
     connection.exec_driver_sql(sql)
 

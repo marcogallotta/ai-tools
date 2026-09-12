@@ -311,12 +311,6 @@ def apply_native_section_lifecycle(
                     "SECTION_LAST_ACTIVE",
                     "last active Section cannot be retired",
                 )
-            if target_entry.workflow_role in PROTECTED_WORKFLOW_ROLES:
-                raise NativeSectionLifecycleError(
-                    "SECTION_REQUIRED_BY_WORKFLOW",
-                    "workflow-required Section cannot be retired",
-                    data={"workflow_role": target_entry.workflow_role},
-                )
             resident_count = session.scalar(
                 select(func.count())
                 .select_from(models.DishState)
@@ -330,6 +324,12 @@ def apply_native_section_lifecycle(
                     "SECTION_NOT_EMPTY",
                     "Section cannot be retired while Dishes remain in it",
                     data={"dish_count": int(resident_count)},
+                )
+            if target_entry.workflow_role in PROTECTED_WORKFLOW_ROLES:
+                raise NativeSectionLifecycleError(
+                    "SECTION_REQUIRED_BY_WORKFLOW",
+                    "workflow-required Section cannot be retired",
+                    data={"workflow_role": target_entry.workflow_role},
                 )
             survivors = [entry for entry in prior_entries if entry.section_id != section_id]
             revised_specs = [
