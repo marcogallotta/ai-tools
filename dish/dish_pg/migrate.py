@@ -348,6 +348,26 @@ def _require_database_revision(
         )
 
 
+def _plain_apply_eligible(script: ScriptDirectory, current_revision: str) -> bool:
+    # Head-first descending order, e.g. [ALEMBIC_HEAD, ..., staging, ..., base].
+    ordered = [revision.revision for revision in script.iterate_revisions(ALEMBIC_HEAD, "base")]
+    if current_revision not in ordered or _NATIVE_PLACEMENT_STAGING_REVISION not in ordered:
+        return False
+    return ordered.index(current_revision) <= ordered.index(_NATIVE_PLACEMENT_STAGING_REVISION)
+
+
+def _apply_final_revision(
+    cfg: Config, args: argparse.Namespace, phases: list[dict[str, Any]]
+) -> None:
+    command.upgrade(cfg, ALEMBIC_HEAD)
+    _require_database_revision(
+        args.database_url,
+        expected_database_name=args.expected_database_name,
+        expected_revision=ALEMBIC_HEAD,
+    )
+    phases.append({"phase": "final_revision", "result": "verified", "revision": ALEMBIC_HEAD})
+
+
 def _run_native_placement_sequence(
     args: argparse.Namespace,
     evidence: dict[str, Any],
@@ -391,15 +411,7 @@ def _run_native_placement_sequence(
     evidence["recorded_at"] = _now()
     journal.write(evidence)
 
-    command.upgrade(cfg, ALEMBIC_HEAD)
-    _require_database_revision(
-        args.database_url,
-        expected_database_name=args.expected_database_name,
-        expected_revision=ALEMBIC_HEAD,
-    )
-    phases.append(
-        {"phase": "final_revision", "result": "verified", "revision": ALEMBIC_HEAD}
-    )
+    _apply_final_revision(cfg, args, phases)
 
 
 def run(args: argparse.Namespace, journal: EvidenceJournal) -> tuple[dict[str, Any], int]:
@@ -449,16 +461,20 @@ def run(args: argparse.Namespace, journal: EvidenceJournal) -> tuple[dict[str, A
             journal.write(evidence)
             return evidence, 0
 
+        plain_apply = False
         if args.apply and not native_placement:
-            raise RoutineMigrationError(
-                "native_placement_sequence_required",
-                "this release requires the governed native-placement sequence before "
-                "the final schema revision",
-                next_action=(
-                    "Run the reviewed/authorized --apply-native-placement command for "
-                    "this exact release, then rerun --check before any service restart."
-                ),
-            )
+            if _plain_apply_eligible(script, before[0]):
+                plain_apply = True
+            else:
+                raise RoutineMigrationError(
+                    "native_placement_sequence_required",
+                    "this release requires the governed native-placement sequence before "
+                    "the final schema revision",
+                    next_action=(
+                        "Run the reviewed/authorized --apply-native-placement command for "
+                        "this exact release, then rerun --check before any service restart."
+                    ),
+                )
 
         evidence["mutation_attempted"] = True
         evidence["mutation_occurred"] = None
@@ -466,7 +482,10 @@ def run(args: argparse.Namespace, journal: EvidenceJournal) -> tuple[dict[str, A
         evidence["recorded_at"] = _now()
         journal.write(evidence)
         try:
-            _run_native_placement_sequence(args, evidence, journal, source_commit)
+            if plain_apply:
+                _apply_final_revision(_alembic_config(args.database_url), args, evidence["phases"])
+            else:
+                _run_native_placement_sequence(args, evidence, journal, source_commit)
         except BaseException as exc:
             final: tuple[str, ...] | None = None
             try:
