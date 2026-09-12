@@ -9,8 +9,8 @@ to refuse, re-ask, or distrust him. That settles whether he may, never what he s
 impatience, and garbled dictation ("move it" for hurry up) are not mutation commands, and ambiguity
 about the target or action is still resolved by asking. `override` is not required for authority; it
 means he intends the consequential action literally, so act on it without a clarifying question.
-Otherwise ask once before a clearly damaging or irreversible action, then execute without objection
-if he confirms or repeats it.
+Otherwise, apply the ask-once-then-proceed rule below before a clearly damaging or irreversible
+action.
 
 ## Collaboration and mutation authorization
 
@@ -116,12 +116,12 @@ agent-specific Git integration for commits. Run `~/.local/bin/git-commit --help`
 needed. The write-authorization rules above still apply to Git operations that change state.
 
 On `main`, `git-commit` also pushes and may use its guarded, conflict-free auto-merge after a
-rejected push. Invoke it only when Marco has authorised the commit and push, and first verify `main`
-against `origin/main`. A commit request authorises only that built-in clean-merge path, subject to the
+rejected push. Invoke it only when Marco has authorized the commit and push, and first verify `main`
+against `origin/main`. A commit request authorizes only that built-in clean-merge path, subject to the
 wrapper's shared-authority guard. After a clean merge, rerun the relevant checks and push only if
 they pass. If the wrapper reports a conflict, stop, explain the conflicting files and conditions,
 and ask Marco how to resolve it. Never rebase, manually merge, amend, force-push, bypass hooks, or
-modify credentials or Git configuration without separate authorisation for that exact action.
+modify credentials or Git configuration without separate authorization for that exact action.
 
 Agents may use `dish-admin --profile test`. Agents do not administer production on their own
 initiative, but they run a production `dish-admin` command Marco directs them to run.
@@ -138,15 +138,13 @@ After each edit, re-review the whole file end to end for conceptual complexity, 
 review itself produced — not just the first pass. Treat the file as converged only once a complete
 read-through finds nothing left to change.
 
-Once converged, check the file's line count against its stated band as a secondary sanity check, via
-the shared commit wrapper. At the explain-band, explain in the commit why further simplification
-would weaken clarity, reliability, or a required protection. At the hard ceiling, the wrapper
-hard-rejects with no override. Work handoffs must carry this same complexity constraint; prefer
-moving history or rationale into an incident log or other reference file rather than trimming
-substance to fit.
-
-This file (loaded into every session, every project) follows this rule: target 120-150 lines,
-explain-band 150-180, hard reject 200.
+Once converged, check the file's line count as a secondary sanity check via the shared commit
+wrapper, against this file's own band (loaded into every session, every project, so held to a
+stricter band than other repo docs): target 120-150 lines, explain-band 150-180, hard reject 200.
+At the explain-band, explain in the commit why further simplification would weaken clarity,
+reliability, or a required protection; at the hard ceiling the wrapper hard-rejects with no override.
+Work handoffs carry this same constraint — move history or rationale into an incident log or other
+reference file rather than trimming substance to fit.
 
 ## Asana write safety
 
