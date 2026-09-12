@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,26 @@ from dish_service.config import ServiceConfig
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_service_entrypoint_import_does_not_eagerly_load_legacy_application():
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import dish_service.__main__; "
+                "assert 'dish_service.application' not in sys.modules; "
+                "assert 'dish_tool.admin' not in sys.modules; "
+                "assert 'dish_tool.backend' not in sys.modules"
+            ),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr
 
 
 @pytest.mark.smoke
