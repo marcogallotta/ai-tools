@@ -39,6 +39,8 @@
                 "sections",
                 "section-tasks",
                 "search",
+                "query",
+                "cooked-updates",
                 "cook-logs",
                 "record-cook-log",
                 "read",
@@ -67,6 +69,8 @@
               "sections",
               "section-tasks",
               "search",
+              "query",
+              "cooked-updates",
               "cook-logs",
               "record-cook-log",
               "read",
@@ -630,6 +634,106 @@
         "x-openai-isConsequential": true
       }
     },
+    "/v1/action/cooked-updates": {
+      "post": {
+        "description": "Read-only current cooked-history discovery over a generation-fenced fixed window. Use the returned generation_id and through as the next successful-pass watermark; request_id is not accepted.",
+        "operationId": "dish_postgresql_cooked_updates",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "cursor": {
+                        "description": "Opaque next_cursor from the same fixed cooked-updates window.",
+                        "type": "string"
+                      },
+                      "generation_id": {
+                        "description": "Prior successful cooked-updates watermark generation. Omit only for bootstrap.",
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "page_size": {
+                        "default": 50,
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "since": {
+                        "description": "Inclusive lower bound for the incremental cooked-update window.",
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "since",
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish cooked-updates",
+        "x-openai-isConsequential": false
+      }
+    },
     "/v1/action/create": {
       "post": {
         "description": "Replay-bound authoritative mutation; exact request identity is durable.",
@@ -1022,6 +1126,106 @@
           }
         ],
         "summary": "Run PostgreSQL-backed dish proposals",
+        "x-openai-isConsequential": false
+      }
+    },
+    "/v1/action/query": {
+      "post": {
+        "description": "Consistent authoritative query; request_id is not accepted.",
+        "operationId": "dish_postgresql_query",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "cursor": {
+                        "description": "Opaque next_cursor from the same fixed cooked-updates window.",
+                        "type": "string"
+                      },
+                      "generation_id": {
+                        "description": "Prior successful cooked-updates watermark generation. Omit only for bootstrap.",
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "page_size": {
+                        "default": 50,
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "since": {
+                        "description": "Inclusive lower bound for the incremental cooked-update window.",
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "since",
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish query",
         "x-openai-isConsequential": false
       }
     },
@@ -1915,6 +2119,13 @@
                         "maxLength": 36,
                         "minLength": 36,
                         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "status": {
+                        "enum": [
+                          "incomplete",
+                          "cooked"
+                        ],
                         "type": "string"
                       }
                     },

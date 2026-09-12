@@ -3,34 +3,38 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
-from dataclasses import dataclass
 import json
 import logging
 import os
+import subprocess
+import threading
+from copy import deepcopy
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
-from fastmcp import FastMCP
-from fastmcp.server.auth.providers.github import GitHubProvider
-from fastmcp.tools import Tool as FastMCPTool
-from fastmcp.tools.base import ToolResult
-from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.auth.provider import AccessToken
-from mcp.types import TextContent, Tool, ToolAnnotations
-from pydantic import PrivateAttr
 import uvicorn
-
 from dish_pg.connected_command_spec import (
     CONNECTED_COMMAND_SPECS,
     TOOL_COMMANDS,
     definition_for,
     result_envelope_schema,
 )
+from fastmcp import FastMCP
+from fastmcp.server.auth.providers.github import GitHubProvider
+from fastmcp.tools import FunctionTool
+from fastmcp.tools import Tool as FastMCPTool
+from fastmcp.tools.base import ToolResult
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.provider import AccessToken
+from mcp.types import TextContent, Tool, ToolAnnotations
+from pydantic import PrivateAttr
+
 from dish_service.client import DishActionClient
 
 SERVER_NAME = "dish-postgresql-mcp"
-SERVER_VERSION = "3"
+SERVER_VERSION = "4"
 ACTION_URL_ENV = "DISH_MCP_ACTION_URL"
 ACTION_TOKEN_ENV = "DISH_MCP_ACTION_TOKEN"
 BACKEND_ENV = "DISH_MCP_BACKEND"
@@ -42,6 +46,10 @@ BIND_HOST_ENV = "DISH_MCP_BIND_HOST"
 BIND_PORT_ENV = "DISH_MCP_BIND_PORT"
 DEFAULT_BIND_HOST = "127.0.0.1"
 DEFAULT_BIND_PORT = 8765
+HONEST_CHECKOUT = Path("/home/marco/honest-pantry")
+HONEST_MAX_FILES = 16
+HONEST_MAX_BYTES = 512 * 1024
+HONEST_LOCK = threading.Lock()
 LOG = logging.getLogger("dish.mcp")
 SERVER_INSTRUCTIONS = (
     "Dish PostgreSQL workflow authority is behind these tools. Keep one stable client.run_id "
@@ -52,8 +60,75 @@ SERVER_INSTRUCTIONS = (
     "continuation fields, and any human_action. Never invent or reconstruct Dish, operation, cycle, "
     "lease, proposal, recovery, or review identifiers. Independent Verification uses a genuinely "
     "different run from the run that authored or materially edited the candidate. An ok:false Dish "
-    "envelope is an authoritative normal tool result, not an MCP transport failure."
+    "envelope is an authoritative normal tool result, not an MCP transport failure. "
+    "Use dish_honest_read to read current Honest Pantry files; it updates main first and serves "
+    "nothing if that update fails."
 )
+
+
+def _honest_git(checkout: Path, *args: str, timeout: int = 10) -> bytes:
+    try:
+        result = subprocess.run(
+            ["/usr/bin/git", *args], cwd=checkout, capture_output=True,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}, timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("Honest Pantry update failed; no files were served") from exc
+    if result.returncode:
+        raise RuntimeError("Honest Pantry update failed; no files were served")
+    return result.stdout
+
+
+def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
+    if not paths or len(paths) > HONEST_MAX_FILES or len(set(paths)) != len(paths):
+        raise ValueError(f"paths must contain 1-{HONEST_MAX_FILES} unique entries")
+    for path in paths:
+        parts = PurePosixPath(path)
+        if (not path or parts.is_absolute() or "." in parts.parts or ".." in parts.parts
+                or any(ord(char) < 32 for char in path)):
+            raise ValueError(f"invalid repository path: {path!r}")
+
+    with HONEST_LOCK:
+        if _honest_git(checkout, "branch", "--show-current").decode().strip() != "main":
+            raise RuntimeError("Honest Pantry checkout is not on main; no files were served")
+        _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
+        sha = _honest_git(checkout, "rev-parse", "HEAD").decode().strip()
+        if sha != _honest_git(checkout, "rev-parse", "FETCH_HEAD").decode().strip():
+            raise RuntimeError("Honest Pantry checkout does not match origin/main; no files were served")
+        files: list[dict[str, str]] = []
+        total = 0
+        for path in paths:
+            entry = _honest_git(checkout, "ls-tree", "-z", sha, "--", path)
+            prefix, separator, listed_path = entry.partition(b"\t")
+            if not separator or listed_path.rstrip(b"\0").decode() != path:
+                raise ValueError(f"tracked file not found: {path}")
+            mode, kind, _object = prefix.decode().split()
+            if kind != "blob" or mode not in {"100644", "100755"}:
+                raise ValueError(f"not a regular tracked file: {path}")
+            content = _honest_git(checkout, "show", f"{sha}:{path}")
+            total += len(content)
+            if total > HONEST_MAX_BYTES:
+                raise ValueError(f"requested files exceed {HONEST_MAX_BYTES} bytes")
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"file is not UTF-8 text: {path}") from exc
+            files.append({"path": path, "text": text})
+        return {"repository": "marcogallotta/honest-pantry", "sha": sha, "files": files}
+
+
+def build_honest_tool(checkout: Path = HONEST_CHECKOUT) -> FunctionTool:
+    def dish_honest_read(paths: list[str]) -> dict[str, Any]:
+        """Pull Honest Pantry main, then return the requested current repository files."""
+        return read_honest_files(checkout, paths)
+
+    return FunctionTool.from_function(
+        dish_honest_read,
+        annotations=ToolAnnotations(
+            readOnlyHint=True, idempotentHint=True, destructiveHint=False, openWorldHint=False,
+        ),
+    )
 
 
 def _resolve_local_refs(value: Any, schemas: Mapping[str, Any]) -> Any:
@@ -363,7 +438,7 @@ def create_app(adapter: Any, config: MCPAuthConfig):
         version=SERVER_VERSION,
         instructions=SERVER_INSTRUCTIONS,
         auth=auth,
-        tools=[DishTool(tool, adapter) for tool in TOOLS],
+        tools=[*[DishTool(tool, adapter) for tool in TOOLS], build_honest_tool()],
     )
     return server.http_app(
         path="/mcp",

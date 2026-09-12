@@ -224,7 +224,9 @@ def test_checked_in_contract_documents_current_access_and_deployment():
     rehearsal = (ROOT / "deploy" / "live-test-project-rehearsal.md").read_text()
 
     assert "one laptop-hosted `dish-service` process" in runtime
-    assert "Planning's read-only lookup" in runtime
+    # 394e02a42 (#398) removed the Planning generic-Asana exception outright;
+    # assert the current no-exception rule rather than the retired one.
+    assert "no generic-Asana exception" in runtime
     assert "There is intentionally no general-purpose `unblock`" in runtime
     for mutation in (
         "`create`", "`start`", "`prepare`", "`approve`", "`reject`", "`submit`",

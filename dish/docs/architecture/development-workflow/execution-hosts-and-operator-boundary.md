@@ -10,9 +10,18 @@ This document records architectural host and human-attention boundaries. It does
 
 ## Current architecture
 
-Semantic role and execution host are separate. ChatGPT uses connected GitHub/Asana capabilities and repository-owned remote publication paths. It may use `api_tool` to select the installed GitHub Connector, but must never select the separate GitHub MCP app; authorization follows the selected integration identity, not the transport namespace. Claude Code and Codex use a live checkout plus native Git and the repository-owned worktree lifecycle. Worker is an execution mode whose authority comes from the routed standing role, not from its name. Final V1-A Integration landing remains local-only.
+Semantic role and execution host are separate. ChatGPT uses the active Project's mutually exclusive
+transport-family profile and repository-owned remote publication paths. Recurring repository-role
+Projects select the installed GitHub Connector and never an MCP app; General Dish and Cooking select
+the installed GitHub MCP app and Dish MCP app and never a Connector. Authorization follows the
+selected integration identity, not a generic tool namespace. Claude Code and Codex use a live
+checkout plus native Git and the repository-owned worktree lifecycle. Worker is an execution mode
+whose authority comes from the routed standing role, not from its name. Final V1-A Integration
+landing remains local-only.
 
 Remote/hosted Implementation is the normal semantic authoring path. Local authoring requires proof of an unavailable remote source/publication capability and bounded exhausted fallbacks. Native tests remain `TESTS ONLY`; sudo, systemd, devices, and installed runtime access remain `LOCAL SYSTEM ACCESS`. Elapsed time and convenience do not change those classes.
+
+Local Claude/Codex hosts may enforce bounded investigation through their existing `PreToolUse` hook boundary plus session/task-local guard state. That guard state is a resource/recovery backstop only, never workflow or assignment authority. Hard-closed claims require a mechanically qualified cap and proven interception for the exact tool surface; uncovered or unqualified surfaces remain degraded. ChatGPT Project/manual operation has no repository-controlled deterministic interceptor for this invariant and remains soft/degraded rather than being presented as equivalent hard enforcement.
 
 Marco owns outcomes, priorities, consequential design/risk, and explicit exceptional authority. Agents own routine mechanics. Durable PR/Asana surfaces carry full agent-to-agent context; Marco-facing communication carries only the outcome, decision/action, material risk, and next owner needed at operator altitude.
 

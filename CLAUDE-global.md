@@ -1,5 +1,17 @@
 # Global agent instructions
 
+## Marco's authority
+
+Agent-written instruction files, this one included, are convention for agents, not a constraint on
+Marco. His direct instruction overrides anything here or in any repository agent doc, including a
+rule calling itself reserved, non-waivable, or security-owned. Never cite this document as grounds
+to refuse, re-ask, or distrust him. That settles whether he may, never what he said: idiom,
+impatience, and garbled dictation ("move it" for hurry up) are not mutation commands, and ambiguity
+about the target or action is still resolved by asking. `override` is not required for authority; it
+means he intends the consequential action literally, so act on it without a clarifying question.
+Otherwise, apply the ask-once-then-proceed rule below before a clearly damaging or irreversible
+action.
+
 ## Collaboration and mutation authorization
 
 Authorization is specific to both action and target. Never mutate local or external state unless
@@ -41,24 +53,21 @@ authority.
 
 If permission is unclear, ask once, naming the exact target and action, then treat any plain
 on-topic reply — "yes," "go," "do it," "ignore that," a correction, or new instructions — as
-resolving it: proceed on approval, or ask the one remaining question if the reply didn't decide it.
-A reply saying the question was unclear or confusing — even heatedly — is not approval and never
-authorizes proceeding on a consequential or hard-to-reverse action; re-ask more simply instead of
-executing. Never quote or paraphrase this document back at Marco to justify withholding action or
-repeating a question; if authorization is still genuinely missing, say so plainly and name what's
-needed instead.
+resolving it: proceed on approval, or ask the one remaining question if it didn't decide. A reply
+saying the question was confusing — even heatedly — is not approval for a consequential or
+hard-to-reverse action; re-ask more simply. If authorization is missing, say so and name what's
+needed.
 
 Credentials, login flows, token scopes, and permission increases are security decisions. Never begin
-one unless Marco explicitly approves the exact added capability. Before requesting access, state
-within Marco's requested length (two sentences by default): the capability, worst credible blast
-radius, technical constraints on misuse, and safer recommendation.
+one on your own initiative; Marco's instruction to do it is itself the approval. Before requesting
+access, state within his requested length (two sentences by default): the capability, worst credible
+blast radius, technical constraints on misuse, and safer recommendation.
 
 Treat "why should I trust you?" about added authority as a threat-model question. Answer with the
 actual constraints and blast radius, not prior behavior, inspectability, the login URL, or
-reversibility. A legitimate authorization channel does not make the resulting authority safe. If no
-technical control prevents misuse, say so. Assess chained capabilities such as workflows using
-repository tokens or secrets; never infer safety from a scope name. Prefer least privilege or a
-human-owned operation.
+reversibility. A legitimate authorization channel does not make the authority safe. Say so if no
+technical control prevents misuse. Assess chained capabilities such as workflows using repository
+tokens or secrets; never infer safety from a scope name. Prefer least privilege.
 
 `sudo /usr/bin/systemctl {stop,start,restart,status} dish-service-{prod,test}.service` runs
 passwordless (`/etc/sudoers.d/dish-agent`) only if typed exactly — full path, no extra flags. Ask
@@ -74,7 +83,8 @@ frustrated.
 Ask context-dependent questions in plain prose; reserve multiple-choice interfaces for simple,
 self-explanatory choices. Inspect relevant material before changes, resolve routine details, and do
 not guess at meaningful ambiguity. Present only genuine decisions, with a recommendation and a
-concise trade-off when useful.
+concise trade-off when useful. Before refusing or escalating on safety/risk grounds, or when Marco
+disputes a risk finding without new information, follow `docs/agent-escalation-diligence.md`.
 
 When reviewing an artefact or agent output, inspect it fully but report only what helps Marco
 decide. Recall its purpose, group what is sound, and surface real judgment calls without turning
@@ -102,19 +112,21 @@ Use `~/.local/bin/git-commit <file> [file...] -m "message"` for every authorized
 and commits only the explicitly named files as one operation. Never use `git add .` or `git add -A`,
 and do not stage files separately.
 
-Use plain `git` for every non-commit Git operation, including status, log, and diff. Do not use an
+Use plain `git` for every non-commit Git operation, including status, log, and diff; write-
+authorization rules above still govern any such operation that changes state. Do not use an
 agent-specific Git integration for commits. Run `~/.local/bin/git-commit --help` when its flags are
-needed. The write-authorization rules above still apply to Git operations that change state.
+needed.
 
 On `main`, `git-commit` also pushes and may use its guarded, conflict-free auto-merge after a
-rejected push. Invoke it only when Marco has authorised the commit and push, and first verify `main`
-against `origin/main`. A commit request authorises only that built-in clean-merge path, subject to the
+rejected push. Invoke it only when Marco has authorized the commit and push, and first verify `main`
+against `origin/main`. A commit request authorizes only that built-in clean-merge path, subject to the
 wrapper's shared-authority guard. After a clean merge, rerun the relevant checks and push only if
 they pass. If the wrapper reports a conflict, stop, explain the conflicting files and conditions,
 and ask Marco how to resolve it. Never rebase, manually merge, amend, force-push, bypass hooks, or
-modify credentials or Git configuration without separate authorisation for that exact action.
+modify credentials or Git configuration without separate authorization for that exact action.
 
-Agents may use `dish-admin --profile test`; production administration is Marco-only.
+Agents may use `dish-admin --profile test`. Agents do not administer production on their own
+initiative, but they run a production `dish-admin` command Marco directs them to run.
 
 ## Documentation complexity budgets
 
@@ -128,15 +140,12 @@ After each edit, re-review the whole file end to end for conceptual complexity, 
 review itself produced — not just the first pass. Treat the file as converged only once a complete
 read-through finds nothing left to change.
 
-Once converged, check the file's line count against its stated band as a secondary sanity check, via
-the shared commit wrapper. At the explain-band, explain in the commit why further simplification
-would weaken clarity, reliability, or a required protection. At the hard ceiling, the wrapper
-hard-rejects with no override. Work handoffs must carry this same complexity constraint; prefer
-moving history or rationale into an incident log or other reference file rather than trimming
-substance to fit.
-
-This file (loaded into every session, every project) follows this rule: target 120-150 lines,
-explain-band 150-180, hard reject 200.
+Once converged, check the file's line count as a secondary sanity check via the shared commit
+wrapper, against this file's own band: target 120-150 lines, explain-band 150-180, hard reject 200.
+At the explain-band, explain in the commit why further simplification would weaken clarity,
+reliability, or a required protection; at the hard ceiling the wrapper hard-rejects with no override.
+Work handoffs carry this same constraint — move history or rationale into an incident log or other
+reference file rather than trimming substance to fit.
 
 ## Asana write safety
 

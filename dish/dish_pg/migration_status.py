@@ -22,7 +22,7 @@ from sqlalchemy import create_engine
 
 from dish_tool.startup_exit import NON_RETRYABLE_STARTUP_EXIT_STATUS
 
-from .release import ALEMBIC_HEAD
+from .schema_identity import ALEMBIC_HEAD
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,7 +40,7 @@ def check_migration_head(database_url: str) -> str:
     script_heads = set(script.get_heads())
     if script_heads != {ALEMBIC_HEAD}:
         raise MigrationStatusError(
-            f"dish_pg.release.ALEMBIC_HEAD ({ALEMBIC_HEAD!r}) does not match the migration "
+            f"dish_pg.schema_identity.ALEMBIC_HEAD ({ALEMBIC_HEAD!r}) does not match the migration "
             f"script directory's own head(s) ({sorted(script_heads)!r}); fix ALEMBIC_HEAD "
             "before trusting this check"
         )

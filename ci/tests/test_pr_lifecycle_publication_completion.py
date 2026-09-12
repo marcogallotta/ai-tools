@@ -175,7 +175,10 @@ def test_temporary_containment_contract_forbids_broken_bundle_card_and_requires_
     implementation = (repo_root / "dish/docs/agents/implementation.md").read_text(encoding="utf-8")
     local_handoff = (repo_root / "tools/agent-worktree-handoff.md").read_text(encoding="utf-8")
     for text in (implementation, local_handoff):
-        assert "GitHub connector" in text
+        # `implementation.md` moved to Connector-family terminology in 6c18bbb1e
+        # ("Split ChatGPT Connector and MCP routing"); the handoff still spells it
+        # "GitHub connector". Both must still reference the connector route.
+        assert "connector" in text.lower()
         assert "artifact-card" in text
         assert "sandbox-link/card" in text
         assert "reported as non-working" in text

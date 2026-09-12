@@ -1594,7 +1594,14 @@ def _step_apply_semantic_proposal(
 
 # Step 9 movement-only submit.
 
-def _step9_submit(self, *, trace: CommandTrace, submission_id: str) -> dict[str, Any]:
+def _step9_submit(
+    self, *, trace: CommandTrace, submission_id: str, agent: str | None = None
+) -> dict[str, Any]:
+    # `agent` is accepted and ignored here. The Action surface requires it on submit so
+    # the PostgreSQL runtime can bootstrap a service run identity; this legacy backend
+    # has no such gate, but `reject_undeclared_arguments` would otherwise refuse the
+    # same validated argument set that the Action surface now mandates.
+    del agent
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     route_release = self._load_release(None)
     routed = self.operation_service.route(operation_id, command="submit", protocol_version=route_release.protocol_version)

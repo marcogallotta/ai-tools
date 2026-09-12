@@ -15,7 +15,7 @@ from dish_pg.command_port import CommandCall, CommandPortError, PostgresCommandP
 from dish_pg.connected_command_spec import TOOL_COMMANDS, definition_for
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
-from dish_pg.release import ALEMBIC_HEAD
+from dish_pg.schema_identity import ALEMBIC_HEAD
 from dish_pg.workflow import RequestIdentityConflict, WorkflowAuthorityError
 from dish_service.action_guidance import attach_connected_agent_guidance
 from dish_service.config import ServiceConfig
@@ -160,17 +160,21 @@ class NativeMCPAdapter:
     def content_text(payload: Mapping[str, Any]) -> str:
         return _minimal_content(payload)
 
+    def _require_caller(self, caller: Mapping[str, str | None] | None) -> None:
+        """Refuse an unauthenticated or mismatched caller before any other work."""
+        subject = None if caller is None else caller.get("subject")
+        if subject != self.owner_id:
+            raise NativeMCPRuntimeError(
+                "authenticated MCP caller identity is missing or does not match the configured owner"
+            )
+
     def _principal(
         self,
         run_id: str,
         *,
         caller: Mapping[str, str | None] | None,
     ) -> ServicePrincipal:
-        subject = None if caller is None else caller.get("subject")
-        if subject != self.owner_id:
-            raise NativeMCPRuntimeError(
-                "authenticated MCP caller identity is missing or does not match the configured owner"
-            )
+        self._require_caller(caller)
         return ServicePrincipal(owner_id=self.owner_id, run_id=run_id)
 
     def _record_validation_failure(
@@ -218,6 +222,11 @@ class NativeMCPAdapter:
         command = TOOL_COMMANDS.get(tool_name)
         if command is None:
             raise NativeMCPRuntimeError(f"unknown Dish MCP tool: {tool_name}")
+        # Caller identity is checked before argument validation. Otherwise an
+        # unauthenticated caller supplying invalid arguments receives validation
+        # feedback instead of being refused, because the read path returns a
+        # validation envelope without ever reaching `_principal`.
+        self._require_caller(caller)
         spec = definition_for(command)
         try:
             client, arguments = spec.validate(request)

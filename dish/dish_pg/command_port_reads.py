@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import asdict, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
-from sqlalchemy import select
+from sqlalchemy import and_, case, func, or_, select
 
 from . import models
 from . import stage3_models as wf
@@ -20,7 +20,7 @@ from .command_port_common import (
     json_safe as _json_safe,
     task_reference_from_dish as _task_reference_from_dish,
 )
-from .legacy_history_import import unresolved_legacy_attention
+from .legacy_attention import unresolved_legacy_attention
 from .document_authority import (
     CanonicalDocumentError,
     parse_canonical_document,
@@ -70,6 +70,7 @@ class PostgresCommandReadMixin:
                 section_reference=str(reference),
                 cursor=call.arguments.get("cursor"),
                 page_size=int(call.arguments.get("page_size", 50)),
+                status=str(call.arguments.get("status", "incomplete")),
             )
             data = {
                 "tasks": [
@@ -85,6 +86,8 @@ class PostgresCommandReadMixin:
                 "next_cursor": page.next_cursor,
                 **page.read_authority,
             }
+        elif call.command_name == "cooked-updates":
+            data = self._cooked_updates(call)
         elif call.command_name == "proposals":
             data = self._proposals()
         elif call.command_name == "queue":
@@ -595,6 +598,251 @@ class PostgresCommandReadMixin:
             return "pending", False
         grants = self._available_semantic_proposal_grants(requirement, required)
         return ("approved", True) if grants else ("pending", False)
+
+    @staticmethod
+    def _cooked_updates_datetime(value: object, *, field: str) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError) as exc:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                f"{field} must be an ISO-8601 timestamp",
+                http_status=400,
+                data={"field": field},
+            ) from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                f"{field} must include a timezone offset",
+                http_status=400,
+                data={"field": field},
+            )
+        return parsed.astimezone(timezone.utc)
+
+    @staticmethod
+    def _cooked_updates_iso(value: datetime) -> str:
+        if value.tzinfo is None or value.utcoffset() is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+
+    def _active_cooked_updates_generation(
+        self, *, exclusive: bool
+    ) -> models.AuthorityGeneration:
+        statement = select(models.AuthorityGeneration).where(
+            models.AuthorityGeneration.status == "active"
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            # First pages take the exclusive generation-liveness fence; continuation pages
+            # retain a shared fence so rollover cannot retire the bound generation mid-page.
+            statement = statement.with_for_update() if exclusive else statement.with_for_update(read=True)
+        generation = self.session.scalar(statement.execution_options(populate_existing=True))
+        if generation is None:
+            raise CommandRuleError(
+                "GENERATION_CHANGED" if not exclusive else "AUTHORITY_UNAVAILABLE",
+                "cooked-updates requires one active authority generation",
+                http_status=409 if not exclusive else 503,
+                data={"active_generation_id": None},
+            )
+        return generation
+
+    def _cooked_updates(self, call: CommandCall) -> Mapping[str, Any]:
+        since = self._cooked_updates_datetime(call.arguments.get("since"), field="since")
+        since_iso = self._cooked_updates_iso(since)
+        page_size = int(call.arguments.get("page_size", 50))
+        if page_size < 1 or page_size > 100:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT", "page_size must be an integer from 1 to 100", http_status=400
+            )
+        requested_generation = call.arguments.get("generation_id")
+        try:
+            requested_generation_id = (
+                None if requested_generation is None else uuid.UUID(str(requested_generation))
+            )
+        except ValueError as exc:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT", "generation_id must be a UUID", http_status=400
+            ) from exc
+
+        cursor = call.arguments.get("cursor")
+        after_time: datetime | None = None
+        after_dish_id: uuid.UUID | None = None
+        if cursor is None:
+            # This lock must precede the authoritative watermark timestamp. Normal retained
+            # mutations take the conflicting shared generation fence before minting their
+            # CommandCall.now and hold it through commit, closing the late-commit gap.
+            generation = self._active_cooked_updates_generation(exclusive=True)
+            if (
+                requested_generation_id is not None
+                and requested_generation_id != generation.generation_id
+            ):
+                raise CommandRuleError(
+                    "GENERATION_CHANGED",
+                    "cooked-updates watermark belongs to a different active generation",
+                    http_status=409,
+                    data={
+                        "expected_generation_id": str(requested_generation_id),
+                        "active_generation_id": str(generation.generation_id),
+                    },
+                )
+            through = datetime.now(timezone.utc)
+            if since > through:
+                raise CommandRuleError(
+                    "INVALID_ARGUMENT",
+                    "since is later than the authoritative cooked-updates watermark",
+                    http_status=400,
+                    data={"field": "since", "through": self._cooked_updates_iso(through)},
+                )
+        else:
+            try:
+                payload = self.reads.cursor_codec.decode(str(cursor))
+                if payload.get("kind") != "cooked_updates_v1":
+                    raise ValueError("cursor kind mismatch")
+                if payload.get("since") != since_iso or int(payload.get("page_size")) != page_size:
+                    raise ValueError("cursor window mismatch")
+                cursor_generation_id = uuid.UUID(str(payload["generation_id"]))
+                through = self._cooked_updates_datetime(payload["through"], field="through")
+                after_time = self._cooked_updates_datetime(
+                    payload["after_update_at"], field="after_update_at"
+                )
+                after_dish_id = uuid.UUID(str(payload["after_dish_id"]))
+            except (KeyError, TypeError, ValueError, ReadModelError, CommandRuleError) as exc:
+                raise CommandRuleError(
+                    "INVALID_CURSOR", "cooked-updates cursor is invalid", http_status=400
+                ) from exc
+            if (
+                requested_generation_id is not None
+                and requested_generation_id != cursor_generation_id
+            ):
+                raise CommandRuleError(
+                    "INVALID_CURSOR",
+                    "cooked-updates cursor and generation_id identify different windows",
+                    http_status=400,
+                )
+            generation = self._active_cooked_updates_generation(exclusive=False)
+            if generation.generation_id != cursor_generation_id:
+                raise CommandRuleError(
+                    "GENERATION_CHANGED",
+                    "cooked-updates continuation generation is no longer active",
+                    http_status=409,
+                    data={
+                        "expected_generation_id": str(cursor_generation_id),
+                        "active_generation_id": str(generation.generation_id),
+                    },
+                )
+
+        generation_id = generation.generation_id
+        log_window = (
+            select(
+                wf.CookLogEntry.task_id.label("task_id"),
+                func.max(wf.CookLogEntry.recorded_at).label("latest_log_at"),
+            )
+            .where(
+                wf.CookLogEntry.generation_id == generation_id,
+                wf.CookLogEntry.recorded_at >= since,
+                wf.CookLogEntry.recorded_at < through,
+            )
+            .group_by(wf.CookLogEntry.task_id)
+            .subquery()
+        )
+        cooked_in_window = case(
+            (
+                and_(
+                    models.DishMutationReceipt.occurred_at >= since,
+                    models.DishMutationReceipt.occurred_at < through,
+                ),
+                models.DishMutationReceipt.occurred_at,
+            ),
+            else_=None,
+        )
+        latest_log = log_window.c.latest_log_at
+        latest_qualifying_update = case(
+            (cooked_in_window.is_(None), latest_log),
+            (latest_log.is_(None), cooked_in_window),
+            (cooked_in_window >= latest_log, cooked_in_window),
+            else_=latest_log,
+        ).label("latest_qualifying_update_at")
+
+        statement = (
+            select(
+                models.DishState.task_id,
+                models.ContentVersion.title,
+                models.DishMutationReceipt.occurred_at.label("current_cooked_at"),
+                latest_qualifying_update,
+            )
+            .join(
+                models.ContentVersion,
+                and_(
+                    models.ContentVersion.generation_id == models.DishState.generation_id,
+                    models.ContentVersion.task_id == models.DishState.task_id,
+                    models.ContentVersion.content_version_id
+                    == models.DishState.current_content_version_id,
+                ),
+            )
+            .join(
+                models.DishMutationReceipt,
+                and_(
+                    models.DishMutationReceipt.generation_id == models.DishState.generation_id,
+                    models.DishMutationReceipt.task_id == models.DishState.task_id,
+                    models.DishMutationReceipt.dish_version == models.DishState.completion_version,
+                ),
+            )
+            .outerjoin(log_window, log_window.c.task_id == models.DishState.task_id)
+            .where(
+                models.DishState.generation_id == generation_id,
+                models.DishState.completed.is_(True),
+                models.DishState.completion_reason == "cooked",
+                latest_qualifying_update.is_not(None),
+            )
+        )
+        if after_time is not None and after_dish_id is not None:
+            statement = statement.where(
+                or_(
+                    latest_qualifying_update > after_time,
+                    and_(
+                        latest_qualifying_update == after_time,
+                        models.DishState.task_id > after_dish_id,
+                    ),
+                )
+            )
+        rows = list(
+            self.session.execute(
+                statement.order_by(latest_qualifying_update, models.DishState.task_id).limit(
+                    page_size + 1
+                )
+            )
+        )
+        visible = rows[:page_size]
+        next_cursor = None
+        if len(rows) > page_size:
+            last = visible[-1]
+            next_cursor = self.reads.cursor_codec.encode(
+                {
+                    "kind": "cooked_updates_v1",
+                    "generation_id": str(generation_id),
+                    "since": since_iso,
+                    "through": self._cooked_updates_iso(through),
+                    "page_size": page_size,
+                    "after_update_at": self._cooked_updates_iso(last.latest_qualifying_update_at),
+                    "after_dish_id": str(last.task_id),
+                }
+            )
+        return {
+            "generation_id": str(generation_id),
+            "since": since_iso,
+            "through": self._cooked_updates_iso(through),
+            "updates": [
+                {
+                    "dish_id": str(row.task_id),
+                    "title": row.title,
+                    "current_cooked_at": self._cooked_updates_iso(row.current_cooked_at),
+                    "latest_qualifying_update_at": self._cooked_updates_iso(
+                        row.latest_qualifying_update_at
+                    ),
+                }
+                for row in visible
+            ],
+            "next_cursor": next_cursor,
+        }
 
     def _proposals(self) -> Mapping[str, Any]:
         generation_id = self.reads.active_generation().generation_id

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import copy
 import uuid
+from pathlib import Path
 from datetime import timedelta
 
 import pytest
@@ -9,6 +11,7 @@ from sqlalchemy import func, select
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
+from dish_pg import legacy_attention
 from dish_pg import legacy_history_import as legacy
 from dish_pg.database import session_scope
 from dish_pg.frontend_admin_query import FrontendAdminQuery
@@ -108,6 +111,26 @@ def _protected_state(session) -> dict[str, tuple[tuple[object, ...], ...]]:
     return result
 
 
+def test_current_legacy_attention_reader_does_not_import_source_capture_stack() -> None:
+    path = Path(legacy_attention.__file__)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    imported_modules = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+    imported_modules.update(
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    )
+
+    assert "dish_tool.admin" not in imported_modules
+    assert "legacy_history_import" not in imported_modules
+    assert legacy.ATTENTION_EVENT == legacy_attention.ATTENTION_EVENT
+
+
 def test_capture_legacy_source_is_read_only_and_uses_current_schema(tmp_path) -> None:
     path = tmp_path / "legacy.sqlite3"
     connection = initialize_database(path)
@@ -179,7 +202,7 @@ def test_queue_frontend_and_resolution_use_only_imported_audit_attention(workflo
         legacy.apply_legacy_source(session, source=source, snapshot_sha=source_sha, now=NOW)
 
     with session_scope(factory) as session:
-        pending = legacy.unresolved_legacy_attention(session, context["generation_id"])
+        pending = legacy_attention.unresolved_legacy_attention(session, context["generation_id"])
         assert {(row["task_gid"], row["source_operation_id"]) for row in pending} == {(gid, op) for gid, op, _ in PENDING}
         assert all("operation_id" not in row for row in pending)
         assert all("resolve-legacy-attention" in row["signals"][0]["shell_command"] for row in pending)
@@ -218,11 +241,15 @@ def test_queue_frontend_and_resolution_use_only_imported_audit_attention(workflo
         ))
         assert resolved.ok
         assert resolved.data["next_step"].startswith("Start a fresh native PostgreSQL operation")
-        remaining = legacy.unresolved_legacy_attention(session, context["generation_id"])
+        remaining = legacy_attention.unresolved_legacy_attention(session, context["generation_id"])
         assert len(remaining) == 2
         assert target["attention_id"] not in {row["attention_id"] for row in remaining}
         imported_event = session.get(wf.GovernedAuditEvent, uuid.UUID(target["attention_id"]))
         assert imported_event is not None
-        resolution = session.scalar(select(wf.GovernedAuditEvent).where(wf.GovernedAuditEvent.event_type == legacy.RESOLUTION_EVENT))
+        resolution = session.scalar(select(wf.GovernedAuditEvent).where(wf.GovernedAuditEvent.event_type == legacy_attention.RESOLUTION_EVENT))
         assert resolution is not None and resolution.operation_id is None
-        assert resolution.payload["attention_id"] == target["attention_id"]
+        assert resolution.payload == {
+            "attention_id": target["attention_id"],
+            "source_snapshot_sha256": imported_event.payload["source_snapshot_sha256"],
+            "resolution": "Legacy case acknowledged; do not resurrect its workflow.",
+        }

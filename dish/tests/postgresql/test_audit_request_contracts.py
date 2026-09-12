@@ -380,6 +380,8 @@ def test_postgresql_command_inventory_matches_independent_stage_a_baseline() -> 
     # Stage A evidence artifact.
     assert expected | {
         "search",
+        "query",
+        "cooked-updates",
         "revise-section-registry",
         "hold-reject",
         "proposals",

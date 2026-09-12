@@ -22,7 +22,14 @@ from .common import (
     require_full_sha,
     require_task_gid,
 )
-from .operations import owner_agent_id, remote_ref_sha, resolve_repository_from_state, validate_branch, verify_owned_worktree
+from .operations import (
+    ensure_commit_object,
+    owner_agent_id,
+    remote_ref_sha,
+    resolve_repository_from_state,
+    validate_branch,
+    verify_owned_worktree,
+)
 from .lineage import (
     LINEAGE_ENV, acquire_pr_registry_claim, assert_active_registry_claim, branch_digest, claim_registry_ownership, fence_lineage,
     read_registry, release_pr_registry_claim, release_registry_claim, reserve_or_recover_lineage, resolve_lineage_for_branch,
@@ -377,6 +384,177 @@ def _closed_same_lineage_block_replacement(
     )
 
 
+def _post_refresh_block_replacement(
+    *,
+    runner: GitRunner,
+    repo,
+    task_gid: str,
+    branch: str,
+    lineage_id: str,
+    assignment: dict[str, Any],
+    admitted_authority: dict[str, Any],
+    previous: dict[str, Any] | None,
+    state: dict[str, Any] | None,
+    block_authority: dict[str, Any],
+) -> tuple[dict[str, Any], Path] | None:
+    """Certify one exact conflict-free Integration refresh after a closed successor."""
+    if previous is None or state is None:
+        return None
+    stored = admitted_authority.get("assignment")
+    previous_authority = previous.get("repository_assignment_authority")
+    previous_pr = previous.get("pr")
+    if not isinstance(stored, dict) or previous_authority != admitted_authority or not isinstance(previous_pr, dict):
+        return None
+    stable_keys = ("task_gid", "branch", "base_ref", "base_sha", "pr_number")
+    stable = (
+        all(stored.get(key) == assignment.get(key) for key in stable_keys)
+        and previous.get("task_gid") == task_gid
+        and previous.get("branch") == branch
+        and previous.get("lineage_id") == lineage_id
+        and state.get("task_gid") == task_gid
+        and state.get("branch") == branch
+        and state.get("lineage_id") == lineage_id
+        and previous_pr.get("number") == assignment.get("pr_number")
+        and previous_pr.get("head") == stored.get("pr_head")
+        and isinstance(previous.get("semantic_mutation_closed_at"), str)
+        and bool(str(previous.get("semantic_mutation_closed_at") or "").strip())
+    )
+    if not stable:
+        return None
+
+    preserved_head = previous.get("head_moved_to")
+    refreshed_head = assignment.get("pr_head")
+    if preserved_head == refreshed_head:
+        return None
+    if not isinstance(preserved_head, str) or not isinstance(refreshed_head, str):
+        fail("REFRESH_BLOCK_RECONCILIATION_INVALID", "post-refresh Review-BLOCK requires exact prior and current heads")
+    preserved_head = require_full_sha(preserved_head, "preserved pre-refresh head")
+    refreshed_head = require_full_sha(refreshed_head, "refreshed blocked head")
+
+    if state.get("repository_assignment_authority") != admitted_authority:
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "worktree assignment authority changed during post-refresh Review-BLOCK admission")
+    if any(state.get(key) != preserved_head for key in ("local_head", "published_head", "remote_owned_head")):
+        # A closed marker which does not describe the actual preserved worktree is
+        # not a post-refresh candidate. Keep the older exact-head replacement gate's
+        # rejection boundary instead of interpreting corrupt bookkeeping as recovery.
+        return None
+    identity = verify_owned_worktree(runner, repo, state)
+    if identity.dirty:
+        fail("REFRESH_BLOCK_WORKTREE_DIRTY", "post-refresh Review-BLOCK reconciliation refuses a dirty worktree or index")
+    if identity.head != preserved_head:
+        fail("REFRESH_BLOCK_LOCAL_HEAD_MISMATCH", "checked-out worktree HEAD is not the exact certified pre-refresh head")
+
+    ensure_commit_object(runner, repo, preserved_head)
+    ensure_commit_object(runner, repo, refreshed_head)
+    ancestor = runner.run(repo.source_top, "merge-base", "--is-ancestor", preserved_head, refreshed_head, check=False)
+    if ancestor.returncode != 0:
+        code = "REFRESH_BLOCK_NOT_FAST_FORWARD" if ancestor.returncode == 1 else "ANCESTRY_CHECK_FAILED"
+        fail(code, "refreshed blocked head is not an exact descendant of the preserved head")
+
+    parent_line = runner.run(repo.source_top, "rev-list", "--parents", "-n", "1", refreshed_head).stdout.strip().split()
+    parents = parent_line[1:]
+    if len(parents) != 2 or parents.count(preserved_head) != 1:
+        fail("REFRESH_BLOCK_NOT_MECHANICAL", "refreshed blocked head must be a two-parent merge containing the exact preserved head")
+    target_head = remote_ref_sha(runner, repo, str(assignment["base_ref"]))
+    assert target_head is not None
+    other_parent = parents[0] if parents[1] == preserved_head else parents[1]
+    if other_parent != target_head:
+        fail("REFRESH_BLOCK_TARGET_MISMATCH", "refresh merge's other parent is not the current exact target-branch head")
+
+    merged = runner.run(repo.source_top, "merge-tree", "--write-tree", preserved_head, target_head, check=False)
+    if merged.returncode != 0:
+        fail("REFRESH_BLOCK_NOT_MECHANICAL", "refresh merge is not a clean mechanically reproducible merge")
+    merged_lines = [line.strip() for line in merged.stdout.splitlines() if line.strip()]
+    if not merged_lines:
+        fail("REFRESH_BLOCK_NOT_MECHANICAL", "refresh merge did not produce a verifiable tree")
+    expected_tree = merged_lines[0]
+    actual_tree = runner.run(repo.source_top, "rev-parse", "--verify", f"{refreshed_head}^{{tree}}").stdout.strip()
+    if expected_tree != actual_tree:
+        fail("REFRESH_BLOCK_NOT_MECHANICAL", "refresh merge tree contains changes beyond the conflict-free mechanical merge")
+
+    transition = {
+        "kind": "integration-base-refresh-review-block",
+        "recorded_at": now_utc(),
+        "from_head": preserved_head,
+        "from_review_id": admitted_authority.get("block_review_id"),
+        "refresh_head": refreshed_head,
+        "refresh_parents": parents,
+        "target_ref": assignment["base_ref"],
+        "target_head": target_head,
+        "to_review_id": block_authority.get("block_review_id"),
+    }
+    state_path_value = state_path_for_branch(task_gid, branch)
+    if state_path_value is None:
+        fail("MUTATION_ASSIGNMENT_MISMATCH", "post-refresh Review-BLOCK replacement requires existing same-lineage state")
+    return transition, state_path_value
+
+
+def _advance_post_refresh_worktree(
+    runner: GitRunner,
+    *,
+    state: dict[str, Any],
+    state_file: Path,
+    block_authority: dict[str, Any],
+    transition: dict[str, Any],
+) -> dict[str, Any]:
+    """Fast-forward the already-clean worktree and persist its exact new authority."""
+    worktree = Path(str(state["worktree_path"]))
+    old_head = str(transition["from_head"])
+    new_head = str(transition["refresh_head"])
+    moved = runner.run(worktree, "merge", "--ff-only", "--no-edit", new_head, check=False)
+    if moved.returncode != 0:
+        fail("REFRESH_BLOCK_FAST_FORWARD_FAILED", "exact post-refresh worktree fast-forward failed")
+    updated = dict(state)
+    try:
+        identity = verify_owned_worktree(runner, resolve_repository_from_state(runner, updated), updated)
+        if identity.head != new_head or identity.dirty:
+            fail("REFRESH_BLOCK_FAST_FORWARD_VERIFY_FAILED", "fast-forwarded worktree did not verify clean at the exact blocked head")
+        updated["local_head"] = new_head
+        updated["published_head"] = new_head
+        updated["remote_owned_head"] = new_head
+        updated["remote_relation"] = "equal"
+        updated["last_verified_at"] = now_utc()
+        updated["repository_assignment_authority"] = block_authority
+        transitions = list(updated.get("assignment_authority_transitions") or [])
+        transitions.append(transition)
+        updated["assignment_authority_transitions"] = transitions
+        atomic_write_json(state_file, updated)
+    except Exception:
+        rollback = runner.run(worktree, "reset", "--hard", old_head, check=False)
+        if rollback.returncode != 0:
+            fail("REFRESH_BLOCK_ROLLBACK_FAILED", "post-refresh persistence failed and exact worktree rollback also failed")
+        raise
+    return updated
+
+
+def _restore_unaccepted_post_refresh_transition(
+    runner: GitRunner,
+    *,
+    refresh_rollback: tuple[Path, dict[str, Any], str] | None,
+    resolved_owner: str | None,
+    replacement_agent_id: str,
+) -> None:
+    """Restore refresh effects when failed claim settlement kept the prior owner."""
+    if refresh_rollback is None or resolved_owner == replacement_agent_id:
+        return
+    replacement_state_path, old_state, old_head = refresh_rollback
+    worktree = Path(str(old_state["worktree_path"]))
+    rollback = runner.run(worktree, "reset", "--hard", old_head, check=False)
+    if rollback.returncode != 0:
+        fail(
+            "REFRESH_BLOCK_ROLLBACK_FAILED",
+            "replacement ownership was not accepted and exact worktree rollback failed",
+        )
+    atomic_write_json(replacement_state_path, old_state)
+    restored_repo = resolve_repository_from_state(runner, old_state)
+    restored = verify_owned_worktree(runner, restored_repo, old_state)
+    if restored.head != old_head or restored.dirty:
+        fail(
+            "REFRESH_BLOCK_ROLLBACK_FAILED",
+            "replacement ownership was not accepted and restored worktree verification failed",
+        )
+
+
 def _reconcile_existing(
     *,
     runner: GitRunner,
@@ -499,6 +677,39 @@ def _settle_failed_claim(
     return post_owner
 
 
+def _settle_failed_claim_reconciled(**kwargs: Any) -> str | None:
+    """Settle locally, reconciling one ambiguous atomic-persistence failure.
+
+    ``atomic_write_json`` can fail before or after replace/fsync.  Readback makes
+    the outcome explicit; retry is safe only while the exact failed token is
+    still present.  Any third state remains a hard ownership ambiguity.
+    """
+    try:
+        return _settle_failed_claim(**kwargs)
+    except Exception as first_error:
+        task_gid = str(kwargs["task_gid"])
+        branch = str(kwargs["branch"])
+        lineage_id = str(kwargs["lineage_id"])
+        token = str(kwargs["token"])
+        agent_id = str(kwargs["agent_id"])
+        previous = kwargs.get("previous")
+        baseline_state_owner = kwargs.get("baseline_state_owner")
+        current = read_claim(task_gid, branch, lineage_id)
+        state_file = state_path_for_branch(task_gid, branch)
+        state = read_json_object(state_file, "task worktree state") if state_file is not None else None
+        post_owner = owner_agent_id(state) if state is not None else None
+        rollback_owner = previous.get("agent_id") if previous is not None else baseline_state_owner
+        if post_owner != agent_id and current == previous:
+            return rollback_owner
+        if post_owner != agent_id and previous is None and current is None:
+            return rollback_owner
+        if post_owner == agent_id and current is not None and current.get("token") == token and current.get("released_at") is not None:
+            return agent_id
+        if current is not None and current.get("token") == token:
+            return _settle_failed_claim(**kwargs)
+        raise first_error
+
+
 class _HeldClaimLocks:
     def __init__(self, paths: list[Path]):
         self.paths = sorted(set(paths), key=str)
@@ -593,7 +804,11 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     launch_identity_bound = False
     registry_claimed = False
     pr_registry_acquired = False
-    prior_registry_owner: str | None = None
+    prior_registry_claim: dict[str, Any] | None = None
+    refresh_rollback: tuple[Path, dict[str, Any], str] | None = None
+    refresh_committed = False
+    refresh_transition: dict[str, Any] | None = None
+    refresh_state_file: Path | None = None
     try:
         # Run the local claim-vs-state consistency check before the repository-wide
         # registry ownership gate, so a locally detectable OWNERSHIP_AMBIGUOUS
@@ -604,7 +819,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         )
         if args.takeover and previous is not None and previous.get("token") != expected_claim:
             fail("OWNER_CLAIM_CHANGED", "takeover expected claim does not match the current durable local claim generation")
-        registry_sha, registry_generation, prior_registry_owner = claim_registry_ownership(
+        registry_sha, registry_generation, prior_registry_claim = claim_registry_ownership(
             runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
             sha=resolved_sha, marker=resolved_marker, agent_id=agent_id, token=token,
             takeover=bool(args.takeover), expected_claim=expected_claim,
@@ -644,19 +859,55 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 ):
                     admitted_authority = block_authority
                     replaced_assignment_authority = True
+                else:
+                    refresh_replacement = _post_refresh_block_replacement(
+                        runner=runner,
+                        repo=repo,
+                        task_gid=task_gid,
+                        branch=branch,
+                        lineage_id=lineage_id,
+                        assignment=assignment,
+                        admitted_authority=admitted_authority,
+                        previous=previous,
+                        state=existing_state,
+                        block_authority=block_authority,
+                    )
+                    if refresh_replacement is not None:
+                        if not args.takeover or previous is None or previous.get("token") != expected_claim:
+                            fail(
+                                "REFRESH_BLOCK_TAKEOVER_CAS_REQUIRED",
+                                "post-refresh Review-BLOCK reconciliation requires takeover against the exact current claim generation",
+                            )
+                        refresh_transition, refresh_state_file = refresh_replacement
+                        admitted_authority = block_authority
+                        replaced_assignment_authority = True
             identity = require_repository_mutation_identity(
                 agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
             )
             admitted_authority = identity.get("repository_assignment_authority")
             if replaced_assignment_authority:
-                replacement_state_path = state_path_for_branch(task_gid, branch)
+                replacement_state_path = refresh_state_file or state_path_for_branch(task_gid, branch)
                 if replacement_state_path is None:
                     fail("MUTATION_ASSIGNMENT_MISMATCH", "Review-BLOCK replacement requires the existing same-lineage worktree state")
                 current_state = read_json_object(replacement_state_path, "task worktree state")
                 if current_state.get("repository_assignment_authority") != existing_state.get("repository_assignment_authority"):
                     fail("MUTATION_ASSIGNMENT_MISMATCH", "worktree assignment authority changed during Review-BLOCK replacement")
-                current_state["repository_assignment_authority"] = admitted_authority
-                atomic_write_json(replacement_state_path, current_state)
+                if refresh_transition is None:
+                    current_state["repository_assignment_authority"] = admitted_authority
+                    atomic_write_json(replacement_state_path, current_state)
+                else:
+                    refresh_rollback = (
+                        replacement_state_path,
+                        current_state,
+                        str(refresh_transition["from_head"]),
+                    )
+                    _advance_post_refresh_worktree(
+                        runner,
+                        state=current_state,
+                        state_file=replacement_state_path,
+                        block_authority=admitted_authority,
+                        transition=refresh_transition,
+                    )
         else:
             identity = require_repository_mutation_identity(
                 agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
@@ -670,7 +921,12 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             "takeover": bool(args.takeover), "pr": pr, "launch_provenance_required": bool(args.require_launch_provenance),
             "repository_assignment_authority": admitted_authority,
         }
+        if refresh_transition is not None:
+            record["assignment_authority_transitions"] = list(
+                read_json_object(refresh_state_file, "task worktree state").get("assignment_authority_transitions") or []
+            )
         atomic_write_json(path, record)
+        refresh_committed = True
         env = os.environ.copy()
         env.update({
             CLAIM_TOKEN_ENV: token,
@@ -683,15 +939,31 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         try:
             completed = subprocess.run(argv, cwd=repo.source_top, env=env, check=False, pass_fds=tuple(locks.fds))
         except OSError as exc:
-            resolved_owner = _settle_failed_claim(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
+            resolved_owner = _settle_failed_claim_reconciled(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
+            _restore_unaccepted_post_refresh_transition(
+                runner,
+                refresh_rollback=refresh_rollback,
+                resolved_owner=resolved_owner,
+                replacement_agent_id=agent_id,
+            )
             if launch_identity_bound:
                 restore_identity(agent_id, prior_identity)
             if pr_registry_acquired:
                 release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
-            release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token, owner_agent_id=resolved_owner)
+            release_registry_claim(
+                runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
+                token=token,
+                restore_claim=prior_registry_claim if resolved_owner != agent_id else None,
+            )
             fail("CLAIM_COMMAND_FAILED", f"could not launch claimed local-agent command: {exc}")
         if completed.returncode != 0:
-            resolved_owner = _settle_failed_claim(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
+            resolved_owner = _settle_failed_claim_reconciled(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
+            _restore_unaccepted_post_refresh_transition(
+                runner,
+                refresh_rollback=refresh_rollback,
+                resolved_owner=resolved_owner,
+                replacement_agent_id=agent_id,
+            )
             if launch_identity_bound:
                 state_file = state_path_for_branch(task_gid, branch)
                 durable_state = read_json_object(state_file, "task worktree state") if state_file is not None else None
@@ -700,7 +972,11 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                     restore_identity(agent_id, prior_identity)
             if pr_registry_acquired:
                 release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
-            release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token, owner_agent_id=resolved_owner)
+            release_registry_claim(
+                runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
+                token=token,
+                restore_claim=prior_registry_claim if resolved_owner != agent_id else None,
+            )
             return completed.returncode
         current = read_claim(task_gid, branch, lineage_id)
         if current is None or current.get("token") != token:
@@ -715,6 +991,13 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         # If setup fails after the repository-wide claim was acquired, release it
         # when it is still ours. A release failure is intentionally fail-closed.
         try:
+            if refresh_rollback is not None and not refresh_committed:
+                replacement_state_path, old_state, old_head = refresh_rollback
+                worktree = Path(str(old_state["worktree_path"]))
+                rollback = runner.run(worktree, "reset", "--hard", old_head, check=False)
+                if rollback.returncode != 0:
+                    fail("REFRESH_BLOCK_ROLLBACK_FAILED", "claim setup failed and exact worktree rollback also failed")
+                atomic_write_json(replacement_state_path, old_state)
             if pr_registry_acquired:
                 try:
                     release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
@@ -725,7 +1008,11 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 if reg is not None:
                     _, marker = reg
                     if marker.get("lineage_id") == lineage_id and marker.get("claim_token") == token and marker.get("claim_active"):
-                        release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token, owner_agent_id=prior_registry_owner)
+                        release_registry_claim(
+                            runner, repo, task_gid=task_gid, branch=branch,
+                            lineage_id=lineage_id, token=token,
+                            restore_claim=prior_registry_claim,
+                        )
         finally:
             if launch_identity_bound:
                 restore_identity(agent_id, prior_identity)

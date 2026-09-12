@@ -10,7 +10,7 @@ This document records durable authority boundaries. It intentionally avoids turn
 
 ## Authoritative implementation
 
-Current anchors include `dish_tool/releases.py`, `dish_tool/task_document.py`, `dish_tool/database.py`, `dish_tool/task_store.py`, `dish_tool/workflow_policy.py`, `dish_service/request_replay.py`, and PostgreSQL models/services under `dish_pg/`.
+Current anchors include `dish_tool/releases.py`, `dish_tool/task_document.py`, `dish_tool/database.py`, `dish_tool/task_store.py`, `dish_tool/workflow_policy.py`, `dish_service/request_replay.py`, and PostgreSQL models/services under `dish_pg/`. `dish_tool/recommendation_state.py` is a derived cooking-recommendation projection only; it is not a durable writer.
 
 ## Actors, processes, and stores
 
@@ -31,6 +31,8 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 | Dark-launch artifacts | No live authority | Evidence only |
 | Frontend password/session/limiter/audit state | Frontend security store | Access support only; never task or workflow authority |
 | Frontend board/detail DTOs | Derived from the active canonical read source | Presentation snapshots; never writer or legality authority |
+| Cooking recommendation evidence | The source authority named by immutable provenance (for example explicit user evidence, Cooking History, Scratchpad, Profile, or a runtime fact) | Recommendation state consumes evidence; it does not rewrite or duplicate the source lifecycle |
+| Cooking recommendation current state/context | Derived by `dish_tool/recommendation_state.py` | Recomputable projection only. Exact candidate eligibility is evaluated outside the bounded soft slice; at most 32 soft signals enter the shared context, and missing exact eligibility is non-actionable |
 
 ## Invariants
 
@@ -43,6 +45,10 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 - After PostgreSQL authority activation, Asana observations do not promote themselves back into canonical backend state.
 - Frontend read projections, caches, presentation registries, and browser state cannot become
   task, placement, completion, workflow, or projection authority.
+- Cooking recommendation state cannot become a competing Scratchpad/Profile lifecycle or safety/halal authority; inferred soft evidence cannot create a hard blocker or durable exclusion.
+- Hard recommendation evidence coalesces implicitly only when both observations name the same
+  stable fact key. Independent or unkeyed blockers and prerequisites remain active even when
+  source, candidate, scope, and lifecycle shape match; clearing one event does not retire another.
 
 During pre-cutover observation, the writable frontend security database is physically distinct
 from the PostgreSQL task-observation database. Observation credentials are read-only. Restoring
@@ -67,7 +73,7 @@ When changing authority, state clearly which fact changes writer/reader and what
 
 ## Proving tests
 
-Evidence is distributed across workflow, replay, Asana lifecycle, recovery, and PostgreSQL authority tests, including `tests/test_workflow_policy_fail_closed.py`, `tests/test_request_identity.py`, and PostgreSQL authority tests under `tests/postgresql/`.
+Evidence is distributed across workflow, replay, Asana lifecycle, recovery, and PostgreSQL authority tests, including `tests/test_workflow_policy_fail_closed.py`, `tests/test_request_identity.py`, `tests/test_recommendation_state.py`, and PostgreSQL authority tests under `tests/postgresql/`.
 
 ## Current debt and temporary compatibility
 

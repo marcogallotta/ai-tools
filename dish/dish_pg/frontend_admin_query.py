@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from dish_pg import stage3_models as workflow
 from dish_pg.frontend_board_query import BoardReadUnavailable, CardFact, FrontendBoardQuery, SectionFact
-from dish_pg.legacy_history_import import unresolved_legacy_attention
+from dish_pg.legacy_attention import unresolved_legacy_attention
 
 
 @dataclass(frozen=True, slots=True)

@@ -414,6 +414,7 @@ def _import_one(
     task_id: uuid.UUID | None = None,
     asana_gid: str = "123456789",
     section_id: uuid.UUID | None = None,
+    completed: bool = False,
 ):
     service = CoreAuthorityService(session, uuid_factory=lambda: _next(ids))
     actual_task_id = task_id or _next(ids)
@@ -430,7 +431,7 @@ def _import_one(
             content_identity=HASH_A,
             project_ids=(context["project_id"],),
             section_id=section_id or context["section_id"],
-            completed=False,
+            completed=completed,
             observed_at=NOW,
         ),
     )

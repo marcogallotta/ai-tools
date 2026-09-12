@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "generated_at": "repository-fixtures",
+  "generator": "hooks/investigation-guard calibrate",
+  "source_glob": "hooks/tests/fixtures/investigation_guard/*.json",
+  "calibrations": {
+    "claude:deep-research": {
+      "early_action_ready": false,
+      "incident_trace_count": 1,
+      "investigation_cap": 4,
+      "legitimate_trace_count": 1,
+      "proof_tail_cap": 0,
+      "qualified_tools": ["Bash", "Edit", "Glob", "Grep", "Read", "Write"],
+      "trace_digest": "2e06afa6a86675bca4c143ab9afa1e48c69ff9714ff0d1b09a5f80861bef9290"
+    },
+    "claude:narrow-fix": {
+      "early_action_ready": false,
+      "incident_trace_count": 1,
+      "investigation_cap": 2,
+      "legitimate_trace_count": 1,
+      "proof_tail_cap": 1,
+      "qualified_tools": ["Bash", "Edit", "Glob", "Grep", "Read", "Write"],
+      "trace_digest": "232546b8cbf19f25ce4ab5a709c3c6616b288f11b7efe1fb4045ef733da69f00"
+    },
+    "codex:narrow-fix": {
+      "early_action_ready": false,
+      "incident_trace_count": 1,
+      "investigation_cap": 1,
+      "legitimate_trace_count": 1,
+      "proof_tail_cap": 1,
+      "qualified_tools": ["Bash"],
+      "trace_digest": "a37d134c585fa009583092a52b70f2c6562accaaa0d9a26744810dedbf88d669"
+    }
+  }
+}

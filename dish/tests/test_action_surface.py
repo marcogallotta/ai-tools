@@ -661,3 +661,45 @@ def test_action_guidance_spells_out_verification_correction_and_route_vocabulari
     assert "correction=small" in text
     assert "large, evidence, or human-review" in text
     assert "Small correction is not a rejection route" in text
+
+
+def test_action_argument_schemas_are_executable_on_the_legacy_backend() -> None:
+    """Every Action-required argument must be accepted by the handler that runs it.
+
+    ``validate_action_request`` guards both authority backends, but the legacy
+    backend additionally calls ``reject_undeclared_arguments``, which derives the
+    accepted set from the handler signature. A field the Action surface *requires*
+    but the handler does not declare is unsatisfiable in both directions: omitting
+    it fails validation with ``argument_required``, supplying it fails dispatch
+    with ``argument_unexpected``.
+    """
+
+    import inspect as handler_inspect
+
+    from dish_service.command_spec import ARGUMENT_SCHEMAS
+    from dish_tool.commands import CURRENT_COMMAND_HANDLERS
+
+    # Fields the transport legitimately consumes before dispatch, so the handler
+    # is not expected to declare them. `DishService._candidate_file` pops
+    # `file_text` and substitutes `file_path`.
+    TRANSPORT_CONSUMED = {"prepare": {"file_text"}}
+
+    unsatisfiable: list[str] = []
+    for command, handler in sorted(CURRENT_COMMAND_HANDLERS.items()):
+        schema = ARGUMENT_SCHEMAS.get(command)
+        if schema is None:
+            continue
+        parameters = handler_inspect.signature(handler).parameters
+        if any(
+            parameter.kind is handler_inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            continue
+        consumed = TRANSPORT_CONSUMED.get(command, frozenset())
+        unsatisfiable.extend(
+            f"{command}.{field}"
+            for field in sorted(schema.get("required") or ())
+            if field not in parameters and field not in consumed
+        )
+
+    assert unsatisfiable == []

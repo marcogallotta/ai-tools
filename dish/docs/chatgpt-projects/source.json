@@ -35,7 +35,7 @@
       "external/current-main defect while pursuing an existing objective": [
         "dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission"
       ],
-      "fast-track": [
+      "fastrack / fast-track / fast track / direct or right to main": [
         "dish/docs/agents/trivial-fast-track.md#Procedure"
       ],
       "task dismissal / already-fixed / no-op conclusion": [
@@ -615,7 +615,7 @@
           "id": "action-first-human-output",
           "impact": "compatible",
           "surface": "presentation",
-          "text": "Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action."
+          "text": "Lead Marco with action; keep reconstructable detail on the PR."
         },
         {
           "action_boundaries": [
@@ -1165,7 +1165,7 @@
           "id": "scope-amplification-checkpoint",
           "impact": "additive",
           "surface": "safety",
-          "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+          "text": "Re-anchor to the operator outcome. A new control plane or broader lifecycle needs Marco approval; after two design loops, shrink scope or seek a decision."
         },
         {
           "action_boundaries": [
@@ -1684,7 +1684,7 @@
       "id": "fast-track-process-overlay",
       "impact": "additive",
       "surface": "authority",
-      "text": "Fast-track: read `dish/docs/agents/trivial-fast-track.md#Procedure`."
+      "text": "Fast-track: named route runs; bare asks once; read procedure."
     },
     {
       "action_boundaries": [
@@ -1697,6 +1697,18 @@
       "impact": "additive",
       "surface": "safety",
       "text": "`1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero."
+    },
+    {
+      "id": "bounded-investigation-termination",
+      "impact": "additive",
+      "surface": "safety",
+      "action_boundaries": [
+        "*"
+      ],
+      "delivery": {
+        "mode": "DIRECT_ALWAYS_ON"
+      },
+      "text": "ACTION_READY: no decision-changing question => act/prove/block; ChatGPT/manual=DEGRADED_SOFT_ONLY."
     }
   ],
   "profiles": {

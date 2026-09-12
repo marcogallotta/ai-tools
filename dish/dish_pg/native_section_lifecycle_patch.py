@@ -162,9 +162,3 @@ def install_port(port_cls: type) -> None:
 
     patched._native_section_lifecycle_patch = True
     port_cls._apply = patched
-
-
-def install_release_head(release_module) -> None:
-    """Advance the canonical migration-head identity for this implementation."""
-
-    release_module.ALEMBIC_HEAD = "0053_native_section_lifecycle"

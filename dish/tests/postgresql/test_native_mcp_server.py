@@ -10,6 +10,7 @@ from dish_pg.connected_command_spec import (
     CONNECTED_COMMANDS,
     CONNECTED_COMMAND_SPECS,
     TOOL_COMMANDS,
+    connected_argument_schema,
     result_envelope_schema,
 )
 from dish_pg.openapi import postgres_action_openapi
@@ -121,9 +122,10 @@ def _adapter(
     )
 
 
-def test_connected_registry_is_exact_18_command_product_contract() -> None:
+def test_connected_registry_is_exact_20_command_product_contract() -> None:
     assert CONNECTED_COMMANDS == ACTION_COMMANDS
-    assert len(CONNECTED_COMMANDS) == 18
+    assert len(CONNECTED_COMMANDS) == 20
+    assert TOOL_COMMANDS["dish_query"] == "query"
     assert tuple(spec.name for spec in CONNECTED_COMMAND_SPECS) == CONNECTED_COMMANDS
     assert tuple(TOOL_COMMANDS.values()) == CONNECTED_COMMANDS
     assert tuple(mcp_server.TOOL_COMMANDS.values()) == CONNECTED_COMMANDS
@@ -174,7 +176,7 @@ def test_authenticated_native_read_dispatches_directly_to_connected_service() ->
 
     result = adapter.call(
         "dish_sections",
-        {"client": {"run_id": RUN_ID}, "arguments": {}},
+        {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
         caller=CALLER,
     )
 
@@ -184,7 +186,7 @@ def test_authenticated_native_read_dispatches_directly_to_connected_service() ->
         (
             "execute",
             "sections",
-            {},
+            {"agent": "gpt"},
             ServicePrincipal(owner_id=OWNER_ID, run_id=RUN_ID),
             None,
         )
@@ -285,7 +287,7 @@ def test_normal_dish_failure_is_structured_not_mcp_transport_error() -> None:
     )
     result = _adapter(service).call(
         "dish_sections",
-        {"client": {"run_id": RUN_ID}, "arguments": {}},
+        {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
         caller=CALLER,
     )
     assert result["ok"] is False
@@ -308,9 +310,32 @@ def test_backend_unavailability_becomes_transport_failure() -> None:
     with pytest.raises(native_mcp_server.NativeMCPRuntimeError):
         _adapter(service).call(
             "dish_sections",
-            {"client": {"run_id": RUN_ID}, "arguments": {}},
+            {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
             caller=CALLER,
         )
+
+
+def test_unauthenticated_caller_is_refused_before_argument_validation() -> None:
+    """An unauthenticated caller must be refused even when its arguments are invalid.
+
+    Argument validation used to run first, so an unauthenticated caller sending
+    invalid arguments received a structured validation envelope instead of being
+    refused: the read path returns early from `_record_validation_failure` and
+    never reaches `_principal`. Identity is checked before validation now.
+    """
+
+    service = FakeService()
+    adapter = _adapter(service)
+
+    for caller in (None, {"subject": "someone-else"}):
+        with pytest.raises(native_mcp_server.NativeMCPRuntimeError):
+            adapter.call(
+                "dish_sections",
+                {"client": {"run_id": RUN_ID}, "arguments": {}},
+                caller=caller,
+            )
+
+    assert service.calls == []
 
 
 def test_non_connected_tool_is_rejected_before_service_dispatch() -> None:
@@ -379,3 +404,36 @@ def test_runtime_uses_authenticated_owner_without_action_credentials(
     assert captured["expected_generation_id"] == __import__("uuid").UUID(generation)
     assert captured["config"].action_token is None
     assert captured["config"].action_client_id == OWNER_ID
+
+
+def _schema_exposes_agent(schema: Any) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    if "agent" in (schema.get("properties") or {}):
+        return True
+    return any(_schema_exposes_agent(variant) for variant in schema.get("oneOf") or ())
+
+
+def test_run_bootstrapping_commands_all_expose_agent_identity() -> None:
+    """Every command that can bootstrap a service run must carry agent identity.
+
+    ``PostgresRuntimeService._execute_command`` calls ``ensure_initial_cutover_run``
+    for each retained non-``Q`` command, and ``_bootstrap_agent`` can only resolve
+    that identity from an ``agent`` argument. A gate-triggering command without one
+    fails closed on the first command of a fresh ``run_id``.
+
+    This asserts exposure, not that ``agent`` is required: ``renew-lease`` exposes
+    it optionally because the expired-lease guidance in ``application.py`` emits
+    replayable arguments that omit it.
+    """
+
+    missing = sorted(
+        command
+        for command in TOOL_COMMANDS.values()
+        for definition in (COMMAND_DEFINITIONS[command],)
+        if definition.retained
+        and definition.profile != "Q"
+        and not _schema_exposes_agent(connected_argument_schema(command))
+    )
+
+    assert missing == []

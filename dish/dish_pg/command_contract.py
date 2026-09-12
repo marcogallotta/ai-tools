@@ -6,7 +6,9 @@ and deliberately contains no transport-owned workflow rules.
 from __future__ import annotations
 
 from copy import deepcopy
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal, Mapping
 
 from dish_service.command_spec import (
@@ -40,13 +42,17 @@ Profile = Literal["Q", "E", "L", "R", "P", "X"]
 Principal = Literal["reader", "agent", "verification", "admin", "historical"]
 
 SEARCH_COMMAND = "search"
+QUERY_COMMAND = "query"
 COOKED_COMMAND = "cooked"
+COOKED_UPDATES_COMMAND = "cooked-updates"
 RECORD_COOK_LOG_COMMAND = "record-cook-log"
 COOK_LOGS_COMMAND = "cook-logs"
 COOK_LOG_TEXT_MAX_LENGTH = 8000
 SEARCH_QUERY_MAX_LENGTH = 160
 SEARCH_PAGE_SIZE_DEFAULT = 50
 SEARCH_PAGE_SIZE_MAX = 100
+COOKED_UPDATES_PAGE_SIZE_DEFAULT = 50
+COOKED_UPDATES_PAGE_SIZE_MAX = 100
 _SEARCH_AGENT_VALUES = ("claude", "gpt", "codex")
 
 
@@ -103,6 +109,18 @@ COMMAND_DEFINITIONS = {
             False,
             action_exposed=True,
             description="Search current active Dish titles through canonical PostgreSQL authority.",
+        ),
+        CommandDefinition(
+            QUERY_COMMAND, "Q", "reader", False, False, False, action_exposed=True,
+            description="Query currently cooked Dishes through the cooked-updates contract.",
+        ),
+        CommandDefinition(
+            COOKED_UPDATES_COMMAND, "Q", "reader", False, False, False,
+            action_exposed=True,
+            description=(
+                "List currently cooked Dishes with qualifying cook transitions or cook-log "
+                "evidence in a generation-fenced incremental window."
+            ),
         ),
         CommandDefinition(
             COOK_LOGS_COMMAND, "Q", "reader", False, True, False,
@@ -202,7 +220,9 @@ CONNECTED_COMMAND_DISPOSITIONS: dict[str, str] = {
 }
 POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (
     SEARCH_COMMAND,
+    QUERY_COMMAND,
     COOKED_COMMAND,
+    COOKED_UPDATES_COMMAND,
     COOK_LOGS_COMMAND,
     RECORD_COOK_LOG_COMMAND,
 )
@@ -283,6 +303,146 @@ def _search_argument_schema() -> dict[str, Any]:
     }
 
 
+def _cooked_updates_argument_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["since", "agent"],
+        "additionalProperties": False,
+        "properties": {
+            "since": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Inclusive lower bound for the incremental cooked-update window.",
+            },
+            "agent": {"type": "string", "enum": list(_SEARCH_AGENT_VALUES)},
+            "generation_id": {
+                "type": "string",
+                "format": "uuid",
+                "description": (
+                    "Prior successful cooked-updates watermark generation. Omit only for bootstrap."
+                ),
+            },
+            "cursor": {
+                "type": "string",
+                "description": "Opaque next_cursor from the same fixed cooked-updates window.",
+            },
+            "page_size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": COOKED_UPDATES_PAGE_SIZE_MAX,
+                "default": COOKED_UPDATES_PAGE_SIZE_DEFAULT,
+            },
+        },
+    }
+
+
+def _normalize_iso8601_utc(value: Any, *, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            f"{field} must be an ISO-8601 timestamp",
+            rule="argument_type_invalid",
+            details={"field": field},
+        )
+    raw = value.strip()
+    try:
+        parsed = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+    except ValueError as exc:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            f"{field} must be an ISO-8601 timestamp",
+            rule="argument_value_invalid",
+            details={"field": field},
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            f"{field} must include a timezone offset",
+            rule="argument_value_invalid",
+            details={"field": field},
+        )
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def normalize_postgres_cooked_updates_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(arguments, Mapping):
+        raise DishRuleError(
+            "INVALID_ARGUMENT", "arguments must be an object", rule="argument_object_required"
+        )
+    allowed = {"since", "agent", "generation_id", "cursor", "page_size"}
+    unknown = sorted(set(arguments) - allowed)
+    if unknown:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "cooked-updates arguments contain unsupported fields",
+            rule="argument_field_forbidden",
+            details={"fields": unknown},
+        )
+    agent = arguments.get("agent")
+    if not isinstance(agent, str) or agent not in _SEARCH_AGENT_VALUES:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "agent must name a supported agent family",
+            rule="argument_value_invalid",
+            details={"field": "agent", "allowed": list(_SEARCH_AGENT_VALUES)},
+        )
+    since = _normalize_iso8601_utc(arguments.get("since"), field="since")
+    generation_id = arguments.get("generation_id")
+    if generation_id is not None:
+        if not isinstance(generation_id, str):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "generation_id must be a UUID string",
+                rule="argument_type_invalid",
+                details={"field": "generation_id"},
+            )
+        try:
+            generation_id = str(uuid.UUID(generation_id))
+        except ValueError as exc:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "generation_id must be a UUID string",
+                rule="argument_value_invalid",
+                details={"field": "generation_id"},
+            ) from exc
+    cursor = arguments.get("cursor")
+    if cursor is not None and (not isinstance(cursor, str) or not cursor):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "cursor must be a non-empty string when provided",
+            rule="argument_type_invalid",
+            details={"field": "cursor"},
+        )
+    page_size = arguments.get("page_size", COOKED_UPDATES_PAGE_SIZE_DEFAULT)
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or not (
+        1 <= page_size <= COOKED_UPDATES_PAGE_SIZE_MAX
+    ):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "page_size must be an integer from 1 to 100",
+            rule="argument_range_invalid",
+            details={"field": "page_size"},
+        )
+    return {
+        "since": since,
+        "agent": agent,
+        "page_size": page_size,
+        **({"generation_id": generation_id} if generation_id is not None else {}),
+        **({"cursor": cursor} if cursor is not None else {}),
+    }
+
+
+def _validate_cooked_updates_action_request(
+    request: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw_arguments = request.get("arguments") if isinstance(request, Mapping) else None
+    adapted = dict(request) if isinstance(request, Mapping) else request
+    if isinstance(adapted, dict):
+        adapted["arguments"] = {"agent": "gpt"}
+    client, _ = validate_legacy_action_request(SECTIONS_COMMAND.name, adapted)
+    return client, normalize_postgres_cooked_updates_arguments(raw_arguments)
+
+
 def _cook_log_argument_schema(*, mutation: bool) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "dish_id": dict(CANONICAL_DISH_UUID_SCHEMA),
@@ -308,6 +468,8 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
 
     if command == SEARCH_COMMAND:
         return _search_argument_schema()
+    if command in {QUERY_COMMAND, COOKED_UPDATES_COMMAND}:
+        return _cooked_updates_argument_schema()
     if command == COOKED_COMMAND:
         return {
             "type": "object",
@@ -548,6 +710,8 @@ def validate_postgres_action_request(
         )
     if command == SEARCH_COMMAND:
         return _validate_search_action_request(request)
+    if command in {QUERY_COMMAND, COOKED_UPDATES_COMMAND}:
+        return _validate_cooked_updates_action_request(request)
     if command == COOKED_COMMAND:
         return _validate_cooked_action_request(request)
     if command in {RECORD_COOK_LOG_COMMAND, COOK_LOGS_COMMAND}:

@@ -57,6 +57,8 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 TOPIC_COMMANDS = ("planning", "research", "verification")
 SEARCH_COMMAND = "search"
+QUERY_COMMAND = "query"
+COOKED_UPDATES_COMMAND = "cooked-updates"
 COOKED_COMMAND = "cooked"
 RECORD_COOK_LOG_COMMAND = "record-cook-log"
 COOK_LOGS_COMMAND = "cook-logs"
@@ -201,6 +203,9 @@ def build_parser() -> JsonArgumentParser:
     section_tasks.add_argument(
         "--cursor", default=None, help="opaque next_cursor from a prior section-tasks page"
     )
+    section_tasks.add_argument(
+        "--status", choices=("incomplete", "cooked"), default=argparse.SUPPRESS
+    )
 
     search = subparsers.add_parser(
         SEARCH_COMMAND,
@@ -214,6 +219,21 @@ def build_parser() -> JsonArgumentParser:
     )
     search.add_argument("--cursor", default=None, help="opaque next_cursor from a prior search page")
     search.add_argument("--page-size", type=int, default=SEARCH_PAGE_SIZE_DEFAULT)
+
+    cooked_updates = subparsers.add_parser(
+        COOKED_UPDATES_COMMAND,
+        aliases=[QUERY_COMMAND],
+        help="list current cooked-history updates from a generation-fenced PostgreSQL window",
+    )
+    cooked_updates.add_argument("since")
+    cooked_updates.add_argument(
+        "--agent",
+        required=True,
+        choices=("claude", "gpt", "codex"),
+    )
+    cooked_updates.add_argument("--generation-id")
+    cooked_updates.add_argument("--cursor", default=None)
+    cooked_updates.add_argument("--page-size", type=int, default=50)
 
     record_cook_log = subparsers.add_parser(
         RECORD_COOK_LOG_COMMAND, help="append an immutable note to a Dish's cook log"

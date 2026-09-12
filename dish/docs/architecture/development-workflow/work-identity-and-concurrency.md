@@ -12,7 +12,7 @@ This document records identity and serialization boundaries. It does not impose 
 
 A repository assignment is bound to repository, owning task, authorized branch, exact authoring base, and existing PR/head when present. A worktree lineage adds an immutable branch-incarnation identity and an exclusive local claim. A PR's current head is the semantic Review and certification identity. These identities overlap but are not interchangeable.
 
-An explicit `TRIVIAL`/`FAST-TRACK` shortcut adds a capability record; it does not replace assignment or claim identity. The durable record is bound to the owning task, owned `agent/*` branch, exact `refs/heads/main` base SHA, exact repository-relative path set, Marco's exact authorization words, whether Review may be skipped, and the risk-selected validation class (`meaningful-readback` or `executable-proof`). Local tooling may consume that pre-existing record but cannot create it. A moved base or mismatched task/branch/path set invalidates shortcut use and returns the work to the normal lifecycle.
+An explicit fast-track destination is immediate action authority for that route; it is not a request to manufacture a pre-action capability record. Fast-track to main intentionally uses the primary checkout and commits and pushes the exact requested change before tests or cleanup. Fast-track to testing intentionally uses the active local main/testing surface without committing. Fast-track to PR uses an owned branch and PR, retains independent exact-head Review, and moves ordinary CI outside merge admission. The action itself produces the durable evidence needed for readback and any post-landing follow-up.
 
 Concurrency is chosen from concrete landing relationships:
 
@@ -33,6 +33,11 @@ Concurrency is chosen from concrete landing relationships:
 - A verified exact-head Review BLOCK may replace prior assignment authority only
   inside the same task, branch, authoring-base, PR, and lineage after publication
   has durably closed the prior semantic writer claim.
+- When Integration has conflict-free refreshed that closed successor onto the exact
+  current target head, a later exact-head Review BLOCK may advance the same lineage
+  only after the tool verifies the two exact merge parents and mechanically
+  reproduces the merge tree. The current claim generation, clean preserved
+  worktree head, and all stable assignment fields remain compare-and-set fences.
 - Local first claim consumes one current exact Implementation handoff from the owning task; Ready,
   a local identity file, or a claim file cannot independently authorize repository mutation.
 - Worktree admission accepts exactly one owning membership from the registered V2 project
@@ -40,7 +45,8 @@ Concurrency is chosen from concrete landing relationships:
   that authority at every material writer boundary.
 - Unrelated movement of the target branch does not silently replace an established authoring base.
 - Stack propagation preserves later completed work when an earlier accepted correction must be down-merged.
-- Fast-track capability never authorizes the shared primary checkout. `TRIVIAL` rejects protected/high-consequence scope; `FAST-TRACK` follows the task's risk-selected validation rule and may cover executable/high-consequence scope only when the exact grant selects focused `executable-proof` and the required proof is obtained before landing.
+- The destination dominates every spelling or generic label. An explicit destination does not trigger a confirmation loop; only a materially wrong-looking route gets one concise warning. A bare fast-track request requires the agent to recommend one route and ask once.
+- Fast-track to main and fast-track to testing are explicit exceptions to the ordinary shared-primary-checkout prohibition for the exact requested change. Their post-fast-track tests, cleanup, and fixes move to an owned branch/PR rather than accumulating on local or remote main.
 
 ## Current anchors
 

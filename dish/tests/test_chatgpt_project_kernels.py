@@ -89,6 +89,49 @@ def test_every_kernel_selects_connector_and_rejects_mcp_app():
  assert 'plugin_connector_*' not in worker
  assert 'plugin_asdk_app_*' not in worker
 
+def test_project_transport_profiles_are_explicit_mutually_exclusive_and_fail_closed():
+ routing=(DISH_ROOT/'docs'/'agents'/'repository-routing.md').read_text()
+ runbook=(DISH_ROOT/'deploy'/'mcp-app.md').read_text()
+ routing_words=' '.join(routing.split())
+ runbook_words=' '.join(runbook.split())
+
+ assert 'Recurring repository-role Projects — Connector-only' in routing
+ assert 'select the installed GitHub Connector' in routing_words
+ assert 'Never select or invoke the separate GitHub MCP app or any other MCP app' in routing_words
+ assert 'General Dish and Cooking Projects — MCP-app-only' in routing
+ assert 'select the installed GitHub MCP app and Dish MCP app' in routing_words
+ assert 'Never select or invoke the GitHub Connector or any other Connector' in routing_words
+ assert 'Never mix Connector tools and MCP apps' in routing_words
+ assert 'For every GitHub read or write, use the GitHub Connector' not in routing
+
+ assert runbook.count('TRANSPORT — MCP APPS ONLY') == 2
+ assert runbook.count('Select the installed GitHub MCP app and Dish MCP app') == 2
+ assert runbook.count('never select or invoke the GitHub Connector or any other Connector') == 2
+ assert runbook.count('Never mix transport families in this chat') == 2
+ assert 'fail closed rather than switching' in runbook_words
+
+ blanket_connector_phrases=(
+  'For every GitHub read or write, use the GitHub Connector',
+  'ChatGPT uses only the authorized GitHub connector',
+  'GitHub Connect remains live source/history/PR/review authority',
+  'download through the GitHub connector',
+  'GitHub connector remains the normal publication path',
+  'with the available connector',
+ )
+ policy_paths=(
+  DISH_ROOT.parent/'CLAUDE.md',
+  DISH_ROOT/'docs'/'agents'/'index.md',
+  DISH_ROOT/'docs'/'agents'/'coordinator.md',
+  DISH_ROOT/'docs'/'agents'/'implementation.md',
+  DISH_ROOT/'docs'/'agents'/'review.md',
+  DISH_ROOT/'docs'/'agents'/'integration.md',
+  DISH_ROOT/'docs'/'agents'/'development-workflow.md',
+ )
+ for path in policy_paths:
+  text=path.read_text()
+  for phrase in blanket_connector_phrases:
+   assert phrase not in text, f'{path}: stale blanket Connector directive: {phrase}'
+
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
  removed=edge['changes'][0]
@@ -829,23 +872,34 @@ def test_refresh_reconciles_renders_checks_and_reports_paste_ready_paths(tmp_pat
  project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}')
  manifest=project/'manifest.json'; review=project/'review.md'; calls=[]
  monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',manifest)
- monkeypatch.setattr(kernels,'command_reconcile',lambda *args: calls.append(('reconcile',args[2])))
- monkeypatch.setattr(kernels,'render_all',lambda *,check: calls.append(('render',check)))
+ def reconcile(*args): args[2].write_text('{}'); calls.append(('reconcile','staged'))
+ def render(*,check):
+  calls.append(('render',check))
+  if not check: (kernels.PROJECT_DIR/'review.md').write_text('review')
+ monkeypatch.setattr(kernels,'command_reconcile',reconcile)
+ monkeypatch.setattr(kernels,'render_all',render)
  monkeypatch.setattr(kernels,'command_check',lambda: calls.append(('check',)))
  monkeypatch.setattr(kernels,'load_canonical',lambda: ({'canonical_version':'v2'},{'roles':{'review':{}}}))
  monkeypatch.setattr(kernels,'generated_paths',lambda manifest,source: {'review':review})
  kernels.command_refresh(tmp_path/'base.json',source)
- assert calls==[('reconcile',manifest),('render',False),('check',)]
+ assert calls==[('reconcile','staged'),('render',False),('check',)]
+ assert manifest.read_text()=='{}' and review.read_text()=='review'
  assert f'review: {review}' in capsys.readouterr().out
 
 def test_refresh_does_not_report_paste_ready_paths_when_check_fails(tmp_path,monkeypatch,capsys):
- project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}')
- monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',project/'manifest.json')
- monkeypatch.setattr(kernels,'command_reconcile',lambda *args: None)
+ project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}'); (project/'manifest.json').write_text('before')
+ manifest=project/'manifest.json'; manifest.write_text('before')
+ role_index=tmp_path/'index.md'; root=tmp_path/'CLAUDE.md'; style=tmp_path/'dish-operator.md'
+ for path in (role_index,root,style): path.write_text('before')
+ monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',manifest)
+ monkeypatch.setattr(kernels,'ROLE_INDEX_PATH',role_index); monkeypatch.setattr(kernels,'ROOT_INSTRUCTIONS_PATH',root); monkeypatch.setattr(kernels,'CLAUDE_OPERATOR_STYLE_PATH',style)
+ monkeypatch.setattr(kernels,'command_reconcile',lambda *args: args[2].write_text('candidate'))
  monkeypatch.setattr(kernels,'render_all',lambda *,check: None)
  monkeypatch.setattr(kernels,'command_check',lambda: (_ for _ in ()).throw(kernels.KernelError('check failed')))
  with pytest.raises(kernels.KernelError,match='check failed'):
   kernels.command_refresh(tmp_path/'base.json',source)
+ assert manifest.read_text()=='before'
+ assert all(path.read_text()=='before' for path in (role_index,root,style))
  assert 'PASTE-READY' not in capsys.readouterr().out
 
 def test_design_principles_projection_is_derived_and_present_everywhere():

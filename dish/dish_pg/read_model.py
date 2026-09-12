@@ -445,9 +445,20 @@ class PostgresReadModel:
         section_reference: str | uuid.UUID,
         cursor: str | None = None,
         page_size: int = 50,
+        status: str = "incomplete",
     ) -> TaskListPage:
         if not 1 <= page_size <= 100:
             raise ReadModelError("page_size must be between 1 and 100")
+        if status not in {"incomplete", "cooked"}:
+            raise ReadModelError("status must be incomplete or cooked")
+        completion_filter = (
+            and_(
+                models.DishState.completed.is_(True),
+                models.DishState.completion_reason == "cooked",
+            )
+            if status == "cooked"
+            else models.DishState.completed.is_(False)
+        )
         generation = self.active_generation()
         native = self._native_read_authority(generation.generation_id)
         if native is None:
@@ -484,6 +495,7 @@ class PostgresReadModel:
                 **read_authority,
                 "section_id": str(section.section_id),
                 "page_size": page_size,
+                "status": status,
             }
             if any(payload.get(key) != value for key, value in expected.items()):
                 raise InvalidCursor("cursor is stale or belongs to another list query")
@@ -524,7 +536,7 @@ class PostgresReadModel:
             .where(
                 models.DishState.section_id == section.section_id,
                 placement_currentness,
-                models.DishState.completed.is_(False),
+                completion_filter,
                 models.DishState.archived_at.is_(None),
                 models.DishTask.existence_state != "retired",
             )
@@ -559,6 +571,7 @@ class PostgresReadModel:
                     **read_authority,
                     "section_id": str(section.section_id),
                     "page_size": page_size,
+                    "status": status,
                     "after_title": last[1].lower(),
                     "after_task_id": str(last[0]),
                 }

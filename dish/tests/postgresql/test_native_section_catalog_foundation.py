@@ -33,8 +33,10 @@ from dish_pg.repositories import (
     CoreAuthorityError,
     RegistryRepository,
 )
-from tests.postgresql.test_native_section_content_materializer import _stage_pr3
 from tests.support.postgresql.core import _bootstrap_registry, _next
+from tests.support.postgresql.native_section_content_materializer_fixtures import (
+    _stage_pr3,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 9, 4, 9, 0, tzinfo=timezone.utc)

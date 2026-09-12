@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import time
 from pathlib import Path
+
+import pytest
 
 from agent_worktree_support import SCRIPT, Harness, assert_error, git_out, h
 
@@ -29,6 +32,14 @@ def record(h: Harness, task: str) -> tuple[Path, dict[str, object]]:
     matches = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
     assert len(matches) == 1
     return matches[0], json.loads(matches[0].read_text())
+
+
+def lineage_marker(h: Harness, branch: str) -> dict[str, object]:
+    digest = hashlib.sha256(branch.encode("utf-8")).hexdigest()[:24]
+    return json.loads(git_out(
+        h.origin, "show", "-s", "--format=%B",
+        f"refs/heads/dish-agent-lineage-registry/{digest}",
+    ))
 
 
 def test_claim_gate_and_concurrent_start_choose_one_owner(h: Harness) -> None:
@@ -110,6 +121,7 @@ def test_failed_takeover_child_restores_prior_coherent_owner(h: Harness) -> None
     h.start(task=task, branch=branch, agent="a")
     _, prior = record(h, task)
     prior_token = str(prior["token"])
+    prior_registry = lineage_marker(h, branch)
 
     failed = claim(
         h,
@@ -125,6 +137,10 @@ def test_failed_takeover_child_restores_prior_coherent_owner(h: Harness) -> None
     assert after["agent_id"] == "a"
     assert after["token"] == prior_token
     assert h.state(task)["owner"]["agent_id"] == "a"
+    after_registry = lineage_marker(h, branch)
+    for key in ("claim_generation", "claim_token", "claim_agent_id", "owner_agent_id", "claim_active"):
+        assert after_registry.get(key) == prior_registry.get(key)
+    assert after_registry["claim_rollback"]["failed_generation"] == prior_registry["claim_generation"] + 1
 
     resumed = claim(
         h,
@@ -833,6 +849,28 @@ subprocess.run(
     return admitted_head, corrected_head
 
 
+def _prepare_refreshed_block(
+    h: Harness, *, task: str, branch: str, agent: str, pr: int, review_id: str,
+    amend_semantic: bool = False,
+) -> tuple[str, str, str, Path]:
+    _, preserved_head = _publish_successor_from_admitted_pr(
+        h, task=task, branch=branch, agent=agent, pr=pr
+    )
+    h.advance_main_file(f"target refresh {task}")
+    refreshed_head = h.merge_branch_with_main(
+        branch, f"integration refresh {task}", amend_semantic=amend_semantic
+    )
+    h.set_block_review(
+        task=task, pr=pr, branch=branch, head=refreshed_head,
+        review_id=review_id,
+    )
+    provenance = _write_launch_provenance(
+        h, agent=agent, task=task, branch=branch, pr=pr, head=refreshed_head,
+        block_review_id=review_id,
+    )
+    return preserved_head, refreshed_head, record(h, task)[1]["token"], provenance
+
+
 def test_closed_same_lineage_formal_block_replaces_authority_and_allows_published_handoff_readback(
     h: Harness,
 ) -> None:
@@ -894,6 +932,157 @@ subprocess.run(
     assert authority["assignment"]["pr_head"] == blocked_head
     assert authority["assignment"]["pr_head"] != admitted_head
     assert h.state(task)["repository_assignment_authority"] == authority
+
+
+def test_post_refresh_formal_block_fast_forwards_exact_clean_lineage_under_claim_cas(
+    h: Harness,
+) -> None:
+    task, branch, agent, pr, review_id = (
+        "3144", "agent/review-block-refresh", "impl-3144", 3144, "913144"
+    )
+    preserved, refreshed, prior_token, provenance = _prepare_refreshed_block(
+        h, task=task, branch=branch, agent=agent, pr=pr, review_id=review_id
+    )
+    readback = h.root / "refresh-child.json"
+    child = f"""
+import pathlib
+import subprocess
+
+result = subprocess.run(
+    ["python3", {str(SCRIPT)!r}, "resume", "--task", {task!r},
+     "--agent-id", {agent!r}, "--json"],
+    check=True, text=True, stdout=subprocess.PIPE,
+)
+pathlib.Path({str(readback)!r}).write_text(result.stdout, encoding="utf-8")
+"""
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--takeover", "--expected-claim", prior_token,
+        "--pr-number", str(pr), "--pr-head", refreshed, "--pr-lease-state", "none",
+        "--launch-provenance", str(provenance), "--require-launch-provenance",
+        "--", "python3", "-c", child,
+        env={"TEST_ASANA_NO_HANDOFF": "1", "TEST_GITHUB_PRESERVE_PR": "1"},
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert json.loads(readback.read_text(encoding="utf-8"))["local_head"] == refreshed
+    state = h.state(task)
+    _, claim_record = record(h, task)
+    assert git_out(h.wt(task), "rev-parse", "HEAD") == refreshed
+    assert state["local_head"] == state["published_head"] == state["remote_owned_head"] == refreshed
+    assert state["repository_assignment_authority"] == claim_record["repository_assignment_authority"]
+    transition = state["assignment_authority_transitions"][-1]
+    assert transition["from_head"] == preserved
+    assert transition["refresh_head"] == refreshed
+    assert transition["to_review_id"] == review_id
+    assert claim_record["assignment_authority_transitions"][-1] == transition
+
+
+@pytest.mark.parametrize("failure", ("nonzero", "launch"))
+def test_post_refresh_failed_different_owner_restores_exact_prior_lifecycle(
+    h: Harness, failure: str,
+) -> None:
+    task = "3150" if failure == "nonzero" else "3151"
+    branch, old_agent, replacement, pr, review_id = (
+        f"agent/refresh-failed-{failure}",
+        f"old-{task}",
+        f"replacement-{task}",
+        int(task),
+        f"91{task}",
+    )
+    preserved, refreshed, prior_token, _ = _prepare_refreshed_block(
+        h, task=task, branch=branch, agent=old_agent, pr=pr, review_id=review_id
+    )
+    replacement_identity_path = h.agent_file(replacement, owning_task_gid=task)
+    prior_identity = json.loads(replacement_identity_path.read_text(encoding="utf-8"))
+    provenance = _write_launch_provenance(
+        h, agent=replacement, task=task, branch=branch, pr=pr, head=refreshed,
+        block_review_id=review_id,
+    )
+    claim_path, prior_claim = record(h, task)
+    prior_state = h.state(task)
+    prior_registry = lineage_marker(h, branch)
+    child = (
+        ["python3", "-c", "raise SystemExit(9)"]
+        if failure == "nonzero"
+        else ["definitely-not-an-agent-worktree-command"]
+    )
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", replacement,
+        "--takeover", "--expected-claim", prior_token,
+        "--pr-number", str(pr), "--pr-head", refreshed, "--pr-lease-state", "none",
+        "--launch-provenance", str(provenance), "--require-launch-provenance",
+        "--", *child,
+        env={"TEST_ASANA_NO_HANDOFF": "1", "TEST_GITHUB_PRESERVE_PR": "1"},
+        check=False,
+    )
+    if failure == "nonzero":
+        assert result.returncode == 9
+    else:
+        assert_error(result, "CLAIM_COMMAND_FAILED")
+
+    assert json.loads(claim_path.read_text(encoding="utf-8")) == prior_claim
+    assert h.state(task) == prior_state
+    assert git_out(h.wt(task), "rev-parse", "HEAD") == preserved
+    assert json.loads(replacement_identity_path.read_text(encoding="utf-8")) == prior_identity
+
+    branch_marker = lineage_marker(h, branch)
+    pr_marker = json.loads(git_out(
+        h.origin, "show", "-s", "--format=%B",
+        f"refs/heads/dish-agent-pr-registry/{pr}",
+    ))
+    for key in ("claim_generation", "claim_token", "claim_agent_id", "owner_agent_id", "claim_active"):
+        assert branch_marker.get(key) == prior_registry.get(key)
+    assert pr_marker["claim_active"] is False
+
+
+@pytest.mark.parametrize(
+    ("task", "mutation", "expected"),
+    (
+        ("3145", "semantic-descendant", "REFRESH_BLOCK_NOT_MECHANICAL"),
+        ("3146", "semantic-merge-tree", "REFRESH_BLOCK_NOT_MECHANICAL"),
+        ("3147", "moved-target", "REFRESH_BLOCK_TARGET_MISMATCH"),
+        ("3148", "dirty", "REFRESH_BLOCK_WORKTREE_DIRTY"),
+        ("3149", "stale-cas", "OWNER_CLAIM_CHANGED"),
+    ),
+)
+def test_post_refresh_formal_block_rejects_unproved_or_mutated_transition(
+    h: Harness, task: str, mutation: str, expected: str,
+) -> None:
+    branch, agent, pr, review_id = f"agent/refresh-reject-{task}", f"impl-{task}", int(task), f"91{task}"
+    if mutation == "semantic-descendant":
+        _, preserved = _publish_successor_from_admitted_pr(
+            h, task=task, branch=branch, agent=agent, pr=pr
+        )
+        refreshed = h.remote_branch_commit(branch, "semantic descendant")
+        h.set_block_review(task=task, pr=pr, branch=branch, head=refreshed, review_id=review_id)
+        provenance = _write_launch_provenance(
+            h, agent=agent, task=task, branch=branch, pr=pr, head=refreshed,
+            block_review_id=review_id,
+        )
+        prior_token = record(h, task)[1]["token"]
+    else:
+        preserved, refreshed, prior_token, provenance = _prepare_refreshed_block(
+            h, task=task, branch=branch, agent=agent, pr=pr, review_id=review_id,
+            amend_semantic=mutation == "semantic-merge-tree",
+        )
+    if mutation == "moved-target":
+        h.advance_main_file("target moved after refresh")
+    if mutation == "dirty":
+        (h.wt(task) / "dirty.txt").write_text("preserve me\n", encoding="utf-8")
+    expected_claim = "0" * 32 if mutation == "stale-cas" else prior_token
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--takeover", "--expected-claim", expected_claim,
+        "--pr-number", str(pr), "--pr-head", refreshed, "--pr-lease-state", "none",
+        "--launch-provenance", str(provenance), "--require-launch-provenance",
+        "--", "python3", "-c", "raise SystemExit('must not run')",
+        env={"TEST_ASANA_NO_HANDOFF": "1", "TEST_GITHUB_PRESERVE_PR": "1"},
+        check=False,
+    )
+    assert_error(result, expected)
+    assert git_out(h.wt(task), "rev-parse", "HEAD") == preserved
+    assert h.state(task)["repository_assignment_authority"]["assignment"]["pr_head"] != refreshed
 
 
 def test_formal_block_cannot_replace_assignment_without_exact_closed_head_lineage(h: Harness) -> None:

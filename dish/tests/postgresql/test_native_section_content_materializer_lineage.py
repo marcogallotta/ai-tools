@@ -14,12 +14,12 @@ from dish_pg.native_catalog_runtime_finalizer import (
 )
 from dish_pg.native_section_carry_forward import RepositoryIdentity
 from dish_pg.native_section_content_materializer import materialized_content_version_id
-from tests.postgresql.test_native_section_content_carry_forward import (
+from tests.support.postgresql.native_section_content_fixtures import (
     NOW,
     SOURCE_COMMIT,
     SOURCE_TREE,
 )
-from tests.postgresql.test_native_section_content_materializer import (
+from tests.support.postgresql.native_section_content_materializer_fixtures import (
     _complete_after_staging,
     _stage_pr3,
 )
