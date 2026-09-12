@@ -702,9 +702,14 @@ class PostgresReadModel:
         inspected = False
         signoff_bound = False
         if cycle is not None:
-            verifier_established = self.session.scalar(
-                select(func.count())
-                .select_from(wf.OperationActorFact)
+            # Scoped to the actor holding the currently ACTIVE verification lease for
+            # this cycle, not "any actor that ever held a lease here". A prior verifier
+            # that abandoned (lease expired/recovered) after inspecting but before
+            # approving/rejecting must not permanently satisfy these for a fresh actor:
+            # a new `start` supersedes it, so the fresh actor is required to inspect
+            # again rather than inheriting stale approve/reject permission.
+            active_actor_fact_id = self.session.scalar(
+                select(wf.OperationActorFact.actor_fact_id)
                 .join(
                     wf.ServiceLease,
                     (wf.ServiceLease.operation_id == wf.OperationActorFact.operation_id)
@@ -723,13 +728,22 @@ class PostgresReadModel:
                     wf.ServiceLease.generation_id == generation_id,
                     wf.ServiceLease.task_id == task_id,
                     wf.ServiceLease.verification_cycle_id == cycle.cycle_id,
+                    wf.ServiceLease.state == "active",
                 )
-            ) > 0
-            inspected = self.session.scalar(
-                select(func.count())
-                .select_from(wf.VerificationInspectionOccurrence)
-                .where(wf.VerificationInspectionOccurrence.cycle_id == cycle.cycle_id)
-            ) > 0
+                .order_by(wf.OperationActorFact.actor_attempt_sequence.desc())
+                .limit(1)
+            )
+            verifier_established = active_actor_fact_id is not None
+            if active_actor_fact_id is not None:
+                inspected = self.session.scalar(
+                    select(func.count())
+                    .select_from(wf.VerificationInspectionOccurrence)
+                    .where(
+                        wf.VerificationInspectionOccurrence.cycle_id == cycle.cycle_id,
+                        wf.VerificationInspectionOccurrence.verifier_actor_fact_id
+                        == active_actor_fact_id,
+                    )
+                ) > 0
             signoff_bound = self.session.scalar(
                 select(func.count())
                 .select_from(wf.VerificationSignoff)
