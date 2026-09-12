@@ -86,9 +86,11 @@ def _honest_git(checkout: Path, *args: str, timeout: int = 10) -> bytes:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError("Honest Pantry update failed; no files were served") from exc
+        raise RuntimeError(f"Honest Pantry update failed; no files were served ({exc})") from exc
     if result.returncode:
-        raise RuntimeError("Honest Pantry update failed; no files were served")
+        stderr_lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
+        reason = stderr_lines[-1] if stderr_lines else f"git {' '.join(args)} exited {result.returncode}"
+        raise RuntimeError(f"Honest Pantry update failed; no files were served ({reason})")
     return result.stdout
 
 
@@ -104,7 +106,10 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
     with HONEST_LOCK:
         if _honest_git(checkout, "branch", "--show-current").decode().strip() != "main":
             raise RuntimeError("Honest Pantry checkout is not on main; no files were served")
-        _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
+        try:
+            _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
+        except RuntimeError:
+            _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
         sha = _honest_git(checkout, "rev-parse", "HEAD").decode().strip()
         if sha != _honest_git(checkout, "rev-parse", "FETCH_HEAD").decode().strip():
             raise RuntimeError("Honest Pantry checkout does not match origin/main; no files were served")
