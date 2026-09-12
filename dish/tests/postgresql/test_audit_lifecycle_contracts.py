@@ -328,8 +328,8 @@ def test_abandoned_verifier_lease_does_not_permanently_lock_out_a_fresh_verifier
         abandoned_lease.terminal_at = NOW
         session.flush()
 
-        # A fresh, independent verifier must be offered `verify` (start) again,
-        # not stale approve/reject it cannot legally exercise.
+        # Raw workflow legality returns to Verification, but a different run must
+        # fence the abandoned occurrence through safe-reclaim before it can start.
         assert tuple(port.reads.task_view(task_id).legal_actions) == ("verify",)
 
         fresh_verifier_run = _next(ids)
@@ -340,13 +340,35 @@ def test_abandoned_verifier_lease_does_not_permanently_lock_out_a_fresh_verifier
             owner="verifier-owner-2",
             agent="codex",
         )
+        discovered = port.execute(
+            _call(
+                "read",
+                run_id=fresh_verifier_run,
+                owner="verifier-owner-2",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert discovered.allowed_actions == ("safe-reclaim",)
+        reclaimed = port.execute(
+            _call(
+                "safe-reclaim",
+                run_id=fresh_verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner-2",
+                arguments=discovered.data["agent_action"]["arguments"],
+            )
+        )
+        assert reclaimed.ok, (reclaimed.code, reclaimed.data)
+        successor_operation_id = reclaimed.data["successor_operation_id"]
         _start_verification(
             port,
             ids,
             task_id=task_id,
-            operation_id=operation_id,
+            operation_id=successor_operation_id,
             run_id=fresh_verifier_run,
             owner="verifier-owner-2",
+            target_operation_id=successor_operation_id,
+            target_cycle_id=reclaimed.data["prepared_cycle_id"],
         )
 
         # The fresh actor's own `start` supersedes the abandoned verifier's stale
@@ -357,7 +379,7 @@ def test_abandoned_verifier_lease_does_not_permanently_lock_out_a_fresh_verifier
             port,
             ids,
             task_id=task_id,
-            operation_id=operation_id,
+            operation_id=successor_operation_id,
             run_id=fresh_verifier_run,
             owner="verifier-owner-2",
         )

@@ -119,6 +119,7 @@ def test_postgresql_action_lifecycle_is_driven_by_each_immediate_response(
     planning_run = _next(ids)
     research_run = _next(ids)
     verification_run = _next(ids)
+    foreign_verification_run = _next(ids)
     with session_scope(factory) as session:
         _add_verification_queue(session, ids, context)
         _add_destination_section(session, ids, context)
@@ -148,6 +149,13 @@ def test_postgresql_action_lifecycle_is_driven_by_each_immediate_response(
             run_id=verification_run,
             owner="gpt-action",
             agent="codex",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=foreign_verification_run,
+            owner="gpt-action",
+            agent="gpt",
         )
 
     service = runtime_service(factory, tmp_path)
@@ -295,6 +303,19 @@ Destination section: Sichuan — 12345
             )
             assert inspected["allowed_actions"] == ["approve", "reject"]
 
+            foreign_read = call(
+                base,
+                "read",
+                run_id=foreign_verification_run,
+                arguments={
+                    "dish_id": research_prepared["data"]["dish_id"],
+                    "agent": "gpt",
+                },
+            )
+            assert foreign_read["allowed_actions"] == []
+            assert "reviewed_identity" not in foreign_read["data"]
+            assert "agent_action" not in foreign_read["data"]
+
             inspected_data = inspected["data"]
             assert isinstance(inspected_data, dict)
             approved = call(
@@ -311,9 +332,11 @@ Destination section: Sichuan — 12345
                     "provenance_complete": True,
                 },
             )
+            assert approved["ok"] is True, approved
 
             command, arguments = returned_action(approved)
             assert arguments == {"submission_id": approved["submission_id"]}
+            arguments["agent"] = "codex"
             submitted = call(
                 base, command, run_id=verification_run, arguments=arguments
             )
