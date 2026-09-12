@@ -135,6 +135,19 @@ def test_server_instructions_require_current_turn_dish_discovery():
     assert "earlier missing dish_query is not current availability evidence" in mcp_server.SERVER_INSTRUCTIONS
 
 
+def test_honest_git_ignores_system_ssh_config(monkeypatch, tmp_path):
+    observed = {}
+
+    def fake_run(argv, **kwargs):
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, stdout=b"ok", stderr=b"")
+
+    monkeypatch.setattr(mcp_server.subprocess, "run", fake_run)
+
+    assert mcp_server._honest_git(tmp_path, "status") == b"ok"
+    assert observed["env"]["GIT_SSH_COMMAND"] == "/usr/bin/ssh -F /dev/null"
+
+
 def test_honest_tool_is_added_outside_connected_command_contract():
     tool = mcp_server.build_honest_tool(Path("/tmp/honest"))
     assert tool.name == "dish_honest_read"
