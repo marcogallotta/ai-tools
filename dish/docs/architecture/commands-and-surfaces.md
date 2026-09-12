@@ -16,7 +16,9 @@ Stable connected-agent command names are owned below transport composition by `d
 
 The MCP app additionally exposes `dish_honest_read` as a transport-local, read-only repository
 context tool. It updates the single host Honest Pantry checkout before returning bounded text files;
-it is not a Dish workflow command and does not join the connected command identity set.
+it is not a Dish workflow command and does not join the connected command identity set. Its response
+may identify missing recommended routing files, including Planning's compact cuisine, class, and
+block indexes. That is discovery feedback, not proof that the caller read or followed those files.
 
 ## Actors, processes, and stores
 
@@ -31,6 +33,9 @@ Connected-agent command identity/exposure membership is shared lower-level metad
 - A surface must not accidentally expose privileged/internal operations merely because a route or command exists elsewhere.
 - Surface-specific guidance may add navigation, explanation, recovery instructions, or non-workflow affordances; it must not manufacture a workflow transition the backend considers legal when it is not.
 - The public GPT Action transport may add `data.agent_guidance` derived from the canonical result. Guidance is contextual caller help, not workflow authority: it must not add or authorize legal actions, invent authoritative identifiers or state, or contradict `allowed_actions`.
+- Connected `query` and `cooked-updates` results may guide callers to exhaust exact pagination and,
+  for Planning, inspect immutable logs plus current Honest Pantry class/block guidance. This does not
+  turn Dish into planning-policy authority or prove that the caller completed those reads.
 - Command identity and replay classification should not be independently redefined in every surface.
 - Overlapping capabilities across agent/admin/frontend surfaces are allowed when exposure and authorization are explicit.
 - The dedicated `implementation-action` deployment is a closed Development Workflow publication projection. During Gate A it exposes only `qualify-file-transport`; it must neither advertise nor route the ordinary Dish workflow Action inventory. It reuses the shared HTTP, authentication, replay, logging, and file-transport infrastructure without inheriting unrelated command exposure.

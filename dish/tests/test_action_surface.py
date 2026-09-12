@@ -375,6 +375,42 @@ def test_action_guidance_uses_postgresql_read_legal_actions():
     )
 
 
+def test_action_guidance_requires_exact_cooked_updates_pagination():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "cooked-updates",
+        "code": "OK",
+        "data": {
+            "generation_id": "11111111-1111-4111-8111-111111111111",
+            "next_cursor": "opaque-next-page",
+        },
+    })
+
+    text = " ".join(guidance["instructions"])
+    assert "discovery is not complete" in text
+    assert "data.next_cursor exactly as returned" in text
+    assert "preserve the original since and page_size" in text
+    assert "cursor preserves the through boundary" in text
+
+
+def test_action_guidance_routes_exhausted_history_to_logs_classes_and_blocks():
+    for command in ("query", "cooked-updates"):
+        guidance = action_agent_guidance({
+            "ok": True,
+            "command": command,
+            "code": "OK",
+            "data": {"next_cursor": None},
+        })
+
+        text = " ".join(guidance["instructions"])
+        assert "result page is exhausted" in text
+        assert "recent related cooks" in text
+        assert "every matching finalist or plausible alias" in text
+        assert "update/import timestamps only as discovery metadata" in text
+        assert "cook log establishes an actual cook" in text
+        assert "class and block guidance" in text
+
+
 def test_action_guidance_does_not_trust_malformed_nested_actions():
     guidance = action_agent_guidance({
         "ok": True,

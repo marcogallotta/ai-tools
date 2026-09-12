@@ -90,8 +90,11 @@ _READ_DESCRIPTIONS = {
     "sections": "List current Dish sections from PostgreSQL authority.",
     "section-tasks": "List current Dishes in one section using exact returned identifiers.",
     "search": "Search current active Dish titles through PostgreSQL authority.",
-    "query": "Query currently cooked Dishes through PostgreSQL authority.",
-    "cooked-updates": "List current cooked-history updates from PostgreSQL authority.",
+    "query": "Query the complete currently cooked Dish inventory for history and duplicate checks.",
+    "cooked-updates": (
+        "List paginated cooked-history updates for candidate discovery; cook logs determine actual "
+        "cook timing."
+    ),
     "cook-logs": "List immutable cook logs for one Dish.",
     "read": "Read one exact Dish by canonical Dish ID or returned task identity.",
     "proposals": "List current governed proposals visible to the connected agent.",
