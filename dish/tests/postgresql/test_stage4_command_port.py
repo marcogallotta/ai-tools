@@ -2056,6 +2056,7 @@ def test_planning_challenge_then_fresh_start_opens_exact_operation(workflow_db) 
         operation = session.get(wf.WorkflowOperation, uuid.UUID(second.data["operation_id"]))
         lease = session.get(wf.ServiceLease, uuid.UUID(second.data["lease_id"]))
         assert second.ok and operation.kind == "planning"
+        assert second.data["operation_kind"] == "planning"
         assert lease.operation_id == operation.operation_id and lease.state == "active"
         challenge = session.get(
             wf.PlanningIntentChallenge, uuid.UUID(first.data["intent_challenge_id"])
