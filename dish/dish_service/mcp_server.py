@@ -50,6 +50,7 @@ HONEST_CHECKOUT = Path("/home/marco/honest-pantry")
 HONEST_MAX_FILES = 16
 HONEST_MAX_BYTES = 512 * 1024
 HONEST_LOCK = threading.Lock()
+HONEST_GIT_SSH_COMMAND = "/usr/bin/ssh -F /dev/null"
 LOG = logging.getLogger("dish.mcp")
 HONEST_PLANNING_START_PATHS = (
     "dish-planning-protocol.md",
@@ -82,7 +83,12 @@ def _honest_git(checkout: Path, *args: str, timeout: int = 10) -> bytes:
     try:
         result = subprocess.run(
             ["/usr/bin/git", *args], cwd=checkout, capture_output=True,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}, timeout=timeout,
+            env={
+                **os.environ,
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_SSH_COMMAND": HONEST_GIT_SSH_COMMAND,
+            },
+            timeout=timeout,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
