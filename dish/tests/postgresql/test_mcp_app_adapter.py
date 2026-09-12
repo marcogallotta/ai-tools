@@ -166,6 +166,16 @@ def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
     assert result["files"] == [{"path": "CLAUDE.md", "text": "current instructions\n"}]
     assert result["reading_guidance"]["recommended_paths"] == ["CLAUDE.md"]
     assert result["reading_guidance"]["missing_recommended_paths"] == []
+    wrapped = asyncio.run(
+        mcp_server.build_honest_tool(checkout).run({"paths": ["CLAUDE.md"]})
+    )
+    assert wrapped.is_error is False
+    assert wrapped.structured_content == {
+        "ok": True,
+        "code": "OK",
+        "retryable": False,
+        **result,
+    }
 
 
 def test_honest_read_reports_missing_planning_start_paths(tmp_path):
@@ -203,6 +213,42 @@ def test_honest_read_fails_without_serving_when_pull_fails(tmp_path):
     subprocess.run(["git", "init", "-b", "main", str(checkout)], check=True, capture_output=True)
     with pytest.raises(RuntimeError, match="no files were served"):
         mcp_server.read_honest_files(checkout, ["CLAUDE.md"])
+
+
+def test_honest_tool_contains_refresh_failure_as_normal_result(monkeypatch):
+    def fail_refresh(checkout, paths):
+        raise RuntimeError("Honest Pantry update failed; no files were served")
+
+    class HealthyDishAdapter:
+        def call(self, tool_name, tool_input, *, caller=None):
+            return {"ok": True, "command": "sections", "data": {"sections": []}}
+
+    monkeypatch.setattr(mcp_server, "read_honest_files", fail_refresh)
+    result = asyncio.run(
+        mcp_server.build_honest_tool(Path("/tmp/honest")).run({"paths": ["CLAUDE.md"]})
+    )
+
+    assert result.is_error is False
+    assert result.structured_content == {
+        "ok": False,
+        "code": "HONEST_READ_FAILED",
+        "message": "Honest Pantry update failed; no files were served",
+        "retryable": True,
+        "repository": "marcogallotta/honest-pantry",
+        "sha": None,
+        "files": [],
+    }
+    followup = asyncio.run(
+        mcp_server.DishTool(_tool("sections"), HealthyDishAdapter()).run(
+            {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}}
+        )
+    )
+    assert followup.is_error is False
+    assert followup.structured_content == {
+        "ok": True,
+        "command": "sections",
+        "data": {"sections": []},
+    }
 
 
 def test_mcp_tool_schemas_project_postgresql_action_openapi():
