@@ -110,6 +110,100 @@ def test_ten_way_same_task_actor_lease_has_one_winner(workflow_db) -> None:
         assert len(active) == 1
 
 
+def test_expired_actor_lease_is_auto_reaped_on_new_acquisition(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        run_id, request_id, execution_id = _next(ids), _next(ids), _next(ids)
+        owner = "owner-a"
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id, owner=owner)
+        service = WorkflowAuthorityService(session)
+        _admit(
+            service,
+            request_id=request_id,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner=owner,
+        )
+        _execution(
+            service,
+            execution_id=execution_id,
+            request_id=request_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            binding_id=context["binding_id"],
+        )
+        service.repo.capture_task_fence(
+            execution_id=execution_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            at=NOW,
+        )
+        operation = service.create_operation(
+            operation_id=_next(ids),
+            execution_id=execution_id,
+            task_id=task_id,
+            kind="initial",
+            phase="prepare_required",
+            persisted_actions=["prepare"],
+            created_at=NOW,
+        )
+        operation_id = operation.operation_id
+
+        stale_lease_id = _next(ids)
+        service.acquire_actor_lease(
+            lease_id=stale_lease_id,
+            execution_id=execution_id,
+            operation_id=operation_id,
+            run_id=run_id,
+            owner_id=owner,
+            actor_role="constructor",
+            actor_attempt_sequence=1,
+            issued_at=NOW,
+            expires_at=NOW + timedelta(minutes=1),
+        )
+
+        retry_run_id, retry_request_id, retry_execution_id = _next(ids), _next(ids), _next(ids)
+        retry_owner = "owner-b"
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=retry_run_id, owner=retry_owner
+        )
+        _admit(
+            service,
+            request_id=retry_request_id,
+            generation_id=context["generation_id"],
+            run_id=retry_run_id,
+            owner=retry_owner,
+        )
+        _execution(
+            service,
+            execution_id=retry_execution_id,
+            request_id=retry_request_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            binding_id=context["binding_id"],
+        )
+
+        later = NOW + timedelta(minutes=5)
+        new_lease_id = _next(ids)
+        result = service.acquire_actor_lease(
+            lease_id=new_lease_id,
+            execution_id=retry_execution_id,
+            operation_id=operation_id,
+            run_id=retry_run_id,
+            owner_id=retry_owner,
+            actor_role="constructor",
+            actor_attempt_sequence=2,
+            issued_at=later,
+            expires_at=later + timedelta(minutes=10),
+        )
+
+        assert result.lease_id == new_lease_id
+        assert result.state == "active"
+        stale = session.get(wf.ServiceLease, stale_lease_id)
+        assert stale.state == "expired"
+        assert stale.terminal_at.replace(tzinfo=None) == later.replace(tzinfo=None)
+
+
 def test_independent_tasks_do_not_share_a_global_lease_fence(workflow_db) -> None:
     factory, ids, context, first_task_id = workflow_db
     with session_scope(factory) as session:

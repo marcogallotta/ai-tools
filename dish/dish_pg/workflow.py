@@ -10,7 +10,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
 
 from sqlalchemy import func, select, text, update
@@ -51,6 +51,13 @@ class StaleAuthorityError(WorkflowAuthorityError):
 
 class ContentionLost(WorkflowAuthorityError):
     """Another compatible transaction won the exclusive authority race."""
+
+
+def _naive_utc(value: datetime) -> datetime:
+    """Normalize for comparison across backends that round-trip tz-naive datetimes (e.g. SQLite)."""
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 class OperationRunRevoked(StaleAuthorityError):
@@ -1579,6 +1586,35 @@ class WorkflowAuthorityService:
             run_id=run_id,
             lock_operation=True,
         )
+        blocking_lease = self.session.scalar(
+            select(wf.ServiceLease).where(
+                wf.ServiceLease.generation_id == execution.generation_id,
+                wf.ServiceLease.task_id == operation.task_id,
+                wf.ServiceLease.state == "active",
+                wf.ServiceLease.lease_kind == "actor",
+            )
+        )
+        if blocking_lease is not None and _naive_utc(blocking_lease.expires_at) <= _naive_utc(issued_at):
+            prior_revision, prior_expiry = blocking_lease.lease_revision, blocking_lease.expires_at
+            blocking_lease.state = "expired"
+            blocking_lease.lease_revision = prior_revision + 1
+            blocking_lease.terminal_at = issued_at
+            self.session.add(
+                wf.LeaseEvent(
+                    lease_event_id=self.uuid_factory(),
+                    lease_id=blocking_lease.lease_id,
+                    event_kind="expired",
+                    request_id=execution.request_id,
+                    command_execution_id=execution_id,
+                    prior_revision=prior_revision,
+                    resulting_revision=prior_revision + 1,
+                    prior_expiry=prior_expiry,
+                    resulting_expiry=prior_expiry,
+                    reason="auto-reaped: expired before new actor lease acquisition",
+                    occurred_at=issued_at,
+                )
+            )
+            self.session.flush()
         row = wf.ServiceLease(
             lease_id=lease_id,
             generation_id=execution.generation_id,
