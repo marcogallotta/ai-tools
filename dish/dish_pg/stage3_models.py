@@ -724,7 +724,7 @@ class MarcoAuthorizationState(Base):
     reservation_request_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("service_requests.request_id", ondelete="RESTRICT")
     )
-    consumed_result_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, unique=True)
+    consumed_result_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     authorization_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
