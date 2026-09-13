@@ -1833,6 +1833,151 @@ def test_postgresql_proposals_and_apply_proposal_install_exact_authorized_candid
         ).data["count"] == 0
 
 
+def test_apply_proposal_succeeds_when_two_governed_fields_change_together(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    author_run = _next(ids)
+    verifier_run = _next(ids)
+    admin_run = _next(ids)
+    applying_run = _next(ids)
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="marco",
+            agent="marco",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=applying_run,
+            owner="applying-owner",
+            agent="gpt",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        prepared = _prepare_for_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=author_run,
+        )
+        _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        _inspect(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        reviewed = session.get(
+            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+        )
+        candidate_text = (
+            (reviewed.title + "\n" + reviewed.body)
+            .replace("Purpose: Compare texture", "Purpose: Compare texture and aroma")
+            .replace("Locks: Keep crisp", "Locks: Keep crisp and warm")
+        )
+        rejected = port.execute(
+            _call(
+                "reject",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "task_id": str(task_id),
+                    "submission_id": started.data["operation_id"],
+                    "agent": "codex",
+                    "reason": "Two governed fields change together in one candidate",
+                    "route": "large",
+                    "model": "test-verifier",
+                    "file_text": candidate_text,
+                    "governed_change_fields": ["Purpose", "Locks"],
+                },
+            )
+        )
+        assert rejected.ok, (rejected.code, rejected.http_status, rejected.data)
+        proposal_id = rejected.data["proposal_id"]
+        assert len(rejected.data["required_authorizations"]) == 2
+
+        for change in rejected.data["required_authorizations"]:
+            grant = port.execute(
+                _call(
+                    "authorize-governed-change",
+                    run_id=admin_run,
+                    request_id=_next(ids),
+                    owner="marco",
+                    principal="admin",
+                    arguments={
+                        "task_id": str(task_id),
+                        "operation_id": started.data["operation_id"],
+                        "field_name": change["field"],
+                        "before": change["before"],
+                        "after": change["after"],
+                        "reason": "approved exact semantic proposal",
+                    },
+                )
+            )
+            assert grant.ok, (grant.code, grant.http_status, grant.data)
+
+        # Regression: applying a proposal that consumed more than one governed
+        # authorization grant at once used to violate a global uniqueness
+        # constraint on consumed_result_id, permanently blocking any proposal
+        # that changed two or more governed fields together.
+        applied = port.execute(
+            _call(
+                "apply-proposal",
+                run_id=applying_run,
+                request_id=_next(ids),
+                owner="applying-owner",
+                arguments={
+                    "proposal_id": proposal_id,
+                    "agent": "gpt",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert applied.ok, (applied.code, applied.http_status, applied.data)
+        current_id = port._current_content_version_id(context["generation_id"], task_id)
+        current = session.get(models.ContentVersion, current_id)
+        assert current.content_identity == rejected.data["candidate_identity"]
+        assert "Purpose: Compare texture and aroma" in current.body
+        assert "Locks: Keep crisp and warm" in current.body
+
+        states = session.scalars(
+            select(wf.MarcoAuthorizationState).where(
+                wf.MarcoAuthorizationState.grant_id.in_(
+                    select(wf.MarcoAuthorizationGrant.grant_id).where(
+                        wf.MarcoAuthorizationGrant.operation_id
+                        == uuid.UUID(started.data["operation_id"])
+                    )
+                )
+            )
+        ).all()
+        assert len(states) == 2
+        assert all(state.state == "consumed" for state in states)
+        assert all(state.consumed_result_id == current_id for state in states)
+
+
 def test_postgresql_queue_rejects_only_the_exact_unapproved_semantic_proposal(
     workflow_db,
 ) -> None:
