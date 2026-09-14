@@ -9,16 +9,21 @@ import time
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from dish_tool.admin_command_spec import (
+    RESOLVED_OPERATION_TARGET_COMMANDS as _ADMIN_OPERATION_TARGET_COMMANDS,
+)
 from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import require_asana_gid, require_dish_uuid, validate_identifier_fields
 from dish_tool.results import error_envelope
+
 from .action_guidance import attach_action_agent_guidance
 
-from .application import DishService
-from .application import _ADMIN_OPERATION_TARGET_COMMANDS
+if TYPE_CHECKING:
+    from .application import DishService
+
 from .auth import authenticate_bearer
 from .http_routing import resolve_post_route
 from .leases import ServicePrincipal
