@@ -11,9 +11,8 @@ import uuid
 from collections.abc import Sequence
 from pathlib import Path
 from types import FrameType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .application import DishService
 from .config import ServiceConfig
 from .database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from .http import DishHTTPServer, build_action_server, build_private_server
@@ -24,6 +23,9 @@ from .process_lock import DatabaseProcessLock
 from .sd_notify import notify as sd_notify
 from dish_tool.errors import DishRuleError
 from dish_tool.startup_exit import startup_exit_status
+
+if TYPE_CHECKING:
+    from .application import DishService
 
 LOG = logging.getLogger("dish.service")
 
@@ -174,6 +176,8 @@ def _build_servers(service: DishService, *, frontend_runtime=None) -> tuple[Dish
 
 
 def _run_configured_service(config: ServiceConfig) -> int:
+    from .application import DishService
+
     lock_path = database_process_lock_path(config.db_path)
     with DatabaseProcessLock(
         lock_path, role="service", rule="service_process_lock_held"
