@@ -104,6 +104,8 @@ Before changing repository-owned agent tooling, lifecycle tooling, development-w
 
 When a local Claude Code/Codex worker publishes a review-ready PR and subagents are available, it immediately dispatches a fresh independent Review agent for the exact head and keeps owning the routine outer loop. A `MERGE` verdict proceeds directly into the authorized local Integration path and expected-head merge without asking Marco to relay the handoff or say `go` again. A `BLOCK` returns to the applicable fix/design path. Pending CI is observed in parallel: candidate-caused failures block; a mechanically proven unrelated current-main/baseline failure uses the repository baseline-debt path when its evidence requirements are met, then receives only a bounded post-merge investigation. Disproportionate CI selection/setup is logged to Development Workflow Friction and does not pause otherwise-authorized work.
 
+`CLAUDE.md` takes precedence over agentic handoffs. A handoff's terminal wording limits work *after* mandatory standing lifecycle steps; it cannot cancel them. Thus `mark ready for fresh independent Review, then stop` means dispatch the required independent Review, persist/read back that handoff, then stop the current worker. It is not a conflict to raise to Marco.
+
 For local Claude Code/Codex, if role, task, or PR context is incomplete or stale after compaction, treat unverified pre-compaction history as `UNKNOWN`. Do not resume substantive work until the repository re-grounding barrier restores current authority; the hook is the primary mechanism and this instruction is its fail-closed fallback.
 
 ### Codex usage budget
