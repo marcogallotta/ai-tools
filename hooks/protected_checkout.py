@@ -607,6 +607,50 @@ def active_task_for_git_segment(segment, cwd):
     return task_gid, basename_token(pairs[sub_idx][0])
 
 
+PRIMARY_WORKTREE_MUTATIONS = frozenset({
+    "add", "am", "apply", "checkout", "cherry-pick", "clean", "commit",
+    "merge", "mv", "pull", "rebase", "reset", "restore", "revert",
+    "rm", "stash", "switch", "tag", "update-index", "update-ref",
+})
+
+
+def primary_mutation_for_git_segment(segment, cwd):
+    """Identify a visible working-tree mutation in a repository's primary checkout.
+
+    Linked worktrees have a separate git-dir but share the common-dir. Git reads,
+    fetches and worktree creation remain available from the primary checkout.
+    """
+    pairs = _classify_tokens(segment)
+    command_idx = _command_index(pairs)
+    if command_idx is None or basename_token(pairs[command_idx][0]) != "git":
+        return None
+    location_args, _global_args, sub_idx, ambiguous, _alias_ambiguous = (
+        _resolve_git_invocation(pairs, command_idx)
+    )
+    if sub_idx is None or ambiguous:
+        return None
+    subcommand = basename_token(pairs[sub_idx][0])
+    args = [token for token, _active in pairs[sub_idx + 1 :]]
+    branch_mutation = subcommand == "branch" and bool(args) and (
+        any(option in args for option in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy"))
+        or not any(option in args for option in ("--list", "-l", "-a", "--all", "-r", "--remotes", "--show-current", "-v", "-vv", "--contains", "--merged"))
+    )
+    worktree_mutation = subcommand == "worktree" and bool(args) and args[0] not in ("add", "list")
+    if subcommand not in PRIMARY_WORKTREE_MUTATIONS and not branch_mutation and not worktree_mutation:
+        return None
+    command_env, _ambiguous_names = _command_environment(pairs[:command_idx])
+    location_env, env_ambiguous = _env_location_overrides(pairs[:command_idx])
+    if env_ambiguous:
+        return None
+    identity = _resolve_repo_identity(location_args, {**command_env, **location_env}, cwd)
+    if identity is None:
+        return None
+    toplevel, git_dir, common_dir = identity
+    if os.path.realpath(git_dir) == os.path.realpath(common_dir):
+        return subcommand, toplevel
+    return None
+
+
 def _alias_value(global_args, extra_env, cwd, name):
     result = _run_git([*global_args, "config", "--get", f"alias.{name}"], extra_env, cwd)
     if result is None or result.returncode != 0:

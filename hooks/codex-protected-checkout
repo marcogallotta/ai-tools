@@ -32,6 +32,35 @@ def active_task_mutation(command, cwd):
     return None
 
 
+def primary_checkout_mutation(command, cwd, depth=0):
+    current_cwd = cwd or os.getcwd()
+    for segment in protected_checkout.split_segments(command):
+        pairs = protected_checkout._classify_tokens(segment)
+        command_idx = protected_checkout._command_index(pairs)
+        if command_idx is not None:
+            name = protected_checkout.basename_token(pairs[command_idx][0])
+            if name == "git-commit":
+                identity = protected_checkout._resolve_repo_identity([], {}, current_cwd)
+                if identity is not None and os.path.realpath(identity[1]) == os.path.realpath(identity[2]):
+                    return "git-commit", identity[0]
+        mutation = protected_checkout.primary_mutation_for_git_segment(segment, current_cwd)
+        if mutation:
+            return mutation
+        if command_idx is not None and depth < 6:
+            if name in protected_checkout.SHELL_COMMANDS:
+                payload = protected_checkout._shell_payload(
+                    [token for token, _active in pairs], command_idx
+                )
+                if payload is not None:
+                    mutation = primary_checkout_mutation(payload, current_cwd, depth + 1)
+                    if mutation:
+                        return mutation
+        changed_cwd = protected_checkout._literal_cd_target(segment, current_cwd)
+        if changed_cwd is not None:
+            current_cwd = changed_cwd
+    return None
+
+
 def main():
     payload = json.load(sys.stdin)
     event = payload.get("hook_event_name") or "PreToolUse"
@@ -52,6 +81,13 @@ def main():
                 or protected_checkout.prompt_free_git(command, invocation_cwd)):
             print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
                 "decision": {"behavior": "allow"}}}))
+        return 0
+    primary = primary_checkout_mutation(command, invocation_cwd)
+    if primary:
+        print(json.dumps(deny(
+            f"[primary-checkout] git {primary[0]} is denied in {primary[1]}; "
+            "use a linked writer worktree."
+        )))
         return 0
     active = active_task_mutation(command, invocation_cwd)
     if active:

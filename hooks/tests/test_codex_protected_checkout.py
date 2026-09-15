@@ -77,7 +77,7 @@ def test_codex_adapter_honors_per_call_workdir(
     assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-def test_codex_adapter_is_silent_outside_ai_tools_even_for_ai_tools_workdir(
+def test_codex_adapter_denies_primary_mutation_even_outside_ai_tools_session(
     codex_protected_checkout, protected_repo, monkeypatch, capsys
 ):
     monkeypatch.setattr(
@@ -99,7 +99,7 @@ def test_codex_adapter_is_silent_outside_ai_tools_even_for_ai_tools_workdir(
         monkeypatch,
         capsys,
     )
-    assert decision is None
+    assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_codex_hooks_config_is_user_level_and_hard_deny_adapter(hooks_dir):
@@ -110,8 +110,40 @@ def test_codex_hooks_config_is_user_level_and_hard_deny_adapter(hooks_dir):
     permission = config["hooks"]["PermissionRequest"][0]
     assert permission["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"
     rules = (hooks_dir.parent / "codex" / "git-pr.rules").read_text()
-    assert 'decision="prompt"' in rules
+    assert 'decision="prompt"' not in rules
+    assert 'decision="forbidden"' in rules
     assert '["gh", "pr"]' in rules
+    ordinary_rules = (hooks_dir.parent / "codex" / "default.rules").read_text()
+    assert 'decision="prompt"' not in ordinary_rules
+    assert '["git", ["add", "commit", "push"]]' in ordinary_rules
+
+
+def test_codex_primary_checkout_denies_mutations_but_not_reads_or_worktree_add(
+    codex_protected_checkout, protected_repo, monkeypatch, capsys
+):
+    primary = str(protected_repo["primary"])
+    linked = str(protected_repo["linked"])
+    for command, cwd, denied in (
+        ("git status --short", primary, False),
+        ("git worktree add /tmp/new-writer", primary, False),
+        ("git fetch origin main", primary, False),
+        ("git branch --show-current", primary, False),
+        ("git branch agent/new", primary, True),
+        ("git worktree remove /tmp/old-writer", primary, True),
+        ("git add README.md", primary, True),
+        ("bash -lc 'git add README.md'", primary, True),
+        ("git commit -m x", primary, True),
+        ("git-commit README.md -m x", primary, True),
+        ("git -C " + primary + " reset --mixed HEAD", linked, True),
+        ("git add README.md", linked, False),
+    ):
+        decision = run_adapter(codex_protected_checkout, {
+            "hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd,
+            "tool_input": {"command": command},
+        }, monkeypatch, capsys)
+        assert (decision is not None) is denied
+        if denied:
+            assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_codex_permission_request_allows_feature_and_pr_but_not_main(

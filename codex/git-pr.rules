@@ -1,3 +1,7 @@
-# Route direct Git through PermissionRequest; PR commands are always allowed.
-prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"]], decision="prompt")
+# Routine Git must not enter a global permission prompt. The Bash hook denies
+# visible primary-checkout mutations; these rules reject destructive forms
+# independently of the checkout. Neither is a process sandbox.
+prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"], "reset", "--hard"], decision="forbidden")
+prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"], "clean", ["-fd", "-f", "-df"]], decision="forbidden")
+prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"], "push", ["--force", "-f", "--force-with-lease"]], decision="forbidden")
 prefix_rule(pattern=["gh", "pr"], decision="allow")

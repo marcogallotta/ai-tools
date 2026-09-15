@@ -1,5 +1,5 @@
 {
-  "description": "ai-tools-scoped Dish operator context, protected-checkout enforcement, and post-compaction re-grounding.",
+  "description": "Dish-scoped operator context and re-grounding; global primary-checkout Git mutation guard.",
   "hooks": {
     "SessionStart": [
       {
