@@ -82,6 +82,81 @@ def test_ineligible_verification_caller_gets_handoff_and_replay(workflow_db) -> 
         ) == 0
 
 
+def test_null_verification_attestation_does_not_create_occurrence(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    author_run = _next(ids)
+    verifier_run = _next(ids)
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        port = _port(session, ids)
+        started = _start_initial(
+            port, ids, task_id=task_id, run_id=author_run, agent="claude"
+        )
+        _prepare_for_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=author_run,
+            agent="claude",
+        )
+
+        missing = port.execute(
+            _call(
+                "start",
+                run_id=verifier_run,
+                owner="verifier-owner",
+                request_id=_next(ids),
+                arguments={
+                    "dish_id": str(task_id),
+                    "kind": "verification",
+                    "agent": "codex",
+                    "independence_attestation": None,
+                },
+            )
+        )
+        assert missing.code == "INDEPENDENCE_ATTESTATION_REQUIRED"
+        sentinel = port.execute(
+            _call(
+                "start",
+                run_id=verifier_run,
+                owner="verifier-owner",
+                request_id=_next(ids),
+                arguments={
+                    "dish_id": str(task_id),
+                    "kind": "verification",
+                    "agent": "codex",
+                    "independence_attestation": "None",
+                },
+            )
+        )
+        assert sentinel.code == "INDEPENDENCE_ATTESTATION_REQUIRED"
+        assert session.scalar(
+            select(func.count()).select_from(wf.OperationActorFact).where(
+                wf.OperationActorFact.actor_role == "verification"
+            )
+        ) == 0
+
+        valid = _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        assert valid.ok
+
+
 def test_verification_continuation_is_caller_aware_without_changing_raw_legality(
     workflow_db,
 ) -> None:

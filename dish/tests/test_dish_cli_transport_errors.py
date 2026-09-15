@@ -5,6 +5,7 @@ import json
 import pytest
 
 from dish_service import admin_cli, cli
+from dish_service.client import DishServiceClient
 from dish_tool.errors import DishRuleError
 
 
@@ -35,6 +36,37 @@ class FailingAdminClient:
 
 def _output(capsys):
     return json.loads(capsys.readouterr().out)
+
+
+def test_inspect_cli_accepts_exact_start_attestation():
+    parsed = cli.build_parser().parse_args(
+        [
+            "inspect", "00000000-0000-4000-8000-000000000000",
+            "--agent", "codex",
+            "--independence-attestation", "independent review",
+        ]
+    )
+    assert parsed.independence_attestation == "independent review"
+
+
+def test_start_cli_rejects_argument_run_id_that_differs_from_service_identity(capsys):
+    client = DishServiceClient(
+        "http://localhost:1", token="test-token",
+        run_id="11111111-1111-4111-8111-111111111111",
+    )
+    status = cli.main(
+        [
+            "start", "00000000-0000-4000-8000-000000000000",
+            "--agent", "codex", "--kind", "verification",
+            "--run-id", "22222222-2222-4222-8222-222222222222",
+            "--independence-attestation", "independent review",
+        ],
+        application=client,
+    )
+    result = _output(capsys)
+    assert status != 0
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["rule"] == "service_run_mismatch"
 
 
 def test_agent_cli_renders_command_time_transport_error_as_json(capsys):
