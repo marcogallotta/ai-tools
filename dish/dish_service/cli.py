@@ -148,7 +148,7 @@ A successful `approve` returns `submit` as the next action -- run it in the same
   5. dish submit SUBMISSION_ID
 
 In service mode, keep the same `DISH_CLIENT_RUN_ID` for every command in this pass.
-If supplied, `start --run-id` must match it.
+If supplied, `--run-id` must match it; the service uses the client envelope identity.
 
 A Large correction stays `pending-verification` for a fresh independent verifier; the
 correcting verifier must not sign its own Large correction. The decision command must repeat
@@ -683,16 +683,16 @@ def main(
             command = parsed.pop("command")
             parsed.pop("profile", None)
             if (
-                command == "start"
+                command in {"start", "approve", "reject", "apply-proposal", "cooked"}
                 and isinstance(app, DishServiceClient)
-                and parsed.get("run_id") is not None
-                and parsed["run_id"] != app.run_id
             ):
-                raise DishRuleError(
-                    "INVALID_ARGUMENT",
-                    "--run-id must match the service client run identity",
-                    rule="service_run_mismatch",
-                )
+                argument_run_id = parsed.pop("run_id", None)
+                if argument_run_id is not None and argument_run_id != app.run_id:
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        "--run-id must match the service client run identity",
+                        rule="service_run_mismatch",
+                    )
             _route_service_canonical_reference(command, parsed, app)
             result = app.execute(command, **parsed)
     except DishRuleError as exc:
