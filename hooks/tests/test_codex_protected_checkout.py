@@ -130,11 +130,14 @@ def test_codex_primary_checkout_denies_mutations_but_not_reads_or_worktree_add(
         ("git branch --show-current", primary, False),
         ("git branch --format='%(refname)'", primary, False),
         ("git tag --list", primary, False),
+        ("git tag --contains HEAD", primary, False),
+        ("git tag --points-at HEAD", primary, False),
         ("git stash list", primary, False),
         ("git branch agent/new", primary, True),
         ("git worktree remove /tmp/old-writer", primary, True),
         ("git add README.md", primary, True),
         ("git -c alias.stage=add stage README.md", primary, True),
+        ("git -c alias.stage='!echo x; git add README.md' stage", primary, True),
         ("bash -lc 'git add README.md'", primary, True),
         ("git commit -m x", primary, True),
         ("git-commit README.md -m x", primary, True),
@@ -156,11 +159,13 @@ def test_codex_adapter_denies_severe_visible_variants(
     linked = str(protected_repo["linked"])
     for command in (
         "git push origin main --force",
+        "git push -fu origin main",
         "bash -lc 'git push origin main --force'",
         "git -C " + linked + " reset --hard",
         "rm -R /tmp/example",
         "rm --force --recursive /tmp/example",
         "docker compose down --volumes",
+        "docker compose --project-name x down --volumes",
     ):
         decision = run_adapter(codex_protected_checkout, {
             "hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": linked,

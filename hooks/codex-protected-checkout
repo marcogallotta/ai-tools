@@ -60,7 +60,9 @@ def severe_visible_command(command, depth=0):
                 return "git clean"
             if sub == "push" and any(
                 token in ("-f", "--force", "--force-with-lease")
-                or token.startswith("--force-with-lease=") for token in tail
+                or token.startswith("--force-with-lease=")
+                or token.startswith("-") and not token.startswith("--")
+                and "f" in token[1:] for token in tail
             ):
                 return "git force push"
         if name == "rm" and any(
@@ -69,10 +71,23 @@ def severe_visible_command(command, depth=0):
             for token in args
         ):
             return "recursive rm"
-        if name == "docker" and args[:2] == ["compose", "down"] and any(
-            token in ("-v", "--volumes") for token in args[2:]
-        ):
-            return "docker compose down --volumes"
+        if name == "docker" and args and args[0] == "compose":
+            compose_args = args[1:]
+            value_flags = {"-p", "--project-name", "-f", "--file", "--env-file",
+                           "--profile", "--project-directory", "--ansi", "--progress"}
+            pos = 0
+            while pos < len(compose_args):
+                token = compose_args[pos]
+                if token in value_flags:
+                    pos += 2
+                elif token.startswith("-"):
+                    pos += 1
+                else:
+                    break
+            if compose_args[pos:pos + 1] == ["down"] and any(
+                token in ("-v", "--volumes") for token in compose_args[pos + 1:]
+            ):
+                return "docker compose down --volumes"
     return None
 
 

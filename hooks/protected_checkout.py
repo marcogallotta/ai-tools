@@ -633,7 +633,15 @@ def primary_mutation_for_git_segment(segment, cwd, depth=0, seen_aliases=frozens
     args = [token for token, _active in pairs[sub_idx + 1 :]]
     branch_mutation = subcommand == "branch" and _branch_mutates(args)
     worktree_mutation = subcommand == "worktree" and bool(args) and args[0] not in ("add", "list")
-    if subcommand == "tag" and (not args or args[0] in ("-l", "--list")):
+    tag_read_flags = ("-l", "--list", "-n", "--contains", "--no-contains",
+                      "--merged", "--no-merged", "--points-at", "--sort", "--format")
+    tag_mutation_flags = ("-a", "-d", "-f", "-s", "-u", "--annotate",
+                          "--delete", "--force", "--sign", "--local-user")
+    if subcommand == "tag" and not any(
+        arg == flag or arg.startswith(flag + "=") for arg in args for flag in tag_mutation_flags
+    ) and (not args or any(
+        args[0] == flag or args[0].startswith(flag + "=") for flag in tag_read_flags
+    )):
         return None
     if subcommand == "stash" and args and args[0] in ("list", "show"):
         return None
@@ -651,7 +659,17 @@ def primary_mutation_for_git_segment(segment, cwd, depth=0, seen_aliases=frozens
         alias = _alias_value(global_args, extra_env, cwd, subcommand)
         if alias is not None:
             if alias.startswith("!"):
-                expanded = alias[1:]
+                alias_cwd = identity[0]
+                for part in split_segments(alias[1:]):
+                    mutation = primary_mutation_for_git_segment(
+                        part, alias_cwd, depth + 1, seen_aliases | {subcommand}
+                    )
+                    if mutation:
+                        return mutation
+                    changed_cwd = _literal_cd_target(part, alias_cwd)
+                    if changed_cwd is not None:
+                        alias_cwd = changed_cwd
+                return None
             else:
                 try:
                     expanded = "git " + shlex.join(shlex.split(alias) + args)
