@@ -1585,10 +1585,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "VERIFICATION_OCCURRENCE_EXISTS",
                     "Verification start cannot bypass the existing verifier occurrence or its recovery lineage",
                 )
-            attestation = str(
-                call.arguments.get("independence_attestation", "")
-            ).strip()
-            if not attestation:
+            supplied_attestation = call.arguments.get("independence_attestation")
+            attestation = (
+                supplied_attestation.strip()
+                if isinstance(supplied_attestation, str)
+                else ""
+            )
+            if not attestation or attestation.lower() == "none":
                 raise CommandRuleError(
                     "INDEPENDENCE_ATTESTATION_REQUIRED",
                     "Verification start requires independence_attestation",

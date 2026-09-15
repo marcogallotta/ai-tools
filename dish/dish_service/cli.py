@@ -125,9 +125,12 @@ See `dish start --help` and `dish prepare --help` for the full argument referenc
     "verification": """\
 dish verification -- stage walkthrough (not a governed operation; this command only prints this text)
 
-  1. dish start TASK_GID --agent AGENT --kind verification --run-id RUN_ID
-  2. review the exact frozen live task for semantic and provenance conformance
-  3. dish approve SUBMISSION_ID --agent AGENT --model MODEL --correction none|small \\
+  1. dish start TASK_GID --agent AGENT --kind verification \\
+       --independence-attestation TEXT
+  2. dish inspect SUBMISSION_ID --agent AGENT \\
+       --independence-attestation EXACT_START_ATTESTATION
+  3. review the exact frozen live task for semantic and provenance conformance
+  4. dish approve SUBMISSION_ID --agent AGENT --model MODEL --correction none|small \\
        --semantic-review-complete --provenance-complete \\
        --reviewed-identity CONTENT_IDENTITY --run-id RUN_ID
      -- or --
@@ -142,7 +145,10 @@ not authenticated runtime provenance. `reject --route large` requires it; `appro
 requires it.
 
 A successful `approve` returns `submit` as the next action -- run it in the same pass:
-  4. dish submit SUBMISSION_ID
+  5. dish submit SUBMISSION_ID
+
+In service mode, keep the same `DISH_CLIENT_RUN_ID` for every command in this pass.
+If supplied, `--run-id` must match it; the service uses the client envelope identity.
 
 A Large correction stays `pending-verification` for a fresh independent verifier; the
 correcting verifier must not sign its own Large correction. The decision command must repeat
@@ -152,7 +158,8 @@ label alone is not authority.
 `allowed_actions` in the JSON response names the next legal command. Do not retry an uncertain
 mutation; preserve the complete JSON result and escalate to Marco for recovery.
 
-See `dish start --help`, `dish approve --help`, `dish reject --help`, and `dish submit --help`
+See `dish start --help`, `dish inspect --help`, `dish approve --help`,
+`dish reject --help`, and `dish submit --help`
 for the full argument reference.
 """,
 }
@@ -273,6 +280,10 @@ def build_parser() -> JsonArgumentParser:
     )
     inspect.add_argument("submission_id")
     inspect.add_argument("--agent", required=True, choices=_canonical_enum_choices(INSPECT_COMMAND, "agent"))
+    inspect.add_argument(
+        "--independence-attestation",
+        help="repeat the exact attestation returned by Verification start",
+    )
     inspect.add_argument("--request-id")
 
     proposals = subparsers.add_parser(
@@ -318,7 +329,10 @@ def build_parser() -> JsonArgumentParser:
             "verification=a fresh independent Verification pass"
         ),
     )
-    start.add_argument("--run-id")
+    start.add_argument(
+        "--run-id",
+        help="in service mode, must match DISH_CLIENT_RUN_ID",
+    )
     start.add_argument("--independence-attestation")
     start.add_argument(
         "--change-level",
@@ -668,6 +682,19 @@ def main(
         else:
             command = parsed.pop("command")
             parsed.pop("profile", None)
+            if (
+                command in {"start", "approve", "reject", "apply-proposal", "cooked"}
+                and isinstance(app, DishServiceClient)
+            ):
+                argument_run_id = parsed.pop("run_id", None)
+                if argument_run_id is not None and argument_run_id != app.run_id:
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        "--run-id must match the service client run identity",
+                        rule="service_run_mismatch",
+                    )
+            if parsed.get("independence_attestation") is None:
+                parsed.pop("independence_attestation", None)
             _route_service_canonical_reference(command, parsed, app)
             result = app.execute(command, **parsed)
     except DishRuleError as exc:
