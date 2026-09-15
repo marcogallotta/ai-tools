@@ -59,10 +59,11 @@ def severe_visible_command(command, cwd=None, depth=0, seen_aliases=frozenset())
             if sub == "clean":
                 return "git clean"
             if sub == "push" and any(
-                token in ("-f", "--force", "--force-with-lease")
+                token in ("-f", "--force", "--force-with-lease", "--mirror")
                 or token.startswith("--force-with-lease=")
                 or token.startswith("-") and not token.startswith("--")
-                and "f" in token[1:] for token in tail
+                and "f" in token[1:]
+                or token.startswith("+") for token in tail
             ):
                 return "git force push"
             if depth < 6 and sub not in seen_aliases:
@@ -82,6 +83,18 @@ def severe_visible_command(command, cwd=None, depth=0, seen_aliases=frozenset())
             for token in args
         ):
             return "recursive rm"
+        if name in ("apt", "apt-get"):
+            apt_value_flags = {"-o", "--option", "-c", "--config-file", "-t", "--target-release"}
+            apt_pos = 0
+            while apt_pos < len(args):
+                if args[apt_pos] in apt_value_flags:
+                    apt_pos += 2
+                elif args[apt_pos].startswith("-"):
+                    apt_pos += 1
+                else:
+                    break
+            if args[apt_pos:apt_pos + 1] in (["remove"], ["purge"]):
+                return "apt package removal"
         if name == "docker":
             docker_value_flags = {"--context", "--host", "-H", "--config", "--log-level", "-l"}
             docker_pos = 0
@@ -93,9 +106,14 @@ def severe_visible_command(command, cwd=None, depth=0, seen_aliases=frozenset())
                     docker_pos += 1
                 else:
                     break
-            if args[docker_pos:docker_pos + 1] != ["compose"]:
+            docker_args = args[docker_pos:]
+            if docker_args[:2] == ["volume", "rm"] or docker_args[:2] == ["volume", "prune"]:
+                return "docker volume removal"
+            if docker_args[:2] == ["system", "prune"]:
+                return "docker system prune"
+            if docker_args[:1] != ["compose"]:
                 continue
-            compose_args = args[docker_pos + 1:]
+            compose_args = docker_args[1:]
             value_flags = {"-p", "--project-name", "-f", "--file", "--env-file",
                            "--profile", "--project-directory", "--ansi", "--progress"}
             pos = 0

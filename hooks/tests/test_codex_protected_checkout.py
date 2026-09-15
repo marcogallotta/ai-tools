@@ -150,6 +150,9 @@ def test_codex_primary_checkout_denies_mutations_but_not_reads_or_worktree_add(
         ("git-commit README.md -m x", primary, True),
         ("git -C " + primary + " reset --mixed HEAD", linked, True),
         ("git add README.md", linked, False),
+        ("git push origin HEAD:agent/new", linked, False),
+        ("docker --context default volume ls", linked, False),
+        ("apt-get -y install example", linked, False),
     ):
         decision = run_adapter(codex_protected_checkout, {
             "hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd,
@@ -167,6 +170,8 @@ def test_codex_adapter_denies_severe_visible_variants(
     for command in (
         "git push origin main --force",
         "git push -fu origin main",
+        "git push origin +HEAD:main",
+        "git push --mirror origin",
         "bash -lc 'git push origin main --force'",
         "git -C " + linked + " reset --hard",
         "rm -R /tmp/example",
@@ -175,9 +180,13 @@ def test_codex_adapter_denies_severe_visible_variants(
         "docker compose --project-name x down --volumes",
         "docker --context default compose down --volumes",
         "docker --host unix:///var/run/docker.sock compose down --volumes",
+        "docker --context default volume rm important",
+        "docker --context default system prune",
         "git -c alias.republish='!git push --force origin main' republish",
         "git -c alias.erase='!rm -rf /tmp/example' erase",
         "git -c alias.v='!docker compose down --volumes' v",
+        "git -c alias.v='!docker --context default volume rm important' v",
+        "apt-get -y purge example",
     ):
         decision = run_adapter(codex_protected_checkout, {
             "hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": linked,
