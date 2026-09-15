@@ -12,10 +12,10 @@ prefix_rule(pattern=["gh", "pr"], decision="allow")
 prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"], "reset", "--hard"], decision="forbidden")
 prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"], "clean"], decision="forbidden")
 prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"], "push", ["--force", "-f", "--force-with-lease"]], decision="forbidden")
-prefix_rule(pattern=["rm", ["-rf", "-fr", "-r", "--recursive"]], decision="forbidden")
+prefix_rule(pattern=["rm", ["-rf", "-fr", "-r", "-R", "--recursive"]], decision="forbidden")
 prefix_rule(pattern=["docker", "volume", ["rm", "prune"]], decision="forbidden")
 prefix_rule(pattern=["docker", "system", "prune"], decision="forbidden")
-prefix_rule(pattern=["docker", "compose", "down", "-v"], decision="forbidden")
+prefix_rule(pattern=["docker", "compose", "down", ["-v", "--volumes"]], decision="forbidden")
 prefix_rule(pattern=[["apt", "apt-get"], ["remove", "purge"]], decision="forbidden")
 
 # Ordinary reads, tests, edits, dependency preparation, and PR publication

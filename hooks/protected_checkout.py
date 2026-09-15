@@ -614,7 +614,7 @@ PRIMARY_WORKTREE_MUTATIONS = frozenset({
 })
 
 
-def primary_mutation_for_git_segment(segment, cwd):
+def primary_mutation_for_git_segment(segment, cwd, depth=0, seen_aliases=frozenset()):
     """Identify a visible working-tree mutation in a repository's primary checkout.
 
     Linked worktrees have a separate git-dir but share the common-dir. Git reads,
@@ -624,26 +624,43 @@ def primary_mutation_for_git_segment(segment, cwd):
     command_idx = _command_index(pairs)
     if command_idx is None or basename_token(pairs[command_idx][0]) != "git":
         return None
-    location_args, _global_args, sub_idx, ambiguous, _alias_ambiguous = (
+    location_args, global_args, sub_idx, ambiguous, alias_ambiguous = (
         _resolve_git_invocation(pairs, command_idx)
     )
     if sub_idx is None or ambiguous:
         return None
     subcommand = basename_token(pairs[sub_idx][0])
     args = [token for token, _active in pairs[sub_idx + 1 :]]
-    branch_mutation = subcommand == "branch" and bool(args) and (
-        any(option in args for option in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy"))
-        or not any(option in args for option in ("--list", "-l", "-a", "--all", "-r", "--remotes", "--show-current", "-v", "-vv", "--contains", "--merged"))
-    )
+    branch_mutation = subcommand == "branch" and _branch_mutates(args)
     worktree_mutation = subcommand == "worktree" and bool(args) and args[0] not in ("add", "list")
-    if subcommand not in PRIMARY_WORKTREE_MUTATIONS and not branch_mutation and not worktree_mutation:
+    if subcommand == "tag" and (not args or args[0] in ("-l", "--list")):
         return None
-    command_env, _ambiguous_names = _command_environment(pairs[:command_idx])
+    if subcommand == "stash" and args and args[0] in ("list", "show"):
+        return None
+    command_env, ambiguous_names = _command_environment(pairs[:command_idx])
     location_env, env_ambiguous = _env_location_overrides(pairs[:command_idx])
     if env_ambiguous:
         return None
-    identity = _resolve_repo_identity(location_args, {**command_env, **location_env}, cwd)
-    if identity is None:
+    extra_env = {**command_env, **location_env}
+    identity = _resolve_repo_identity(location_args, extra_env, cwd)
+    if identity is None or os.path.realpath(identity[1]) != os.path.realpath(identity[2]):
+        return None
+    if depth < 6 and subcommand not in seen_aliases:
+        if alias_ambiguous or _alias_environment_is_ambiguous(global_args, ambiguous_names, subcommand):
+            return subcommand, identity[0]
+        alias = _alias_value(global_args, extra_env, cwd, subcommand)
+        if alias is not None:
+            if alias.startswith("!"):
+                expanded = alias[1:]
+            else:
+                try:
+                    expanded = "git " + shlex.join(shlex.split(alias) + args)
+                except ValueError:
+                    return subcommand, identity[0]
+            return primary_mutation_for_git_segment(
+                expanded, identity[0], depth + 1, seen_aliases | {subcommand}
+            )
+    if subcommand not in PRIMARY_WORKTREE_MUTATIONS and not branch_mutation and not worktree_mutation:
         return None
     toplevel, git_dir, common_dir = identity
     if os.path.realpath(git_dir) == os.path.realpath(common_dir):

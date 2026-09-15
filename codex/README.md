@@ -16,8 +16,9 @@ hook calls
 The same adapter handles `PermissionRequest` only as a compatibility fallback.
 There is no blanket Git prompt rule. `codex/default.rules` replaces the old
 personal rules containing routine prompts and the blanket `git add` refusal.
-Its explicit severe forms are forbidden, not presented as habitual approvals.
-The primary-checkout deny is applied in `PreToolUse`, before execution.
+Its explicit severe prefixes are forbidden, not presented as habitual approvals.
+The Bash `PreToolUse` hook denies visible severe variants whose dangerous flag
+appears later in the command, as well as primary-checkout mutations, before execution.
 Claude's `destructive-op-guard` uses the same small branch check.
 
 The Bash `PreToolUse` entry also invokes `~/.local/bin/investigation-guard`. That guard keeps a
@@ -46,7 +47,10 @@ later `write_stdin` cannot become an unobserved command channel.
 This is a command-hook guardrail, not a process or filesystem sandbox. Under
 `danger-full-access`, an opaque script, Make target, Python subprocess, or other
 child process can invoke Git without exposing that Git command to `PreToolUse`.
-Execpolicy also cannot inspect the semantic authorization of an Asana write,
+Prefix rules alone do not reject reordered dangerous flags (for example,
+`git push origin main --force`); the Bash hook supplies that visible-command
+check, but opaque child processes remain outside it. Execpolicy also cannot
+inspect the semantic authorization of an Asana write,
 deployment, merge, or equivalent wrapped command. Current task authority and
 the owned-worktree managed launcher remain the stronger boundaries. Do not claim
 that removing prompts makes unrestricted execution safe.

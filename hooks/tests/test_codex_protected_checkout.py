@@ -128,9 +128,13 @@ def test_codex_primary_checkout_denies_mutations_but_not_reads_or_worktree_add(
         ("git worktree add /tmp/new-writer", primary, False),
         ("git fetch origin main", primary, False),
         ("git branch --show-current", primary, False),
+        ("git branch --format='%(refname)'", primary, False),
+        ("git tag --list", primary, False),
+        ("git stash list", primary, False),
         ("git branch agent/new", primary, True),
         ("git worktree remove /tmp/old-writer", primary, True),
         ("git add README.md", primary, True),
+        ("git -c alias.stage=add stage README.md", primary, True),
         ("bash -lc 'git add README.md'", primary, True),
         ("git commit -m x", primary, True),
         ("git-commit README.md -m x", primary, True),
@@ -144,6 +148,25 @@ def test_codex_primary_checkout_denies_mutations_but_not_reads_or_worktree_add(
         assert (decision is not None) is denied
         if denied:
             assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_codex_adapter_denies_severe_visible_variants(
+    codex_protected_checkout, protected_repo, monkeypatch, capsys
+):
+    linked = str(protected_repo["linked"])
+    for command in (
+        "git push origin main --force",
+        "bash -lc 'git push origin main --force'",
+        "git -C " + linked + " reset --hard",
+        "rm -R /tmp/example",
+        "rm --force --recursive /tmp/example",
+        "docker compose down --volumes",
+    ):
+        decision = run_adapter(codex_protected_checkout, {
+            "hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": linked,
+            "tool_input": {"command": command},
+        }, monkeypatch, capsys)
+        assert decision["hookSpecificOutput"]["permissionDecision"] == "deny", command
 
 
 def test_codex_permission_request_allows_feature_and_pr_but_not_main(
