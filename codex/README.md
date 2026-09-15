@@ -1,9 +1,10 @@
 # Codex local-agent hooks
 
 `hooks.json` is installed at user level because Codex has no project-local hook
-configuration. Every adapter immediately exits unless the session CWD is
-`~/ai-tools` or one of its descendants, so Dish policy and enforcement never
-apply to unrelated repositories. The operator `SessionStart`
+configuration. Dish operator context and investigation limits remain scoped to
+`~/ai-tools`. The small primary-checkout Git mutation deny applies to visible
+direct Git commands in any repository, including Switchstand; linked writer
+worktrees remain writable. The operator `SessionStart`
 entry invokes `~/.local/bin/dish-operator-context`, so exact-head certification
 can bind both the user hook definition and the operator-policy adapter to the
 same candidate worktree. `SessionStart(source=compact)` invokes
@@ -12,9 +13,12 @@ plus owning Asana and active Git/PR state from durable identity. Re-grounding is
 informational recovery and is not a global tool-use barrier. The Bash-specific
 hook calls
 `~/.local/bin/codex-protected-checkout` and preserves its hard-deny boundary.
-The same adapter handles `PermissionRequest`: direct Git reads, ordinary
-mutations on a known non-`main` branch, and direct `gh pr` commands are allowed;
-`main`, unresolved, wrapped, compound, and unfamiliar forms retain the prompt.
+The same adapter handles `PermissionRequest` only as a compatibility fallback.
+There is no blanket Git prompt rule. `codex/default.rules` replaces the old
+personal rules containing routine prompts and the blanket `git add` refusal.
+Its explicit severe prefixes are forbidden, not presented as habitual approvals.
+The Bash `PreToolUse` hook denies visible severe variants whose dangerous flag
+appears later in the command, as well as primary-checkout mutations, before execution.
 Claude's `destructive-op-guard` uses the same small branch check.
 
 The Bash `PreToolUse` entry also invokes `~/.local/bin/investigation-guard`. That guard keeps a
@@ -43,8 +47,13 @@ later `write_stdin` cannot become an unobserved command channel.
 This is a command-hook guardrail, not a process or filesystem sandbox. Under
 `danger-full-access`, an opaque script, Make target, Python subprocess, or other
 child process can invoke Git without exposing that Git command to `PreToolUse`.
-The owned-worktree session launcher is responsible for the stronger isolation
-boundary.
+Prefix rules alone do not reject reordered dangerous flags (for example,
+`git push origin main --force`); the Bash hook supplies that visible-command
+check, but opaque child processes remain outside it. Execpolicy also cannot
+inspect the semantic authorization of an Asana write,
+deployment, merge, or equivalent wrapped command. Current task authority and
+the owned-worktree managed launcher remain the stronger boundaries. Do not claim
+that removing prompts makes unrestricted execution safe.
 
 ## Install after integration
 
@@ -54,15 +63,19 @@ session and use `/hooks` to review and trust the exact hook definition:
 ```sh
 ln -s /home/marco/ai-tools/codex/hooks.json /home/marco/.codex/hooks.json
 ln -s /home/marco/ai-tools/codex/git-pr.rules /home/marco/.codex/rules/git-pr.rules
+ln -s /home/marco/ai-tools/codex/default.rules /home/marco/.codex/rules/default.rules
 ln -s /home/marco/ai-tools/hooks/dish-operator-context /home/marco/.local/bin/dish-operator-context
 ln -s /home/marco/ai-tools/hooks/agent-reground /home/marco/.local/bin/agent-reground
 ln -s /home/marco/ai-tools/hooks/codex-protected-checkout /home/marco/.local/bin/codex-protected-checkout
 ln -s /home/marco/ai-tools/hooks/investigation-guard /home/marco/.local/bin/investigation-guard
 ```
 
-Do not overwrite existing paths blindly. Inspect and preserve any existing
-user hook configuration before installation; multiple hook sources run rather
-than replacing one another.
+Do not overwrite existing paths blindly. The existing personal `default.rules`
+is a regular, untracked file: preserve it before replacing it with the reviewed
+symlink. Inspect all existing user hooks/rules; multiple sources run and an old
+`prompt` rule still overrides a new `allow` rule. Test the installed rules with
+`codex execpolicy check` and start a fresh Codex session before claiming prompts
+have disappeared. Review any app-specific approval settings separately.
 
 ## Exact-head local runtime certification
 
@@ -77,8 +90,8 @@ test "$(git -C "$WT" rev-parse HEAD)" = "$EXPECTED"
 git -C "$WT" status --short
 ```
 
-Temporarily point the user hook and adapter links at that exact worktree head.
-First inspect `~/.codex/hooks.json`, `~/.codex/rules/git-pr.rules`, `~/.local/bin/dish-operator-context`,
+Temporarily point the user hook, rules and adapter links at that exact worktree head.
+First inspect `~/.codex/hooks.json`, `~/.codex/rules/git-pr.rules`, `~/.codex/rules/default.rules`, `~/.local/bin/dish-operator-context`,
 `~/.local/bin/agent-reground`, `~/.local/bin/codex-protected-checkout`, and `~/.local/bin/investigation-guard`;
 move aside and later restore any pre-existing files or links rather than
 overwriting them.
@@ -86,6 +99,7 @@ overwriting them.
 ```sh
 ln -s "$WT/codex/hooks.json" /home/marco/.codex/hooks.json
 ln -s "$WT/codex/git-pr.rules" /home/marco/.codex/rules/git-pr.rules
+ln -s "$WT/codex/default.rules" /home/marco/.codex/rules/default.rules
 ln -s "$WT/hooks/dish-operator-context" /home/marco/.local/bin/dish-operator-context
 ln -s "$WT/hooks/agent-reground" /home/marco/.local/bin/agent-reground
 ln -s "$WT/hooks/codex-protected-checkout" /home/marco/.local/bin/codex-protected-checkout

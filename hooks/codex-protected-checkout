@@ -32,6 +32,135 @@ def active_task_mutation(command, cwd):
     return None
 
 
+def severe_visible_command(command, cwd=None, depth=0, seen_aliases=frozenset()):
+    for segment in protected_checkout.split_segments(command):
+        pairs = protected_checkout._classify_tokens(segment)
+        idx = protected_checkout._command_index(pairs)
+        if idx is None:
+            continue
+        name = protected_checkout.basename_token(pairs[idx][0])
+        args = [token for token, _active in pairs[idx + 1:]]
+        if name in protected_checkout.SHELL_COMMANDS and depth < 6:
+            payload = protected_checkout._shell_payload(
+                [token for token, _active in pairs], idx
+            )
+            if payload:
+                nested = severe_visible_command(payload, cwd, depth + 1, seen_aliases)
+                if nested:
+                    return nested
+        if name == "git":
+            _loc, _global, sub_idx, ambiguous, _alias = protected_checkout._resolve_git_invocation(pairs, idx)
+            if ambiguous or sub_idx is None:
+                continue
+            sub = pairs[sub_idx][0]
+            tail = [token for token, _active in pairs[sub_idx + 1:]]
+            if sub == "reset" and "--hard" in tail:
+                return "git reset --hard"
+            if sub == "clean":
+                return "git clean"
+            if sub == "push" and any(
+                token in ("-f", "--force", "--force-with-lease", "--mirror")
+                or token.startswith("--force-with-lease=")
+                or token.startswith("-") and not token.startswith("--")
+                and "f" in token[1:]
+                or token.startswith("+") for token in tail
+            ):
+                return "git force push"
+            if depth < 6 and sub not in seen_aliases:
+                expansion = protected_checkout.visible_git_alias_expansion(
+                    pairs, idx, cwd or os.getcwd()
+                )
+                if expansion is not None:
+                    expanded, alias_cwd, alias_name = expansion
+                    nested = severe_visible_command(
+                        expanded, alias_cwd, depth + 1, seen_aliases | {alias_name}
+                    )
+                    if nested:
+                        return nested
+        if name == "rm" and any(
+            token in ("-r", "-R", "--recursive")
+            or token.startswith("-") and not token.startswith("--") and "r" in token.lower()
+            for token in args
+        ):
+            return "recursive rm"
+        if name in ("apt", "apt-get"):
+            apt_value_flags = {"-o", "--option", "-c", "--config-file", "-t", "--target-release"}
+            apt_pos = 0
+            while apt_pos < len(args):
+                if args[apt_pos] in apt_value_flags:
+                    apt_pos += 2
+                elif args[apt_pos].startswith("-"):
+                    apt_pos += 1
+                else:
+                    break
+            if args[apt_pos:apt_pos + 1] in (["remove"], ["purge"]):
+                return "apt package removal"
+        if name == "docker":
+            docker_value_flags = {"--context", "--host", "-H", "--config", "--log-level", "-l"}
+            docker_pos = 0
+            while docker_pos < len(args):
+                token = args[docker_pos]
+                if token in docker_value_flags:
+                    docker_pos += 2
+                elif token.startswith("-"):
+                    docker_pos += 1
+                else:
+                    break
+            docker_args = args[docker_pos:]
+            if docker_args[:2] == ["volume", "rm"] or docker_args[:2] == ["volume", "prune"]:
+                return "docker volume removal"
+            if docker_args[:2] == ["system", "prune"]:
+                return "docker system prune"
+            if docker_args[:1] != ["compose"]:
+                continue
+            compose_args = docker_args[1:]
+            value_flags = {"-p", "--project-name", "-f", "--file", "--env-file",
+                           "--profile", "--project-directory", "--ansi", "--progress"}
+            pos = 0
+            while pos < len(compose_args):
+                token = compose_args[pos]
+                if token in value_flags:
+                    pos += 2
+                elif token.startswith("-"):
+                    pos += 1
+                else:
+                    break
+            if compose_args[pos:pos + 1] == ["down"] and any(
+                token in ("-v", "--volumes") for token in compose_args[pos + 1:]
+            ):
+                return "docker compose down --volumes"
+    return None
+
+
+def primary_checkout_mutation(command, cwd, depth=0):
+    current_cwd = cwd or os.getcwd()
+    for segment in protected_checkout.split_segments(command):
+        pairs = protected_checkout._classify_tokens(segment)
+        command_idx = protected_checkout._command_index(pairs)
+        if command_idx is not None:
+            name = protected_checkout.basename_token(pairs[command_idx][0])
+            if name == "git-commit":
+                identity = protected_checkout._resolve_repo_identity([], {}, current_cwd)
+                if identity is not None and os.path.realpath(identity[1]) == os.path.realpath(identity[2]):
+                    return "git-commit", identity[0]
+        mutation = protected_checkout.primary_mutation_for_git_segment(segment, current_cwd)
+        if mutation:
+            return mutation
+        if command_idx is not None and depth < 6:
+            if name in protected_checkout.SHELL_COMMANDS:
+                payload = protected_checkout._shell_payload(
+                    [token for token, _active in pairs], command_idx
+                )
+                if payload is not None:
+                    mutation = primary_checkout_mutation(payload, current_cwd, depth + 1)
+                    if mutation:
+                        return mutation
+        changed_cwd = protected_checkout._literal_cd_target(segment, current_cwd)
+        if changed_cwd is not None:
+            current_cwd = changed_cwd
+    return None
+
+
 def main():
     payload = json.load(sys.stdin)
     event = payload.get("hook_event_name") or "PreToolUse"
@@ -52,6 +181,17 @@ def main():
                 or protected_checkout.prompt_free_git(command, invocation_cwd)):
             print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
                 "decision": {"behavior": "allow"}}}))
+        return 0
+    severe = severe_visible_command(command, invocation_cwd)
+    if severe:
+        print(json.dumps(deny(f"[destructive-command] {severe} is forbidden.")))
+        return 0
+    primary = primary_checkout_mutation(command, invocation_cwd)
+    if primary:
+        print(json.dumps(deny(
+            f"[primary-checkout] git {primary[0]} is denied in {primary[1]}; "
+            "use a linked writer worktree."
+        )))
         return 0
     active = active_task_mutation(command, invocation_cwd)
     if active:

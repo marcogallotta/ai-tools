@@ -607,11 +607,130 @@ def active_task_for_git_segment(segment, cwd):
     return task_gid, basename_token(pairs[sub_idx][0])
 
 
+PRIMARY_WORKTREE_MUTATIONS = frozenset({
+    "add", "am", "apply", "checkout", "cherry-pick", "clean", "commit",
+    "merge", "mv", "pull", "rebase", "reset", "restore", "revert",
+    "rm", "stage", "stash", "switch", "tag", "unstage", "update-index", "update-ref",
+})
+
+
+def primary_mutation_for_git_segment(segment, cwd, depth=0, seen_aliases=frozenset()):
+    """Identify a visible working-tree mutation in a repository's primary checkout.
+
+    Linked worktrees have a separate git-dir but share the common-dir. Git reads,
+    fetches and worktree creation remain available from the primary checkout.
+    """
+    pairs = _classify_tokens(segment)
+    command_idx = _command_index(pairs)
+    if command_idx is None or basename_token(pairs[command_idx][0]) != "git":
+        return None
+    location_args, global_args, sub_idx, ambiguous, alias_ambiguous = (
+        _resolve_git_invocation(pairs, command_idx)
+    )
+    if sub_idx is None or ambiguous:
+        return None
+    subcommand = basename_token(pairs[sub_idx][0])
+    args = [token for token, _active in pairs[sub_idx + 1 :]]
+    branch_mutation = subcommand == "branch" and _branch_mutates(args)
+    worktree_mutation = subcommand == "worktree" and bool(args) and args[0] not in ("add", "list")
+    tag_read_flags = ("-l", "--list", "-n", "--contains", "--no-contains",
+                      "--merged", "--no-merged", "--points-at", "--sort", "--format")
+    tag_mutation_flags = ("-a", "-d", "-f", "-s", "-u", "--annotate",
+                          "--delete", "--force", "--sign", "--local-user")
+    if subcommand == "tag" and not any(
+        arg == flag or arg.startswith(flag + "=") for arg in args for flag in tag_mutation_flags
+    ) and (not args or re.fullmatch(r"-n[0-9]+", args[0]) or any(
+        args[0] == flag or args[0].startswith(flag + "=") for flag in tag_read_flags
+    )):
+        return None
+    if subcommand == "stash" and args and args[0] in ("list", "show"):
+        return None
+    command_env, ambiguous_names = _command_environment(pairs[:command_idx])
+    location_env, env_ambiguous = _env_location_overrides(pairs[:command_idx])
+    if env_ambiguous:
+        return None
+    extra_env = {**command_env, **location_env}
+    identity = _resolve_repo_identity(location_args, extra_env, cwd)
+    if identity is None or os.path.realpath(identity[1]) != os.path.realpath(identity[2]):
+        return None
+    if depth < 6 and subcommand not in seen_aliases:
+        if alias_ambiguous or _alias_environment_is_ambiguous(global_args, ambiguous_names, subcommand):
+            return subcommand, identity[0]
+        expansion = visible_git_alias_expansion(pairs, command_idx, cwd)
+        if expansion is not None:
+            expanded, alias_cwd, alias_name = expansion
+            if not expanded:
+                return alias_name, alias_cwd
+            for part in split_segments(expanded):
+                mutation = primary_mutation_for_git_segment(
+                    part, alias_cwd, depth + 1, seen_aliases | {alias_name}
+                )
+                part_pairs = _classify_tokens(part)
+                part_idx = _command_index(part_pairs)
+                if not mutation and part_idx is not None and depth < 6:
+                    if basename_token(part_pairs[part_idx][0]) in SHELL_COMMANDS:
+                        payload = _shell_payload(
+                            [token for token, _active in part_pairs], part_idx
+                        )
+                        if payload:
+                            for nested_part in split_segments(payload):
+                                mutation = primary_mutation_for_git_segment(
+                                    nested_part, alias_cwd, depth + 1,
+                                    seen_aliases | {alias_name}
+                                )
+                                if mutation:
+                                    break
+                if mutation:
+                    return mutation
+                changed_cwd = _literal_cd_target(part, alias_cwd)
+                if changed_cwd is not None:
+                    alias_cwd = changed_cwd
+            return None
+    if subcommand not in PRIMARY_WORKTREE_MUTATIONS and not branch_mutation and not worktree_mutation:
+        return None
+    toplevel, git_dir, common_dir = identity
+    if os.path.realpath(git_dir) == os.path.realpath(common_dir):
+        return subcommand, toplevel
+    return None
+
+
 def _alias_value(global_args, extra_env, cwd, name):
     result = _run_git([*global_args, "config", "--get", f"alias.{name}"], extra_env, cwd)
     if result is None or result.returncode != 0:
         return None
     return result.stdout.rstrip("\n")
+
+
+def visible_git_alias_expansion(pairs, git_idx, cwd):
+    """Expand a visible Git alias once; callers inspect only its visible command text."""
+    location_args, global_args, sub_idx, ambiguous, _alias_ambiguous = (
+        _resolve_git_invocation(pairs, git_idx)
+    )
+    if ambiguous or sub_idx is None:
+        return None
+    name = basename_token(pairs[sub_idx][0])
+    builtins = _run_git([*location_args, "--list-cmds=main,builtins"], {}, cwd)
+    if builtins and builtins.returncode == 0 and name in builtins.stdout.splitlines():
+        return None  # Git builtins take precedence over aliases.
+    command_env, _ambiguous_names = _command_environment(pairs[:git_idx])
+    location_env, env_ambiguous = _env_location_overrides(pairs[:git_idx])
+    if env_ambiguous:
+        return None
+    extra_env = {**command_env, **location_env}
+    identity = _resolve_repo_identity(location_args, extra_env, cwd)
+    if identity is None:
+        return None
+    alias = _alias_value(global_args, extra_env, cwd, name)
+    if alias is None:
+        return None
+    if alias.startswith("!"):
+        return alias[1:], identity[0], name
+    args = [token for token, _active in pairs[sub_idx + 1:]]
+    try:
+        expanded = "git " + shlex.join(shlex.split(alias) + args)
+    except ValueError:
+        expanded = ""
+    return expanded, identity[0], name
 
 
 def _deny_branch(subcommand, kind, protected_root):

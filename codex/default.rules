@@ -1,0 +1,22 @@
+# Ordinary authorized development is not a permission-prompt workflow.
+# This file replaces the personal, prompt-heavy default.rules after review.
+# Visible dangerous forms are forbidden; task authority and managed isolation
+# remain separate controls. Execpolicy cannot inspect user intent or child processes.
+
+prefix_rule(pattern=["git", ["status", "diff", "log", "show", "branch", "rev-parse", "merge-base", "ls-files", "grep", "fetch", "worktree"]], decision="allow")
+prefix_rule(pattern=["git", ["add", "commit", "push"]], decision="allow")
+prefix_rule(pattern=["/home/marco/.local/bin/git-commit"], decision="allow")
+prefix_rule(pattern=["gh", "pr"], decision="allow")
+
+# These forms destroy or rewrite work rather than complete an ordinary PR.
+prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"], "reset", "--hard"], decision="forbidden")
+prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"], "clean"], decision="forbidden")
+prefix_rule(pattern=[["git", "/usr/bin/git", "/bin/git"], "push", ["--force", "-f", "--force-with-lease"]], decision="forbidden")
+prefix_rule(pattern=["rm", ["-rf", "-fr", "-r", "-R", "--recursive"]], decision="forbidden")
+prefix_rule(pattern=["docker", "volume", ["rm", "prune"]], decision="forbidden")
+prefix_rule(pattern=["docker", "system", "prune"], decision="forbidden")
+prefix_rule(pattern=["docker", "compose", "down", ["-v", "--volumes"]], decision="forbidden")
+prefix_rule(pattern=[["apt", "apt-get"], ["remove", "purge"]], decision="forbidden")
+
+# Ordinary reads, tests, edits, dependency preparation, and PR publication
+# have no prompt rule. Consequential writes still require task-specific authority.
