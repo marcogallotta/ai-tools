@@ -132,12 +132,19 @@ def test_codex_primary_checkout_denies_mutations_but_not_reads_or_worktree_add(
         ("git tag --list", primary, False),
         ("git tag --contains HEAD", primary, False),
         ("git tag --points-at HEAD", primary, False),
+        ("git tag -n1", primary, False),
         ("git stash list", primary, False),
         ("git branch agent/new", primary, True),
         ("git worktree remove /tmp/old-writer", primary, True),
         ("git add README.md", primary, True),
+        ("git stage README.md", primary, True),
+        ("git unstage README.md", primary, True),
         ("git -c alias.stage=add stage README.md", primary, True),
+        ("git -c alias.customstage=add customstage README.md", primary, True),
         ("git -c alias.stage='!echo x; git add README.md' stage", primary, True),
+        ("git -c alias.customstage='!echo x; git add README.md' customstage", primary, True),
+        ("git -c alias.stage='!bash -lc \"git add README.md\"' stage", primary, True),
+        ("git -c alias.customstage='!bash -lc \"git add README.md\"' customstage", primary, True),
         ("bash -lc 'git add README.md'", primary, True),
         ("git commit -m x", primary, True),
         ("git-commit README.md -m x", primary, True),
@@ -148,7 +155,7 @@ def test_codex_primary_checkout_denies_mutations_but_not_reads_or_worktree_add(
             "hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd,
             "tool_input": {"command": command},
         }, monkeypatch, capsys)
-        assert (decision is not None) is denied
+        assert (decision is not None) is denied, command
         if denied:
             assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
 
@@ -166,6 +173,11 @@ def test_codex_adapter_denies_severe_visible_variants(
         "rm --force --recursive /tmp/example",
         "docker compose down --volumes",
         "docker compose --project-name x down --volumes",
+        "docker --context default compose down --volumes",
+        "docker --host unix:///var/run/docker.sock compose down --volumes",
+        "git -c alias.republish='!git push --force origin main' republish",
+        "git -c alias.erase='!rm -rf /tmp/example' erase",
+        "git -c alias.v='!docker compose down --volumes' v",
     ):
         decision = run_adapter(codex_protected_checkout, {
             "hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": linked,

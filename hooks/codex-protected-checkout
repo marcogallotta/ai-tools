@@ -32,7 +32,7 @@ def active_task_mutation(command, cwd):
     return None
 
 
-def severe_visible_command(command, depth=0):
+def severe_visible_command(command, cwd=None, depth=0, seen_aliases=frozenset()):
     for segment in protected_checkout.split_segments(command):
         pairs = protected_checkout._classify_tokens(segment)
         idx = protected_checkout._command_index(pairs)
@@ -45,7 +45,7 @@ def severe_visible_command(command, depth=0):
                 [token for token, _active in pairs], idx
             )
             if payload:
-                nested = severe_visible_command(payload, depth + 1)
+                nested = severe_visible_command(payload, cwd, depth + 1, seen_aliases)
                 if nested:
                     return nested
         if name == "git":
@@ -65,14 +65,37 @@ def severe_visible_command(command, depth=0):
                 and "f" in token[1:] for token in tail
             ):
                 return "git force push"
+            if depth < 6 and sub not in seen_aliases:
+                expansion = protected_checkout.visible_git_alias_expansion(
+                    pairs, idx, cwd or os.getcwd()
+                )
+                if expansion is not None:
+                    expanded, alias_cwd, alias_name = expansion
+                    nested = severe_visible_command(
+                        expanded, alias_cwd, depth + 1, seen_aliases | {alias_name}
+                    )
+                    if nested:
+                        return nested
         if name == "rm" and any(
             token in ("-r", "-R", "--recursive")
             or token.startswith("-") and not token.startswith("--") and "r" in token.lower()
             for token in args
         ):
             return "recursive rm"
-        if name == "docker" and args and args[0] == "compose":
-            compose_args = args[1:]
+        if name == "docker":
+            docker_value_flags = {"--context", "--host", "-H", "--config", "--log-level", "-l"}
+            docker_pos = 0
+            while docker_pos < len(args):
+                token = args[docker_pos]
+                if token in docker_value_flags:
+                    docker_pos += 2
+                elif token.startswith("-"):
+                    docker_pos += 1
+                else:
+                    break
+            if args[docker_pos:docker_pos + 1] != ["compose"]:
+                continue
+            compose_args = args[docker_pos + 1:]
             value_flags = {"-p", "--project-name", "-f", "--file", "--env-file",
                            "--profile", "--project-directory", "--ansi", "--progress"}
             pos = 0
@@ -141,7 +164,7 @@ def main():
             print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
                 "decision": {"behavior": "allow"}}}))
         return 0
-    severe = severe_visible_command(command)
+    severe = severe_visible_command(command, invocation_cwd)
     if severe:
         print(json.dumps(deny(f"[destructive-command] {severe} is forbidden.")))
         return 0
