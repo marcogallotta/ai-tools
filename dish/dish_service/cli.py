@@ -693,6 +693,8 @@ def main(
                         "--run-id must match the service client run identity",
                         rule="service_run_mismatch",
                     )
+            if parsed.get("independence_attestation") is None:
+                parsed.pop("independence_attestation", None)
             _route_service_canonical_reference(command, parsed, app)
             result = app.execute(command, **parsed)
     except DishRuleError as exc:
