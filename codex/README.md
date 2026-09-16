@@ -56,6 +56,7 @@ ln -s /home/marco/ai-tools/codex/hooks.json /home/marco/.codex/hooks.json
 ln -s /home/marco/ai-tools/codex/git-pr.rules /home/marco/.codex/rules/git-pr.rules
 ln -s /home/marco/ai-tools/hooks/dish-operator-context /home/marco/.local/bin/dish-operator-context
 ln -s /home/marco/ai-tools/hooks/agent-reground /home/marco/.local/bin/agent-reground
+ln -s /home/marco/ai-tools/hooks/codex-hook-router /home/marco/.local/bin/codex-hook-router
 ln -s /home/marco/ai-tools/hooks/codex-protected-checkout /home/marco/.local/bin/codex-protected-checkout
 ln -s /home/marco/ai-tools/hooks/investigation-guard /home/marco/.local/bin/investigation-guard
 ```
@@ -88,6 +89,7 @@ ln -s "$WT/codex/hooks.json" /home/marco/.codex/hooks.json
 ln -s "$WT/codex/git-pr.rules" /home/marco/.codex/rules/git-pr.rules
 ln -s "$WT/hooks/dish-operator-context" /home/marco/.local/bin/dish-operator-context
 ln -s "$WT/hooks/agent-reground" /home/marco/.local/bin/agent-reground
+ln -s "$WT/hooks/codex-hook-router" /home/marco/.local/bin/codex-hook-router
 ln -s "$WT/hooks/codex-protected-checkout" /home/marco/.local/bin/codex-protected-checkout
 ln -s "$WT/hooks/investigation-guard" /home/marco/.local/bin/investigation-guard
 

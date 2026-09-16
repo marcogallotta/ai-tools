@@ -261,8 +261,11 @@ def test_codex_hard_scope_is_bash_only_and_other_paths_remain_degraded(hooks_dir
     entries = config["hooks"]["PreToolUse"]
     bash = next(item for item in entries if item.get("matcher") == "^Bash$")
     commands = [hook["command"] for hook in bash["hooks"]]
-    assert "/home/marco/.local/bin/codex-protected-checkout" in commands
-    assert "/home/marco/.local/bin/investigation-guard hook --host codex" in commands
+    assert any(command.endswith(" -- /home/marco/.local/bin/codex-protected-checkout")
+               for command in commands)
+    assert any(command.endswith(
+        " -- /home/marco/.local/bin/investigation-guard hook --host codex"
+    ) for command in commands)
     assert not any(item.get("matcher") not in {"^Bash$"} and "investigation-guard" in json.dumps(item) for item in entries)
     readme = (hooks_dir.parent / "codex/README.md").read_text()
     assert "DEGRADED" in readme

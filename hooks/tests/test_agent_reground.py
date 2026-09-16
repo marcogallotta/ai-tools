@@ -338,14 +338,20 @@ def test_host_configs_wire_compact_reground_separately_from_investigation_guard(
     session = codex["hooks"]["SessionStart"]
     assert any(
         entry.get("matcher") == "^compact$"
-        and entry["hooks"][0]["command"] == "/home/marco/.local/bin/agent-reground"
+        and entry["hooks"][0]["command"].endswith(
+            " -- /home/marco/.local/bin/agent-reground"
+        )
         for entry in session
     )
     pretool = codex["hooks"]["PreToolUse"]
-    assert not any(entry["hooks"][0]["command"] == "/home/marco/.local/bin/agent-reground" for entry in pretool)
+    assert not any(entry["hooks"][0]["command"].endswith(
+        " -- /home/marco/.local/bin/agent-reground"
+    ) for entry in pretool)
     assert any(
         entry.get("matcher") == "^Bash$"
-        and entry["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"
+        and entry["hooks"][0]["command"].endswith(
+            " -- /home/marco/.local/bin/codex-protected-checkout"
+        )
         for entry in pretool
     )
 

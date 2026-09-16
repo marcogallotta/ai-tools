@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/marco/.local/bin/dish-operator-context",
+            "command": "/home/marco/.local/bin/codex-hook-router -- python3 /home/marco/.local/bin/dish-operator-context",
             "timeout": 5
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/marco/.local/bin/agent-reground",
+            "command": "/home/marco/.local/bin/codex-hook-router -- /home/marco/.local/bin/agent-reground",
             "timeout": 30,
             "statusMessage": "Re-grounding Dish role and active work"
           }
@@ -29,13 +29,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/marco/.local/bin/codex-protected-checkout",
+            "command": "/home/marco/.local/bin/codex-hook-router -- /home/marco/.local/bin/codex-protected-checkout",
             "timeout": 10,
             "statusMessage": "Checking protected checkout"
           },
           {
             "type": "command",
-            "command": "/home/marco/.local/bin/investigation-guard hook --host codex",
+            "command": "/home/marco/.local/bin/codex-hook-router -- /home/marco/.local/bin/investigation-guard hook --host codex",
             "timeout": 10,
             "statusMessage": "Checking investigation budget"
           }
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/marco/.local/bin/codex-protected-checkout",
+            "command": "/home/marco/.local/bin/codex-hook-router -- /home/marco/.local/bin/codex-protected-checkout",
             "timeout": 10,
             "statusMessage": "Checking branch prompt policy"
           }

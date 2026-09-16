@@ -46,7 +46,9 @@ def test_codex_hooks_load_operator_policy_on_every_session_start():
     ]
     assert len(operator_entries) == 1
     assert "matcher" not in operator_entries[0]
-    assert operator_entries[0]["hooks"][0]["command"] == f"python3 {OPERATOR_ADAPTER}"
+    assert operator_entries[0]["hooks"][0]["command"].endswith(
+        f" -- python3 {OPERATOR_ADAPTER}"
+    )
 
 
 def test_operator_adapter_symlink_resolves_policy_from_candidate(tmp_path):

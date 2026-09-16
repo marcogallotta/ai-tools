@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Route Codex hooks to canonical Switchstand without changing other sessions."""
+
+import json
+import os
+import subprocess
+import sys
+
+SWITCHSTAND = "/home/marco/switchstand"
+SWITCHSTAND_HOOK = ("/home/marco/switchstand/scripts/codex-hook",)
+
+def common_dir(cwd: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(cwd), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    value = result.stdout.strip()
+    return os.path.realpath(value) if value else None
+
+def dispatch(raw: bytes, fallback: tuple[str, ...]) -> subprocess.CompletedProcess[bytes]:
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = {}
+    cwd = payload.get("cwd")
+    actual = common_dir(cwd) if isinstance(cwd, str) and cwd else None
+    canonical = common_dir(SWITCHSTAND)
+    command = SWITCHSTAND_HOOK if actual is not None and actual == canonical else fallback
+    return subprocess.run(command, input=raw, capture_output=True, check=False)
+
+def main() -> int:
+    fallback = tuple(sys.argv[2:] if sys.argv[1:2] == ["--"] else sys.argv[1:])
+    if not fallback:
+        return 2
+    result = dispatch(sys.stdin.buffer.read(), fallback)
+    sys.stdout.buffer.write(result.stdout)
+    sys.stderr.buffer.write(result.stderr)
+    return result.returncode
+
+if __name__ == "__main__":
+    raise SystemExit(main())
