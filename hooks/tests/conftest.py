@@ -18,6 +18,11 @@ def hooks_dir():
     return HOOKS_DIR
 
 
+@pytest.fixture
+def codex_hook_router():
+    return load_hook_module("codex-hook-router")
+
+
 def load_hook_module(name):
     path = HOOKS_DIR / name
     loader = SourceFileLoader(f"{name}_under_test", str(path))

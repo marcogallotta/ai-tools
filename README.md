@@ -55,6 +55,7 @@ The repo is used through `~/.claude/` and `~/.local/bin/`, not from this directo
 | `codex/hooks.json` | `~/.codex/hooks.json` |
 | `codex/git-pr.rules` | `~/.codex/rules/git-pr.rules` |
 | `hooks/agent-reground` | `~/.local/bin/agent-reground` |
+| `hooks/codex-hook-router` | `~/.local/bin/codex-hook-router` |
 | `hooks/codex-protected-checkout` | `~/.local/bin/codex-protected-checkout` |
 | `hooks/investigation-guard` | `~/.local/bin/investigation-guard` |
 | `tools/git-commit` | `~/.local/bin/git-commit` |

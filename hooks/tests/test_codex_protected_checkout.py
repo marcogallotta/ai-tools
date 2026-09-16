@@ -106,9 +106,13 @@ def test_codex_hooks_config_is_user_level_and_hard_deny_adapter(hooks_dir):
     config = json.loads((hooks_dir.parent / "codex" / "hooks.json").read_text())
     entries = config["hooks"]["PreToolUse"]
     entry = next(item for item in entries if item.get("matcher") == "^Bash$")
-    assert entry["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"
+    assert entry["hooks"][0]["command"].endswith(
+        " -- /home/marco/.local/bin/codex-protected-checkout"
+    )
     permission = config["hooks"]["PermissionRequest"][0]
-    assert permission["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"
+    assert permission["hooks"][0]["command"].endswith(
+        " -- /home/marco/.local/bin/codex-protected-checkout"
+    )
     rules = (hooks_dir.parent / "codex" / "git-pr.rules").read_text()
     assert 'decision="prompt"' in rules
     assert '["gh", "pr"]' in rules
