@@ -161,7 +161,8 @@ def _run_verification(url, task_gid, operation_id):
         provenance_complete=True,
     )
     assert approved["allowed_actions"] == ["submit"]
-    submitted = verifier.execute("submit", submission_id=operation_id)
+    submitted = verifier.execute("submit", agent="codex", submission_id=operation_id)
+    assert submitted["ok"], submitted
     assert submitted["allowed_actions"] == []
     resting = verifier.execute("read", agent="gpt", task_gid=task_gid)
     assert resting["allowed_actions"] == ["start"]
