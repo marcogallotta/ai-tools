@@ -739,6 +739,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 return
             if exc.rule == "postgresql_authority_unavailable":
                 status = HTTPStatus.SERVICE_UNAVAILABLE
+            elif exc.rule == "postgresql_database_error":
+                status = HTTPStatus.INTERNAL_SERVER_ERROR
             elif exc.rule in {"service_auth_required", "service_auth_invalid"}:
                 status = HTTPStatus.UNAUTHORIZED
             elif exc.rule == "service_scope_forbidden":

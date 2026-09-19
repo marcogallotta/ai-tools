@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import exc as sa_exc
 
+from dish_pg.postgres_service import database_failure_error
 from dish_pg.command_contract import ACTION_COMMANDS, COMMAND_DEFINITIONS
 from dish_pg.connected_command_spec import (
     CONNECTED_COMMANDS,
@@ -313,6 +315,89 @@ def test_backend_unavailability_becomes_transport_failure() -> None:
             {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
             caller=CALLER,
         )
+
+
+def _db_failure(kind: type[Exception], **kwargs: Any) -> Exception:
+    if issubclass(kind, sa_exc.DBAPIError):
+        return kind("SELECT 1", {}, RuntimeError("driver detail"), **kwargs)
+    return kind("pool exhausted")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        _db_failure(sa_exc.OperationalError),
+        _db_failure(sa_exc.InterfaceError),
+        _db_failure(sa_exc.DBAPIError, connection_invalidated=True),
+        _db_failure(sa_exc.TimeoutError),
+    ],
+    ids=["operational", "interface", "connection-invalidated", "pool-timeout"],
+)
+def test_connectivity_failures_are_reported_as_authority_unavailable(
+    failure: Exception,
+) -> None:
+    error = database_failure_error(
+        failure, outcome="governed mutation was not admitted", request_id=REQUEST_ID
+    )
+
+    assert error.rule == "postgresql_authority_unavailable"
+    assert error.retryable is True
+    assert str(error) == (
+        "PostgreSQL authority is unavailable; governed mutation was not admitted"
+    )
+    assert error.details == {"error_type": type(failure).__name__}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        _db_failure(sa_exc.IntegrityError),
+        _db_failure(sa_exc.ProgrammingError),
+        _db_failure(sa_exc.DataError),
+        _db_failure(sa_exc.DBAPIError),
+        sa_exc.StatementError("bad bind", "SELECT 1", {}, RuntimeError("x")),
+        sa_exc.InvalidRequestError("session misuse"),
+    ],
+    ids=["integrity", "programming", "data", "dbapi", "statement", "invalid-request"],
+)
+def test_non_connectivity_database_errors_are_not_reported_as_an_outage(
+    failure: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("ERROR", logger="dish.pg.service"):
+        error = database_failure_error(
+            failure, outcome="governed mutation was not admitted", request_id=REQUEST_ID
+        )
+
+    assert error.rule == "postgresql_database_error"
+    assert error.retryable is False
+    assert "unavailable" not in str(error)
+    assert type(failure).__name__ in str(error)
+    assert error.details == {"error_type": type(failure).__name__}
+    logged = [r for r in caplog.records if r.name == "dish.pg.service"]
+    assert len(logged) == 1
+    assert REQUEST_ID in logged[0].getMessage()
+    assert logged[0].exc_info is not None
+
+
+def test_non_outage_database_error_is_a_structured_500_not_a_transport_failure() -> None:
+    service = FakeService()
+
+    def rejected(*args, **kwargs):
+        raise database_failure_error(
+            _db_failure(sa_exc.IntegrityError), outcome="governed mutation was not admitted"
+        )
+
+    service.execute_agent = rejected  # type: ignore[method-assign]
+
+    result = _adapter(service).call(
+        "dish_sections",
+        {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
+        caller=CALLER,
+    )
+
+    assert result["ok"] is False
+    assert result["http_status"] == 500
+    assert result["retryable"] is False
 
 
 def test_unauthenticated_caller_is_refused_before_argument_validation() -> None:

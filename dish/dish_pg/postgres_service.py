@@ -8,6 +8,7 @@ this service composition; environment/startup policy decides where it may run.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import uuid
@@ -17,7 +18,13 @@ from typing import Any, Mapping
 
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import select, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import (
+    DBAPIError,
+    InterfaceError,
+    OperationalError,
+    SQLAlchemyError,
+    TimeoutError as PoolTimeoutError,
+)
 
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
@@ -47,6 +54,57 @@ from .workflow import (
     WorkflowAuthorityError,
     WorkflowAuthorityService,
 )
+
+
+LOGGER = logging.getLogger("dish.pg.service")
+
+
+def database_failure_error(
+    exc: SQLAlchemyError, *, outcome: str = "", request_id: str | None = None
+) -> DishRuleError:
+    """Classify a database-layer failure without reporting every one as an outage.
+
+    Only connectivity-class failures mean PostgreSQL authority is unavailable and
+    a retry can help. Any other database error (constraint, schema, data or
+    statement failure) is a deterministic service fault: retrying will not help
+    and calling it an outage sends operators after the wrong problem. The
+    original exception is always logged because the response carries only the
+    error type.
+    """
+    unavailable = isinstance(
+        exc, (OperationalError, InterfaceError, PoolTimeoutError)
+    ) or (isinstance(exc, DBAPIError) and exc.connection_invalidated)
+    error_type = type(exc).__name__
+    rule = (
+        "postgresql_authority_unavailable"
+        if unavailable
+        else "postgresql_database_error"
+    )
+    LOGGER.error(
+        "postgresql_database_failure rule=%s error_type=%s request_id=%s outcome=%s",
+        rule,
+        error_type,
+        request_id,
+        outcome,
+        exc_info=exc,
+    )
+    suffix = f"; {outcome}" if outcome else ""
+    if unavailable:
+        return DishRuleError(
+            "BACKEND_REJECTED",
+            f"PostgreSQL authority is unavailable{suffix}",
+            rule=rule,
+            retryable=True,
+            details={"error_type": error_type},
+        )
+    return DishRuleError(
+        "BACKEND_REJECTED",
+        f"PostgreSQL is reachable but the database rejected the operation "
+        f"({error_type}){suffix}",
+        rule=rule,
+        retryable=False,
+        details={"error_type": error_type},
+    )
 
 
 _SUPPORTED_PROFILES = ("test", "prod")
@@ -247,13 +305,7 @@ class PostgresRuntimeService:
         except DishRuleError:
             raise
         except SQLAlchemyError as exc:
-            raise DishRuleError(
-                "BACKEND_REJECTED",
-                "PostgreSQL authority is unavailable",
-                rule="postgresql_authority_unavailable",
-                retryable=True,
-                details={"error_type": type(exc).__name__},
-            ) from exc
+            raise database_failure_error(exc) from exc
 
         observed = {
             "database": database_name,
@@ -384,12 +436,8 @@ class PostgresRuntimeService:
                 rule="postgresql_command_rejected",
             ) from exc
         except SQLAlchemyError as exc:
-            raise DishRuleError(
-                "BACKEND_REJECTED",
-                "PostgreSQL authority is unavailable; validation failure was not recorded",
-                rule="postgresql_authority_unavailable",
-                retryable=True,
-                details={"error_type": type(exc).__name__},
+            raise database_failure_error(
+                exc, outcome="validation failure was not recorded", request_id=request_id
             ) from exc
 
 
@@ -823,12 +871,8 @@ class PostgresRuntimeService:
                 rule="postgresql_command_rejected",
             ) from exc
         except SQLAlchemyError as exc:
-            raise DishRuleError(
-                "BACKEND_REJECTED",
-                "PostgreSQL authority is unavailable; governed mutation was not admitted",
-                rule="postgresql_authority_unavailable",
-                retryable=True,
-                details={"error_type": type(exc).__name__},
+            raise database_failure_error(
+                exc, outcome="governed mutation was not admitted", request_id=request_id
             ) from exc
 
     def execute_agent(
