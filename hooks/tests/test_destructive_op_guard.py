@@ -427,13 +427,16 @@ class TestGitSubcommands:
 
 
 class TestPsql:
-    def test_write_keyword_asked(self, destructive_op_guard, monkeypatch, capsys):
+    # Marco deliberately disabled the psql prompt in e7709c77e ("make psql fine to
+    # run"); evaluate() no longer calls check_psql. These tests pin that decision
+    # so a regression in either direction is visible.
+    def test_write_keyword_allowed(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, 'psql -d mydb -c "DROP TABLE x"', monkeypatch, capsys)
-        assert_asked(decision, "psql write operation")
+        assert_allowed(decision)
 
-    def test_inline_sql_flag_asked(self, destructive_op_guard, monkeypatch, capsys):
+    def test_inline_sql_flag_allowed(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, 'psql -c "SELECT 1"', monkeypatch, capsys)
-        assert_asked(decision, "psql -c")
+        assert_allowed(decision)
 
     def test_psql_from_file_allowed(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "psql -d mydb -f schema.sql", monkeypatch, capsys)
