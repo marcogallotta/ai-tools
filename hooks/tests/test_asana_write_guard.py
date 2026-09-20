@@ -336,14 +336,16 @@ class TestOwnTaskAutoAllow:
         decision = run_hook_as_agent(asana_write_guard, "asana rename 12345 'new name'", agent_id, monkeypatch, capsys)
         assert_explicitly_allowed(decision, f"active task {task_gid}")
 
-    def test_same_task_move_remains_approval_gated_without_destination_proof(
+    def test_same_task_move_is_allowed(
         self, asana_write_guard, monkeypatch, capsys, tmp_path
     ):
-        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        # 96d64d6a4 deliberately added `move` to OWN_TASK_AUTO_ALLOW: the CLI's
+        # `move` only retargets a section within the task's current project.
+        agent_id, task_gid = _install_agent_identity(monkeypatch, tmp_path)
         decision = run_hook_as_agent(
             asana_write_guard, "asana move 12345 99999", agent_id, monkeypatch, capsys
         )
-        assert_asked(decision, "Approve this Asana write")
+        assert_explicitly_allowed(decision, f"active task {task_gid}")
 
     def test_other_task_and_create_remain_approval_gated(
         self, asana_write_guard, monkeypatch, capsys, tmp_path
