@@ -88,7 +88,9 @@ def test_status_fails_closed_on_unexpected_route(caddy_fake: str) -> None:
 
 def test_router_keeps_prod_at_root_and_separates_test_authority_from_oracle() -> None:
     config = json.loads((ROOT / "deploy/caddy/dish-action-router.json").read_text())
-    routes = config["apps"]["http"]["servers"]["dish_action_router"]["routes"]
+    all_routes = config["apps"]["http"]["servers"]["dish_action_router"]["routes"]
+    # MCP/OAuth routes are prepended ahead of the fixed-path Action split; the split is the tail.
+    routes = all_routes[-3:]
 
     assert routes[0]["match"] == [
         {"path": ["/test-legacy/openapi/action.json", "/test-legacy/v1/action/*"]}
@@ -102,6 +104,6 @@ def test_router_keeps_prod_at_root_and_separates_test_authority_from_oracle() ->
     assert routes[1]["handle"][1]["upstreams"] == [{"dial": "127.0.0.1:8766"}]
     assert routes[2].get("match") is None
     assert routes[2]["handle"][0]["upstreams"] == [{"dial": "127.0.0.1:8776"}]
-    for route in routes:
+    for route in all_routes:
         proxy = next(handle for handle in route["handle"] if handle.get("handler") == "reverse_proxy")
         assert len(proxy["upstreams"]) == 1

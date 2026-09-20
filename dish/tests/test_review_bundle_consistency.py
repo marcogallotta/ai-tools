@@ -18,7 +18,7 @@ def test_rendered_review_bundle_instructions_are_noncontradictory():
 def test_root_bootstrap_has_the_same_review_carveout_and_invalid_bundle_fence():
     root=(REPO_ROOT/'CLAUDE.md').read_text()
     assert '**outside ordinary ChatGPT PR Review**' in root
-    assert 'ordinary Review treats bundle unavailability alone as non-blocking when connector-native exact evidence is sufficient' in root
+    assert 'ordinary Review treats bundle unavailability alone as non-blocking when active-route exact evidence is sufficient' in root
     assert 'stale, mismatched, corrupt, or wrong-SHA material remains fail-closed' in root
     assert 'does not relax bundle-first admission for broad architecture, Implementation, or other substantial non-Review reasoning' in root
 def test_nonreview_roles_still_receive_bundle_first_admission():
