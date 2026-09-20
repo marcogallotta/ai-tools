@@ -20,7 +20,7 @@ UNKNOWN_OPERATION = "99999999-9999-4999-8999-999999999999"
         (
             "/v1/action/submit",
             "action-secret",
-            {"arguments": {"submission_id": UNKNOWN_OPERATION}},
+            {"arguments": {"agent": "codex", "submission_id": UNKNOWN_OPERATION}},
             "submit",
         ),
         (
@@ -97,11 +97,12 @@ def test_unknown_operation_request_id_still_rejects_changed_reuse(tmp_path):
     request_id = str(uuid.uuid4())
     first_payload = {
         "client": {"run_id": RUN_ID, "request_id": request_id},
-        "arguments": {"submission_id": UNKNOWN_OPERATION},
+        "arguments": {"agent": "codex", "submission_id": UNKNOWN_OPERATION},
     }
     changed_payload = {
         "client": {"run_id": RUN_ID, "request_id": request_id},
         "arguments": {
+            "agent": "codex",
             "submission_id": "88888888-8888-4888-8888-888888888888"
         },
     }
