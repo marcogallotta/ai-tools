@@ -20,7 +20,6 @@ from dish_pg.native_catalog_runtime_finalizer import (
     NativeCatalogRuntimeFinalizerError,
     finalize_native_catalog_runtime_authority,
 )
-from dish_pg.native_section_carry_forward import RepositoryIdentity
 from dish_pg.native_section_content_materializer import (
     NativeSectionContentMaterializationError,
     materialize_staged_native_section_content,
@@ -34,12 +33,12 @@ from dish_pg.repositories import (
     RegistryRepository,
 )
 from tests.support.postgresql.core import _bootstrap_registry, _next
-from tests.support.postgresql.native_section_content_materializer_fixtures import (
-    _stage_pr3,
+from tests.support.postgresql.native_section_lifecycle import (
+    NOW,
+    _stage_runtime_switch_fixture,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-NOW = datetime(2026, 9, 4, 9, 0, tzinfo=timezone.utc)
 HASH_A = "a" * 64
 HASH_B = "b" * 64
 
@@ -664,14 +663,6 @@ def test_pr2a_absent_pointer_preserves_legacy_authority(core_db) -> None:
             contract.registry_version.registry_version_id
             == legacy["registry_version_id"]
         )
-
-
-def _stage_runtime_switch_fixture(session, ids, monkeypatch, **fixture_kwargs):
-    monkeypatch.setattr(
-        "dish_pg.native_section_carry_forward._verified_repository_identity",
-        lambda: RepositoryIdentity(commit_sha="a" * 40, tree_sha="b" * 40),
-    )
-    return _stage_pr3(session, ids, **fixture_kwargs)
 
 
 def test_pr2f_atomically_materializes_and_establishes_revision_one_root(

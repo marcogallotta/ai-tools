@@ -10,6 +10,7 @@ import pytest
 
 from dish_pg import migrate
 from dish_pg.migrate import RoutineMigrationError, _validate_current_revision, _validate_target
+from dish_pg.schema_identity import ALEMBIC_HEAD
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "dish-pg-migrate"
@@ -155,8 +156,8 @@ def test_populated_0050_uses_governed_native_placement_sequence(monkeypatch) -> 
         [
             ("dish_rollout_test", ("0050_native_catalog_runtime_authority_switch",)),
             ("dish_rollout_test", ("0051_native_dish_state_placement",)),
-            ("dish_rollout_test", ("0052_dish_state_section_not_null",)),
-            ("dish_rollout_test", ("0052_dish_state_section_not_null",)),
+            ("dish_rollout_test", (ALEMBIC_HEAD,)),
+            ("dish_rollout_test", (ALEMBIC_HEAD,)),
         ]
     )
     monkeypatch.setattr(migrate, "_resolve_source_commit", lambda _value: "a" * 40)
@@ -165,7 +166,7 @@ def test_populated_0050_uses_governed_native_placement_sequence(monkeypatch) -> 
         "_repository_script",
         lambda: SimpleNamespace(
             iterate_revisions=lambda _head, _base: [
-                SimpleNamespace(revision="0052_dish_state_section_not_null"),
+                SimpleNamespace(revision=ALEMBIC_HEAD),
                 SimpleNamespace(revision="0051_native_dish_state_placement"),
                 SimpleNamespace(revision="0050_native_catalog_runtime_authority_switch"),
             ],
@@ -195,7 +196,7 @@ def test_populated_0050_uses_governed_native_placement_sequence(monkeypatch) -> 
     assert calls == [
         "0051_native_dish_state_placement",
         f"finalize:{'a' * 40}",
-        "0052_dish_state_section_not_null",
+        ALEMBIC_HEAD,
     ]
     assert [phase["phase"] for phase in evidence["phases"]] == [
         "staging_revision",

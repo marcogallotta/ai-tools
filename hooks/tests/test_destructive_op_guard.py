@@ -302,7 +302,7 @@ class TestDocker:
 class TestGitCommitWrapper:
     def test_wrapper_invocation_asked(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, 'git-commit foo.py -m "msg"', monkeypatch, capsys)
-        assert_asked(decision, "git-commit (stage + commit)")
+        assert_asked(decision, "git-commit in the shared main checkout")
 
     def test_wrapper_help_long_flag_allowed(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git-commit --help", monkeypatch, capsys)
@@ -316,7 +316,7 @@ class TestGitCommitWrapper:
         decision = run_hook(
             destructive_op_guard, "/home/marco/.claude/bin/git-commit foo.py -m x", monkeypatch, capsys
         )
-        assert_asked(decision, "git-commit (stage + commit)")
+        assert_asked(decision, "git-commit in the shared main checkout")
 
     def test_bare_wrapper_invocation_allowed(self, destructive_op_guard, monkeypatch, capsys):
         # Matches the original bash regex quirk: with no following token
@@ -348,7 +348,7 @@ class TestGitCommitWrapper:
             capsys,
             cwd=str(protected_repo["primary"]),
         )
-        assert_asked(decision, "git-commit (stage + commit)")
+        assert_asked(decision, "git-commit in the shared main checkout")
 
     def test_wrapper_in_unrelated_repo_still_asked(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
@@ -360,7 +360,7 @@ class TestGitCommitWrapper:
             capsys,
             cwd=str(protected_repo["unrelated"]),
         )
-        assert_asked(decision, "git-commit (stage + commit)")
+        assert_asked(decision, "git-commit in the shared main checkout")
 
 
 class TestGitSubcommands:
