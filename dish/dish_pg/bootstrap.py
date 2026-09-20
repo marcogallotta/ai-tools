@@ -42,10 +42,11 @@ from .release_history import (
     EXACT_REVOCATION_SOURCE_CONTRACT,
 )
 from .repositories import AuthorityRepository, ContractBindingRepository, RegistryRepository
+from .schema_identity import ALEMBIC_HEAD
 
 DEFAULT_DISH_COMMIT = "9926e511297af94e3897eb65f02c902cadcc016f"
 DEFAULT_HONEST_COMMIT = "f4e16e369c4ea90fe287c13975a35ab0afd985d5"
-DEFAULT_SCHEMA_HEAD = "0052_dish_state_section_not_null"
+DEFAULT_SCHEMA_HEAD = ALEMBIC_HEAD
 DEFAULT_DATABASE_NAME = "dish_stage_a_dark_test"
 DEFAULT_PROJECT_GID = "1216693403164366"
 DEFAULT_PROJECT_ID = uuid.UUID("1ae6e7ba-31e3-5dc5-9565-4ea37b49ac97")
