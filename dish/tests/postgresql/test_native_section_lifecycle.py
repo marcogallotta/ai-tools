@@ -13,43 +13,17 @@ from dish_pg.database import session_scope
 from dish_pg.native_catalog_runtime_finalizer import finalize_native_catalog_runtime_authority
 from dish_pg.read_model import ReadModelError
 from dish_pg.repositories import CatalogRepository
-from tests.postgresql.test_native_section_catalog_foundation import (
+from tests.support.postgresql.native_section_lifecycle import (
     NOW,
+    _call,
     _stage_runtime_switch_fixture,
+    _view,
 )
 from tests.support.postgresql.command import _port
 from tests.support.postgresql.workflow import _next, _register_run
 
 pytestmark = pytest.mark.database_boundary
 pytest_plugins = ("tests.support.postgresql.core",)
-
-
-def _view(session, generation_id: uuid.UUID) -> dict[str, object]:
-    active = session.get(models.ActiveSectionCatalog, generation_id)
-    pointer = session.get(models.CurrentNativeCatalogRuntime, generation_id)
-    assert active is not None and pointer is not None
-    return {
-        "expected_catalog_version_id": str(active.catalog_version_id),
-        "expected_catalog_activation_id": str(active.catalog_activation_id),
-        "expected_catalog_revision": active.catalog_revision,
-        "expected_runtime_attestation_id": str(pointer.attestation_id),
-        "expected_runtime_attestation_revision": pointer.attestation_revision,
-    }
-
-
-def _call(session, command, *, run_id, request_id, generation_id, arguments):
-    contract = CatalogRepository(session).active_runtime_catalog_contract(generation_id)
-    assert contract is not None
-    return CommandCall(
-        command_name=command,
-        arguments=arguments,
-        owner_id="Marco",
-        principal_class="admin",
-        run_id=run_id,
-        request_id=request_id,
-        now=NOW + timedelta(hours=2),
-        protocol_release=contract.honest_binding.protocol_release,
-    )
 
 
 def _runtime_fixture(session, ids, monkeypatch):

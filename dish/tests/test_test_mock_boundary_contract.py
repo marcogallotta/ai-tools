@@ -268,7 +268,7 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
         "Storage-boundary fault injection forcing a mid-import failure at the receipt write to"
         " prove the legacy import stays atomic and audit-only on partial failure."
     ),
-    ("postgresql/test_native_section_catalog_foundation.py", "_verified_repository_identity"): (
+    ("support/postgresql/native_section_lifecycle.py", "_verified_repository_identity"): (
         "Deterministic repository-identity boundary stubbed so the runtime-switch fixture can"
         " exercise catalog materialization without a real Git identity resolution."
     ),

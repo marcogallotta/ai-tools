@@ -63,7 +63,11 @@ def test_0050_schema_revision_does_not_implicitly_execute_runtime_finalizer() ->
     upgrade_body = migration.split("def upgrade() -> None:", 1)[1].split(
         "def downgrade() -> None:", 1
     )[0]
-    assert "finalize_native_catalog_runtime_authority(" not in upgrade_body
+    # Comments may name the finalizer; only an actual call would switch authority.
+    code_only = "\n".join(
+        line for line in upgrade_body.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "finalize_native_catalog_runtime_authority(" not in code_only
     assert "CurrentNativeCatalogRuntime implicitly" in upgrade_body
 
 

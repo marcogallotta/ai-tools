@@ -12,11 +12,12 @@ from dish_pg.command_port import CommandCall
 from dish_pg.database import session_scope
 from dish_pg.native_catalog_runtime_finalizer import finalize_native_catalog_runtime_authority
 from dish_pg.repositories import CatalogRepository
-from tests.postgresql.test_native_section_catalog_foundation import (
+from tests.support.postgresql.native_section_lifecycle import (
     NOW,
+    _call,
     _stage_runtime_switch_fixture,
+    _view,
 )
-from tests.postgresql.test_native_section_lifecycle import _call, _view
 from tests.support.postgresql.command import _port
 from tests.support.postgresql.workflow import _next, _register_run
 
