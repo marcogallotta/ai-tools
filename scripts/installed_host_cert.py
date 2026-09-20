@@ -80,10 +80,18 @@ def _hook_commands(value: Any) -> Iterable[str]:
             yield from _hook_commands(child)
 
 
-def _command_hook_path(command: str, root: Path) -> str | None:
-    match = re.search(r"(?:\$CLAUDE_PROJECT_DIR|[^\s\"']*)/hooks/(?P<name>[A-Za-z0-9_.-]+)", command)
-    if match:
-        return f"hooks/{match.group('name')}"
+def _command_hook_paths(command: str, root: Path) -> list[str]:
+    """Return every repository hook a command runs, in command order.
+
+    A command may wrap the real hook (`codex-hook-router -- <hook>`), so the
+    wrapper and the wrapped hook are both active on the command's host.
+    """
+    paths = [
+        f"hooks/{match.group('name')}"
+        for match in re.finditer(
+            r"(?:\$CLAUDE_PROJECT_DIR|[^\s\"']*)/hooks/(?P<name>[A-Za-z0-9_.-]+)", command
+        )
+    ]
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -92,8 +100,8 @@ def _command_hook_path(command: str, root: Path) -> str | None:
     for token in tokens:
         name = Path(token).name
         if name and (hooks / name).is_file():
-            return f"hooks/{name}"
-    return None
+            paths.append(f"hooks/{name}")
+    return list(dict.fromkeys(paths))
 
 
 def _python_hook_dependencies(root: Path, path: str) -> set[str]:
@@ -134,8 +142,7 @@ def active_hook_surface(repo_root: Path | str | None = None) -> dict[str, dict[s
         except (OSError, json.JSONDecodeError) as exc:
             raise HostCertError(f"cannot derive {host} active hooks from {config_path}: {exc}") from exc
         for command in _hook_commands(config):
-            hook_path = _command_hook_path(command, root)
-            if hook_path:
+            for hook_path in _command_hook_paths(command, root):
                 direct.setdefault(hook_path, set()).add(host)
 
     components: dict[str, set[str]] = {}
