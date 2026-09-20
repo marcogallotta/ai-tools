@@ -5,6 +5,37 @@
     "listen": ["127.0.0.1:8786"],
     "routes": [
       {
+        "match": [{"path": ["/switchstand/mcp", "/switchstand/mcp/*"]}],
+        "handle": [
+          {"handler": "rewrite", "strip_path_prefix": "/switchstand"},
+          {"@id": "switchstand_mcp_proxy", "handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8790"}]}
+        ],
+        "terminal": true
+      },
+      {
+        "match": [{"path": ["/.well-known/oauth-protected-resource/switchstand/mcp"]}],
+        "handle": [
+          {"@id": "switchstand_mcp_metadata_proxy", "handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8790"}]}
+        ],
+        "terminal": true
+      },
+      {
+        "match": [{"path": ["/switchstand/authorize", "/switchstand/token", "/switchstand/register", "/switchstand/auth/callback", "/switchstand/consent"]}],
+        "handle": [
+          {"handler": "rewrite", "strip_path_prefix": "/switchstand"},
+          {"@id": "switchstand_mcp_oauth_proxy", "handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8790"}]}
+        ],
+        "terminal": true
+      },
+      {
+        "match": [{"path": ["/.well-known/oauth-authorization-server/switchstand"]}],
+        "handle": [
+          {"handler": "rewrite", "uri": "/.well-known/oauth-authorization-server"},
+          {"@id": "switchstand_mcp_oauth_metadata_proxy", "handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8790"}]}
+        ],
+        "terminal": true
+      },
+      {
         "match": [{"path": ["/dish/mcp", "/dish/mcp/*"]}],
         "handle": [
           {"handler": "rewrite", "strip_path_prefix": "/dish"},
