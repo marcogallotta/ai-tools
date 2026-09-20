@@ -27,7 +27,7 @@ from tests.support.postgresql.workflow import NOW, _next, _register_run, workflo
 
 def _plan_first_admission(session, ids, *, service, cutover_run_id, context, task_id, recorded_at):
     run_id = _next(ids)
-    _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+    _register_run(session, generation_id=context["generation_id"], run_id=run_id, agent="codex")
     service.plan_first_admission(
         cutover_run_id=cutover_run_id,
         request_id=_next(ids),
