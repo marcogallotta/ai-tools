@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import builtins
-
-from dish_service import admin_cli
+from dish_service import cli
 from dish_tool import constants
 from dish_tool.admin import DishAdminApplication
 from dish_tool.database import confirm_task_content, create_operation
@@ -60,39 +58,53 @@ def test_archive_requires_confirmation_without_mutating(monkeypatch) -> None:
 
 
 def test_archive_cli_has_no_reason_argument() -> None:
-    parser = admin_cli.build_parser()
+    parser = cli.build_parser()
 
     try:
-        parser.parse_args(["archive", TASK_GID, "--reason", "unused"])
+        parser.parse_args(
+            ["archive", TASK_GID, "--agent", "claude", "--reason", "unused"]
+        )
     except Exception as exc:
         assert getattr(exc, "code", None) == "INVALID_ARGUMENT"
     else:
         raise AssertionError("archive unexpectedly accepted --reason")
 
 
-def test_archive_cli_empty_confirmation_cancels_successfully(
-    monkeypatch, capsys
+def test_archive_is_not_an_admin_command() -> None:
+    """Archive moved to `dish`; `dish-admin archive` must no longer exist."""
+    from dish_service import admin_cli
+
+    parser = admin_cli.build_parser()
+
+    try:
+        parser.parse_args(["archive", TASK_GID])
+    except Exception as exc:
+        assert getattr(exc, "code", None) == "INVALID_ARGUMENT"
+    else:
+        raise AssertionError("dish-admin still accepts archive")
+
+
+def test_archive_cli_requires_agent() -> None:
+    """Archive is a governed command and must name the acting agent family."""
+    parser = cli.build_parser()
+
+    try:
+        parser.parse_args(["archive", TASK_GID])
+    except Exception as exc:
+        assert getattr(exc, "code", None) == "INVALID_ARGUMENT"
+    else:
+        raise AssertionError("archive unexpectedly accepted a missing --agent")
+
+
+def test_archive_without_yes_requires_confirmation_and_does_not_mutate(
+    monkeypatch,
 ) -> None:
+    """Without --yes the service still withholds the mutation."""
     _conn, backend, app = _application(monkeypatch)
-    prompts: list[str] = []
 
-    def decline(prompt: str) -> str:
-        prompts.append(prompt)
-        return ""
+    result = app.execute("archive", dish=TASK_GID, confirmed=False)
 
-    monkeypatch.setattr(builtins, "input", decline)
-    monkeypatch.setattr(admin_cli.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(admin_cli.sys.stdout, "isatty", lambda: True)
-
-    status = admin_cli.main(["archive", TASK_GID], application=app)
-
-    assert status == 0
-    assert prompts == [
-        app.execute("archive", dish=TASK_GID, confirmed=False)["data"][
-            "confirmation_prompt"
-        ]
-    ]
-    assert "no Dish was changed" in capsys.readouterr().out
+    assert result["code"] == "CONFIRMATION_REQUIRED"
     assert backend.writes == 0
 
 

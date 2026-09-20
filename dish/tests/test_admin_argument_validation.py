@@ -231,7 +231,6 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
     command_help = root_help.split("positional arguments:", 1)[1].split("options:", 1)[0]
     expected_commands = (
         "inspect",
-        "archive",
         "queue",
         "audit",
         "active",
