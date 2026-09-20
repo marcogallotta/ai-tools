@@ -49,6 +49,7 @@ def _certificate(*, head=base.HEAD):
         "claude": ["hooks/agent-reground", "hooks/investigation-guard"],
         "codex": [
             "hooks/agent-reground",
+            "hooks/codex-hook-router",
             "hooks/codex-protected-checkout",
             "hooks/dish-operator-context",
             "hooks/investigation-guard",
@@ -105,6 +106,7 @@ def _certificate(*, head=base.HEAD):
             {"path": ".claude/settings.json", "git_blob_sha": "b" * 40, "sha256": digest},
             {"path": "codex/hooks.json", "git_blob_sha": "b" * 40, "sha256": digest},
             {"path": "hooks/agent-reground", "git_blob_sha": "a" * 40, "sha256": digest},
+            {"path": "hooks/codex-hook-router", "git_blob_sha": "c" * 40, "sha256": digest},
             {"path": "hooks/codex-protected-checkout", "git_blob_sha": "c" * 40, "sha256": digest},
             {"path": "hooks/dish-operator-context", "git_blob_sha": "c" * 40, "sha256": digest},
             {"path": "hooks/investigation-guard", "git_blob_sha": "c" * 40, "sha256": digest},
@@ -331,3 +333,16 @@ def test_certificate_missing_security_decision_boundary_fails_closed():
 
     assert state.state == p.LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED
     assert "security_decision_boundary" in (state.residual_reason or "")
+
+
+def test_wrapped_hook_command_marks_wrapper_and_wrapped_hook_active(tmp_path):
+    (tmp_path / "hooks").mkdir()
+    for name in ("codex-hook-router", "agent-reground"):
+        (tmp_path / "hooks" / name).write_text("#!/bin/sh\n", encoding="utf-8")
+
+    paths = installed_host_cert._command_hook_paths(
+        "/home/u/.local/bin/codex-hook-router -- /home/u/.local/bin/agent-reground",
+        tmp_path,
+    )
+
+    assert paths == ["hooks/codex-hook-router", "hooks/agent-reground"]

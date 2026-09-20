@@ -583,8 +583,8 @@ def _effective_config_command_targets(path: Path) -> list[str]:
         raise HookCertifyError(f"cannot inspect effective host config {path}: {exc}") from exc
     targets: set[str] = set()
     for command in cert._hook_commands(value):
-        hook_path = cert._command_hook_path(command, REPO_ROOT)
-        if not hook_path:
+        hook_names = {Path(hook_path).name for hook_path in cert._command_hook_paths(command, REPO_ROOT)}
+        if not hook_names:
             continue
         try:
             tokens = shlex.split(command)
@@ -592,9 +592,8 @@ def _effective_config_command_targets(path: Path) -> list[str]:
             tokens = command.split()
         for token in tokens:
             token_path = Path(token)
-            if token_path.is_absolute() and token_path.name == Path(hook_path).name:
+            if token_path.is_absolute() and token_path.name in hook_names:
                 targets.add(str(token_path))
-                break
     return sorted(targets)
 
 
@@ -625,18 +624,21 @@ def _rebase_codex_config(output: Path, candidate_root: Path) -> None:
     value = json.loads((REPO_ROOT / "codex" / "hooks.json").read_text(encoding="utf-8"))
     surface = cert.active_hook_surface(REPO_ROOT)
     by_name = {Path(path).name: path for path, item in surface.items() if "codex" in item["hosts"]}
+    # One pass rewrites every hook token in a command, so a wrapper such as
+    # `codex-hook-router -- <hook>` and the hook it wraps both target the candidate.
+    hook_token = re.compile(
+        r"(?<!\S)(?:\S*/)?(?P<name>"
+        + "|".join(re.escape(name) for name in sorted(by_name, key=len, reverse=True))
+        + r")(?=\s|$)"
+    )
 
     def rewrite(node: Any) -> None:
         if isinstance(node, dict):
             command = node.get("command")
             if isinstance(command, str):
-                for name, path in sorted(by_name.items(), key=lambda item: -len(item[0])):
-                    pattern = re.compile(rf"(?P<prefix>(?:python3\s+)?)\S*{re.escape(name)}(?P<suffix>(?:\s.*)?)$")
-                    match = pattern.search(command)
-                    if match:
-                        prefix = "python3 " if command.strip().startswith("python3 ") else ""
-                        node["command"] = f"{prefix}{candidate_root / path}"
-                        break
+                node["command"] = hook_token.sub(
+                    lambda match: str(candidate_root / by_name[match.group("name")]), command
+                )
             for child in node.values():
                 rewrite(child)
         elif isinstance(node, list):
