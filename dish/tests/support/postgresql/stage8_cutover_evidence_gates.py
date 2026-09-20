@@ -237,7 +237,12 @@ def _case_test_admission_requires_post_burn_runtime_and_first_request_evidence(w
 
         first_request_id = _next(ids)
         first_run_id = _next(ids)
-        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=first_run_id,
+            agent="codex",
+        )
         plan = service.plan_first_admission(
             cutover_run_id=cutover_run_id,
             request_id=first_request_id,

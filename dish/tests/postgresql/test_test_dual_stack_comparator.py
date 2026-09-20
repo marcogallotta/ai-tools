@@ -325,18 +325,20 @@ def test_mutating_run_rejects_health_generation_mismatch() -> None:
 
 
 @pytest.mark.parametrize("retire_run", [False, True])
-def test_postgresql_action_unregistered_or_retired_run_is_structured_conflict(
+def test_postgresql_action_foreign_or_retired_run_is_structured_conflict(
     workflow_db, tmp_path: Path, retire_run: bool
 ) -> None:
+    # An unregistered run is auto-registered in the initial-cutover generation, so the
+    # rejected cases are a run already bound to another owner and a retired run.
     factory, ids, context, _task_id = workflow_db
     run_id = runtime_http._next(ids)
     request_id = runtime_http._next(ids)
-    if retire_run:
-        with session_scope(factory) as session:
-            runtime_http._register_run(
-                session, generation_id=context["generation_id"], run_id=run_id,
-                owner="gpt-action", agent="gpt",
-            )
+    with session_scope(factory) as session:
+        runtime_http._register_run(
+            session, generation_id=context["generation_id"], run_id=run_id,
+            owner="gpt-action" if retire_run else "another-owner", agent="gpt",
+        )
+        if retire_run:
             registered = session.get(runtime_http.wf.ServiceRun, run_id)
             assert registered is not None
             registered.status = "retired"
@@ -363,7 +365,7 @@ def test_postgresql_action_unregistered_or_retired_run_is_structured_conflict(
     assert result["code"] == "CONFLICT"
     assert result["retryable"] is False
     assert result["errors"] == [{"rule": "postgresql_command_rejected"}]
-    assert result["data"]["message"] == "run is stale, retired, or belongs to another generation"
+    assert result["data"]["message"] == "run is stale, retired, or conflicts with the authenticated run identity"
 
 def test_material_mismatch_is_durable_and_blocks_qualification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     authority, oracle = _targets()
