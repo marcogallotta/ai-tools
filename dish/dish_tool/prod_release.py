@@ -15,7 +15,7 @@ import tarfile
 import tempfile
 import time
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,7 +26,10 @@ MANIFEST_VERSION = 1
 DEFAULT_RELEASE_ROOT = Path("/home/marco/.local/share/dish/releases")
 DEFAULT_CURRENT = Path("/home/marco/.local/share/dish/prod-current")
 DEFAULT_PREVIOUS = Path("/home/marco/.local/share/dish/prod-previous")
-DEFAULT_ENV_FILE = Path("/home/marco/.config/dish-service/prod.env")
+DEFAULT_ENV_FILES = (
+    Path("/home/marco/.config/dish-service/prod.env"),
+    Path("/home/marco/.config/dish-service/postgres-prod.env"),
+)
 DEFAULT_HEALTH_URL = "http://127.0.0.1:8775/health"
 DEFAULT_UNIT = "dish-service-prod.service"
 _SHA = re.compile(r"[0-9a-f]{40}")
@@ -297,21 +300,24 @@ def load_release(release_root: Path, source_commit: str) -> Release:
     return Release(path, source_commit, schema_head, dict(hashes))
 
 
-def _read_env(path: Path) -> dict[str, str]:
+def _read_env(paths: Path | Sequence[Path]) -> dict[str, str]:
+    if isinstance(paths, Path):
+        paths = (paths,)
     values: dict[str, str] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        name, separator, value = line.partition("=")
-        if not separator or not name.strip():
-            raise ReleaseError(f"invalid environment line in {path}")
-        values[name.strip()] = value.strip().strip('"').strip("'")
+    for path in paths:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            name, separator, value = line.partition("=")
+            if not separator or not name.strip():
+                raise ReleaseError(f"invalid environment line in {path}")
+            values[name.strip()] = value.strip().strip('"').strip("'")
     return values
 
 
-def preflight_database(release: Release, env_file: Path) -> None:
-    values = _read_env(env_file)
+def preflight_database(release: Release, env_files: Path | Sequence[Path]) -> None:
+    values = _read_env(env_files)
     expected = values.get("DISH_PG_EXPECTED_SCHEMA_HEAD")
     if expected != release.schema_head:
         raise ReleaseError(
@@ -475,7 +481,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--release-root", type=Path, default=DEFAULT_RELEASE_ROOT)
     parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
     parser.add_argument("--previous", type=Path, default=DEFAULT_PREVIOUS)
-    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
+    parser.add_argument(
+        "--env-file",
+        dest="env_files",
+        type=Path,
+        action="append",
+        help="service environment file; repeat in systemd precedence order",
+    )
     parser.add_argument("--health-url", default=DEFAULT_HEALTH_URL)
     parser.add_argument("--unit", default=DEFAULT_UNIT)
     parser.add_argument("--timeout", type=float, default=30.0)
@@ -543,7 +555,7 @@ def _run(args: argparse.Namespace) -> None:
         previous=args.previous,
         operations=operations,
         database_preflight=lambda candidate: preflight_database(
-            candidate, args.env_file
+            candidate, tuple(args.env_files or DEFAULT_ENV_FILES)
         ),
     )
     print(json.dumps({"ok": True, "release": release.source_commit}))

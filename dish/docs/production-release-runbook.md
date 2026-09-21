@@ -68,6 +68,10 @@ within the bounded readiness interval:
 - private `/health` is ready;
 - `/health.code_release` equals the selected Git commit.
 
+The bare commands read the same environment split and precedence as the production unit:
+`prod.env` first, then `postgres-prod.env`. For an explicit non-production rehearsal, repeat
+`--env-file` in the desired precedence order before the subcommand.
+
 The database generation identity remains `identity.dish_release`; it is intentionally distinct
 from executable `code_release`.
 

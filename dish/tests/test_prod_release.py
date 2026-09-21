@@ -15,8 +15,10 @@ import pytest
 
 from dish_service.config import ServiceConfig
 from dish_service.http import DishHTTPServer
+from dish_tool import prod_release
 from dish_tool.code_identity import executable_code_release
 from dish_tool.prod_release import (
+    DEFAULT_ENV_FILES,
     MANIFEST_NAME,
     Release,
     ReleaseError,
@@ -232,6 +234,89 @@ def test_preflight_uses_candidate_runtime_to_check_live_database(
             "dish_pg.release_preflight",
         ]
     ]
+
+
+def test_preflight_combines_canonical_service_environment_files_in_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    release = _write_release(tmp_path / "releases", "a" * 40)
+    service_env = tmp_path / "prod.env"
+    postgres_env = tmp_path / "postgres-prod.env"
+    service_env.write_text(
+        "DISH_PG_EXPECTED_SCHEMA_HEAD=overridden-by-postgres-env\n"
+        "DISH_AGENT_TOKEN=service-token\n",
+        encoding="utf-8",
+    )
+    postgres_env.write_text(
+        "DISH_PG_EXPECTED_SCHEMA_HEAD=0054_test\n"
+        "DISH_PG_DATABASE_URL=postgresql://dish:secret@localhost/dish_prod\n"
+        "DISH_PG_EXPECTED_DATABASE_NAME=dish_prod\n"
+        "DISH_PG_EXPECTED_RELEASE=dish@generation\n"
+        "DISH_PG_EXPECTED_GENERATION_ID=11111111-1111-4111-8111-111111111111\n",
+        encoding="utf-8",
+    )
+
+    class _Completed:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        assert kwargs["env"]["DISH_AGENT_TOKEN"] == "service-token"
+        assert kwargs["env"]["DISH_PG_EXPECTED_SCHEMA_HEAD"] == "0054_test"
+        assert kwargs["env"]["DISH_PG_EXPECTED_DATABASE_NAME"] == "dish_prod"
+        return _Completed()
+
+    monkeypatch.setattr("dish_tool.prod_release.subprocess.run", fake_run)
+    preflight_database(release, (service_env, postgres_env))
+
+
+@pytest.mark.parametrize("command", ["activate", "rollback"])
+def test_documented_commands_use_both_canonical_environment_files_before_mutation(
+    command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    release = _write_release(tmp_path / "releases", "a" * 40)
+    current = tmp_path / "prod-current"
+    previous = tmp_path / "prod-previous"
+    if command == "rollback":
+        previous.symlink_to(release.root)
+    observed: list[tuple[Path, ...]] = []
+    events: list[str] = []
+
+    def fake_preflight(candidate: Release, env_files: tuple[Path, ...]) -> None:
+        assert candidate == release
+        observed.append(env_files)
+        events.append("preflight")
+
+    class _RecordingOperations:
+        def restart(self) -> None:
+            events.append("restart")
+
+        def verify(self, candidate: Release) -> None:
+            assert candidate == release
+            events.append("verify")
+
+    monkeypatch.setattr(prod_release, "preflight_database", fake_preflight)
+    monkeypatch.setattr(
+        prod_release,
+        "SystemOperations",
+        lambda *args, **kwargs: _RecordingOperations(),
+    )
+    argv = [
+        "--release-root",
+        str(release.root.parent),
+        "--current",
+        str(current),
+        "--previous",
+        str(previous),
+        command,
+    ]
+    if command == "activate":
+        argv.append(release.source_commit)
+
+    assert prod_release.main(argv) == 0
+    assert observed == [DEFAULT_ENV_FILES]
+    assert events == ["preflight", "restart", "verify"]
 
 
 def test_executable_identity_is_distinct_and_fail_closed(
