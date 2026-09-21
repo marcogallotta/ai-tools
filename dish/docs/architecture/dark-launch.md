@@ -32,7 +32,11 @@ Production capture is read-only observation. The location manifest/export/spool/
 - Dark launch cannot create authority or transfer authority.
 - Production source capture opens SQLite with `mode=ro`, uses the complete location manifest for the fixed production service environment, and cannot become a source mutation path.
 - Production and TEST source identities/configuration must not silently mix or fall back into one another.
-- Readiness/preflight uses a read-only transaction for database inspection and may inspect unit state with `systemctl show`; expected worker state remains disabled and inactive/stopped before activation. Readiness does not itself activate workers, enable production mutation, create command admission authority, or create a new import/spool/checkpoint authority.
+- Readiness/preflight uses a read-only transaction for database inspection and may perform the
+  `systemctl show` operation through the user manager (`systemctl --user show`); expected worker
+  state remains disabled and inactive/stopped before activation. Readiness does not itself activate
+  workers, enable production
+  mutation, create command admission authority, or create a new import/spool/checkpoint authority.
 - Shadow execution has no Asana I/O and shadow-origin work cannot project live effects, even if some other effect-enable/epoch configuration is incorrect or permissive.
 - Treatment and comparison eligibility derive from current command metadata plus explicit shadow-only exceptions; there is no second complete hand-maintained treatment oracle.
 - Captured/exported evidence remains bound to the source/environment/generation/corpus identities needed to interpret it; evidence from one identity must not silently certify another.

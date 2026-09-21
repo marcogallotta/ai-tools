@@ -52,13 +52,13 @@ roots. They must be non-TEST, owner-safe, non-aliased paths without symlink trav
 
 0. Ensure the production PostgreSQL container is running before anything below. It is
    code-defined, not manually provisioned: `deploy/postgresql/compose.yaml` (shared with TEST,
-   selected by `--env-file` and `-p` project name) plus the systemd unit
+   selected by `--env-file` and `-p` project name) plus the per-user systemd unit
    `deploy/systemd/dish-postgres-prod.service`, whose environment file
    (`/home/marco/.config/dish-service/postgres-prod.env`, from
    `deploy/systemd/postgres-prod.env.example`) supplies `DISH_POSTGRES_DB`,
    `DISH_POSTGRES_USER`, `DISH_POSTGRES_PASSWORD`, and `DISH_POSTGRES_HOST_PORT`. Installing the
-   unit under `/etc/systemd/system` and starting it is Marco-only (outside the passwordless
-   `dish-service-{prod,test}` sudo grant); once installed, `DISH_PG_DATABASE_URL` and
+   unit under `/home/marco/.config/systemd/user` and starting it uses `systemctl --user`; once
+   installed, `DISH_PG_DATABASE_URL` and
    `DISH_PG_EXPECTED_DATABASE_NAME` used below must match the same database name, user, and port.
 1. Migrate the explicit production PostgreSQL database to the repository Alembic head.
 2. Capture the complete source-location manifest through the explicit production read-only path:
@@ -247,20 +247,20 @@ supplemental-history drift as stale.
 
 ## Install the worker while stopped
 
-Marco may install the committed unit, reload systemd, and confirm that it remains disabled and
+Marco may install the committed per-user unit, reload the user manager, and confirm that it remains disabled and
 inactive:
 
 ```sh
-sudo install -o root -g root -m 0644 \
+install -Dm0644 \
   deploy/systemd/dish-shadow-worker.service \
-  /etc/systemd/system/dish-shadow-worker.service
-sudo systemctl daemon-reload
-systemctl is-enabled dish-shadow-worker.service
-systemctl is-active dish-shadow-worker.service
+  /home/marco/.config/systemd/user/dish-shadow-worker.service
+systemctl --user daemon-reload
+systemctl --user is-enabled dish-shadow-worker.service
+systemctl --user is-active dish-shadow-worker.service
 ```
 
 Expected state before readiness is `disabled` and `inactive`. Do not enable or start the worker yet.
-The readiness preflight uses only `systemctl show`; it fails if the installed digest differs from the
+The readiness preflight uses only `systemctl --user show`; it fails if the installed digest differs from the
 repository unit, the unit is enabled, active, or failed, the installed file is unsafe, a drop-in or
 inline/pass-through environment is present, or the effective environment file is not exactly the
 explicit worker environment supplied to preflight.
@@ -364,14 +364,15 @@ comparison outcome. For root cause on a specific failure or mismatch, query Post
 `attempts`, `last_error`), `shadow_comparisons` (`parity_class`, `differences`), and `shadow_gaps`
 (`gap_kind`, `state`, `details`).
 
-Read worker/service logs without an interactive sudo password:
+Read worker/service status and logs through the user manager:
 
 ```sh
-systemctl status dish-shadow-worker.service --no-pager -l   # no sudo needed
-sudo /usr/bin/systemctl status dish-service-prod.service    # passwordless, exact form only
+systemctl --user status dish-shadow-worker.service --no-pager -l
+systemctl --user status dish-service-prod.service --no-pager -l
+journalctl --user -u dish-shadow-worker.service -u dish-service-prod.service
 ```
 
-Plain `journalctl` requires an interactive password and does not work non-interactively.
+Do not use `sudo` or the system manager for these Dish units.
 
 Recovering a delivery in terminal `failed` state (open `delivery_failure` gap) requires proof the
 shadow attempt had no external effect — always true for dark launch, since shadow execution never
@@ -443,9 +444,9 @@ breaks delivery or preflight rather than erroring loudly:
   read-only readiness preflight fails with "shadow baseline is absent, closed, stale, or
   source-mismatched" even though everything else is correct.
 
-`systemctl start` on an already-active unit is a no-op — it does not restart the process or reload
+`systemctl --user start` on an already-active unit is a no-op — it does not restart the process or reload
 code. After any code change intended to reach the running worker or service, use `restart`, not
-`start`; confirm with `systemctl status` that the reported "Active: active (running) since" time
+`start`; confirm with `systemctl --user status` that the reported "Active: active (running) since" time
 moved forward before trusting that a fix is live.
 
 ## Immediate disable and rollback
@@ -467,7 +468,7 @@ Configuration rollback is separate:
 1. Restore the previously reviewed production service environment. Any mode or service-environment
    change requires an explicit production service restart.
 2. Restore the previously reviewed worker environment or unit. Any worker environment or unit change
-   requires an explicit worker restart; unit replacement also requires `systemctl daemon-reload`.
+   requires an explicit worker restart; unit replacement also requires `systemctl --user daemon-reload`.
 3. Keep the kill switch engaged while validating the restored configuration and status.
 4. Resume capture only through Marco's explicit action:
 

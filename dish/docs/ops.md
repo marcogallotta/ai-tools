@@ -139,21 +139,22 @@ This is the developer/local fixture path, not the PostgreSQL TEST product path.
 - **Install/update**:
 
   ```sh
-  sudo install -m 0644 deploy/systemd/dish-frontend-private.service /etc/systemd/system/
-  sudo install -m 0644 deploy/systemd/dish-frontend-caddy.service /etc/systemd/system/
-  sudo install -m 0644 deploy/systemd/dish-frontend.target /etc/systemd/system/
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now dish-frontend.target
+  install -Dm0644 deploy/systemd/dish-frontend-private.service /home/marco/.config/systemd/user/dish-frontend-private.service
+  install -Dm0644 deploy/systemd/dish-frontend-caddy.service /home/marco/.config/systemd/user/dish-frontend-caddy.service
+  install -Dm0644 deploy/systemd/dish-frontend.target /home/marco/.config/systemd/user/dish-frontend.target
+  systemctl --user daemon-reload
+  systemctl --user add-wants default.target dish-frontend.target
+  systemctl --user start dish-frontend.target
   ```
 
 - **Operate**:
 
   ```sh
-  sudo systemctl status dish-frontend.target dish-frontend-private dish-frontend-caddy
-  sudo systemctl restart dish-frontend-private
-  sudo systemctl restart dish-frontend-caddy
-  sudo systemctl stop dish-frontend.target
-  journalctl -u dish-frontend-private -u dish-frontend-caddy
+  systemctl --user status dish-frontend.target dish-frontend-private dish-frontend-caddy
+  systemctl --user restart dish-frontend-private
+  systemctl --user restart dish-frontend-caddy
+  systemctl --user stop dish-frontend.target
+  journalctl --user -u dish-frontend-private -u dish-frontend-caddy
   ```
 
 - **URL**: `https://127.0.0.1:4443/`. The Caddy internal root currently trusted by
