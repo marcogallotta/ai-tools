@@ -78,7 +78,7 @@ def test_release_preflight_binds_live_generation_identity(core_db) -> None:
             models.AuthorityGeneration(
                 generation_id=generation_id,
                 predecessor_generation_id=None,
-                creation_reason="release-preflight-test",
+                creation_reason="initial_cutover",
                 external_restore_control_id=None,
                 schema_head=migration_status.ALEMBIC_HEAD,
                 dish_release="dish@generation",
