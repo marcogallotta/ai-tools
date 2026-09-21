@@ -6,10 +6,11 @@ Wants=network-online.target
 [Service]
 Type=notify
 User=marco
-WorkingDirectory=/home/marco/ai-tools/dish
+WorkingDirectory=/home/marco/.local/share/dish/prod-current/dish
 EnvironmentFile=/home/marco/.config/dish-service/prod.env
 EnvironmentFile=/home/marco/.config/dish-service/postgres-prod.env
-ExecStart=/home/marco/ai-tools/dish/dish-service
+Environment=DISH_RELEASE_MANIFEST=/home/marco/.local/share/dish/prod-current/.dish-release.json
+ExecStart=/home/marco/.local/share/dish/prod-current/dish/dish-service
 Restart=on-failure
 RestartPreventExitStatus=78
 RestartSec=5

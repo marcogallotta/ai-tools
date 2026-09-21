@@ -203,6 +203,11 @@ workflow commands, so edits to those assets do not require a service restart. Re
 service after changing its environment or Python code. Verification cycles already in
 progress remain bound to their recorded Verification protocol release.
 
+Production code is staged, activated, and rolled back only through the immutable-pointer procedure
+in [`docs/production-release-runbook.md`](docs/production-release-runbook.md). In particular, an
+older application release is not a valid rollback target unless it expects the live PostgreSQL
+schema.
+
 The unit is `Type=notify`: the process sends systemd a `READY=1` notification only once both
 listeners are bound and their serve loops are running, so a systemd restart
 blocks until the new process is actually ready to take requests — no race where a command issued
