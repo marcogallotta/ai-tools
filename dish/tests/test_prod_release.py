@@ -433,3 +433,15 @@ def test_production_unit_runs_only_through_the_release_pointer() -> None:
     )
     assert "RestartPreventExitStatus=78" in unit
     assert "/home/marco/ai-tools/dish" not in unit
+
+
+def test_production_unit_is_compatible_with_the_user_systemd_manager() -> None:
+    root = Path(__file__).resolve().parents[1]
+    unit = (root / "deploy/systemd/dish-service-prod.service").read_text(
+        encoding="utf-8"
+    )
+    assert "WantedBy=default.target" in unit
+    assert "User=" not in unit
+    assert "PrivateDevices=" not in unit
+    assert "ProtectKernelModules=" not in unit
+    assert "tailscaled.service" not in unit
