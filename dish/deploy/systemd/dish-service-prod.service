@@ -1,11 +1,10 @@
 [Unit]
-Description=Dish workflow service (production)
-After=network-online.target tailscaled.service
+Description=Dish workflow service (production, user mode)
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=notify
-User=marco
 WorkingDirectory=/home/marco/.local/share/dish/prod-current/dish
 EnvironmentFile=/home/marco/.config/dish-service/prod.env
 EnvironmentFile=/home/marco/.config/dish-service/postgres-prod.env
@@ -17,9 +16,7 @@ RestartSec=5
 TimeoutStopSec=10min
 NoNewPrivileges=true
 UMask=0077
-PrivateDevices=true
 ProtectKernelTunables=true
-ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
@@ -30,4 +27,4 @@ ProtectHome=read-only
 ReadWritePaths=/home/marco/.local/state/dish/prod
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
