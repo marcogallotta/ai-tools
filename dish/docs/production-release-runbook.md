@@ -7,8 +7,8 @@ downgrades the database.
 Production runs from the immutable release selected by
 `/home/marco/.local/share/dish/prod-current`. The controller records the displaced exact release in
 `prod-previous`; it never guesses from directory timestamps. Each release directory is named for
-its full Git commit and contains a manifest binding that commit to the expected schema head and
-release-critical file hashes.
+its full Git commit and contains a manifest binding that commit to the expected schema head, the
+complete exported source tree, and the installed dependency set.
 
 ## One-time service installation
 
@@ -26,8 +26,8 @@ the canonical production unit is the system unit controlled with the repository-
 
 If `prod-current` already names a working release created before this controller, certify it once
 before the first managed activation. Certification requires the directory name and Git `HEAD` to
-be the same full commit, no tracked modifications, a built virtual environment, the current schema
-identity source, and the release-critical hashes:
+be the same full commit, no modified or untracked files, a built virtual environment, the current
+schema identity source, and matching source/dependency digests:
 
 ```sh
 dish/scripts/dish-prod-release certify-existing <exact-40-character-commit>
@@ -38,8 +38,8 @@ This transition command rejects the mislabelled or modified directory instead of
 ## Stage a release
 
 Run from a clean repository that contains the reviewed commit. Staging exports committed bytes,
-builds a private virtual environment, hashes the critical entrypoint/schema/dependency inputs, and
-publishes the directory only after all steps succeed.
+builds a private virtual environment, hashes the complete exported source tree and installed
+package set, and publishes the directory only after all steps succeed.
 
 ```sh
 dish/scripts/dish-prod-release stage \
@@ -57,10 +57,11 @@ schema is not a usable fallback after a forward-only migration.
 dish/scripts/dish-prod-release activate <exact-40-character-commit>
 ```
 
-Before changing the pointer, the controller verifies manifest integrity and uses the candidate's
-own runtime to prove that both the configured and live PostgreSQL schema match the candidate. It
-then atomically records `prod-previous`, switches `prod-current`, performs one service restart, and
-requires all of these within the bounded readiness interval:
+Before changing the pointer, the controller verifies the complete exported source-tree digest and
+uses the candidate's own runtime to prove that the configured database, schema, authority-generation
+ID, and generation release all exactly match live PostgreSQL. It then atomically records
+`prod-previous`, switches `prod-current`, performs one service restart, and requires all of these
+within the bounded readiness interval:
 
 - the system service is active;
 - its main process working directory is the selected immutable release;

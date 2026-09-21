@@ -10,15 +10,19 @@ deliberately refuses to run (it would reopen known CHECK NULL holes), and
 this check only ever reads the version marker, never actual columns, so a
 raw marker rewrite is a faithful and much cheaper way to exercise it.
 """
+
 from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 import pytest
 from sqlalchemy import create_engine, text
 
-from dish_pg import migration_status
+from dish_pg import migration_status, models, release_preflight
 from dish_pg.migration_status import MigrationStatusError, check_migration_head, main
 from tests.support.postgresql.certification import postgresql_dsn
-from tests.support.postgresql.core import core_db
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
 
@@ -28,7 +32,8 @@ def _rewrite_version_marker(dsn: str, version: str) -> None:
     try:
         with engine.begin() as connection:
             connection.execute(
-                text("UPDATE alembic_version SET version_num = :version"), {"version": version}
+                text("UPDATE alembic_version SET version_num = :version"),
+                {"version": version},
             )
     finally:
         engine.dispose()
@@ -47,7 +52,9 @@ def test_check_migration_head_raises_when_database_is_stale(core_db) -> None:
         check_migration_head(dsn)
 
 
-def test_main_exits_nonzero_and_prints_actionable_message_on_drift(core_db, capsys) -> None:
+def test_main_exits_nonzero_and_prints_actionable_message_on_drift(
+    core_db, capsys
+) -> None:
     dsn = postgresql_dsn()
     _rewrite_version_marker(dsn, "0034_cc5_schema_repair")
     exit_code = main(["--database-url", dsn])
@@ -61,3 +68,31 @@ def test_main_exits_zero_when_up_to_date(core_db) -> None:
     dsn = postgresql_dsn()
     exit_code = main(["--database-url", dsn])
     assert exit_code == 0
+
+
+def test_release_preflight_binds_live_generation_identity(core_db) -> None:
+    factory, _ids = core_db
+    generation_id = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    with factory.begin() as session:
+        session.add(
+            models.AuthorityGeneration(
+                generation_id=generation_id,
+                predecessor_generation_id=None,
+                creation_reason="release-preflight-test",
+                external_restore_control_id=None,
+                schema_head=migration_status.ALEMBIC_HEAD,
+                dish_release="dish@generation",
+                status="active",
+                created_at=datetime.now(timezone.utc),
+                retired_at=None,
+            )
+        )
+    dsn = postgresql_dsn()
+    identity = release_preflight.check_release_preflight(
+        database_url=dsn,
+        expected_database=urlsplit(dsn).path.removeprefix("/"),
+        expected_schema_head=migration_status.ALEMBIC_HEAD,
+        expected_release="dish@generation",
+        expected_generation_id=str(generation_id),
+    )
+    assert identity["generation_id"] == str(generation_id)

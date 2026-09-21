@@ -72,6 +72,44 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _source_tree_sha256(root: Path) -> str:
+    digest = hashlib.sha256()
+    excluded_parts = {".git", ".venv", "__pycache__", ".pytest_cache"}
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if excluded_parts.intersection(relative.parts):
+            continue
+        if relative.name == MANIFEST_NAME or relative.name.startswith(
+            f".{MANIFEST_NAME}."
+        ):
+            continue
+        if not path.is_file():
+            continue
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(_sha256(path).encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _installed_packages_sha256(python: Path) -> str:
+    try:
+        completed = subprocess.run(
+            [str(python), "-m", "pip", "freeze", "--all"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise ReleaseError("cannot inspect release dependencies") from exc
+    if completed.returncode != 0:
+        raise ReleaseError("cannot inspect release dependencies")
+    normalized = "\n".join(
+        sorted(line.strip() for line in completed.stdout.splitlines() if line.strip())
+    )
+    return hashlib.sha256((normalized + "\n").encode()).hexdigest()
+
+
 def _schema_head(source: Path) -> str:
     match = _SCHEMA_ASSIGNMENT.search(source.read_text(encoding="utf-8"))
     if match is None:
@@ -101,12 +139,15 @@ def _exact_commit(repository: Path, revision: str) -> str:
 
 def _manifest_payload(release_root: Path, source_commit: str) -> dict[str, object]:
     dish_root = release_root / "dish"
+    python = dish_root / ".venv/bin/python"
     return {
         "version": MANIFEST_VERSION,
         "source_commit": source_commit,
         "schema_head": _schema_head(dish_root / "dish_pg/schema_identity.py"),
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "hashes": {name: _sha256(release_root / name) for name in _HASHED_PATHS},
+        "source_tree_sha256": _source_tree_sha256(release_root),
+        "installed_packages_sha256": _installed_packages_sha256(python),
     }
 
 
@@ -194,7 +235,7 @@ def certify_existing_release(release_root: Path, source_commit: str) -> Release:
         check=False,
     )
     status = subprocess.run(
-        ["git", "-C", str(path), "status", "--porcelain=v1", "--untracked-files=no"],
+        ["git", "-C", str(path), "status", "--porcelain=v1", "--untracked-files=all"],
         text=True,
         capture_output=True,
         check=False,
@@ -204,7 +245,7 @@ def certify_existing_release(release_root: Path, source_commit: str) -> Release:
             "existing release Git HEAD does not match its directory identity"
         )
     if status.returncode != 0 or status.stdout.strip():
-        raise ReleaseError("existing release has modified tracked files")
+        raise ReleaseError("existing release has modified or untracked files")
     if not (path / "dish/.venv/bin/python").is_file():
         raise ReleaseError("existing release virtual environment is missing")
     _write_manifest(path, _manifest_payload(path, source_commit))
@@ -230,10 +271,14 @@ def load_release(release_root: Path, source_commit: str) -> Release:
         raise ReleaseError("release manifest identity does not match its directory")
     schema_head = payload.get("schema_head")
     hashes = payload.get("hashes")
+    tree_digest = payload.get("source_tree_sha256")
+    packages_digest = payload.get("installed_packages_sha256")
     if (
         not isinstance(schema_head, str)
         or not schema_head
         or not isinstance(hashes, dict)
+        or not isinstance(tree_digest, str)
+        or not isinstance(packages_digest, str)
     ):
         raise ReleaseError("release manifest is incomplete")
     if _schema_head(path / "dish/dish_pg/schema_identity.py") != schema_head:
@@ -242,9 +287,13 @@ def load_release(release_root: Path, source_commit: str) -> Release:
         expected = hashes.get(name)
         if not isinstance(expected, str) or _sha256(path / name) != expected:
             raise ReleaseError(f"release integrity check failed for {name}")
+    if _source_tree_sha256(path) != tree_digest:
+        raise ReleaseError("release source-tree integrity check failed")
     python = path / "dish/.venv/bin/python"
     if not python.is_file():
         raise ReleaseError("release virtual environment is missing")
+    if _installed_packages_sha256(python) != packages_digest:
+        raise ReleaseError("release dependency integrity check failed")
     return Release(path, source_commit, schema_head, dict(hashes))
 
 
@@ -264,31 +313,38 @@ def _read_env(path: Path) -> dict[str, str]:
 def preflight_database(release: Release, env_file: Path) -> None:
     values = _read_env(env_file)
     expected = values.get("DISH_PG_EXPECTED_SCHEMA_HEAD")
-    database_url = values.get("DISH_PG_DATABASE_URL")
     if expected != release.schema_head:
         raise ReleaseError(
             f"release schema {release.schema_head!r} is incompatible with configured schema {expected!r}"
         )
-    if not database_url:
+    required = {
+        "DISH_PG_DATABASE_URL",
+        "DISH_PG_EXPECTED_DATABASE_NAME",
+        "DISH_PG_EXPECTED_SCHEMA_HEAD",
+        "DISH_PG_EXPECTED_RELEASE",
+        "DISH_PG_EXPECTED_GENERATION_ID",
+    }
+    if missing := sorted(name for name in required if not values.get(name)):
         raise ReleaseError(
-            "DISH_PG_DATABASE_URL is missing from the production environment"
+            "production identity environment is incomplete: " + ", ".join(missing)
         )
+    candidate_env = os.environ.copy()
+    candidate_env.update(values)
     completed = subprocess.run(
         [
             str(release.dish_root / ".venv/bin/python"),
             "-m",
-            "dish_pg.migration_status",
-            "--database-url",
-            database_url,
+            "dish_pg.release_preflight",
         ],
         cwd=release.dish_root,
+        env=candidate_env,
         text=True,
         capture_output=True,
         check=False,
     )
     if completed.returncode != 0:
         raise ReleaseError(
-            "release schema is incompatible with the live production database"
+            "release identity is incompatible with the live production authority"
         )
 
 

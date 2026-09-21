@@ -21,6 +21,8 @@ from dish_tool.prod_release import (
     Release,
     ReleaseError,
     SystemOperations,
+    _installed_packages_sha256,
+    _source_tree_sha256,
     activate_release,
     certify_existing_release,
     load_release,
@@ -35,14 +37,18 @@ def _write_release(root: Path, identity: str, schema: str = "0054_test") -> Rele
     files = {
         "dish/dish-service": "#!/bin/sh\n",
         "dish/dish_pg/schema_identity.py": f'ALEMBIC_HEAD = "{schema}"\n',
+        "dish/dish_service/runtime.py": "RUNTIME = True\n",
         "dish/requirements.txt": "example==1\n",
     }
     hashes: dict[str, str] = {}
     for name, content in files.items():
         path = release / name
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         hashes[name] = hashlib.sha256(content.encode()).hexdigest()
-    (release / "dish/.venv/bin/python").write_text("", encoding="utf-8")
+    python = release / "dish/.venv/bin/python"
+    python.write_text("#!/bin/sh\nprintf 'example==1\\n'\n", encoding="utf-8")
+    python.chmod(0o755)
     (release / MANIFEST_NAME).write_text(
         json.dumps(
             {
@@ -51,6 +57,8 @@ def _write_release(root: Path, identity: str, schema: str = "0054_test") -> Rele
                 "schema_head": schema,
                 "created_at": "2026-09-21T00:00:00Z",
                 "hashes": hashes,
+                "source_tree_sha256": _source_tree_sha256(release),
+                "installed_packages_sha256": _installed_packages_sha256(python),
             }
         ),
         encoding="utf-8",
@@ -84,6 +92,19 @@ def test_load_release_rejects_mislabeled_and_modified_artifacts(tmp_path: Path) 
 
     with pytest.raises(ReleaseError, match="exact lowercase commit"):
         load_release(tmp_path, "not-a-commit")
+
+    other = _write_release(tmp_path, "b" * 40)
+    (other.root / "dish/dish_service/runtime.py").write_text(
+        "RUNTIME = False\n", encoding="utf-8"
+    )
+    with pytest.raises(ReleaseError, match="source-tree integrity"):
+        load_release(tmp_path, other.source_commit)
+
+    dependency_changed = _write_release(tmp_path, "c" * 40)
+    python = dependency_changed.root / "dish/.venv/bin/python"
+    python.write_text("#!/bin/sh\nprintf 'example==2\\n'\n", encoding="utf-8")
+    with pytest.raises(ReleaseError, match="dependency integrity"):
+        load_release(tmp_path, dependency_changed.source_commit)
 
 
 def test_certify_existing_rejects_mislabeled_git_worktree(
@@ -169,7 +190,7 @@ def test_schema_mismatch_refuses_before_any_restart(tmp_path: Path) -> None:
     release = _write_release(tmp_path / "releases", "a" * 40, schema="0054_expected")
     env = tmp_path / "prod.env"
     env.write_text(
-        "DISH_PG_EXPECTED_SCHEMA_HEAD=0045_old\nDISH_PG_DATABASE_URL=postgresql://invalid\n",
+        "DISH_PG_EXPECTED_SCHEMA_HEAD=0045_old\n",
         encoding="utf-8",
     )
 
@@ -184,7 +205,10 @@ def test_preflight_uses_candidate_runtime_to_check_live_database(
     env = tmp_path / "prod.env"
     env.write_text(
         "DISH_PG_EXPECTED_SCHEMA_HEAD=0054_test\n"
-        "DISH_PG_DATABASE_URL=postgresql://dish:secret@localhost/dish_prod\n",
+        "DISH_PG_DATABASE_URL=postgresql://dish:secret@localhost/dish_prod\n"
+        "DISH_PG_EXPECTED_DATABASE_NAME=dish_prod\n"
+        "DISH_PG_EXPECTED_RELEASE=dish@generation\n"
+        "DISH_PG_EXPECTED_GENERATION_ID=11111111-1111-4111-8111-111111111111\n",
         encoding="utf-8",
     )
     observed: list[list[str]] = []
@@ -205,9 +229,7 @@ def test_preflight_uses_candidate_runtime_to_check_live_database(
         [
             str(release.dish_root / ".venv/bin/python"),
             "-m",
-            "dish_pg.migration_status",
-            "--database-url",
-            "postgresql://dish:secret@localhost/dish_prod",
+            "dish_pg.release_preflight",
         ]
     ]
 
