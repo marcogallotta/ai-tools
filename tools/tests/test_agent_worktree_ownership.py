@@ -1179,6 +1179,32 @@ def test_first_pr_attachment_requires_fresh_exact_pr_head_handoff(h: Harness) ->
     assert_error(result, "MUTATION_READY_HANDOFF_INVALID")
 
 
+def test_first_pr_attachment_persists_authority_for_claimed_writer(h: Harness) -> None:
+    task, branch, agent, pr = "3139", "agent/pr-attachment-success", "impl-3139", 3139
+    h.agent_file(agent, owning_task_gid=task)
+    h.start(task=task, branch=branch, agent=agent)
+    h.tool("publish", "--task", task)
+    head = git_out(h.wt(task), "rev-parse", "HEAD")
+    child = (
+        "import pathlib,subprocess; "
+        f"path=pathlib.Path({str(h.wt(task) / 'tracked.txt')!r}); "
+        "path.write_text(path.read_text() + 'attached PR correction\\n'); "
+        f"raise SystemExit(subprocess.run(['python3', {str(SCRIPT)!r}, 'commit', '--task', {task!r}, "
+        "'-m', 'commit after PR attachment', '--', 'tracked.txt']).returncode)"
+    )
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--pr-number", str(pr), "--pr-head", head, "--pr-lease-state", "none",
+        "--", "python3", "-c", child, check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    state_authority = h.state(task)["repository_assignment_authority"]
+    claim_authority = record(h, task)[1]["repository_assignment_authority"]
+    assert state_authority == claim_authority
+    assert state_authority["assignment"]["pr_number"] == pr
+    assert state_authority["assignment"]["pr_head"] == head
+
+
 def test_live_pr_head_movement_blocks_writer_inside_already_admitted_claim(h: Harness) -> None:
     task, branch, agent, pr = "3140", "agent/live-head-drift", "impl-3140", 3140
     base = h.current_remote_main()
