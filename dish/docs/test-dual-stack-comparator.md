@@ -24,7 +24,7 @@ Before starting the rig:
 systemctl --user disable --now dish-shadow-worker-test.service
 systemctl --user daemon-reload
 systemctl --user restart dish-postgres-test.service dish-service-test.service dish-service-test-legacy.service
-systemctl --user restart caddy
+systemctl --user restart dish-action-router.service
 /home/marco/ai-tools/dish/deploy/caddy/dish-action-route status
 ```
 
