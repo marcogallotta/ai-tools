@@ -153,7 +153,8 @@ def test_test_frontend_caddy_is_dedicated_to_existing_private_listener() -> None
     assert "dish-frontend-private.service" not in unit
     assert "frontend-test-caddy.env" in unit
     assert "dish-frontend-test.Caddyfile" in unit
-    assert "CAP_NET_BIND_SERVICE" in unit
+    assert "CAP_NET_BIND_SERVICE" not in unit
+    assert "https://{$DISH_FRONTEND_TEST_HOST}:8443" in caddy
     assert set(edge) == {
         "DISH_FRONTEND_TEST_HOST",
         "DISH_FRONTEND_TEST_BIND_IP",

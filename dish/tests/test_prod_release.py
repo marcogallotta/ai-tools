@@ -445,3 +445,33 @@ def test_production_unit_is_compatible_with_the_user_systemd_manager() -> None:
     assert "PrivateDevices=" not in unit
     assert "ProtectKernelModules=" not in unit
     assert "tailscaled.service" not in unit
+
+
+def test_all_shipped_dish_units_are_compatible_with_the_user_systemd_manager() -> None:
+    root = Path(__file__).resolve().parents[1]
+    systemd_root = root / "deploy/systemd"
+    service_units = sorted(systemd_root.glob("dish-*.service"))
+
+    assert service_units
+    for path in service_units:
+        unit = path.read_text(encoding="utf-8")
+        assert "User=" not in unit, path.name
+        assert "PrivateDevices=" not in unit, path.name
+        assert "ProtectKernelModules=" not in unit, path.name
+        assert "AmbientCapabilities=" not in unit, path.name
+        assert "CapabilityBoundingSet=" not in unit, path.name
+        assert "tailscaled.service" not in unit, path.name
+        assert "docker.service" not in unit, path.name
+        assert "WantedBy=multi-user.target" not in unit, path.name
+
+    frontend_target = (systemd_root / "dish-frontend.target").read_text(encoding="utf-8")
+    assert "WantedBy=default.target" in frontend_target
+    assert "WantedBy=multi-user.target" not in frontend_target
+
+    backup = (systemd_root / "dish-postgres-backup.service").read_text(encoding="utf-8")
+    assert "ExecStartPre=+" not in backup
+
+    frontend_test_caddy = (root / "deploy/caddy/dish-frontend-test.Caddyfile").read_text(
+        encoding="utf-8"
+    )
+    assert "https://{$DISH_FRONTEND_TEST_HOST}:8443" in frontend_test_caddy

@@ -1,11 +1,10 @@
 [Unit]
 Description=Shared dish workflow service
-After=network-online.target tailscaled.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=notify
-User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
 EnvironmentFile=/home/marco/.config/dish-service/service.env
 ExecStart=/home/marco/ai-tools/dish/dish-service
@@ -15,9 +14,7 @@ RestartSec=5
 TimeoutStopSec=10min
 NoNewPrivileges=true
 UMask=0077
-PrivateDevices=true
 ProtectKernelTunables=true
-ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
@@ -28,4 +25,4 @@ ProtectHome=read-only
 ReadWritePaths=/home/marco/.local/state/dish
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

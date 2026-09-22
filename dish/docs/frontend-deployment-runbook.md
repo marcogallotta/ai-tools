@@ -38,7 +38,8 @@ activation decision remains in `frontend-activation.md`.
    required frontend value. For PostgreSQL TEST, use
    `deploy/systemd/service-test.env.example` plus
    `deploy/systemd/frontend-test-caddy.env.example`. The frontend origin and
-   Action origin must use different hostnames.
+   Action origin must use different hostnames. Include the user-service HTTPS
+   port in the TEST frontend origin: `https://<private-hostname>:8443`.
 2. Apply the current Alembic head to the writable database named by
    `DISH_FRONTEND_DATABASE_URL`.
 3. Provision the owner-only restore fence outside PostgreSQL:
@@ -62,8 +63,9 @@ activation decision remains in `frontend-activation.md`.
 6. Configure the dedicated HTTPS mapping, then enable authentication. For TEST,
    install `deploy/systemd/dish-frontend-test-caddy.service` and
    `deploy/caddy/dish-frontend-test.Caddyfile`; it binds the configured private
-   address and proxies only to the existing TEST private listener on
-   `127.0.0.1:8765`. It must never proxy to the TEST Action listener on 8766.
+   address on unprivileged port `8443` and proxies only to the existing TEST
+   private listener on `127.0.0.1:8765`. It must never proxy to the TEST Action
+   listener on 8766.
    Enable PostgreSQL reads only for the exact candidate and reviewed
    projection-delay setting.
 7. In PostgreSQL authority mode, startup independently validates the authority

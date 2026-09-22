@@ -7,7 +7,6 @@ PartOf=dish-frontend.target
 
 [Service]
 Type=notify
-User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
 Environment=XDG_CONFIG_HOME=/home/marco/.config
 Environment=XDG_DATA_HOME=/home/marco/.local/share
@@ -17,9 +16,7 @@ RestartSec=5
 TimeoutStopSec=5min
 NoNewPrivileges=true
 UMask=0077
-PrivateDevices=true
 ProtectKernelTunables=true
-ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
