@@ -261,6 +261,7 @@ def _service_identity() -> dict[str, str]:
         completed = subprocess.run(
             [
                 str(SYSTEMCTL),
+                "--user",
                 "show",
                 TEST_SERVICE_UNIT,
                 "--no-pager",

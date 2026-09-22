@@ -1155,6 +1155,7 @@ def observe_worker_unit(
     """Read bounded systemd unit state without invoking a mutating verb."""
     command = [
         systemctl_command,
+        "--user",
         "show",
         unit_name,
         "--no-pager",

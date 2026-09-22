@@ -69,9 +69,10 @@ reversibility. A legitimate authorization channel does not make the authority sa
 technical control prevents misuse. Assess chained capabilities such as workflows using repository
 tokens or secrets; never infer safety from a scope name. Prefer least privilege.
 
-`sudo /usr/bin/systemctl {stop,start,restart,status} dish-service-{prod,test}.service` runs
-passwordless (`/etc/sudoers.d/dish-agent`) only if typed exactly — full path, no extra flags. Ask
-Marco for anything else needing sudo.
+All Dish services are per-user units. Operate them with
+`systemctl --user {stop,start,restart,status} dish-service-{prod,test}.service` and inspect logs with
+`journalctl --user`; never use sudo or the system manager for Dish services. Ask Marco for any
+unrelated operation that genuinely requires sudo.
 
 ## Communication
 
