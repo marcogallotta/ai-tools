@@ -784,6 +784,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         # Existing exact lineages admitted before this authority projection landed
         # remain recoverable, but the projection cannot widen their assignment.
         admitted_authority = {"legacy_admitted": True, "assignment": assignment}
+    original_admitted_authority = admitted_authority
     if not args.launch_provenance:
         identity = require_repository_mutation_identity(
             agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
@@ -809,6 +810,8 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     refresh_committed = False
     refresh_transition: dict[str, Any] | None = None
     refresh_state_file: Path | None = None
+    authority_rollback: tuple[Path, dict[str, Any]] | None = None
+    replaced_assignment_authority = False
     try:
         # Run the local claim-vs-state consistency check before the repository-wide
         # registry ownership gate, so a locally detectable OWNERSHIP_AMBIGUOUS
@@ -842,7 +845,6 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             launch_identity_bound = True
             launch = bound_identity.get("launch_provenance")
             block_review_id = launch.get("block_review_id") if isinstance(launch, dict) else None
-            replaced_assignment_authority = False
             if block_review_id is not None:
                 block_authority = verified_review_block_authority(
                     task_gid, assignment, str(block_review_id)
@@ -913,6 +915,21 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 agent_id, task_gid, assignment=assignment, admitted_authority=admitted_authority
             )
             admitted_authority = identity.get("repository_assignment_authority")
+        if (
+            existing_state is not None
+            and admitted_authority != original_admitted_authority
+            and not replaced_assignment_authority
+        ):
+            authority_state_path = state_path_for_branch(task_gid, branch)
+            if authority_state_path is None:
+                fail("MUTATION_ASSIGNMENT_MISMATCH", "assignment-authority transition requires existing same-lineage worktree state")
+            current_state = read_json_object(authority_state_path, "task worktree state")
+            if current_state.get("repository_assignment_authority") != original_admitted_authority:
+                fail("MUTATION_ASSIGNMENT_MISMATCH", "worktree assignment authority changed during claim admission")
+            authority_rollback = (authority_state_path, current_state)
+            updated_state = dict(current_state)
+            updated_state["repository_assignment_authority"] = admitted_authority
+            atomic_write_json(authority_state_path, updated_state)
         record: dict[str, Any] = {
             "schema_version": CLAIM_SCHEMA_VERSION, "repository": EXPECTED_REPOSITORY, "origin_id": repo.origin_id,
             "task_gid": task_gid, "branch": branch, "lineage_id": lineage_id, "agent_id": agent_id,
@@ -946,6 +963,8 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 resolved_owner=resolved_owner,
                 replacement_agent_id=agent_id,
             )
+            if authority_rollback is not None and resolved_owner != agent_id:
+                atomic_write_json(*authority_rollback)
             if launch_identity_bound:
                 restore_identity(agent_id, prior_identity)
             if pr_registry_acquired:
@@ -964,6 +983,8 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 resolved_owner=resolved_owner,
                 replacement_agent_id=agent_id,
             )
+            if authority_rollback is not None and resolved_owner != agent_id:
+                atomic_write_json(*authority_rollback)
             if launch_identity_bound:
                 state_file = state_path_for_branch(task_gid, branch)
                 durable_state = read_json_object(state_file, "task worktree state") if state_file is not None else None
@@ -998,6 +1019,8 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 if rollback.returncode != 0:
                     fail("REFRESH_BLOCK_ROLLBACK_FAILED", "claim setup failed and exact worktree rollback also failed")
                 atomic_write_json(replacement_state_path, old_state)
+            if authority_rollback is not None and not refresh_committed:
+                atomic_write_json(*authority_rollback)
             if pr_registry_acquired:
                 try:
                     release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
