@@ -21,10 +21,10 @@ Install the reviewed `dish-service-test.service`, `dish-service-test-legacy.serv
 Before starting the rig:
 
 ```sh
-sudo systemctl disable --now dish-shadow-worker-test.service
-sudo systemctl daemon-reload
-sudo systemctl restart dish-postgres-test.service dish-service-test.service dish-service-test-legacy.service
-sudo systemctl restart caddy
+systemctl --user disable --now dish-shadow-worker-test.service
+systemctl --user daemon-reload
+systemctl --user restart dish-postgres-test.service dish-service-test.service dish-service-test-legacy.service
+systemctl --user restart dish-action-router.service
 /home/marco/ai-tools/dish/deploy/caddy/dish-action-route status
 ```
 

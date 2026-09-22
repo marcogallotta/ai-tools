@@ -67,6 +67,7 @@ def test_systemd_inspection_uses_one_bounded_read_only_show_command(tmp_path: Pa
     assert calls == [
         [
             "systemctl",
+            "--user",
             "show",
             "dish-shadow-worker.service",
             "--no-pager",

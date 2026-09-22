@@ -374,7 +374,7 @@ def validate_test_identity(env: Mapping[str, str]) -> tuple[str, int, str, int, 
 def systemctl(action: str, *, save_to: Path | None = None, require_success: bool = True) -> subprocess.CompletedProcess[str]:
     if action not in {"stop", "start", "restart", "status"}:
         raise RehearsalError(f"forbidden systemctl action: {action}")
-    command = ["sudo", str(SYSTEMCTL), action, TEST_UNIT]
+    command = [str(SYSTEMCTL), "--user", action, TEST_UNIT]
     completed = subprocess.run(command, text=True, capture_output=True, check=False)
     if save_to is not None:
         save_to.write_text(completed.stdout + completed.stderr, encoding="utf-8")
@@ -989,17 +989,16 @@ def write_manual_recovery(ctx: RuntimeContext) -> None:
 Scratch directory:
   {ctx.scratch}
 
-The rehearsal uses the direct test.env fallback because the authorized systemctl
-capability does not include daemon-reload, so a temporary drop-in cannot be
-installed safely.
+The rehearsal uses the direct test.env fallback so it can restore the exact
+environment file without installing a temporary drop-in.
 
 Run these commands as marco if the rehearsal process is killed before cleanup:
 
   cp --preserve=mode,timestamps {shlex.quote(str(ctx.backup_path))} {shlex.quote(str(ctx.env_path))}
   sha256sum {shlex.quote(str(ctx.env_path))}
   cat {shlex.quote(str(ctx.scratch / 'original-test.env.sha256'))}
-  sudo /usr/bin/systemctl restart dish-service-test.service
-  sudo /usr/bin/systemctl status dish-service-test.service
+  /usr/bin/systemctl --user restart dish-service-test.service
+  /usr/bin/systemctl --user status dish-service-test.service
 
 The printed SHA256 must match the value in original-test.env.sha256.  The two
 scratch kill switches are no longer live after the original environment is

@@ -24,6 +24,7 @@ LEGACY_SERVICE_UNIT = ROOT / "deploy/systemd/dish-service-test-legacy.service"
 COMPARATOR_RUNBOOK = ROOT / "docs/test-dual-stack-comparator.md"
 PREPARE = ROOT / "scripts/dish-pg-production-prepare"
 TEST_PREPARE = ROOT / "scripts/dish-pg-test-prepare"
+HOST_CAPTURE_REHEARSAL = ROOT / "scripts/dish-pg-host-capture-rehearsal"
 
 
 def _assignments(path: Path) -> dict[str, str]:
@@ -165,9 +166,15 @@ def test_test_frontend_caddy_is_dedicated_to_existing_private_listener() -> None
 
 def test_comparator_qualification_stops_legacy_to_pg_shadow_synchronization() -> None:
     runbook = COMPARATOR_RUNBOOK.read_text(encoding="utf-8")
-    assert "systemctl disable --now dish-shadow-worker-test.service" in runbook
+    assert "systemctl --user disable --now dish-shadow-worker-test.service" in runbook
     assert "no alternate upstream, load balancing, or automatic fallback" in runbook.lower()
     assert "Do not copy PostgreSQL state into legacy" in runbook
+
+
+def test_host_capture_rehearsal_controls_test_through_the_user_manager() -> None:
+    source = HOST_CAPTURE_REHEARSAL.read_text(encoding="utf-8")
+    assert 'command = [str(SYSTEMCTL), "--user", action, TEST_UNIT]' in source
+    assert "sudo /usr/bin/systemctl" not in source
 
 def test_test_prepare_entrypoint_forces_test_and_target_gate_precedes_mutation() -> None:
     wrapper = TEST_PREPARE.read_text(encoding="utf-8")

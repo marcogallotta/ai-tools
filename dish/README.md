@@ -173,30 +173,37 @@ DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/prod/backups
 The production corpus and durable baselines are live in the production instance. The public Action
 router keeps production at the root URL and exposes test only under the explicit `/test` prefix.
 
-Install the two service units and Caddy router with:
+If this host still has the obsolete system-manager installation, remove those legacy port owners
+once before installing the supported per-user units:
+
+```sh
+sudo /usr/bin/systemctl disable --now caddy.service dish-service.service
+```
+
+That command is migration cleanup for the old system-level installation only. Supported Dish
+service operation is entirely through the user manager. Install the two service units and Caddy
+router as per-user units with:
 
 ```sh
 sudo apt-get install caddy
-sudo systemctl disable --now caddy.service
-sudo install -m 0755 deploy/caddy/dish-action-route /usr/local/bin/
-sudo install -m 0644 deploy/systemd/dish-service-test.service /etc/systemd/system/
-sudo install -m 0644 deploy/systemd/dish-service-prod.service /etc/systemd/system/
-sudo install -m 0644 deploy/systemd/dish-action-router.service /etc/systemd/system/
-sudo systemctl disable --now dish-service.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now dish-service-test dish-service-prod dish-action-router
+install -Dm0755 deploy/caddy/dish-action-route /home/marco/.local/bin/dish-action-route
+install -Dm0644 deploy/systemd/dish-service-test.service /home/marco/.config/systemd/user/dish-service-test.service
+install -Dm0644 deploy/systemd/dish-service-prod.service /home/marco/.config/systemd/user/dish-service-prod.service
+install -Dm0644 deploy/systemd/dish-action-router.service /home/marco/.config/systemd/user/dish-action-router.service
+systemctl --user daemon-reload
+systemctl --user add-wants default.target dish-service-test dish-service-prod dish-action-router
+systemctl --user start dish-service-test dish-service-prod dish-action-router
 ```
 
 Populate `/home/marco/.config/dish-service/test.env` and `prod.env` from their examples before
 starting the units; both files must be mode `0600`. PostgreSQL dark-launch production readiness is
 bound specifically to `/home/marco/.config/dish-service/prod.env` and verifies that its effective
-spool, kill switch, and capacity settings match the worker configuration. The distribution's
-generic `caddy.service` is disabled because Dish's router has a dedicated config, state directory,
-and unit.
+spool, kill switch, and capacity settings match the worker configuration. Dish's user-managed
+router has a dedicated config, state directory, and `dish-action-router.service` unit.
 
-The legacy `dish-service.service` conflicts with the test unit because both bind `8765/8766`; stop
-and disable it when installing `dish-service-test`. View logs with `journalctl -u
-dish-service-test -u dish-service-prod -u dish-action-router`.
+The obsolete system-level `dish-service.service` conflicts with the test unit because both bind
+`8765/8766`; the one-time migration cleanup above stops and disables it. View logs with
+`journalctl --user -u dish-service-test -u dish-service-prod -u dish-action-router`.
 
 Dish reads the current protocol and task-schema assets from `DISH_HONEST_PATH` when it handles
 workflow commands, so edits to those assets do not require a service restart. Restart the affected

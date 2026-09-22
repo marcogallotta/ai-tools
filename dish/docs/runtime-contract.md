@@ -576,7 +576,7 @@ abandonment successor.
 ## Troubleshooting checklist
 
 1. Save the complete JSON result and process exit status.
-2. Cross-check `journalctl -u dish-service.service` for the corresponding request.
+2. Cross-check `journalctl --user -u dish-service.service` for the corresponding request.
 3. Run `dish read TASK_GID --agent AGENT` and, when an operation exists, `dish inspect OPERATION_ID --agent AGENT`.
 4. Compare the reported live identity, reviewed/signed identity, placement, schema version, and legal actions.
 5. For compatibility failure, confirm `DISH_HONEST_PATH`, `DISH_VERSION`, schema assets, and the exact supported protocol/schema pair.

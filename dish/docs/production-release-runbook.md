@@ -12,17 +12,17 @@ complete exported source tree, and the installed dependency set.
 
 ## One-time service installation
 
-Install the reviewed system unit and reload systemd:
+Install the reviewed per-user unit and reload the user manager:
 
 ```sh
-sudo install -m 0644 deploy/systemd/dish-service-prod.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable dish-service-prod.service
+install -Dm0644 deploy/systemd/dish-service-prod.service /home/marco/.config/systemd/user/dish-service-prod.service
+systemctl --user daemon-reload
+systemctl --user add-wants default.target dish-service-prod.service
 ```
 
-Remove or disable any older user-level unit before enabling the system unit. Do not operate both:
-the canonical production unit is the system unit controlled with the repository-approved exact
-`sudo /usr/bin/systemctl ... dish-service-prod.service` commands.
+Remove or disable any obsolete duplicate before enabling the per-user unit. The canonical
+production unit is controlled only with `systemctl --user ... dish-service-prod.service`; never use
+the system manager or `sudo` for it.
 
 If `prod-current` already names a working release created before this controller, certify it once
 before the first managed activation. Certification requires the directory name and Git `HEAD` to
@@ -63,7 +63,7 @@ ID, and generation release all exactly match live PostgreSQL. It then atomically
 `prod-previous`, switches `prod-current`, performs one service restart, and requires all of these
 within the bounded readiness interval:
 
-- the system service is active;
+- the per-user service is active;
 - its main process working directory is the selected immutable release;
 - private `/health` is ready;
 - `/health.code_release` equals the selected Git commit.
@@ -99,6 +99,6 @@ dish/scripts/dish-prod-release status
 For diagnosis, use:
 
 ```sh
-sudo /usr/bin/systemctl status dish-service-prod.service
-journalctl -u dish-service-prod.service
+systemctl --user status dish-service-prod.service
+journalctl --user -u dish-service-prod.service
 ```

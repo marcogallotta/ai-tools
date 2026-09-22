@@ -101,25 +101,39 @@ def test_service_identity_requires_test_environment_file(
 ) -> None:
     namespace = _namespace()
     service_identity = namespace["_service_identity"]
+    calls: list[list[str]] = []
     output = "\n".join(
         (
             "LoadState=loaded",
             "ActiveState=active",
             "SubState=running",
-            "FragmentPath=/etc/systemd/system/dish-service-test.service",
+            "FragmentPath=/home/marco/.config/systemd/user/dish-service-test.service",
             "EnvironmentFiles=/home/marco/.config/dish-service/prod.env (ignore_errors=no)",
         )
     )
     monkeypatch.setattr(
         namespace["subprocess"],
         "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=output, stderr=""
+        lambda args, **_kwargs: (
+            calls.append(args)
+            or subprocess.CompletedProcess(args=args, returncode=0, stdout=output, stderr="")
         ),
     )
 
     with pytest.raises(namespace["AcceptanceError"], match="TEST environment file"):
         service_identity()
+    assert calls == [[
+        "/usr/bin/systemctl",
+        "--user",
+        "show",
+        "dish-service-test.service",
+        "--no-pager",
+        "--property=LoadState",
+        "--property=ActiveState",
+        "--property=SubState",
+        "--property=FragmentPath",
+        "--property=EnvironmentFiles",
+    ]]
 
 
 def test_capture_report_verification_requires_both_surfaces_unchanged() -> None:

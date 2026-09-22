@@ -69,7 +69,10 @@ Destination dominates terminology: `fastrack to main`, `fastrack to PR`, and `fa
 
 ## Dish safety and environments
 
-- On the local host, control the Dish production and TEST system services through the existing passwordless sudo rule: `sudo /usr/bin/systemctl {stop,start,restart,status} dish-service-{prod,test}.service`. Type the full path with no extra flags; do not try bare `systemctl` or `systemctl --user` for these system units. Ask Marco only for other sudo operations.
+- On the local host, every Dish service is a per-user systemd unit. Control it only with
+  `systemctl --user {stop,start,restart,status} <dish-unit>.service`; inspect logs with
+  `journalctl --user -u <dish-unit>.service`. Never use `sudo systemctl`, the system manager, or
+  `/etc/systemd/system` for Dish services, and never ask Marco for a password to operate them.
 - Before any Asana write, identify the exact target project and freshly read/apply its current repository-owned contract; stale session context is insufficient, project-specific semantics remain distinct, and every state-changing write requires authoritative readback.
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.
 - Agents may use `dish-admin --profile test`; production administration via `dish-admin` is Marco-only. This does not cover the reviewed `dish-pg-migrate --apply` routine migration path (`dish/docs/postgresql-routine-migration.md`), which an assigned agent runs directly under the task's authorization.

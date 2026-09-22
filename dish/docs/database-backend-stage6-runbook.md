@@ -195,21 +195,21 @@ install -m 0600 deploy/systemd/postgres-backup.env.example \
 # Edit the populated file with the exact production DB identity, deployed Alembic head,
 # independent mounted destination, retention, and freshness threshold.
 
-sudo install -m 0644 deploy/systemd/dish-postgres-backup.service \
-  /etc/systemd/system/dish-postgres-backup.service
-sudo install -m 0644 deploy/systemd/dish-postgres-backup.timer \
-  /etc/systemd/system/dish-postgres-backup.timer
+install -Dm0644 deploy/systemd/dish-postgres-backup.service \
+  /home/marco/.config/systemd/user/dish-postgres-backup.service
+install -Dm0644 deploy/systemd/dish-postgres-backup.timer \
+  /home/marco/.config/systemd/user/dish-postgres-backup.timer
 
 # Optional cadence override. Edit OnCalendar before installation. Keep
 # DISH_PG_BACKUP_MAX_AGE_SECONDS coherent with the resulting interval.
-sudo install -d -m 0755 /etc/systemd/system/dish-postgres-backup.timer.d
-sudo install -m 0644 deploy/systemd/postgres-backup-cadence.conf.example \
-  /etc/systemd/system/dish-postgres-backup.timer.d/cadence.conf
+install -d -m 0755 /home/marco/.config/systemd/user/dish-postgres-backup.timer.d
+install -m 0644 deploy/systemd/postgres-backup-cadence.conf.example \
+  /home/marco/.config/systemd/user/dish-postgres-backup.timer.d/cadence.conf
 
-sudo systemctl daemon-reload
+systemctl --user daemon-reload
 # Production authorization required before either command below:
-# sudo systemctl enable --now dish-postgres-backup.timer
-# sudo systemctl start dish-postgres-backup.service
+# systemctl --user enable --now dish-postgres-backup.timer
+# systemctl --user start dish-postgres-backup.service
 ```
 
 Each service run that passes the artifact-safety gates:
@@ -242,8 +242,8 @@ set -a
 . /home/marco/.config/dish-service/postgres-backup.env
 set +a
 .venv/bin/python scripts/dish-pg-scheduled-backup health
-systemctl status dish-postgres-backup.timer dish-postgres-backup.service
-journalctl -u dish-postgres-backup.service --since '24 hours ago'
+systemctl --user status dish-postgres-backup.timer dish-postgres-backup.service
+journalctl --user -u dish-postgres-backup.service --since '24 hours ago'
 ```
 
 The scheduled `.dump` is intentionally the same PostgreSQL custom archive shape used by section 3.3
