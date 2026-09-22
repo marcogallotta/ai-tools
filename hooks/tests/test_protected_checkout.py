@@ -151,6 +151,22 @@ def test_worktree_add_rejects_shell_expanded_target(classifier_module, protected
     assert "shell-expanded/unknown target" in reason
 
 
+@pytest.mark.parametrize("command", [
+    'git -C "$REPO" worktree add --detach /tmp/dish-audit HEAD',
+    'GIT_DIR="$REPO/.git" git worktree add --detach /tmp/dish-audit HEAD',
+])
+def test_worktree_add_fails_closed_for_ambiguous_repository_location(
+    classifier_module, protected_repo, command
+):
+    reason = classify(
+        classifier_module,
+        protected_repo,
+        command,
+        cwd="unrelated",
+    )
+    assert "must survive restart/reboot" in reason
+
+
 def test_worktree_add_accepts_persistent_dish_target(classifier_module, protected_repo):
     command = "git worktree add --detach /home/test/.local/share/dish/audits/mcp HEAD"
     assert classify(classifier_module, protected_repo, command) is None

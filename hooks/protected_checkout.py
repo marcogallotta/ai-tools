@@ -722,10 +722,13 @@ def _classify_git(
 
     if subcommand == "worktree":
         identity = _resolve_repo_identity(location_args, extra_env, cwd)
-        if _is_protected_repository(identity, protected_root):
-            target, target_ambiguous = _worktree_add_target(pairs[sub_idx + 1 :], cwd)
-            if target_ambiguous or _is_volatile_path(target):
-                return _deny_volatile_worktree(target)
+        target, target_ambiguous = _worktree_add_target(pairs[sub_idx + 1 :], cwd)
+        repository_ambiguous = ambiguous or env_ambiguous
+        dangerous_target = target_ambiguous or _is_volatile_path(target)
+        if dangerous_target and (
+            repository_ambiguous or _is_protected_repository(identity, protected_root)
+        ):
+            return _deny_volatile_worktree(target)
 
     if subcommand in ("checkout", "switch"):
         kind = _branch_change_kind(args, subcommand)
