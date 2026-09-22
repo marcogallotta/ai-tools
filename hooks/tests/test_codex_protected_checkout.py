@@ -35,6 +35,32 @@ def test_codex_adapter_emits_supported_hard_deny(
     assert "ask" not in json.dumps(decision)
 
 
+def test_codex_adapter_hard_denies_volatile_worktree(
+    codex_protected_checkout, protected_repo, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        codex_protected_checkout.protected_checkout,
+        "DEFAULT_PROTECTED_CHECKOUT_ROOT",
+        str(protected_repo["primary"]),
+    )
+    decision = run_adapter(
+        codex_protected_checkout,
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "cwd": str(protected_repo["primary"]),
+            "tool_input": {
+                "command": "git worktree add --detach /tmp/dish-mcp-audit HEAD"
+            },
+        },
+        monkeypatch,
+        capsys,
+    )
+    output = decision["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert "must survive restart/reboot" in output["permissionDecisionReason"]
+
+
 def test_codex_adapter_stays_silent_for_unrelated_tool(
     codex_protected_checkout, monkeypatch, capsys
 ):

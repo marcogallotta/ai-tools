@@ -303,16 +303,20 @@ def test_local_implementation_handoff_contract_is_terse_executable_and_pr_durabl
     root = (repo / "CLAUDE.md").read_text()
 
     assert "tools/agent-worktree-handoff.md" in root
+    assert "Never place a Dish worktree, resumable test checkout" in root
+    assert "Use a purpose-specific persistent path under `~/.local/share/dish/`" in root
+    assert (repo / "AGENTS.md").resolve() == (repo / "CLAUDE.md").resolve()
     for token in (
         "use exactly two lines: `Blocker:`",
         "`Action:` giving one exact next action",
         "PostgreSQL bootstrap, package/service setup",
-        "/tmp/dish-pg-bootstrap.sh",
+        "~/.local/state/dish/handoffs/pg-bootstrap/dish-pg-bootstrap.sh",
         "set -euo pipefail",
-        "/tmp/dish-pg-bootstrap.json",
+        "~/.local/state/dish/handoffs/pg-bootstrap/dish-pg-bootstrap.json",
         "Persist failure diagnostics as well as success evidence",
         "exactly one runnable command",
-        "sudo bash /tmp/dish-pg-bootstrap.sh",
+        "sudo bash ~/.local/state/dish/handoffs/pg-bootstrap/dish-pg-bootstrap.sh",
+        "Never use `/tmp`, `/var/tmp`, `/run`, `/dev/shm`",
         "read the persisted output file",
         "Do not request authorization that the current task or standing role contract already grants",
         "Keep it current proactively",

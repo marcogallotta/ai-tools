@@ -122,6 +122,40 @@ def test_direct_and_dash_c_target_primary(classifier_module, protected_repo):
     )
 
 
+@pytest.mark.parametrize("target", [
+    "/tmp/dish-audit",
+    "/var/tmp/dish-audit",
+    "/run/user/1000/dish-audit",
+    "/dev/shm/dish-audit",
+])
+def test_worktree_add_rejects_reboot_volatile_targets(
+    classifier_module, protected_repo, target
+):
+    for cwd in ("primary", "linked"):
+        reason = classify(
+            classifier_module,
+            protected_repo,
+            f"git worktree add --detach {target} HEAD",
+            cwd=cwd,
+        )
+        assert "must survive restart/reboot" in reason
+        assert "~/.local/share/dish/" in reason
+
+
+def test_worktree_add_rejects_shell_expanded_target(classifier_module, protected_repo):
+    reason = classify(
+        classifier_module,
+        protected_repo,
+        'git worktree add --detach "$AUDIT_WORKTREE" HEAD',
+    )
+    assert "shell-expanded/unknown target" in reason
+
+
+def test_worktree_add_accepts_persistent_dish_target(classifier_module, protected_repo):
+    command = "git worktree add --detach /home/test/.local/share/dish/audits/mcp HEAD"
+    assert classify(classifier_module, protected_repo, command) is None
+
+
 def test_attached_and_flag_only_checkout_mutations_are_denied(
     classifier_module, protected_repo
 ):
