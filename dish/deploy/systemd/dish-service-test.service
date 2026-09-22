@@ -1,12 +1,11 @@
 [Unit]
 Description=Dish workflow service (test PostgreSQL authority)
-After=network-online.target tailscaled.service dish-postgres-test.service
+After=network-online.target dish-postgres-test.service
 Wants=network-online.target dish-postgres-test.service
 Conflicts=dish-service.service dish-shadow-worker-test.service
 
 [Service]
 Type=notify
-User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
 EnvironmentFile=/home/marco/.config/dish-service/test.env
 ExecStart=/home/marco/ai-tools/dish/dish-service
@@ -16,9 +15,7 @@ RestartSec=5
 TimeoutStopSec=10min
 NoNewPrivileges=true
 UMask=0077
-PrivateDevices=true
 ProtectKernelTunables=true
-ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
@@ -29,4 +26,4 @@ ProtectHome=read-only
 ReadWritePaths=/home/marco/.local/state/dish/test
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

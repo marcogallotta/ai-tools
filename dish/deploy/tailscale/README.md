@@ -57,11 +57,14 @@ port-scoped.
 
 Provision a private hostname and certificate, populate
 `deploy/systemd/frontend-test-caddy.env.example`, and run
-`dish-frontend-test-caddy.service`. Its Caddy configuration terminates HTTPS/HSTS and proxies only to
-the existing TEST private listener at `127.0.0.1:8765`; it does not create another Dish application
-listener and never routes to Action port 8766. Bind Caddy to the intended private interface rather
-than all interfaces. The frontend ignores forwarded authority and client-address headers, so do not
-depend on `Forwarded` or `X-Forwarded-*` values for Host, scheme, origin, or throttling authority.
+`dish-frontend-test-caddy.service`. Its Caddy configuration terminates HTTPS/HSTS
+and proxies only to the existing TEST private listener at `127.0.0.1:8765` from
+user-service port `8443`; set the TEST frontend origin to
+`https://<private-hostname>:8443`. It does not create another Dish application
+listener and never routes to Action port 8766. Bind Caddy to the intended private
+interface rather than all interfaces. The frontend ignores forwarded authority
+and client-address headers, so do not depend on `Forwarded` or `X-Forwarded-*`
+values for Host, scheme, origin, or throttling authority.
 
 This TEST origin is rehearsal-only. It does not change the production frontend activation decision.
 Follow `docs/frontend-deployment-runbook.md` and deploy only the ordinary production build, never

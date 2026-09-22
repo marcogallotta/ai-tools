@@ -1054,6 +1054,9 @@ def test_systemd_default_schedule_is_hourly_persistent_and_configurable() -> Non
     assert "Requires=dish-postgres-prod.service" not in service
     assert "After=network-online.target dish-postgres-prod.service" in service
     assert "[Install]" not in service
+    assert "StateDirectory=dish/prod/postgresql-backups" in service
+    assert "StateDirectoryMode=0700" in service
+    assert "ExecStartPre=" not in service
     assert "OnCalendar=*-*-* *:00:00 UTC" in timer
     assert "Persistent=true" in timer
     assert "OnCalendar=\nOnCalendar=" in override

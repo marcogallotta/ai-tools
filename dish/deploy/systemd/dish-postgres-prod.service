@@ -1,13 +1,11 @@
 [Unit]
 Description=Dish PostgreSQL (production)
-After=network-online.target docker.service
+After=network-online.target
 Wants=network-online.target
-Requires=docker.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
 EnvironmentFile=/home/marco/.config/dish-service/postgres-prod.env
 ExecStart=/usr/bin/docker compose -p dish-postgres-prod -f deploy/postgresql/compose.yaml up -d
@@ -15,4 +13,4 @@ ExecStop=/usr/bin/docker compose -p dish-postgres-prod -f deploy/postgresql/comp
 TimeoutStartSec=2min
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
