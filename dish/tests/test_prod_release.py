@@ -469,7 +469,9 @@ def test_all_shipped_dish_units_are_compatible_with_the_user_systemd_manager() -
     assert "WantedBy=multi-user.target" not in frontend_target
 
     backup = (systemd_root / "dish-postgres-backup.service").read_text(encoding="utf-8")
-    assert "ExecStartPre=+" not in backup
+    assert "ExecStartPre=" not in backup
+    assert "StateDirectory=dish/prod/postgresql-backups" in backup
+    assert "StateDirectoryMode=0700" in backup
 
     frontend_test_caddy = (root / "deploy/caddy/dish-frontend-test.Caddyfile").read_text(
         encoding="utf-8"
