@@ -27,6 +27,7 @@
     "abandon-operation",
     "active",
     "active-leases",
+    "archive",
     "attention",
     "audit",
     "authorize-governed-change",
@@ -75,12 +76,12 @@
   ],
   "governing_source_sha256": {
     "dish_pg/release.py": "e2295fec87e85366013d3906c2ce79f48f9eb726a7fa687a74a34bce660e3648",
-    "dish_service/admin_cli.py": "0e03ee8c4bef8d5d0a1f824f3c7ab4e4fd15eea08e44fbd4d2d37e3e5e1b4661",
+    "dish_service/admin_cli.py": "5e16e1b56fa735757f93b5ebe333c9279a9cd53d7c9bbfd0dc5412747dc278e1",
     "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
     "dish_service/command_spec.py": "dbcc953a3c3fa5ca19fed42f64dda155c1d6f190ac95a0542df0f5a119a43fa7",
     "dish_service/planning_reopen.py": "28321ba068fb2b271a8cc5ec54a1d2584f44d6425231e33c77490b721bd0a872",
-    "dish_tool/admin_command_spec.py": "c403ccba19595ed20a01a4bf8c45d3c10f36c78416cf174f2eef342742037a9a",
+    "dish_tool/admin_command_spec.py": "4ec0a9e6fa862fa4af1323c727bdaf723d1084c346dd8818ea8fa07194829d38",
     "dish_tool/command_identity.py": "c12a3afe0225583862a35f37b4b602350403616ab1d0f8edfb97fe93090ba381",
     "dish_tool/database_initialization.py": "13b49cf8f722a0b6a56ca30cce5f8e2a9a037acaa50d1bb74776929fedb7343d",
     "dish_tool/database_migrations.py": "31bdbf9966f399ce7a21966e35ff9183f75958911456d9a80a68c1e54a8af6b9",
@@ -93,7 +94,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "PR #442 moved archive off the admin CLI onto the ordinary dish CLI (dish_service/cli.py); archive is no longer an ADMIN_COMMANDS/ACTION_COMMANDS surface tracked by this baseline, so its target_treatments entry is removed. Refreshed governing-source hashes for dish_pg/dark_launch_readiness.py and docs/runtime-contract.md after the merged user-manager systemd migration (#444-#448); no command inventory change.",
+  "last_rebaseline_reason": "PR #457 restores archive to the private admin CLI; classify archive as retain:L and refresh the governed admin CLI/spec hashes",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
@@ -155,6 +156,7 @@
   "target_treatments": {
     "abandon-operation": "retain:R",
     "approve": "retain:L",
+    "archive": "retain:L",
     "attention": "retain:Q",
     "authorize-governed-change": "retain:L",
     "backup-create": "retire:X",
