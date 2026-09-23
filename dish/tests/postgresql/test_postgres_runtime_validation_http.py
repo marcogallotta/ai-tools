@@ -16,7 +16,7 @@ from dish_pg.command_port import CommandResult
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.transition import ProjectionService
-from dish_service import admin_cli, cli
+from dish_service import admin_cli, cli, mcp_server
 from dish_service.client import DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import DishHTTPServer
@@ -1258,6 +1258,77 @@ def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
     assert alias_read["ok"] is True
     assert alias_read["data"]["dish_id"] == str(imported_task_id)
     assert alias_started["ok"] is True and alias_started["data"]["operation_id"]
+
+
+def test_mcp_section_tasks_invalid_cursors_are_structured_client_errors(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        for offset in range(50):
+            _import_one(session, ids, context, asana_gid=str(123456790 + offset))
+        other_section_id = _add_destination_section(
+            session, ids, context, external_id="1217084805070732"
+        )
+
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(
+        service.config,
+        action_token="postgres-action-token",
+        action_public_base_url="https://dish-pg-test.example.invalid/test",
+    )
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="postgres-mcp-invalid-cursor-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        adapter = mcp_server.DishMCPAdapter(
+            action_url=base,
+            action_token="postgres-action-token",
+        )
+        try:
+            first = adapter.call(
+                "dish_section_tasks",
+                {
+                    "client": {"run_id": str(run_id)},
+                    "arguments": {
+                        "section_id": str(context["section_id"]),
+                        "agent": "gpt",
+                    },
+                },
+            )
+            assert first["ok"] is True, first
+            assert first["data"]["next_cursor"]
+            malformed = adapter.call(
+                "dish_section_tasks",
+                {
+                    "client": {"run_id": str(run_id)},
+                    "arguments": {
+                        "section_id": str(context["section_id"]),
+                        "cursor": "not-a-cursor",
+                        "agent": "gpt",
+                    },
+                },
+            )
+            cross_section = adapter.call(
+                "dish_section_tasks",
+                {
+                    "client": {"run_id": str(run_id)},
+                    "arguments": {
+                        "section_id": str(other_section_id),
+                        "cursor": first["data"]["next_cursor"],
+                        "agent": "gpt",
+                    },
+                },
+            )
+        finally:
+            stop_server(server, thread)
+
+    for result in (malformed, cross_section):
+        assert result["ok"] is False
+        assert result["code"] == "INVALID_ARGUMENT"
+        assert result["http_status"] == 400
+        assert result["retryable"] is False
+        assert result["data"]["field"] == "cursor"
 
 
 def test_postgresql_runtime_renew_lease_reuses_command_port(
