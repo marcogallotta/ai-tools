@@ -435,13 +435,46 @@ def test_github_provider_rejects_every_user_except_configured_numeric_id(monkeyp
     assert asyncio.run(provider.verify_token("999999")) is None
 
 
-def test_adapter_failure_redacts_action_bearer_and_config_is_loopback_only():
+def test_adapter_rejects_loopback_action_url_with_embedded_credentials():
+    for action_url, secrets in (
+        ("http://mcp-user@127.0.0.1:8766", ("mcp-user",)),
+        ("http://:mcp-password@localhost:8766", ("mcp-password",)),
+        (
+            "http://mcp-user:mcp-password@[::1]:8766",
+            ("mcp-user", "mcp-password"),
+        ),
+    ):
+        with pytest.raises(
+            ValueError, match="must not contain embedded credentials"
+        ) as caught:
+            mcp_server.DishMCPAdapter(
+                action_url=action_url,
+                action_token="action-secret-must-not-leak",
+            )
+        for secret in secrets:
+            assert secret not in str(caught.value)
+
+
+def test_adapter_failure_redacts_action_token_and_url_credentials():
     adapter = _adapter()
-    error = RuntimeError(f"connection reset {adapter.action_token}")
+    adapter.action_url = "http://mcp-user:mcp%3Apassword@127.0.0.1:8766"
+    error = RuntimeError(
+        f"connection reset {adapter.action_url} "
+        f"mcp-user mcp%3Apassword mcp:password {adapter.action_token}"
+    )
     detail = mcp_server._redacted_adapter_error(error, adapter)
     assert "connection reset" in detail
-    assert adapter.action_token not in detail
+    for secret in (
+        adapter.action_token,
+        "mcp-user",
+        "mcp%3Apassword",
+        "mcp:password",
+    ):
+        assert secret not in detail
     assert "<redacted>" in detail
+
+
+def test_adapter_config_is_loopback_only():
     with pytest.raises(ValueError, match="loopback"):
         mcp_server.DishMCPAdapter(
             action_url="https://public.example.com",

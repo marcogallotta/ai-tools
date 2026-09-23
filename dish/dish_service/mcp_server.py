@@ -12,7 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import uvicorn
 from dish_pg.connected_command_spec import (
@@ -238,6 +238,8 @@ MCP_TOOLS = tuple(Tool.model_validate(tool) for tool in TOOLS)
 def _loopback_action_url(raw_url: str) -> str:
     value = raw_url.strip().rstrip("/")
     parsed = urlparse(value)
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{ACTION_URL_ENV} must not contain embedded credentials")
     if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
         "127.0.0.1",
         "localhost",
@@ -416,9 +418,16 @@ def _caller_audit_context(token: AccessToken | None) -> dict[str, str | None]:
 
 def _redacted_adapter_error(exc: Exception, adapter: Any) -> str:
     detail = f"{type(exc).__name__}: {exc}"
-    token = str(getattr(adapter, "action_token", "") or "")
-    if token:
-        detail = detail.replace(token, "<redacted>")
+    secrets = {str(getattr(adapter, "action_token", "") or "")}
+    action_url = str(getattr(adapter, "action_url", "") or "")
+    if action_url:
+        parsed = urlparse(action_url)
+        for credential in (parsed.username, parsed.password):
+            if credential:
+                secrets.add(credential)
+                secrets.add(unquote(credential))
+    for secret in sorted(secrets - {""}, key=len, reverse=True):
+        detail = detail.replace(secret, "<redacted>")
     return detail
 
 
