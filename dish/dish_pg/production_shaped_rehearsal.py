@@ -1771,6 +1771,7 @@ def _service_database_disconnect_scenario(
         reached.release()
         first_response = pending.finish(timeout_seconds=60.0, allow_error=True)
     primary.start()
+    engine.dispose()
     health = runtime.request({"action": "health"})
     if not health.get("ok"):
         raise ProductionShapedError("service runtime did not recover database connectivity")
