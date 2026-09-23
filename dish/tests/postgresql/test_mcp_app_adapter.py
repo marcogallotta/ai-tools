@@ -39,6 +39,15 @@ REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 BASE_URL = "https://dish-mcp.example.com/dish"
 ISSUER = BASE_URL
 RESOURCE_URL = f"{BASE_URL}/mcp"
+REGISTRATION_BODY = json.dumps(
+    {
+        "redirect_uris": ["http://127.0.0.1:8765/callback"],
+        "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code"],
+        "response_types": ["code"],
+        "client_name": "Dish test client",
+    }
+).encode()
 
 
 def _tool(command: str) -> dict[str, object]:
@@ -416,6 +425,45 @@ def test_oauth_http_boundary_challenges_and_publishes_protected_resource_metadat
     assert authorization["token_endpoint"] == f"{BASE_URL}/token"
     assert authorization["registration_endpoint"] == f"{BASE_URL}/register"
     assert authorization["code_challenge_methods_supported"] == ["S256"]
+
+
+@pytest.mark.parametrize("content_type", ["application/json", "Application/JSON; charset=utf-8"])
+def test_oauth_registration_accepts_json_content_type(content_type):
+    app = mcp_server.create_app(_adapter(), _config())
+
+    status, headers, body = _asgi_request(
+        app,
+        method="POST",
+        path="/register",
+        headers={"content-type": content_type},
+        body=REGISTRATION_BODY,
+    )
+
+    assert status == 201
+    assert headers["content-type"] == "application/json"
+    assert json.loads(body)["client_name"] == "Dish test client"
+
+
+@pytest.mark.parametrize("content_type", [None, "text/plain", "application/x-www-form-urlencoded"])
+def test_oauth_registration_rejects_non_json_content_type(content_type):
+    app = mcp_server.create_app(_adapter(), _config())
+    request_headers = {} if content_type is None else {"content-type": content_type}
+
+    status, headers, body = _asgi_request(
+        app,
+        method="POST",
+        path="/register",
+        headers=request_headers,
+        body=REGISTRATION_BODY,
+    )
+
+    assert status == 415
+    assert headers["content-type"] == "application/json"
+    assert headers["access-control-allow-origin"] == "*"
+    assert json.loads(body) == {
+        "error": "invalid_client_metadata",
+        "error_description": "Content-Type must be application/json",
+    }
 
 
 def test_github_provider_rejects_every_user_except_configured_numeric_id(monkeypatch):

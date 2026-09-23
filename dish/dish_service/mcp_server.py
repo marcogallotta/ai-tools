@@ -30,6 +30,8 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.types import TextContent, Tool, ToolAnnotations
 from pydantic import PrivateAttr
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dish_service.client import DishActionClient
 
@@ -482,6 +484,42 @@ class DishTool(FastMCPTool):
         )
 
 
+class JSONRegistrationContentType:
+    """Require JSON media type before OAuth registration body parsing."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] == "http"
+            and scope["method"] == "POST"
+            and scope["path"] == "/register"
+        ):
+            content_types = [
+                value.decode("latin-1")
+                for name, value in scope["headers"]
+                if name.lower() == b"content-type"
+            ]
+            media_type = (
+                content_types[0].partition(";")[0].strip().lower()
+                if len(content_types) == 1
+                else ""
+            )
+            if media_type != "application/json":
+                response = JSONResponse(
+                    {
+                        "error": "invalid_client_metadata",
+                        "error_description": "Content-Type must be application/json",
+                    },
+                    status_code=415,
+                    headers={"Access-Control-Allow-Origin": "*"},
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 def create_app(adapter: Any, config: MCPAuthConfig):
     """Build the one authenticated GitHub OAuth MCP shell around a backend adapter."""
     auth = DishGitHubProvider(
@@ -500,10 +538,12 @@ def create_app(adapter: Any, config: MCPAuthConfig):
         auth=auth,
         tools=[*[DishTool(tool, adapter) for tool in TOOLS], build_honest_tool()],
     )
-    return server.http_app(
-        path="/mcp",
-        json_response=True,
-        stateless_http=True,
+    return JSONRegistrationContentType(
+        server.http_app(
+            path="/mcp",
+            json_response=True,
+            stateless_http=True,
+        )
     )
 
 
