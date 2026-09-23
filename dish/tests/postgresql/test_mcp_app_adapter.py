@@ -9,6 +9,7 @@ import pytest
 from dish_pg.command_contract import ACTION_COMMANDS, COMMAND_DEFINITIONS
 from dish_pg.openapi import postgres_action_openapi
 from dish_service import mcp_server
+from dish_service.native_mcp_server import NativeMCPAdapter
 from fastmcp.server.auth.providers.github import GitHubProvider
 from mcp.server.auth.provider import AccessToken
 
@@ -39,6 +40,15 @@ REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 BASE_URL = "https://dish-mcp.example.com/dish"
 ISSUER = BASE_URL
 RESOURCE_URL = f"{BASE_URL}/mcp"
+REGISTRATION_BODY = json.dumps(
+    {
+        "redirect_uris": ["http://127.0.0.1:8765/callback"],
+        "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code"],
+        "response_types": ["code"],
+        "client_name": "Dish test client",
+    }
+).encode()
 
 
 def _tool(command: str) -> dict[str, object]:
@@ -418,6 +428,137 @@ def test_oauth_http_boundary_challenges_and_publishes_protected_resource_metadat
     assert authorization["code_challenge_methods_supported"] == ["S256"]
 
 
+def test_mcp_trailing_slash_redirect_uses_configured_public_resource():
+    app = mcp_server.create_app(_adapter(), _config())
+
+    status, headers, _ = _asgi_request(
+        app,
+        method="POST",
+        path="/mcp/",
+        headers={
+            "host": "attacker.example",
+            "forwarded": "host=attacker.example;proto=http",
+            "x-forwarded-host": "attacker.example",
+            "x-forwarded-proto": "http",
+        },
+    )
+
+    assert status == 307
+    assert headers["location"] == RESOURCE_URL
+
+
+@pytest.mark.parametrize("content_type", ["application/json", "Application/JSON; charset=utf-8"])
+def test_oauth_registration_accepts_json_content_type(content_type):
+    app = mcp_server.create_app(_adapter(), _config())
+
+    status, headers, body = _asgi_request(
+        app,
+        method="POST",
+        path="/register",
+        headers={"content-type": content_type},
+        body=REGISTRATION_BODY,
+    )
+
+    assert status == 201
+    assert headers["content-type"] == "application/json"
+    assert json.loads(body)["client_name"] == "Dish test client"
+
+
+@pytest.mark.parametrize("content_type", [None, "text/plain", "application/x-www-form-urlencoded"])
+def test_oauth_registration_rejects_non_json_content_type(content_type):
+    app = mcp_server.create_app(_adapter(), _config())
+    request_headers = {} if content_type is None else {"content-type": content_type}
+
+    status, headers, body = _asgi_request(
+        app,
+        method="POST",
+        path="/register",
+        headers=request_headers,
+        body=REGISTRATION_BODY,
+    )
+
+    assert status == 415
+    assert headers["content-type"] == "application/json"
+    assert headers["access-control-allow-origin"] == "*"
+    assert json.loads(body) == {
+        "error": "invalid_client_metadata",
+        "error_description": "Content-Type must be application/json",
+    }
+
+
+def test_main_closes_native_backend_once_when_app_initialization_fails(monkeypatch):
+    class FakePostgresService:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    service = FakePostgresService()
+    adapter = NativeMCPAdapter(service, owner_id="192548")
+    monkeypatch.setattr(
+        mcp_server.MCPAuthConfig,
+        "from_environment",
+        classmethod(lambda cls: _config()),
+    )
+    monkeypatch.setattr(mcp_server, "backend_from_environment", lambda config: adapter)
+
+    def fail_create_app(created_adapter, config):
+        assert created_adapter is adapter
+        raise RuntimeError("app initialization failed")
+
+    monkeypatch.setattr(mcp_server, "create_app", fail_create_app)
+    monkeypatch.setattr(
+        mcp_server.uvicorn,
+        "run",
+        lambda *args, **kwargs: pytest.fail("uvicorn must not start"),
+    )
+
+    with pytest.raises(RuntimeError, match="app initialization failed"):
+        mcp_server.main()
+
+    assert service.close_calls == 1
+
+
+def test_main_preserves_app_initialization_error_when_native_cleanup_fails(
+    monkeypatch,
+    caplog,
+):
+    class FailingPostgresService:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+            raise RuntimeError("close failed")
+
+    service = FailingPostgresService()
+    adapter = NativeMCPAdapter(service, owner_id="192548")
+    monkeypatch.setattr(
+        mcp_server.MCPAuthConfig,
+        "from_environment",
+        classmethod(lambda cls: _config()),
+    )
+    monkeypatch.setattr(mcp_server, "backend_from_environment", lambda config: adapter)
+
+    def fail_create_app(created_adapter, config):
+        assert created_adapter is adapter
+        raise ValueError("app initialization failed")
+
+    monkeypatch.setattr(mcp_server, "create_app", fail_create_app)
+    monkeypatch.setattr(
+        mcp_server.uvicorn,
+        "run",
+        lambda *args, **kwargs: pytest.fail("uvicorn must not start"),
+    )
+
+    with pytest.raises(ValueError, match="app initialization failed"):
+        mcp_server.main()
+
+    assert service.close_calls == 1
+    assert "MCP backend cleanup failed after app initialization failure" in caplog.text
+
+
 def test_github_provider_rejects_every_user_except_configured_numeric_id(monkeypatch):
     async def fake_verify(self, token: str):
         return AccessToken(token=token, client_id="client", scopes=[], subject=token)
@@ -435,13 +576,46 @@ def test_github_provider_rejects_every_user_except_configured_numeric_id(monkeyp
     assert asyncio.run(provider.verify_token("999999")) is None
 
 
-def test_adapter_failure_redacts_action_bearer_and_config_is_loopback_only():
+def test_adapter_rejects_loopback_action_url_with_embedded_credentials():
+    for action_url, secrets in (
+        ("http://mcp-user@127.0.0.1:8766", ("mcp-user",)),
+        ("http://:mcp-password@localhost:8766", ("mcp-password",)),
+        (
+            "http://mcp-user:mcp-password@[::1]:8766",
+            ("mcp-user", "mcp-password"),
+        ),
+    ):
+        with pytest.raises(
+            ValueError, match="must not contain embedded credentials"
+        ) as caught:
+            mcp_server.DishMCPAdapter(
+                action_url=action_url,
+                action_token="action-secret-must-not-leak",
+            )
+        for secret in secrets:
+            assert secret not in str(caught.value)
+
+
+def test_adapter_failure_redacts_action_token_and_url_credentials():
     adapter = _adapter()
-    error = RuntimeError(f"connection reset {adapter.action_token}")
+    adapter.action_url = "http://mcp-user:mcp%3Apassword@127.0.0.1:8766"
+    error = RuntimeError(
+        f"connection reset {adapter.action_url} "
+        f"mcp-user mcp%3Apassword mcp:password {adapter.action_token}"
+    )
     detail = mcp_server._redacted_adapter_error(error, adapter)
     assert "connection reset" in detail
-    assert adapter.action_token not in detail
+    for secret in (
+        adapter.action_token,
+        "mcp-user",
+        "mcp%3Apassword",
+        "mcp:password",
+    ):
+        assert secret not in detail
     assert "<redacted>" in detail
+
+
+def test_adapter_config_is_loopback_only():
     with pytest.raises(ValueError, match="loopback"):
         mcp_server.DishMCPAdapter(
             action_url="https://public.example.com",

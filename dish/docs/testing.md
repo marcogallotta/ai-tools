@@ -574,45 +574,39 @@ skips as native-certification defects; run the dedicated rehearsal instead:
 ```
 
 This spins up its own disposable Docker Compose PostgreSQL stack (own port, own database, own
-lifecycle) and runs a fixed, literal 14-node inventory (`PROCESS_TEST_INVENTORY` in
+lifecycle) and runs a fixed, literal 15-node inventory (`PROCESS_TEST_INVENTORY` in
 `dish_pg/process_failure_rehearsal.py`) covering §1 process-failure command handling, projection,
 takeover, supervision, reconciliation, and disconnect scenarios. It deliberately invokes pytest
 with `--postgresql` but not `--native-postgresql`, so it never triggers the governed
 full-repository-collection rule for native lanes.
 
-**Known gap, waived:** four tests call `compose_control()` but fit neither this rehearsal's fixed
-14-node inventory nor any other runner's Compose wiring, so bare native-certification runs must
-waive them rather than treat them as defects:
+Four tests call `compose_control()` and run under this rehearsal's fixed 15-node inventory. Bare
+native-certification does not own a disposable Compose lifecycle, so it must carry explicit
+review-bounded overlap waivers for their expected skips rather than treat them as defects:
 
 - `tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once`
-  — runs against the live shared TEST PostgreSQL target rather than a disposable stack.
+  — proves service rollback and exact recovery against this rehearsal's disposable stack.
 - `tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers`
 - `tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect`
 - `tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down`
 
-The latter three are already covered and passing via `dish-pg-process-failure`'s own disposable
-Compose stack; they are only waived here because bare native-certification never sets
-`DISH_SECTION1_COMPOSE_JSON`. All four skip (with a reason) rather than fail when that variable is
-unset:
+All four are covered by `dish-pg-process-failure`'s disposable Compose stack and skip with a reason
+when `DISH_SECTION1_COMPOSE_JSON` is unset.
 
-The accepted 2026-08-07 gap is review-bounded to 2026-09-07. These are the committed structured
-waivers; a reason change requires a new reviewed signature rather than reusing the node ID:
+The overlap waivers were reproduced and reassessed on 2026-09-23 and are review-bounded to
+2026-10-23. These are the committed structured waivers; a reason change requires a new reviewed
+signature rather than reusing the node ID:
 
 ```sh
---waive-skip '{"nodeid":"tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once","expected_reason_sha256":"a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"bare native certification lacks shared TEST Compose control; revisit before enabling external effects"}' \
---waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
---waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
---waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}'
+--waive-skip '{"nodeid":"tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once","expected_reason_sha256":"a063fdf9a1a005c05496ef29b1a988340866495141fcd3e76a8bb4171c8ffab2","owner_task_gid":"1218793787033330","review_by":"2026-10-23","justification":"covered by dish-pg-process-failure; bare native certification lacks disposable Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1218793787033330","review_by":"2026-10-23","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1218793787033330","review_by":"2026-10-23","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1218793787033330","review_by":"2026-10-23","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}'
 ```
 
-The section4 test is a decided, accepted gap (2026-08-07), tolerable only because dark-launch
-capture currently runs with `external_effects_enabled=false`: an undetected bug in that
-exact-once-recovery path can at worst cause shadow-worker downtime or bad shadow projection data,
-not real data loss or external side effects, since SQLite/Asana stay authoritative until cutover. It
-must be revisited — either with dedicated Compose wiring against the shared TEST target, or a
-decision to keep waiving — before any cutover that sets `external_effects_enabled=true`. The other
-three carry no equivalent risk: they already run and pass under `dish-pg-process-failure`, so the
-waiver here is purely about inventory-discovery overlap, not untested behavior.
+All four run under `dish-pg-process-failure`; the waiver is purely about bare-native inventory
+discovery overlapping tests whose required disposable Compose lifecycle is owned by the dedicated
+rehearsal, not about untested behavior.
 
 ### Local PostgreSQL 17 server binaries (backup/PITR and production-shaped rehearsals)
 
