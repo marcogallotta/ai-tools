@@ -453,6 +453,45 @@ def test_main_closes_native_backend_once_when_app_initialization_fails(monkeypat
     assert service.close_calls == 1
 
 
+def test_main_preserves_app_initialization_error_when_native_cleanup_fails(
+    monkeypatch,
+    caplog,
+):
+    class FailingPostgresService:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+            raise RuntimeError("close failed")
+
+    service = FailingPostgresService()
+    adapter = NativeMCPAdapter(service, owner_id="192548")
+    monkeypatch.setattr(
+        mcp_server.MCPAuthConfig,
+        "from_environment",
+        classmethod(lambda cls: _config()),
+    )
+    monkeypatch.setattr(mcp_server, "backend_from_environment", lambda config: adapter)
+
+    def fail_create_app(created_adapter, config):
+        assert created_adapter is adapter
+        raise ValueError("app initialization failed")
+
+    monkeypatch.setattr(mcp_server, "create_app", fail_create_app)
+    monkeypatch.setattr(
+        mcp_server.uvicorn,
+        "run",
+        lambda *args, **kwargs: pytest.fail("uvicorn must not start"),
+    )
+
+    with pytest.raises(ValueError, match="app initialization failed"):
+        mcp_server.main()
+
+    assert service.close_calls == 1
+    assert "MCP backend cleanup failed after app initialization failure" in caplog.text
+
+
 def test_github_provider_rejects_every_user_except_configured_numeric_id(monkeypatch):
     async def fake_verify(self, token: str):
         return AccessToken(token=token, client_id="client", scopes=[], subject=token)

@@ -521,8 +521,10 @@ def backend_from_environment(config: MCPAuthConfig) -> Any:
 def main() -> int:
     config = MCPAuthConfig.from_environment()
     adapter = backend_from_environment(config)
+    app_initializing = True
     try:
         app = create_app(adapter, config)
+        app_initializing = False
         uvicorn.run(
             app,
             host=config.bind_host,
@@ -534,7 +536,12 @@ def main() -> int:
     finally:
         close = getattr(adapter, "close", None)
         if callable(close):
-            close()
+            try:
+                close()
+            except Exception:
+                if not app_initializing:
+                    raise
+                LOG.exception("MCP backend cleanup failed after app initialization failure")
 
 
 if __name__ == "__main__":
