@@ -15,8 +15,10 @@ import shlex
 import shutil
 import signal
 import subprocess
+import struct
 import sys
 import tempfile
+import termios
 import time
 import uuid
 from dataclasses import dataclass
@@ -37,6 +39,7 @@ CLAIM_TASK_ENV = "DISH_AGENT_CLAIM_TASK"
 CLAIM_BRANCH_ENV = "DISH_AGENT_CLAIM_BRANCH"
 CLAIM_AGENT_ENV = "DISH_AGENT_CLAIM_AGENT"
 DEFAULT_PHASE_TIMEOUT = 180.0
+HOST_STARTUP_QUIET_SECONDS = 1.0
 
 
 class HookCertifyError(RuntimeError):
@@ -466,6 +469,35 @@ def _strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text).replace("\r", "")
 
 
+def _wait_for_host_startup(
+    *,
+    drain: Any,
+    output_size: Any,
+    process_alive: Any,
+    evidence: Path,
+    timeout: float,
+    quiet_seconds: float = HOST_STARTUP_QUIET_SECONDS,
+) -> None:
+    """Wait until an interactive host has rendered and stopped changing."""
+    deadline = time.monotonic() + timeout
+    last_size = 0
+    quiet_since: float | None = None
+    while time.monotonic() < deadline:
+        drain(min(0.25, quiet_seconds))
+        size = output_size()
+        now = time.monotonic()
+        if size <= 0:
+            quiet_since = None
+        elif size != last_size:
+            last_size = size
+            quiet_since = now
+        elif quiet_since is not None and now - quiet_since >= quiet_seconds:
+            return
+        if not process_alive():
+            raise HookCertifyError(f"host exited before interactive startup settled; evidence: {evidence}")
+    raise HookCertifyError(f"timed out waiting for interactive host startup; evidence: {evidence}")
+
+
 def _pty_drive(
     argv: list[str],
     *,
@@ -481,6 +513,7 @@ def _pty_drive(
     if pid == 0:  # pragma: no cover - real-host boundary
         os.chdir(cwd)
         os.execvpe(argv[0], argv, dict(env))
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     selector = selectors.DefaultSelector()
     selector.register(fd, selectors.EVENT_READ)
     raw = bytearray()
@@ -515,7 +548,13 @@ def _pty_drive(
         raise HookCertifyError(f"timed out waiting for {label}; evidence: {transcript}")
 
     try:
-        drain(2.0)
+        _wait_for_host_startup(
+            drain=drain,
+            output_size=lambda: len(raw),
+            process_alive=lambda: os.waitpid(pid, os.WNOHANG)[0] == 0,
+            evidence=transcript,
+            timeout=phase_timeout,
+        )
         send("Use the Bash tool to run `pwd`. Then reply with exactly DISH_CERT_PHASE1_READY. Do nothing else.\n")
         wait_for(re.compile(r"DISH_CERT_PHASE1_READY"), "first harmless governed action")
         send("/compact\n")

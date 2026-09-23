@@ -1,6 +1,7 @@
 import importlib.machinery
 import importlib.util
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -50,3 +51,41 @@ def test_candidate_worktree_venv_dependency_fails_before_host_launch(tmp_path, m
     python.parent.mkdir(parents=True)
     python.write_text("", encoding="utf-8")
     module._preflight_candidate_dependencies(requirement)
+
+
+def test_host_startup_waits_for_output_then_quiet(tmp_path):
+    module = _load_module()
+    sizes = iter((0, 12, 24, 24, 24, 24))
+    current = 0
+    drained = 0
+
+    def drain(_seconds):
+        nonlocal current, drained
+        drained += 1
+        current = next(sizes, current)
+        time.sleep(0.01)
+
+    module._wait_for_host_startup(
+        drain=drain,
+        output_size=lambda: current,
+        process_alive=lambda: True,
+        evidence=tmp_path / "host.log",
+        timeout=1.0,
+        quiet_seconds=0.02,
+    )
+
+    assert drained >= 4
+
+
+def test_host_startup_fails_if_process_exits_before_output(tmp_path):
+    module = _load_module()
+
+    with pytest.raises(module.HookCertifyError, match="exited before interactive startup settled"):
+        module._wait_for_host_startup(
+            drain=lambda _seconds: None,
+            output_size=lambda: 0,
+            process_alive=lambda: False,
+            evidence=tmp_path / "host.log",
+            timeout=1.0,
+            quiet_seconds=0.01,
+        )
