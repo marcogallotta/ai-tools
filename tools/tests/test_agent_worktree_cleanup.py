@@ -77,7 +77,15 @@ def test_cleanup_refuses_ignored_task_local_content_and_preserves_worktree(h: Ha
     ignored.write_text("only task-local copy\n", encoding="utf-8")
 
     assert git_out(h.wt(task), "status", "--porcelain=v1", "--untracked-files=all") == ""
-    ignored_paths = git_out(h.wt(task), "ls-files", "--others", "--ignored", "--exclude-standard").splitlines()
+    # -c core.quotepath=false: some Python 3.14 venv builds place a non-ASCII-named
+    # symlink (e.g. a "pi + thon" pun) under the bootstrapped venv's bin/ alongside
+    # python3.14. Without this, git C-quotes that one path (wrapping it in
+    # double quotes with octal escapes), which would break the plain
+    # startswith("tools/.venv/") prefix check below for a file that is genuinely
+    # under tools/.venv/.
+    ignored_paths = git_out(
+        h.wt(task), "-c", "core.quotepath=false", "ls-files", "--others", "--ignored", "--exclude-standard"
+    ).splitlines()
     assert ignored.name in ignored_paths
     assert all(path == ignored.name or path.startswith("tools/.venv/") for path in ignored_paths)
 

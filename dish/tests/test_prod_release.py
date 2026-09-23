@@ -6,7 +6,6 @@ import io
 import json
 import subprocess
 import sys
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -30,6 +29,7 @@ from dish_tool.prod_release import (
     load_release,
     preflight_database,
 )
+from tests.support.thread_teardown import start_server_thread, stop_server
 
 
 def _write_release(root: Path, identity: str, schema: str = "0054_test") -> Release:
@@ -363,9 +363,10 @@ def test_system_verification_binds_health_identity_to_real_process_directory(
         lambda *args, **kwargs: io.BytesIO(payload),
     )
     try:
-        SystemOperations("dish-service-prod.service", "http://health", 1).verify(
+        result = SystemOperations("dish-service-prod.service", "http://health", 1).verify(
             release
         )
+        assert result is None
     finally:
         process.terminate()
         process.wait(timeout=5)
@@ -401,8 +402,7 @@ def test_private_health_exposes_executable_identity_separately(
     server = DishHTTPServer(
         ("127.0.0.1", 0), cast(Any, _Service(config)), surface_mode="private"
     )
-    thread = threading.Thread(target=server.serve_forever)
-    thread.start()
+    thread = start_server_thread(server, name="prod-release-health")
     host, port = cast(tuple[str, int], server.server_address)
     connection = http.client.HTTPConnection(host, port, timeout=2)
     try:
@@ -411,9 +411,7 @@ def test_private_health_exposes_executable_identity_separately(
         payload = json.loads(response.read())
     finally:
         connection.close()
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
     assert payload["code_release"] == identity
     assert payload["identity"]["dish_release"] == "dish@database-generation"
 

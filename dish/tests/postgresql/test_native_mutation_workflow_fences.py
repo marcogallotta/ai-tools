@@ -121,7 +121,13 @@ def _activate_native_runtime(
             outcome="applied",
             started_at=NOW,
             terminal_at=NOW,
-            details={"source_commit_sha": "c" * 40},
+            details={
+                "source_commit_sha": "c" * 40,
+                "authority_transition": "native_section_runtime_root_v1",
+                "catalog_activation_id": str(catalog_activation_id),
+                "catalog_version_id": str(catalog_version_id),
+                "honest_contract_binding_id": str(context["binding_id"]),
+            },
         )
     )
     attestation_id = _next(ids)
