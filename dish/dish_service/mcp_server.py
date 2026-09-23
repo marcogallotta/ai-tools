@@ -521,8 +521,8 @@ def backend_from_environment(config: MCPAuthConfig) -> Any:
 def main() -> int:
     config = MCPAuthConfig.from_environment()
     adapter = backend_from_environment(config)
-    app = create_app(adapter, config)
     try:
+        app = create_app(adapter, config)
         uvicorn.run(
             app,
             host=config.bind_host,

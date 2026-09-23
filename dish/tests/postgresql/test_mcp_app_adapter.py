@@ -9,6 +9,7 @@ import pytest
 from dish_pg.command_contract import ACTION_COMMANDS, COMMAND_DEFINITIONS
 from dish_pg.openapi import postgres_action_openapi
 from dish_service import mcp_server
+from dish_service.native_mcp_server import NativeMCPAdapter
 from fastmcp.server.auth.providers.github import GitHubProvider
 from mcp.server.auth.provider import AccessToken
 
@@ -416,6 +417,40 @@ def test_oauth_http_boundary_challenges_and_publishes_protected_resource_metadat
     assert authorization["token_endpoint"] == f"{BASE_URL}/token"
     assert authorization["registration_endpoint"] == f"{BASE_URL}/register"
     assert authorization["code_challenge_methods_supported"] == ["S256"]
+
+
+def test_main_closes_native_backend_once_when_app_initialization_fails(monkeypatch):
+    class FakePostgresService:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    service = FakePostgresService()
+    adapter = NativeMCPAdapter(service, owner_id="192548")
+    monkeypatch.setattr(
+        mcp_server.MCPAuthConfig,
+        "from_environment",
+        classmethod(lambda cls: _config()),
+    )
+    monkeypatch.setattr(mcp_server, "backend_from_environment", lambda config: adapter)
+
+    def fail_create_app(created_adapter, config):
+        assert created_adapter is adapter
+        raise RuntimeError("app initialization failed")
+
+    monkeypatch.setattr(mcp_server, "create_app", fail_create_app)
+    monkeypatch.setattr(
+        mcp_server.uvicorn,
+        "run",
+        lambda *args, **kwargs: pytest.fail("uvicorn must not start"),
+    )
+
+    with pytest.raises(RuntimeError, match="app initialization failed"):
+        mcp_server.main()
+
+    assert service.close_calls == 1
 
 
 def test_github_provider_rejects_every_user_except_configured_numeric_id(monkeypatch):
