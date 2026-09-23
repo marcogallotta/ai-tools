@@ -427,6 +427,25 @@ def test_oauth_http_boundary_challenges_and_publishes_protected_resource_metadat
     assert authorization["code_challenge_methods_supported"] == ["S256"]
 
 
+def test_mcp_trailing_slash_redirect_uses_configured_public_resource():
+    app = mcp_server.create_app(_adapter(), _config())
+
+    status, headers, _ = _asgi_request(
+        app,
+        method="POST",
+        path="/mcp/",
+        headers={
+            "host": "attacker.example",
+            "forwarded": "host=attacker.example;proto=http",
+            "x-forwarded-host": "attacker.example",
+            "x-forwarded-proto": "http",
+        },
+    )
+
+    assert status == 307
+    assert headers["location"] == RESOURCE_URL
+
+
 @pytest.mark.parametrize("content_type", ["application/json", "Application/JSON; charset=utf-8"])
 def test_oauth_registration_accepts_json_content_type(content_type):
     app = mcp_server.create_app(_adapter(), _config())
