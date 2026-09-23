@@ -100,6 +100,17 @@ def build_parser() -> JsonArgumentParser:
     )
     inspect_admin.add_argument("dish", metavar="DISH", help=_dish_target_help)
 
+    archive = subparsers.add_parser(
+        _admin_name("archive"),
+        help="archive one Dish while preserving its history",
+        description="archive one Dish without deleting or rewriting its history",
+    )
+    archive.add_argument("dish", metavar="DISH", help=_dish_target_help)
+    archive.add_argument(
+        "--yes", dest="confirmed", action="store_true",
+        help="confirm archive without a separate confirmation round trip",
+    )
+
     queue = subparsers.add_parser(
         _admin_name("queue"),
         help="work through everything currently waiting for Marco",

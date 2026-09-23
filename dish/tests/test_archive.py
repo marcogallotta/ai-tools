@@ -70,18 +70,14 @@ def test_archive_cli_has_no_reason_argument() -> None:
         raise AssertionError("archive unexpectedly accepted --reason")
 
 
-def test_archive_is_not_an_admin_command() -> None:
-    """Archive moved to `dish`; `dish-admin archive` must no longer exist."""
+def test_archive_is_a_confirmed_admin_command_without_agent() -> None:
     from dish_service import admin_cli
 
-    parser = admin_cli.build_parser()
+    parsed = admin_cli.build_parser().parse_args(["archive", TASK_GID, "--yes"])
 
-    try:
-        parser.parse_args(["archive", TASK_GID])
-    except Exception as exc:
-        assert getattr(exc, "code", None) == "INVALID_ARGUMENT"
-    else:
-        raise AssertionError("dish-admin still accepts archive")
+    assert parsed.command == "archive"
+    assert parsed.dish == TASK_GID
+    assert parsed.confirmed is True
 
 
 def test_archive_cli_requires_agent() -> None:
