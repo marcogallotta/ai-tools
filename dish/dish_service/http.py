@@ -77,6 +77,22 @@ def _requires_request_id(surface: str, command: str) -> bool:
     }
 
 
+def _error_payload(
+    service: Any,
+    surface: str,
+    command: str,
+    error: DishRuleError,
+    *,
+    http_status: int,
+) -> dict[str, Any]:
+    """Use a backend's public Action error projection when it defines one."""
+
+    action_error_envelope = getattr(service, "action_error_envelope", None)
+    if surface == "action" and callable(action_error_envelope):
+        return action_error_envelope(command, error, http_status=http_status)
+    return error_envelope(command, error)
+
+
 def _file_ref_diagnostics(request: dict[str, Any]) -> dict[str, Any]:
     """Return a value-free description of an Action file-reference field."""
     client = request.get("client")
@@ -735,7 +751,13 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                             if replay_exc.rule == "postgresql_authority_unavailable":
                                 exc = replay_exc
                             else:
-                                replay_payload = error_envelope(command, replay_exc)
+                                replay_payload = _error_payload(
+                                    self.server.service,
+                                    surface,
+                                    command,
+                                    replay_exc,
+                                    http_status=400,
+                                )
             if replay_payload is not None:
                 if surface == "action":
                     replay_payload = attach_action_agent_guidance(replay_payload)
@@ -763,7 +785,17 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 status = HTTPStatus.UNSUPPORTED_MEDIA_TYPE
             else:
                 status = HTTPStatus.BAD_REQUEST
-            error_payload = error_envelope(command, exc)
+            error_payload = _error_payload(
+                self.server.service,
+                surface,
+                command,
+                exc,
+                http_status=(
+                    400
+                    if surface == "action" and status == HTTPStatus.OK
+                    else int(status)
+                ),
+            )
             if surface == "action":
                 error_payload = attach_action_agent_guidance(error_payload)
             self._write_json(status, error_payload)
@@ -784,7 +816,13 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             try:
                 self._write_json(
                     HTTPStatus.INTERNAL_SERVER_ERROR,
-                    error_envelope(command, error),
+                    _error_payload(
+                        self.server.service,
+                        surface,
+                        command,
+                        error,
+                        http_status=500,
+                    ),
                 )
             except Exception:
                 LOG.exception(

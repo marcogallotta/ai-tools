@@ -261,6 +261,17 @@ class PostgresRuntimeService:
 
         return validate_postgres_action_request(command, request)
 
+    @staticmethod
+    def action_error_envelope(
+        command: str, error: DishRuleError, *, http_status: int
+    ) -> dict[str, Any]:
+        """Project pre-dispatch Action failures into the public PostgreSQL shape."""
+
+        payload = error_envelope(command, error)
+        payload["http_status"] = http_status
+        payload["data"]["request_replayed"] = False
+        return payload
+
     def _identity(self) -> dict[str, Any]:
         try:
             with session_scope(self._session_maker) as session:
