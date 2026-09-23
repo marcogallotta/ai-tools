@@ -30,6 +30,8 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.types import TextContent, Tool, ToolAnnotations
 from pydantic import PrivateAttr
+from starlette.responses import RedirectResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dish_service.client import DishActionClient
 
@@ -482,6 +484,21 @@ class DishTool(FastMCPTool):
         )
 
 
+class CanonicalMCPRedirect:
+    """Redirect the proxy-stripped slash route to the configured public resource."""
+
+    def __init__(self, app: ASGIApp, resource_url: str) -> None:
+        self.app = app
+        self.resource_url = resource_url
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"] == "/mcp/":
+            response = RedirectResponse(self.resource_url, status_code=307)
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 def create_app(adapter: Any, config: MCPAuthConfig):
     """Build the one authenticated GitHub OAuth MCP shell around a backend adapter."""
     auth = DishGitHubProvider(
@@ -500,10 +517,13 @@ def create_app(adapter: Any, config: MCPAuthConfig):
         auth=auth,
         tools=[*[DishTool(tool, adapter) for tool in TOOLS], build_honest_tool()],
     )
-    return server.http_app(
-        path="/mcp",
-        json_response=True,
-        stateless_http=True,
+    return CanonicalMCPRedirect(
+        server.http_app(
+            path="/mcp",
+            json_response=True,
+            stateless_http=True,
+        ),
+        config.resource_url,
     )
 
 
