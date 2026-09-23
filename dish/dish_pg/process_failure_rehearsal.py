@@ -59,6 +59,7 @@ PROCESS_TEST_INVENTORY = (
     "tests/postgresql/native/test_process_failure_reconciliation.py::test_reconciliation_process_loss_after_partial_corpus_resumes_without_duplicate_items",
     "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect",
     "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down",
+    "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once",
 )
 
 NODE_REQUIREMENTS = {
@@ -76,6 +77,7 @@ NODE_REQUIREMENTS = {
     PROCESS_TEST_INVENTORY[11]: "reconciliation_loss_after_partially_recorded_corpus",
     PROCESS_TEST_INVENTORY[12]: "postgresql_disconnect_projection_worker",
     PROCESS_TEST_INVENTORY[13]: "postgresql_disconnect_reconciliation_worker",
+    PROCESS_TEST_INVENTORY[14]: "service_database_disconnect_rollback_and_exact_recovery",
 }
 
 NODE_SCENARIOS = {
@@ -93,6 +95,7 @@ NODE_SCENARIOS = {
     PROCESS_TEST_INVENTORY[11]: "reconciliation-loss-after-partial-corpus",
     PROCESS_TEST_INVENTORY[12]: "postgresql-disconnect-projection-worker",
     PROCESS_TEST_INVENTORY[13]: "postgresql-disconnect-reconciliation-worker",
+    PROCESS_TEST_INVENTORY[14]: "service-database-disconnect-rollback-recovery",
 }
 
 NOT_IMPLEMENTED_SCENARIOS: tuple[str, ...] = ()

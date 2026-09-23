@@ -11,6 +11,7 @@ from sqlalchemy.engine import make_url
 import pytest
 
 from dish_pg.database import session_scope
+from dish_pg.process_failure_rehearsal import write_json_atomic
 from dish_pg.production_shaped_rehearsal import (
     _register_runtime_run,
     _safe_child_env,
@@ -22,13 +23,17 @@ from dish_pg.release import ALEMBIC_HEAD
 from dish_pg.transition import ProjectionService
 from tests.support.postgresql.certification import postgresql_dsn
 from tests.support.postgresql.core import core_db
-from tests.support.postgresql.process_failure import compose_control
+from tests.support.postgresql.process_failure import compose_control, write_scenario
 from tests.support.postgresql.projection_attempts import native_workflow_db
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_ENTRY_POINT = ROOT / "dish-service"
+DATABASE_DISCONNECT_NODEID = (
+    "tests/postgresql/native/test_production_shaped_runtime.py::"
+    "test_section4_service_database_disconnect_rolls_back_then_recovers_once"
+)
 
 
 def _runtime(core_db, tmp_path: Path, *, corpus_sha256: str):
@@ -65,6 +70,42 @@ def _runtime(core_db, tmp_path: Path, *, corpus_sha256: str):
     return client, engine
 
 
+def _write_runtime_process_evidence(runtime: ServiceRuntimeClient, tmp_path: Path) -> None:
+    assert runtime.child is not None
+    process = runtime.child.evidence()
+    stop = process["stop_record"]
+    assert isinstance(stop, dict) and stop["stopped"] is True
+    signals = list(stop["signals"])
+    termination_state = (
+        "sigkill" if "SIGKILL" in signals else "sigterm" if "SIGTERM" in signals else "none"
+    )
+    completion_state = "terminated" if termination_state != "none" else "completed"
+    evidence_root = Path(os.environ.get("DISH_SECTION1_EVIDENCE_DIR", tmp_path))
+    processes = evidence_root / "processes"
+    processes.mkdir(parents=True, exist_ok=True)
+    process_id = f"section4-service-{process['pid']}"
+    write_json_atomic(
+        processes / f"{process_id}.json",
+        {
+            "format": "dish-section1-process-record-v2",
+            "process_id": process_id,
+            "nodeid": DATABASE_DISCONNECT_NODEID,
+            "label": process["label"],
+            "pid": process["pid"],
+            "process_group_id": process["process_group_id"],
+            "command": process["argv"],
+            "scenario": "service-database-disconnect-rollback-recovery",
+            "log_path": process["log_path"],
+            "started_at": process["started_at"],
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "final_exit_status": stop["returncode"],
+            "completion_state": completion_state,
+            "termination_state": termination_state,
+            "detail": "bounded PostgreSQL TEST service shutdown after recovery proof",
+        },
+    )
+
+
 def test_section4_service_process_loss_replays_without_duplicate_effects(
     core_db, tmp_path
 ) -> None:
@@ -87,10 +128,8 @@ def test_section4_service_process_loss_replays_without_duplicate_effects(
 @pytest.mark.skipif(
     not os.environ.get("DISH_SECTION1_COMPOSE_JSON"),
     reason=(
-        "requires DISH_SECTION1_COMPOSE_JSON compose control for the shared TEST "
-        "PostgreSQL target; no runner currently provides this (see docs/testing.md, "
-        "'§1 process-failure rehearsal' section) — waived pending dedicated wiring, "
-        "revisit before setting external_effects_enabled=true"
+        "requires DISH_SECTION1_COMPOSE_JSON disposable Compose control; covered by "
+        "dish-pg-process-failure, while bare native certification has no Compose control"
     ),
 )
 def test_section4_service_database_disconnect_rolls_back_then_recovers_once(
@@ -125,3 +164,10 @@ def test_section4_service_database_disconnect_rolls_back_then_recovers_once(
     assert result["after_replay"]["execution_count"] == 1
     assert result["after_replay"]["task_effect_count"] == 1
     assert result["after_replay"]["projection_effect_count"] == 1
+    _write_runtime_process_evidence(runtime, tmp_path)
+    write_scenario(
+        "service-database-disconnect-rollback-recovery",
+        result,
+        nodeid=DATABASE_DISCONNECT_NODEID,
+        tmp_path=tmp_path,
+    )
