@@ -418,6 +418,25 @@ def test_oauth_http_boundary_challenges_and_publishes_protected_resource_metadat
     assert authorization["code_challenge_methods_supported"] == ["S256"]
 
 
+def test_mcp_trailing_slash_redirect_uses_configured_public_resource():
+    app = mcp_server.create_app(_adapter(), _config())
+
+    status, headers, _ = _asgi_request(
+        app,
+        method="POST",
+        path="/mcp/",
+        headers={
+            "host": "attacker.example",
+            "forwarded": "host=attacker.example;proto=http",
+            "x-forwarded-host": "attacker.example",
+            "x-forwarded-proto": "http",
+        },
+    )
+
+    assert status == 307
+    assert headers["location"] == RESOURCE_URL
+
+
 def test_github_provider_rejects_every_user_except_configured_numeric_id(monkeypatch):
     async def fake_verify(self, token: str):
         return AccessToken(token=token, client_id="client", scopes=[], subject=token)
