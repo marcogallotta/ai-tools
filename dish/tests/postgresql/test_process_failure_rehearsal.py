@@ -186,13 +186,18 @@ def test_requirement_status_distinguishes_not_run_from_infrastructure_blocked() 
 
 def test_process_failure_inventory_is_literal_process_owned_and_scenario_complete() -> None:
     assert rehearsal.NOT_IMPLEMENTED_SCENARIOS == ()
-    assert len(rehearsal.PROCESS_TEST_INVENTORY) == 14
+    assert len(rehearsal.PROCESS_TEST_INVENTORY) == 15
     assert len(rehearsal.PROCESS_TEST_INVENTORY) == len(set(rehearsal.PROCESS_TEST_INVENTORY))
     assert set(rehearsal.NODE_REQUIREMENTS) == set(rehearsal.PROCESS_TEST_INVENTORY)
     assert set(rehearsal.NODE_SCENARIOS) == set(rehearsal.PROCESS_TEST_INVENTORY)
     assert len(set(rehearsal.NODE_SCENARIOS.values())) == len(rehearsal.PROCESS_TEST_INVENTORY)
     assert all(
         node.startswith("tests/postgresql/native/test_process_failure_")
+        or node
+        == (
+            "tests/postgresql/native/test_production_shaped_runtime.py::"
+            "test_section4_service_database_disconnect_rolls_back_then_recovers_once"
+        )
         for node in rehearsal.PROCESS_TEST_INVENTORY
     )
     assert all("::test_" in node for node in rehearsal.PROCESS_TEST_INVENTORY)
