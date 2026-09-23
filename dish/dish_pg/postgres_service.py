@@ -857,9 +857,14 @@ class PostgresRuntimeService:
             data = dict(payload.pop("data"))
             data["request_replayed"] = payload.pop("request_replayed")
             payload["data"] = data
-            if principal.owner_id == self.config.action_client_id:
+            if principal.owner_id == self.config.action_client_id or (
+                principal_class == "admin" and command == "archive"
+            ):
                 # Guidance is attached before JSON encoding, so normalize the
                 # immutable tuple fields to their public JSON array shape now.
+                # The private archive CLI consumes the same canonical command
+                # contract even though other native private clients retain the
+                # transitional compact PostgreSQL response family.
                 payload["allowed_actions"] = list(payload["allowed_actions"])
                 payload["errors"] = list(payload["errors"])
             else:

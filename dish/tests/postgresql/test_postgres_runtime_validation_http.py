@@ -977,7 +977,7 @@ def test_postgresql_test_admin_allowlist_exposes_only_queue_and_archive(
     assert service.supports_http_route("admin-lease-expiry", "expire-lease") is False
 
 
-def test_postgresql_test_admin_queue_through_cli_and_archive_through_admin_http_route(
+def test_postgresql_test_admin_queue_and_archive_through_cli(
     workflow_db, tmp_path: Path, capsys
 ) -> None:
     factory, ids, context, task_id = workflow_db
@@ -1008,16 +1008,8 @@ def test_postgresql_test_admin_queue_through_cli_and_archive_through_admin_http_
 
         try:
             queue = invoke("--profile", "test", "--json", "queue", "--non-interactive")
-            # `archive` moved off the dish-admin CLI parser onto the ordinary
-            # `dish` agent CLI, but the TEST profile still allows it over the
-            # admin-authenticated HTTP route; exercise that route directly.
-            archived_status, archived = _post_json(
-                f"{base}/v1/admin/archive",
-                token="postgres-admin-token",
-                body={
-                    "client": {"run_id": str(run_id), "request_id": str(_next(ids))},
-                    "arguments": {"dish": str(task_id), "confirmed": True},
-                },
+            archived = invoke(
+                "--profile", "test", "--json", "archive", str(task_id), "--yes"
             )
             hidden_status, hidden = _post_json(
                 f"{base}/v1/admin/inspect",
@@ -1032,10 +1024,15 @@ def test_postgresql_test_admin_queue_through_cli_and_archive_through_admin_http_
 
     assert queue["ok"] is True
     assert queue["command"] == "queue"
-    assert archived_status == 200
     assert archived["ok"] is True
     assert archived["command"] == "archive"
+    assert archived["task_gid"] is None
+    assert archived["submission_id"] is None
+    assert archived["state"] is None
+    assert archived["allowed_actions"] == []
+    assert archived["errors"] == []
     assert archived["data"]["completion_state"] == "archived"
+    assert archived["data"]["system_reason"] == "admin_archive"
     assert hidden_status == 404
     assert hidden == {"ok": False, "error": "not_found"}
 
