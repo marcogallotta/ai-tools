@@ -30,8 +30,6 @@ BRANCH_READ_VALUE_FLAGS = {"--contains", "--format", "--merged", "--no-contains"
 GIT_EXECUTION_FLAGS = ("--exec-path", "--ext-diff", "--open-files-in-pager", "--textconv")
 PUSH_VALUE_FLAGS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 PUSH_UNSAFE_FLAGS = ("-f", "--force", "--force-with-lease", "--force-if-includes", "-d", "--delete", "--all", "--mirror", "--tags", "--follow-tags")
-VOLATILE_WORKTREE_ROOTS = ("/tmp", "/var/tmp", "/run", "/dev/shm")
-WORKTREE_ADD_VALUE_FLAGS = ("-b", "-B", "--reason", "--orphan")
 
 
 def _safe_direct_tokens(segment):
@@ -548,60 +546,6 @@ def _is_protected_primary(identity, protected_root):
     )
 
 
-def _is_protected_repository(identity, protected_root):
-    if identity is None:
-        return False
-    _toplevel, _git_dir, common_dir = identity
-    protected_git_dir = os.path.realpath(os.path.join(protected_root, ".git"))
-    return os.path.realpath(common_dir) == protected_git_dir
-
-
-def _worktree_add_target(args, cwd):
-    """Resolve the literal target of ``git worktree add`` or flag ambiguity."""
-    if not args or args[0][0] != "add":
-        return None, False
-    index = 1
-    while index < len(args):
-        token, active = args[index]
-        if token == "--":
-            index += 1
-            break
-        if token in WORKTREE_ADD_VALUE_FLAGS:
-            index += 2
-            continue
-        if any(token.startswith(flag + "=") for flag in WORKTREE_ADD_VALUE_FLAGS):
-            index += 1
-            continue
-        if token.startswith("-"):
-            index += 1
-            continue
-        break
-    if index >= len(args):
-        return None, False
-    target, active = args[index]
-    resolved = _reject_shell_expansion(target, active)
-    if resolved is None:
-        return None, True
-    if not os.path.isabs(resolved):
-        resolved = os.path.join(cwd, resolved)
-    return os.path.realpath(resolved), False
-
-
-def _is_volatile_path(path):
-    if path is None:
-        return False
-    return any(path == root or path.startswith(root + os.sep) for root in VOLATILE_WORKTREE_ROOTS)
-
-
-def _deny_volatile_worktree(target=None):
-    location = target or "a shell-expanded/unknown target"
-    return (
-        f"[protected-checkout] Refusing 'git worktree add' at {location}: Dish worktrees "
-        "and resumable test checkouts must survive restart/reboot. Use tools/agent-worktree "
-        "for Implementation or a named path under ~/.local/share/dish/ for read-only audit/testing."
-    )
-
-
 def _active_task_for_identity(identity):
     """Return the exact active task GID for a registered linked worktree."""
     if identity is None:
@@ -719,16 +663,6 @@ def _classify_git(
     command_env, ambiguous_env_names = _command_environment(prefix_pairs)
     location_env, env_ambiguous = _env_location_overrides(prefix_pairs)
     extra_env = {**inherited_env, **command_env, **location_env}
-
-    if subcommand == "worktree":
-        identity = _resolve_repo_identity(location_args, extra_env, cwd)
-        target, target_ambiguous = _worktree_add_target(pairs[sub_idx + 1 :], cwd)
-        repository_ambiguous = ambiguous or env_ambiguous
-        dangerous_target = target_ambiguous or _is_volatile_path(target)
-        if dangerous_target and (
-            repository_ambiguous or _is_protected_repository(identity, protected_root)
-        ):
-            return _deny_volatile_worktree(target)
 
     if subcommand in ("checkout", "switch"):
         kind = _branch_change_kind(args, subcommand)

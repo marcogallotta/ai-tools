@@ -39,6 +39,10 @@ reviewable through this repo's own PR flow — not unreachable global config.
 In ai-tools, mutations genuinely part of an assigned task proceed without re-confirming each step;
 tool permission prompts are the gate. Elsewhere, or outside task scope, `~/.claude/CLAUDE.md` governs.
 
+Any substantial work not explicitly assigned requires Marco's clear authorization and sign-off.
+A request for policy or guidance changes authorizes only the requested documentation; it does not
+authorize hooks, enforcement, tooling, runtime, certification, deployment, or scope expansion.
+
 ## Marco-facing workflow policy
 
 Anything shown directly to Marco must explain the workflow state and next action in plain English rather than relying on internal codenames or unexplained process shorthand. Technical IDs may be included when useful, but they do not carry the meaning by themselves.
