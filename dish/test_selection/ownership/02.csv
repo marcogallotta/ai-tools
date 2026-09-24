@@ -285,6 +285,8 @@ tests/support/service_foundation.py,shared-test-infrastructure,1,4,isolated-test
 tests/support/small_correction.py,shared-test-infrastructure,1,4,isolated-test; shared-test-infrastructure,,,narrow,exact changed test/module,exact changed test/module,,
 tests/support/thread_teardown.py,shared-test-infrastructure,1,4,isolated-test; shared-test-infrastructure,,,cross-lane,SQLite database-boundary; exact changed test/module; flake diagnostics; smoke,SQLite database-boundary; exact changed test/module; flake diagnostics; smoke,,
 tests/support/workflow_builders.py,shared-test-infrastructure,1,4,isolated-test; shared-test-infrastructure,,,narrow,exact changed test/module; smoke,exact changed test/module; smoke,,
+tests/support/systemd_units.py,shared-test-infrastructure,1,3,deployment; isolated-test; shared-test-infrastructure,,,narrow,exact changed test/module,exact changed test/module,,
+tests/test_systemd_user_unit_contracts.py,test,1,3,deployment; isolated-test,,,none,,exact changed test/module,,
 tests/test_abandonment_frontier_route_preservation.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_abandonment_reconciliation.py,test,1,4,isolated-test; smoke-owned,,,none,,exact changed test/module; smoke,,
 tests/test_abandonment_verification_successors.py,test,1,4,isolated-test; smoke-owned,,,none,,exact changed test/module; smoke,,
