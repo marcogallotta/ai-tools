@@ -380,7 +380,11 @@ class SystemOperations:
         self.timeout = timeout
 
     def restart(self) -> None:
-        subprocess.run(["sudo", "/usr/bin/systemctl", "restart", self.unit], check=True)
+        subprocess.run(
+            ["/usr/bin/systemctl", "--user", "restart", self.unit],
+            check=True,
+            timeout=self.timeout,
+        )
 
     def verify(self, release: Release) -> None:
         deadline = time.monotonic() + self.timeout
@@ -388,16 +392,18 @@ class SystemOperations:
         while time.monotonic() < deadline:
             try:
                 active = subprocess.run(
-                    ["/usr/bin/systemctl", "is-active", self.unit],
+                    ["/usr/bin/systemctl", "--user", "is-active", self.unit],
                     text=True,
                     capture_output=True,
                     check=False,
+                    timeout=self.timeout,
                 )
                 if active.stdout.strip() != "active":
                     raise ReleaseError("service is not active")
                 pid_result = subprocess.run(
                     [
                         "/usr/bin/systemctl",
+                        "--user",
                         "show",
                         self.unit,
                         "--property=MainPID",
@@ -406,6 +412,7 @@ class SystemOperations:
                     text=True,
                     capture_output=True,
                     check=True,
+                    timeout=self.timeout,
                 )
                 pid = int(pid_result.stdout.strip())
                 if Path(f"/proc/{pid}/cwd").resolve() != release.dish_root.resolve():

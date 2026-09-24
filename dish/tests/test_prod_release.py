@@ -223,6 +223,86 @@ def test_conformance_failure_uses_existing_recovery_and_reverifies_prior_release
     assert checked == [new.source_commit, old.source_commit]
 
 
+def test_timed_out_unit_evidence_restores_and_reverifies_prior_release(
+    tmp_path: Path,
+) -> None:
+    releases = tmp_path / "releases"
+    old = _write_release(releases, "a" * 40)
+    new = _write_release(releases, "b" * 40)
+    current = tmp_path / "prod-current"
+    previous = tmp_path / "prod-previous"
+    current.symlink_to(old.root)
+    operations = _Operations()
+    token_file = tmp_path / "token"
+    token_file.write_text("secret", encoding="utf-8")
+    token_file.chmod(0o600)
+    status_attempts = 0
+    command_timeouts: list[float] = []
+
+    def request(request, *, expected_status=200):
+        if expected_status == 401:
+            return 401, {
+                "WWW-Authenticate": (
+                    'Bearer resource_metadata="https://dish.example/'
+                    '.well-known/oauth-protected-resource/dish/mcp"'
+                )
+            }, b""
+        if request.method == "GET":
+            return 200, {}, b'{"resource":"https://dish.example/dish/mcp"}'
+        payload = json.loads(request.data)
+        if payload["method"] == "notifications/initialized":
+            return 202, {}, b""
+        if payload["method"] == "initialize":
+            return 200, {}, b'{"jsonrpc":"2.0","id":1,"result":{}}'
+        return 200, {}, b'{"jsonrpc":"2.0","id":2,"result":{"isError":false}}'
+
+    class _Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def system_run(command, **kwargs):
+        nonlocal status_attempts
+        command_timeouts.append(kwargs["timeout"])
+        if "systemctl" in command[0]:
+            status_attempts += 1
+            if status_attempts == 1:
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return _Completed("ActiveState=active\nSubState=running\nMainPID=42\n")
+        return _Completed("prior release recovered\n")
+
+    conformance = MCPReleaseConformance(
+        resource_url="https://dish.example/dish/mcp",
+        token_file=token_file,
+        receipt_root=tmp_path / "receipts",
+        unit="dish-mcp.service",
+        timeout=1,
+        http_request=request,
+        command_runner=system_run,
+    )
+
+    with pytest.raises(ReleaseError, match="prior pointer was restored"):
+        activate_release(
+            new,
+            current=current,
+            previous=previous,
+            operations=operations,  # type: ignore[arg-type]
+            database_preflight=lambda release: None,
+            pre_activation_check=conformance.preflight,
+            post_activation_check=conformance.verify_and_write_receipt,
+        )
+
+    assert current.resolve() == old.root.resolve()
+    assert operations.restarts == 2
+    assert operations.verified == [new.source_commit, old.source_commit]
+    assert status_attempts == 2
+    assert command_timeouts == [1, 1, 1]
+    receipt = json.loads((tmp_path / "receipts" / f"{old.source_commit}.json").read_text())
+    assert receipt["backend_release"]["source_commit"] == old.source_commit
+
+
 def test_mcp_preflight_runs_before_pointer_switch(tmp_path: Path) -> None:
     releases = tmp_path / "releases"
     old = _write_release(releases, "a" * 40)
@@ -404,6 +484,7 @@ def test_mcp_conformance_receipt_binds_backend_but_not_mutable_mcp_checkout(
     token_file.write_text("super-secret-bearer", encoding="utf-8")
     token_file.chmod(0o600)
     calls: list[tuple[str, str | None]] = []
+    evidence_commands: list[tuple[list[str], float]] = []
 
     def request(request, *, expected_status=200):
         authorization = request.headers.get("Authorization")
@@ -441,6 +522,7 @@ def test_mcp_conformance_receipt_binds_backend_but_not_mutable_mcp_checkout(
             self.stdout = stdout
 
     def system_run(command, **kwargs):
+        evidence_commands.append((command, kwargs["timeout"]))
         if "systemctl" in command[0]:
             return _Completed("ActiveState=active\nSubState=running\nMainPID=42\n")
         return _Completed("secret-looking journal line\n")
@@ -480,6 +562,30 @@ def test_mcp_conformance_receipt_binds_backend_but_not_mutable_mcp_checkout(
         ("POST", "Bearer super-secret-bearer"),
         ("POST", "Bearer super-secret-bearer"),
     ]
+    assert evidence_commands == [
+        (
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "show",
+                "dish-mcp.service",
+                "--property=ActiveState,SubState,MainPID",
+            ],
+            1,
+        ),
+        (
+            [
+                "/usr/bin/journalctl",
+                "--user",
+                "-u",
+                "dish-mcp.service",
+                "--lines=40",
+                "--no-pager",
+                "--output=short-iso",
+            ],
+            1,
+        ),
+    ]
 
 
 def test_executable_identity_is_distinct_and_fail_closed(
@@ -512,7 +618,12 @@ def test_system_verification_binds_health_identity_to_real_process_directory(
         def __init__(self, stdout: str) -> None:
             self.stdout = stdout
 
+    commands: list[tuple[list[str], float]] = []
+
     def fake_run(command, **kwargs):
+        commands.append((command, kwargs["timeout"]))
+        if "restart" in command:
+            return _Completed("")
         if "is-active" in command:
             return _Completed("active\n")
         if "show" in command:
@@ -526,13 +637,44 @@ def test_system_verification_binds_health_identity_to_real_process_directory(
         lambda *args, **kwargs: io.BytesIO(payload),
     )
     try:
-        result = SystemOperations("dish-service-prod.service", "http://health", 1).verify(
-            release
-        )
+        operations = SystemOperations("dish-service-prod.service", "http://health", 1)
+        operations.restart()
+        result = operations.verify(release)
         assert result is None
     finally:
         process.terminate()
         process.wait(timeout=5)
+    assert commands == [
+        (
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "restart",
+                "dish-service-prod.service",
+            ],
+            1,
+        ),
+        (
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "is-active",
+                "dish-service-prod.service",
+            ],
+            1,
+        ),
+        (
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "show",
+                "dish-service-prod.service",
+                "--property=MainPID",
+                "--value",
+            ],
+            1,
+        ),
+    ]
 
 
 def test_private_health_exposes_executable_identity_separately(

@@ -178,18 +178,22 @@ class MCPReleaseConformance:
         return response
 
     def _unit_evidence(self) -> dict[str, Any]:
-        status = self.command_runner(
-            [
-                "/usr/bin/systemctl",
-                "--user",
-                "show",
-                self.unit,
-                "--property=ActiveState,SubState,MainPID",
-            ],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            status = self.command_runner(
+                [
+                    "/usr/bin/systemctl",
+                    "--user",
+                    "show",
+                    self.unit,
+                    "--property=ActiveState,SubState,MainPID",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ReleaseError("timed out collecting MCP user-unit status") from exc
         if status.returncode != 0:
             raise ReleaseError("cannot collect MCP user-unit status")
         values: dict[str, str] = {}
@@ -199,20 +203,26 @@ class MCPReleaseConformance:
                 values[name] = value
         if values.get("ActiveState") != "active":
             raise ReleaseError("MCP user unit is not active")
-        journal = self.command_runner(
-            [
-                "/usr/bin/journalctl",
-                "--user",
-                "-u",
-                self.unit,
-                "--lines=40",
-                "--no-pager",
-                "--output=short-iso",
-            ],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            journal = self.command_runner(
+                [
+                    "/usr/bin/journalctl",
+                    "--user",
+                    "-u",
+                    self.unit,
+                    "--lines=40",
+                    "--no-pager",
+                    "--output=short-iso",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ReleaseError(
+                "timed out collecting bounded MCP user-unit journal evidence"
+            ) from exc
         if journal.returncode != 0:
             raise ReleaseError("cannot collect bounded MCP user-unit journal evidence")
         encoded = journal.stdout.encode("utf-8", "replace")
