@@ -98,6 +98,9 @@ def test_public_oauth_and_caddy_journey_reaches_native_mcp_and_rejects_wrong_own
             row["redirect_uri"] == f"{PUBLIC_BASE}/auth/callback"
             for row in observations
         )
+        assert [
+            row["resource"] for row in observations if row["path"] == "/authorize"
+        ] == [PUBLIC_RESOURCE, PUBLIC_RESOURCE]
     finally:
         receipt = edge.stop() if edge.process is not None else None
 
@@ -109,6 +112,7 @@ def test_public_oauth_and_caddy_journey_reaches_native_mcp_and_rejects_wrong_own
     diagnostics = edge.log_path.read_text(encoding="utf-8")
     assert GITHUB_CLIENT_SECRET not in diagnostics
     assert "github-accepted" not in diagnostics
+    assert "github-rejected" not in diagnostics
     assert accepted_token not in diagnostics
     assert rejected_token not in diagnostics
     json.loads(edge.caddy_config_path.read_text(encoding="utf-8"))

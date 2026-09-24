@@ -224,7 +224,7 @@ class DisposablePublicEdge(DisposableMCPProcess):
             base_dsn=base_dsn,
             root=root,
             server_module="tests.support.postgresql.mcp_public_edge",
-            server_environment={"FASTMCP_HOME": str(root / "fastmcp")},
+            fastmcp_home=root / "fastmcp",
             server_args=(
                 "--caddy-port",
                 str(self.caddy_port),

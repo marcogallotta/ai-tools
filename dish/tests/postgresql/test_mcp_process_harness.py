@@ -6,7 +6,26 @@ import sys
 import pytest
 
 from tests.support.postgresql import mcp_process
-from tests.support.postgresql.mcp_process import ROOT, DisposableMCPProcess
+from tests.support.postgresql.mcp_process import (
+    ROOT,
+    DisposableMCPError,
+    DisposableMCPProcess,
+)
+
+
+@pytest.mark.parametrize(
+    "server_args",
+    (("--profile", "prod"), ("--database-name=dish_live_prod",), ("--p", "1")),
+)
+def test_disposable_process_rejects_protected_server_argument_overrides(
+    tmp_path, server_args
+) -> None:
+    with pytest.raises(DisposableMCPError, match="protected option"):
+        DisposableMCPProcess(
+            base_dsn="postgresql+psycopg://dish_test@localhost/postgres",
+            root=tmp_path,
+            server_args=server_args,
+        )
 
 
 def test_start_drops_created_database_when_migration_fails(

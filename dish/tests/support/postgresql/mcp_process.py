@@ -11,7 +11,6 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
@@ -45,6 +44,13 @@ from tests.support.postgresql.core import NOW, _bootstrap_registry, _uuid_stream
 ROOT = Path(__file__).resolve().parents[3]
 TEST_RELEASE = "dish-42619b9"
 CURSOR_SECRET = "disposable-mcp-cursor-secret-32-bytes"
+PROTECTED_SERVER_OPTIONS = (
+    "--profile",
+    "--database-name",
+    "--port",
+    "--token",
+    "--owner-id",
+)
 
 
 class DisposableMCPError(RuntimeError):
@@ -210,8 +216,16 @@ class DisposableMCPProcess:
         root: Path,
         server_module: str = "tests.support.postgresql.mcp_process",
         server_args: tuple[str, ...] = (),
-        server_environment: Mapping[str, str] | None = None,
+        fastmcp_home: Path | None = None,
     ) -> None:
+        for argument in server_args:
+            option = argument.partition("=")[0]
+            if option.startswith("--") and any(
+                protected.startswith(option) for protected in PROTECTED_SERVER_OPTIONS
+            ):
+                raise DisposableMCPError(
+                    f"server_args cannot override protected option {option}"
+                )
         suffix = uuid.uuid4().hex[:16]
         self.database_name = f"dish_mcp_{suffix}_test"
         self.base_dsn = base_dsn
@@ -220,7 +234,7 @@ class DisposableMCPProcess:
         self.readiness_port = self.port
         self.server_module = server_module
         self.server_args = server_args
-        self.server_environment = dict(server_environment or {})
+        self.fastmcp_home = fastmcp_home
         self.token = secrets.token_urlsafe(32)
         self.owner_id = str(secrets.randbelow(900_000) + 100_000)
         self.process: subprocess.Popen[str] | None = None
@@ -255,7 +269,8 @@ class DisposableMCPProcess:
                     "DISH_PG_AUTHORITY_STATE_DIR": str(state_dir),
                 }
             )
-            env.update(self.server_environment)
+            if self.fastmcp_home is not None:
+                env["FASTMCP_HOME"] = str(self.fastmcp_home)
             command_line = [
                 sys.executable,
                 "-m",
