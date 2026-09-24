@@ -308,6 +308,18 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
         "Native-placement state read boundary stubbed so routine-migration tests can assert on a"
         " deterministic post-finalize placement state."
     ),
+    ("postgresql/test_mcp_process_harness.py", "_create_database"): (
+        "Disposable TEST database-creation boundary used to prove migration failure still drops"
+        " the newly created database."
+    ),
+    ("postgresql/test_mcp_process_harness.py", "_migrate_database"): (
+        "Alembic migration fault boundary used to prove disposable database cleanup after a"
+        " post-creation migration failure."
+    ),
+    ("postgresql/test_mcp_process_harness.py", "_drop_database"): (
+        "Disposable TEST database-drop observation boundary used to prove failure-path teardown"
+        " without requiring a live PostgreSQL database."
+    ),
 }
 
 
