@@ -323,7 +323,9 @@ def test_contract_table_is_complete_for_every_shipped_dish_user_unit() -> None:
 @pytest.mark.parametrize("name", sorted(UNIT_CONTRACTS))
 def test_shipped_dish_user_unit_contract(name: str) -> None:
     unit = load_unit(SYSTEMD / name)
-    assert_directives(unit, UNIT_CONTRACTS[name].directives)
+    expected = UNIT_CONTRACTS[name]
+    assert unit.sections, f"{name} parsed with no sections"
+    assert_directives(unit, expected.directives)
     assert_user_manager_compatible(unit)
 
 
