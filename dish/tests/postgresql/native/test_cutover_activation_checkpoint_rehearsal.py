@@ -242,7 +242,12 @@ def test_stage6_activation_checkpoints_survive_process_death_and_stale_writer_is
     first_request_id = _next(ids)
     first_run_id = _next(ids)
     with session_scope(factory) as session:
-        _register_run(session, generation_id=generation_id, run_id=first_run_id)
+        _register_run(
+            session,
+            generation_id=generation_id,
+            run_id=first_run_id,
+            agent="codex",
+        )
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
         reconciliation = _complete_active_mapping_reconciliation(
             session,
