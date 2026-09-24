@@ -13,7 +13,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import httpx2
 import uvicorn
@@ -31,7 +31,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from dish_pg.database import session_scope
 from dish_pg.schema_identity import ALEMBIC_HEAD
 from dish_pg.transition import ProjectionService
-from dish_service.mcp_server import DishTool, SERVER_INSTRUCTIONS, SERVER_NAME, SERVER_VERSION, TOOLS
+from dish_service.mcp_server import (
+    SERVER_INSTRUCTIONS,
+    SERVER_NAME,
+    SERVER_VERSION,
+    TOOLS,
+    DishTool,
+)
 from dish_service.native_mcp_server import native_adapter_from_environment
 from tests.support.postgresql.core import NOW, _bootstrap_registry, _uuid_stream
 
@@ -129,11 +135,13 @@ def _create_database(base_dsn: str, database_name: str) -> str:
             connection.exec_driver_sql(f'CREATE DATABASE "{database_name}"')
     finally:
         engine.dispose()
-    dsn = _database_url(base_dsn, database_name)
+    return _database_url(base_dsn, database_name)
+
+
+def _migrate_database(dsn: str) -> None:
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", dsn)
     command.upgrade(config, "head")
-    return dsn
 
 
 def _drop_database(base_dsn: str, database_name: str) -> None:
@@ -203,17 +211,19 @@ class DisposableMCPProcess:
         self.token = secrets.token_urlsafe(32)
         self.owner_id = str(secrets.randbelow(900_000) + 100_000)
         self.process: subprocess.Popen[str] | None = None
+        self.process_group_id: int | None = None
         self.dsn: str | None = None
         self.generation_id: uuid.UUID | None = None
         self.receipt: TeardownReceipt | None = None
         self.log_path = root / "mcp-process.log"
 
-    def start(self) -> "DisposableMCPProcess":
+    def start(self) -> Self:
         self.root.mkdir(parents=True, exist_ok=True)
         state_dir = self.root / "state"
         state_dir.mkdir()
         try:
             self.dsn = _create_database(self.base_dsn, self.database_name)
+            _migrate_database(self.dsn)
             self.generation_id = _bootstrap_authority(self.dsn)
             env = {
                 key: value
@@ -259,12 +269,17 @@ class DisposableMCPProcess:
                     text=True,
                     start_new_session=True,
                 )
+                self.process_group_id = self.process.pid
             finally:
                 log.close()
             self._wait_for_tcp()
         except BaseException:
             if self.process is not None and self.process.poll() is None:
-                os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+                assert self.process_group_id is not None
+                try:
+                    os.killpg(self.process_group_id, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 self.process.wait(timeout=5)
             if self.dsn is not None:
                 _drop_database(self.base_dsn, self.database_name)
@@ -290,43 +305,45 @@ class DisposableMCPProcess:
 
     async def _create_readback(self) -> tuple[dict[str, Any], dict[str, Any]]:
         headers = {"Authorization": f"Bearer {self.token}"}
-        async with httpx2.AsyncClient(headers=headers) as client:
-            async with streamable_http_client(
+        async with (
+            httpx2.AsyncClient(headers=headers) as client,
+            streamable_http_client(
                 f"http://127.0.0.1:{self.port}/mcp", http_client=client
-            ) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    run_id = str(uuid.uuid4())
-                    created_result = await session.call_tool(
-                        "dish_create",
-                        {
-                            "client": {
-                                "run_id": run_id,
-                                "request_id": str(uuid.uuid4()),
-                            },
-                            "arguments": {
-                                "agent": "codex",
-                                "title": "Disposable MCP process proof",
-                            },
-                        },
-                    )
-                    created = created_result.structured_content
-                    if created_result.is_error or not isinstance(created, dict):
-                        raise DisposableMCPError(f"dish_create failed: {created_result}")
-                    dish_id = created.get("data", {}).get("dish_id")
-                    if not isinstance(dish_id, str):
-                        raise DisposableMCPError("dish_create omitted canonical dish_id")
-                    read_result = await session.call_tool(
-                        "dish_read",
-                        {
-                            "client": {"run_id": run_id},
-                            "arguments": {"agent": "codex", "dish_id": dish_id},
-                        },
-                    )
-                    readback = read_result.structured_content
-                    if read_result.is_error or not isinstance(readback, dict):
-                        raise DisposableMCPError(f"dish_read failed: {read_result}")
-                    return created, readback
+            ) as (read_stream, write_stream),
+            ClientSession(read_stream, write_stream) as session,
+        ):
+            await session.initialize()
+            run_id = str(uuid.uuid4())
+            created_result = await session.call_tool(
+                "dish_create",
+                {
+                    "client": {
+                        "run_id": run_id,
+                        "request_id": str(uuid.uuid4()),
+                    },
+                    "arguments": {
+                        "agent": "codex",
+                        "title": "Disposable MCP process proof",
+                    },
+                },
+            )
+            created = created_result.structured_content
+            if created_result.is_error or not isinstance(created, dict):
+                raise DisposableMCPError(f"dish_create failed: {created_result}")
+            dish_id = created.get("data", {}).get("dish_id")
+            if not isinstance(dish_id, str):
+                raise DisposableMCPError("dish_create omitted canonical dish_id")
+            read_result = await session.call_tool(
+                "dish_read",
+                {
+                    "client": {"run_id": run_id},
+                    "arguments": {"agent": "codex", "dish_id": dish_id},
+                },
+            )
+            readback = read_result.structured_content
+            if read_result.is_error or not isinstance(readback, dict):
+                raise DisposableMCPError(f"dish_read failed: {read_result}")
+            return created, readback
 
     def create_readback(self) -> tuple[dict[str, Any], dict[str, Any]]:
         return asyncio.run(self._create_readback())
@@ -336,16 +353,24 @@ class DisposableMCPProcess:
             return self.receipt
         if self.process is None:
             raise DisposableMCPError("MCP process was never started")
+        if self.process_group_id is None:
+            raise DisposableMCPError("MCP process group identity was not retained")
         process = self.process
-        pgid = os.getpgid(process.pid)
+        pgid = self.process_group_id
         forced = False
         if process.poll() is None:
-            os.killpg(pgid, signal.SIGTERM)
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 forced = True
-                os.killpg(pgid, signal.SIGKILL)
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 process.wait(timeout=5)
         try:
             os.killpg(pgid, 0)
@@ -365,7 +390,7 @@ class DisposableMCPProcess:
         )
         return self.receipt
 
-    def __enter__(self) -> "DisposableMCPProcess":
+    def __enter__(self) -> Self:
         return self.start()
 
     def __exit__(self, _type, _value, _traceback) -> None:
