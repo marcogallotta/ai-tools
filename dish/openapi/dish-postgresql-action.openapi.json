@@ -19,13 +19,28 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "dish_id"
-                ],
                 "type": "object"
               }
             },
             "type": "object"
+          },
+          {
+            "if": {
+              "properties": {
+                "ok": {
+                  "const": true
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "data": {
+                  "required": [
+                    "dish_id"
+                  ]
+                }
+              }
+            }
           }
         ]
       },

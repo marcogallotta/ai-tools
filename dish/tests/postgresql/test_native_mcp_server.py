@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from jsonschema import Draft202012Validator
 from sqlalchemy import exc as sa_exc
 
 from dish_pg.postgres_service import database_failure_error
@@ -170,6 +171,16 @@ def test_connected_output_schemas_preserve_qualified_result_envelope_parity() ->
         if isinstance(expected, dict) and "type" not in expected:
             expected = {**expected, "type": "object"}
         assert result_envelope_schema(command=command) == expected
+
+
+def test_create_output_schema_requires_dish_id_only_for_success() -> None:
+    validator = Draft202012Validator(result_envelope_schema(command="create"))
+    envelope = {"ok": False, "command": "create", "code": "INVALID_ARGUMENT", "http_status": 400, "retryable": False, "allowed_actions": [], "data": {}, "errors": []}
+    assert validator.is_valid(envelope)
+    envelope["ok"] = True
+    assert not validator.is_valid(envelope)
+    envelope["data"]["dish_id"] = "11111111-1111-4111-8111-111111111111"
+    assert validator.is_valid(envelope)
 
 
 def test_authenticated_native_read_dispatches_directly_to_connected_service() -> None:
