@@ -44,6 +44,13 @@ from tests.support.postgresql.core import NOW, _bootstrap_registry, _uuid_stream
 ROOT = Path(__file__).resolve().parents[3]
 TEST_RELEASE = "dish-42619b9"
 CURSOR_SECRET = "disposable-mcp-cursor-secret-32-bytes"
+PROTECTED_SERVER_OPTIONS = (
+    "--profile",
+    "--database-name",
+    "--port",
+    "--token",
+    "--owner-id",
+)
 
 
 class DisposableMCPError(RuntimeError):
@@ -202,12 +209,32 @@ class TeardownReceipt:
 class DisposableMCPProcess:
     """Own one unique TEST database, MCP process group, and teardown receipt."""
 
-    def __init__(self, *, base_dsn: str, root: Path) -> None:
+    def __init__(
+        self,
+        *,
+        base_dsn: str,
+        root: Path,
+        server_module: str = "tests.support.postgresql.mcp_process",
+        server_args: tuple[str, ...] = (),
+        fastmcp_home: Path | None = None,
+    ) -> None:
+        for argument in server_args:
+            option = argument.partition("=")[0]
+            if option.startswith("--") and any(
+                protected.startswith(option) for protected in PROTECTED_SERVER_OPTIONS
+            ):
+                raise DisposableMCPError(
+                    f"server_args cannot override protected option {option}"
+                )
         suffix = uuid.uuid4().hex[:16]
         self.database_name = f"dish_mcp_{suffix}_test"
         self.base_dsn = base_dsn
         self.root = root
         self.port = _free_loopback_port()
+        self.readiness_port = self.port
+        self.server_module = server_module
+        self.server_args = server_args
+        self.fastmcp_home = fastmcp_home
         self.token = secrets.token_urlsafe(32)
         self.owner_id = str(secrets.randbelow(900_000) + 100_000)
         self.process: subprocess.Popen[str] | None = None
@@ -216,6 +243,24 @@ class DisposableMCPProcess:
         self.generation_id: uuid.UUID | None = None
         self.receipt: TeardownReceipt | None = None
         self.log_path = root / "mcp-process.log"
+
+    def _server_command_line(self) -> list[str]:
+        return [
+            sys.executable,
+            "-m",
+            self.server_module,
+            "serve",
+            "--profile",
+            "test",
+            "--database-name",
+            self.database_name,
+            "--port",
+            str(self.port),
+            f"--token={self.token}",
+            "--owner-id",
+            self.owner_id,
+            *self.server_args,
+        ]
 
     def start(self) -> Self:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -242,22 +287,9 @@ class DisposableMCPProcess:
                     "DISH_PG_AUTHORITY_STATE_DIR": str(state_dir),
                 }
             )
-            command_line = [
-                sys.executable,
-                "-m",
-                "tests.support.postgresql.mcp_process",
-                "serve",
-                "--profile",
-                "test",
-                "--database-name",
-                self.database_name,
-                "--port",
-                str(self.port),
-                "--token",
-                self.token,
-                "--owner-id",
-                self.owner_id,
-            ]
+            if self.fastmcp_home is not None:
+                env["FASTMCP_HOME"] = str(self.fastmcp_home)
+            command_line = self._server_command_line()
             log = self.log_path.open("w", encoding="utf-8")
             try:
                 self.process = subprocess.Popen(
@@ -297,7 +329,9 @@ class DisposableMCPProcess:
                     f"{self.log_path.read_text(encoding='utf-8')}"
                 )
             try:
-                with socket.create_connection(("127.0.0.1", self.port), timeout=0.2):
+                with socket.create_connection(
+                    ("127.0.0.1", self.readiness_port), timeout=0.2
+                ):
                     return
             except OSError:
                 time.sleep(0.05)
