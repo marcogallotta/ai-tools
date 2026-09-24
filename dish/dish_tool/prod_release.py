@@ -439,9 +439,13 @@ def activate_release(
     previous: Path,
     operations: SystemOperations,
     database_preflight: Callable[[Release], None],
+    pre_activation_check: Callable[[Release], None] | None = None,
+    post_activation_check: Callable[[Release], None] | None = None,
 ) -> None:
     """Activate exactly one validated release, restoring both pointers on failure."""
     database_preflight(release)
+    if pre_activation_check is not None:
+        pre_activation_check(release)
     old_current = _pointer_value(current)
     old_previous = _pointer_value(previous)
     prior = None
@@ -452,6 +456,8 @@ def activate_release(
         prior = load_release(release.root.parent, old_current_path.name)
     if old_current is not None and current.resolve() == release.root.resolve():
         operations.verify(release)
+        if post_activation_check is not None:
+            post_activation_check(release)
         return
     try:
         if old_current is not None:
@@ -459,6 +465,8 @@ def activate_release(
         _set_pointer(current, str(release.root))
         operations.restart()
         operations.verify(release)
+        if post_activation_check is not None:
+            post_activation_check(release)
     except Exception as activation_error:
         _set_pointer(current, old_current)
         _set_pointer(previous, old_previous)
@@ -467,6 +475,8 @@ def activate_release(
                 operations.restart()
                 assert prior is not None
                 operations.verify(prior)
+                if post_activation_check is not None:
+                    post_activation_check(prior)
             except Exception as recovery_error:
                 raise ReleaseError(
                     f"activation failed ({activation_error}); prior release recovery also failed ({recovery_error})"
@@ -491,6 +501,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--health-url", default=DEFAULT_HEALTH_URL)
     parser.add_argument("--unit", default=DEFAULT_UNIT)
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument(
+        "--mcp-url", default="https://laptop.tail46f0b9.ts.net/dish/mcp"
+    )
+    parser.add_argument(
+        "--mcp-token-file",
+        type=Path,
+        default=Path("/home/marco/.config/dish-service/mcp-conformance-token"),
+    )
+    parser.add_argument(
+        "--mcp-receipt-root",
+        type=Path,
+        default=Path("/home/marco/.local/state/dish/release-receipts"),
+    )
+    parser.add_argument("--mcp-unit", default="dish-mcp.service")
     commands = parser.add_subparsers(dest="command", required=True)
     stage = commands.add_parser("stage")
     stage.add_argument("--repository", type=Path, required=True)
@@ -549,6 +573,15 @@ def _run(args: argparse.Namespace) -> None:
             "previous pointer does not resolve to its recorded release identity"
         )
     operations = SystemOperations(args.unit, args.health_url, args.timeout)
+    from .release_mcp_conformance import MCPReleaseConformance
+
+    conformance = MCPReleaseConformance(
+        resource_url=args.mcp_url,
+        token_file=args.mcp_token_file,
+        receipt_root=args.mcp_receipt_root,
+        unit=args.mcp_unit,
+        timeout=args.timeout,
+    )
     activate_release(
         release,
         current=args.current,
@@ -557,6 +590,8 @@ def _run(args: argparse.Namespace) -> None:
         database_preflight=lambda candidate: preflight_database(
             candidate, tuple(args.env_files or DEFAULT_ENV_FILES)
         ),
+        pre_activation_check=conformance.preflight,
+        post_activation_check=conformance.verify_and_write_receipt,
     )
     print(json.dumps({"ok": True, "release": release.source_commit}))
 
