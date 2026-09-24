@@ -397,19 +397,12 @@ def test_documented_commands_use_both_canonical_environment_files_before_mutatio
 
 
 def test_mcp_conformance_receipt_binds_backend_but_not_mutable_mcp_checkout(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    tmp_path: Path,
 ) -> None:
     release = _write_release(tmp_path / "releases", "a" * 40)
     token_file = tmp_path / "token"
     token_file.write_text("super-secret-bearer", encoding="utf-8")
     token_file.chmod(0o600)
-    conformance = MCPReleaseConformance(
-        resource_url="https://dish.example/dish/mcp",
-        token_file=token_file,
-        receipt_root=tmp_path / "receipts",
-        unit="dish-mcp.service",
-        timeout=1,
-    )
     calls: list[tuple[str, str | None]] = []
 
     def request(request, *, expected_status=200):
@@ -452,8 +445,15 @@ def test_mcp_conformance_receipt_binds_backend_but_not_mutable_mcp_checkout(
             return _Completed("ActiveState=active\nSubState=running\nMainPID=42\n")
         return _Completed("secret-looking journal line\n")
 
-    monkeypatch.setattr(conformance, "_request", request)
-    monkeypatch.setattr("dish_tool.release_mcp_conformance.subprocess.run", system_run)
+    conformance = MCPReleaseConformance(
+        resource_url="https://dish.example/dish/mcp",
+        token_file=token_file,
+        receipt_root=tmp_path / "receipts",
+        unit="dish-mcp.service",
+        timeout=1,
+        http_request=request,
+        command_runner=system_run,
+    )
     conformance.preflight(release)
     receipt_path = conformance.verify_and_write_receipt(release)
     text = receipt_path.read_text(encoding="utf-8")

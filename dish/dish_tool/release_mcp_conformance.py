@@ -10,7 +10,7 @@ import subprocess
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +37,8 @@ class MCPReleaseConformance:
         receipt_root: Path,
         unit: str,
         timeout: float,
+        http_request: Callable[..., tuple[int, Mapping[str, str], bytes]] | None = None,
+        command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
         parsed = urlparse(resource_url)
         if (
@@ -50,6 +52,8 @@ class MCPReleaseConformance:
         self.receipt_root = receipt_root
         self.unit = unit
         self.timeout = timeout
+        self.http_request = http_request
+        self.command_runner = command_runner
         self._preflight: dict[str, Any] | None = None
 
     def _request(
@@ -58,6 +62,8 @@ class MCPReleaseConformance:
         *,
         expected_status: int = 200,
     ) -> tuple[int, Mapping[str, str], bytes]:
+        if self.http_request is not None:
+            return self.http_request(request, expected_status=expected_status)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 status = response.status
@@ -172,7 +178,7 @@ class MCPReleaseConformance:
         return response
 
     def _unit_evidence(self) -> dict[str, Any]:
-        status = subprocess.run(
+        status = self.command_runner(
             [
                 "/usr/bin/systemctl",
                 "--user",
@@ -193,7 +199,7 @@ class MCPReleaseConformance:
                 values[name] = value
         if values.get("ActiveState") != "active":
             raise ReleaseError("MCP user unit is not active")
-        journal = subprocess.run(
+        journal = self.command_runner(
             [
                 "/usr/bin/journalctl",
                 "--user",
