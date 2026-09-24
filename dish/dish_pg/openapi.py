@@ -146,7 +146,6 @@ def postgres_action_openapi(*, server_url: str = "https://dish-postgresql.exampl
                             "properties": {
                                 "data": {
                                     "type": "object",
-                                    "required": ["dish_id"],
                                     "properties": {
                                         "dish_id": deepcopy(POSTGRES_DISH_ID_SCHEMA)
                                     },
@@ -154,6 +153,7 @@ def postgres_action_openapi(*, server_url: str = "https://dish-postgresql.exampl
                                 }
                             },
                         },
+                        {"if": {"properties": {"ok": {"const": True}}}, "then": {"properties": {"data": {"required": ["dish_id"]}}}},
                     ]
                 },
             },

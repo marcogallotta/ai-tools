@@ -82,7 +82,7 @@ def _assert_postgresql_action_contract(document: dict[str, object]) -> None:
     }
     create_response = document["components"]["schemas"]["CreateResultEnvelope"]
     create_data = create_response["allOf"][1]["properties"]["data"]
-    assert create_data["required"] == ["dish_id"]
+    assert create_response["allOf"][2]["then"]["properties"]["data"]["required"] == ["dish_id"]
     assert create_data["properties"]["dish_id"] == POSTGRES_DISH_ID_SCHEMA
 
 
