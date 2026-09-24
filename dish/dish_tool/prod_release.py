@@ -588,6 +588,7 @@ def _run(args: argparse.Namespace) -> None:
         receipt_root=args.mcp_receipt_root,
         unit=args.mcp_unit,
         timeout=args.timeout,
+        error_type=ReleaseError,
     )
     activate_release(
         release,

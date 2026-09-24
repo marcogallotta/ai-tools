@@ -279,6 +279,7 @@ def test_timed_out_unit_evidence_restores_and_reverifies_prior_release(
         receipt_root=tmp_path / "receipts",
         unit="dish-mcp.service",
         timeout=1,
+        error_type=ReleaseError,
         http_request=request,
         command_runner=system_run,
     )
@@ -310,6 +311,11 @@ def test_mcp_preflight_runs_before_pointer_switch(tmp_path: Path) -> None:
     current = tmp_path / "prod-current"
     previous = tmp_path / "prod-previous"
     current.symlink_to(old.root)
+    pointers_during_preflight: list[Path] = []
+
+    def record_pointer_before_switch(release: Release) -> None:
+        del release
+        pointers_during_preflight.append(current.resolve())
 
     activate_release(
         new,
@@ -317,11 +323,10 @@ def test_mcp_preflight_runs_before_pointer_switch(tmp_path: Path) -> None:
         previous=previous,
         operations=_Operations(),  # type: ignore[arg-type]
         database_preflight=lambda release: None,
-        pre_activation_check=lambda release: (
-            current.resolve() == old.root.resolve()
-            or (_ for _ in ()).throw(AssertionError("pointer changed before preflight"))
-        ),
+        pre_activation_check=record_pointer_before_switch,
     )
+
+    assert pointers_during_preflight == [old.root.resolve()]
 
 
 def test_schema_mismatch_refuses_before_any_restart(tmp_path: Path) -> None:
@@ -533,6 +538,7 @@ def test_mcp_conformance_receipt_binds_backend_but_not_mutable_mcp_checkout(
         receipt_root=tmp_path / "receipts",
         unit="dish-mcp.service",
         timeout=1,
+        error_type=ReleaseError,
         http_request=request,
         command_runner=system_run,
     )

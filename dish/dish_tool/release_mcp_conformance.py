@@ -13,10 +13,8 @@ import uuid
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
-
-from .prod_release import Release, ReleaseError
 
 DEFAULT_MCP_URL = "https://laptop.tail46f0b9.ts.net/dish/mcp"
 DEFAULT_TOKEN_FILE = Path("/home/marco/.config/dish-service/mcp-conformance-token")
@@ -24,6 +22,11 @@ DEFAULT_RECEIPT_ROOT = Path("/home/marco/.local/state/dish/release-receipts")
 DEFAULT_MCP_UNIT = "dish-mcp.service"
 _RESOURCE_METADATA = re.compile(r'resource_metadata="([^"]+)"')
 _MAX_RESPONSE_BYTES = 1024 * 1024
+
+
+class _ReleaseIdentity(Protocol):
+    source_commit: str
+    schema_head: str
 
 
 class MCPReleaseConformance:
@@ -37,6 +40,7 @@ class MCPReleaseConformance:
         receipt_root: Path,
         unit: str,
         timeout: float,
+        error_type: type[Exception],
         http_request: Callable[..., tuple[int, Mapping[str, str], bytes]] | None = None,
         command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
@@ -46,12 +50,13 @@ class MCPReleaseConformance:
             or not parsed.netloc
             or not parsed.path.endswith("/mcp")
         ):
-            raise ReleaseError("MCP resource URL must be an https URL ending in /mcp")
+            raise error_type("MCP resource URL must be an https URL ending in /mcp")
         self.resource_url = resource_url
         self.token_file = token_file
         self.receipt_root = receipt_root
         self.unit = unit
         self.timeout = timeout
+        self.error_type = error_type
         self.http_request = http_request
         self.command_runner = command_runner
         self._preflight: dict[str, Any] | None = None
@@ -74,16 +79,16 @@ class MCPReleaseConformance:
             headers = dict(exc.headers.items())
             body = exc.read(_MAX_RESPONSE_BYTES + 1)
         except OSError as exc:
-            raise ReleaseError("MCP conformance request failed") from exc
+            raise self.error_type("MCP conformance request failed") from exc
         if status != expected_status:
-            raise ReleaseError(
+            raise self.error_type(
                 f"MCP conformance expected HTTP {expected_status}, received {status}"
             )
         if len(body) > _MAX_RESPONSE_BYTES:
-            raise ReleaseError("MCP conformance response exceeds the bounded limit")
+            raise self.error_type("MCP conformance response exceeds the bounded limit")
         return status, headers, body
 
-    def preflight(self, release: Release) -> None:
+    def preflight(self, release: _ReleaseIdentity) -> None:
         """Prove public discovery before either release pointer is changed."""
         del release
         request = urllib.request.Request(
@@ -103,7 +108,7 @@ class MCPReleaseConformance:
         )
         match = _RESOURCE_METADATA.search(challenge)
         if match is None:
-            raise ReleaseError("MCP authentication challenge omits resource metadata")
+            raise self.error_type("MCP authentication challenge omits resource metadata")
         metadata_url = match.group(1)
         parsed_resource = urlparse(self.resource_url)
         parsed_metadata = urlparse(metadata_url)
@@ -113,19 +118,19 @@ class MCPReleaseConformance:
             or parsed_metadata.username is not None
             or parsed_metadata.password is not None
         ):
-            raise ReleaseError("MCP resource metadata URL is not same-origin https")
+            raise self.error_type("MCP resource metadata URL is not same-origin https")
         metadata_status, _headers, metadata_body = self._request(
             urllib.request.Request(metadata_url, method="GET")
         )
         try:
             metadata = json.loads(metadata_body)
         except (TypeError, ValueError) as exc:
-            raise ReleaseError("MCP resource metadata is not valid JSON") from exc
+            raise self.error_type("MCP resource metadata is not valid JSON") from exc
         if (
             not isinstance(metadata, dict)
             or metadata.get("resource") != self.resource_url
         ):
-            raise ReleaseError("MCP resource metadata identifies a different resource")
+            raise self.error_type("MCP resource metadata identifies a different resource")
         self._preflight = {
             "auth_challenge_status": status,
             "resource_metadata_status": metadata_status,
@@ -137,13 +142,13 @@ class MCPReleaseConformance:
             mode = self.token_file.stat().st_mode & 0o777
             token = self.token_file.read_text(encoding="utf-8").strip()
         except OSError as exc:
-            raise ReleaseError("MCP conformance token file is unavailable") from exc
+            raise self.error_type("MCP conformance token file is unavailable") from exc
         if mode & 0o077:
-            raise ReleaseError(
+            raise self.error_type(
                 "MCP conformance token file must not be group/world accessible"
             )
         if not token or "\n" in token or "\r" in token:
-            raise ReleaseError("MCP conformance token file is invalid")
+            raise self.error_type("MCP conformance token file is invalid")
         return token
 
     def _rpc(
@@ -172,9 +177,9 @@ class MCPReleaseConformance:
         try:
             response = json.loads(body)
         except (TypeError, ValueError) as exc:
-            raise ReleaseError("MCP conformance response is not valid JSON") from exc
+            raise self.error_type("MCP conformance response is not valid JSON") from exc
         if not isinstance(response, dict) or response.get("error") is not None:
-            raise ReleaseError("MCP conformance JSON-RPC request failed")
+            raise self.error_type("MCP conformance JSON-RPC request failed")
         return response
 
     def _unit_evidence(self) -> dict[str, Any]:
@@ -193,16 +198,16 @@ class MCPReleaseConformance:
                 timeout=self.timeout,
             )
         except subprocess.TimeoutExpired as exc:
-            raise ReleaseError("timed out collecting MCP user-unit status") from exc
+            raise self.error_type("timed out collecting MCP user-unit status") from exc
         if status.returncode != 0:
-            raise ReleaseError("cannot collect MCP user-unit status")
+            raise self.error_type("cannot collect MCP user-unit status")
         values: dict[str, str] = {}
         for line in status.stdout.splitlines():
             name, separator, value = line.partition("=")
             if separator and name in {"ActiveState", "SubState", "MainPID"}:
                 values[name] = value
         if values.get("ActiveState") != "active":
-            raise ReleaseError("MCP user unit is not active")
+            raise self.error_type("MCP user unit is not active")
         try:
             journal = self.command_runner(
                 [
@@ -220,11 +225,11 @@ class MCPReleaseConformance:
                 timeout=self.timeout,
             )
         except subprocess.TimeoutExpired as exc:
-            raise ReleaseError(
+            raise self.error_type(
                 "timed out collecting bounded MCP user-unit journal evidence"
             ) from exc
         if journal.returncode != 0:
-            raise ReleaseError("cannot collect bounded MCP user-unit journal evidence")
+            raise self.error_type("cannot collect bounded MCP user-unit journal evidence")
         encoded = journal.stdout.encode("utf-8", "replace")
         return {
             "manager": "user",
@@ -237,10 +242,10 @@ class MCPReleaseConformance:
             },
         }
 
-    def verify_and_write_receipt(self, release: Release) -> Path:
+    def verify_and_write_receipt(self, release: _ReleaseIdentity) -> Path:
         """Run authenticated read-only probes and atomically persist redacted evidence."""
         if self._preflight is None:
-            raise ReleaseError("MCP pre-activation conformance was not completed")
+            raise self.error_type("MCP pre-activation conformance was not completed")
         token = self._token()
         initialize = self._rpc(
             token,
@@ -256,7 +261,7 @@ class MCPReleaseConformance:
             },
         )
         if not isinstance(initialize.get("result"), dict):
-            raise ReleaseError("MCP initialize did not return a result")
+            raise self.error_type("MCP initialize did not return a result")
         self._rpc(
             token,
             {
@@ -283,7 +288,7 @@ class MCPReleaseConformance:
         )
         result = read.get("result")
         if not isinstance(result, dict) or result.get("isError") is True:
-            raise ReleaseError("MCP read-only conformance call failed")
+            raise self.error_type("MCP read-only conformance call failed")
         receipt = {
             "schema": "dish-release-mcp-conformance-v1",
             "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
