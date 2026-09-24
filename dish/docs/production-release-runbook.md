@@ -53,6 +53,10 @@ schema is not a usable fallback after a forward-only migration.
 
 ## Activate
 
+Keep a currently authorized MCP bearer token in
+`/home/marco/.config/dish-service/mcp-conformance-token` with mode `0600`. This credential is read
+only in process; it is never passed on the command line or written to the receipt.
+
 ```sh
 dish/scripts/dish-prod-release activate <exact-40-character-commit>
 ```
@@ -67,6 +71,17 @@ within the bounded readiness interval:
 - its main process working directory is the selected immutable release;
 - private `/health` is ready;
 - `/health.code_release` equals the selected Git commit.
+- the existing public MCP endpoint accepts an authenticated initialize and a read-only
+  `dish_sections` call.
+
+The MCP checks are part of this existing readiness/recovery boundary, not a separate release gate.
+Before the pointer switch, the controller also checks the unauthenticated challenge and exact
+protected-resource metadata. After successful readiness it writes a mode-`0600` machine-readable
+receipt under `/home/marco/.local/state/dish/release-receipts/`. The receipt binds the exact
+immutable backend commit and schema, but truthfully records the MCP executable as an
+`unbound_mutable_checkout`; `dish-mcp.service` does not execute from the selected release. Unit
+evidence is collected through the user manager. Journal content is represented only by a bounded
+line count and digest, so credentials and response bodies are not copied into the receipt.
 
 The bare commands read the same environment split and precedence as the production unit:
 `prod.env` first, then `postgres-prod.env`. For an explicit non-production rehearsal, repeat
@@ -86,9 +101,9 @@ dish/scripts/dish-prod-release rollback
 ```
 
 Rollback targets only the exact `prod-previous` release and runs the same integrity, schema,
-process-path, and health checks as activation. If no compatible previous release is recorded, it
-fails before stopping or restarting production. Never change `prod-current` manually and never
-select a release merely because its directory is old.
+process-path, health, and MCP conformance checks as activation. If no compatible previous release
+is recorded, it fails before stopping or restarting production. Never change `prod-current`
+manually and never select a release merely because its directory is old.
 
 Read pointer state without mutation:
 
