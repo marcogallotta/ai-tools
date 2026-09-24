@@ -26,6 +26,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from dish_service import mcp_server
 from dish_service.native_mcp_server import native_adapter_from_environment
+from tests.support.postgresql.certification import NATIVE_POSTGRESQL_UNAVAILABLE
 from tests.support.postgresql.mcp_process import (
     ROOT,
     DisposableMCPError,
@@ -38,6 +39,7 @@ PUBLIC_ORIGIN = "https://dish-mcp.example.test"
 PUBLIC_BASE = f"{PUBLIC_ORIGIN}/dish"
 PUBLIC_RESOURCE = f"{PUBLIC_BASE}/mcp"
 CADDY_UNAVAILABLE = "public-edge conformance UNAVAILABLE: caddy executable missing"
+CADDY_NATIVE_UNAVAILABLE = f"{CADDY_UNAVAILABLE}; {NATIVE_POSTGRESQL_UNAVAILABLE}"
 GITHUB_CLIENT_SECRET = "stub-github-client-secret"
 
 

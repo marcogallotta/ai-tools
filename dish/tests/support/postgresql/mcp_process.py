@@ -244,6 +244,24 @@ class DisposableMCPProcess:
         self.receipt: TeardownReceipt | None = None
         self.log_path = root / "mcp-process.log"
 
+    def _server_command_line(self) -> list[str]:
+        return [
+            sys.executable,
+            "-m",
+            self.server_module,
+            "serve",
+            "--profile",
+            "test",
+            "--database-name",
+            self.database_name,
+            "--port",
+            str(self.port),
+            f"--token={self.token}",
+            "--owner-id",
+            self.owner_id,
+            *self.server_args,
+        ]
+
     def start(self) -> Self:
         self.root.mkdir(parents=True, exist_ok=True)
         state_dir = self.root / "state"
@@ -271,23 +289,7 @@ class DisposableMCPProcess:
             )
             if self.fastmcp_home is not None:
                 env["FASTMCP_HOME"] = str(self.fastmcp_home)
-            command_line = [
-                sys.executable,
-                "-m",
-                self.server_module,
-                "serve",
-                "--profile",
-                "test",
-                "--database-name",
-                self.database_name,
-                "--port",
-                str(self.port),
-                "--token",
-                self.token,
-                "--owner-id",
-                self.owner_id,
-                *self.server_args,
-            ]
+            command_line = self._server_command_line()
             log = self.log_path.open("w", encoding="utf-8")
             try:
                 self.process = subprocess.Popen(

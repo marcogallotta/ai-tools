@@ -8,20 +8,30 @@ import pytest
 
 from tests.support.postgresql.certification import postgresql_dsn
 from tests.support.postgresql.mcp_public_edge import (
+    CADDY_NATIVE_UNAVAILABLE,
     GITHUB_CLIENT_SECRET,
     PUBLIC_BASE,
     PUBLIC_RESOURCE,
     DisposablePublicEdge,
+    PublicEdgeUnavailable,
 )
+
+
+@pytest.fixture
+def public_edge(tmp_path) -> DisposablePublicEdge:
+    dsn = postgresql_dsn()
+    assert dsn is not None
+    try:
+        return DisposablePublicEdge(base_dsn=dsn, root=tmp_path)
+    except PublicEdgeUnavailable:
+        pytest.skip(CADDY_NATIVE_UNAVAILABLE)
 
 
 @pytest.mark.native_postgresql
 def test_public_oauth_and_caddy_journey_reaches_native_mcp_and_rejects_wrong_owner(
-    tmp_path,
+    public_edge: DisposablePublicEdge,
 ) -> None:
-    dsn = postgresql_dsn()
-    assert dsn is not None
-    edge = DisposablePublicEdge(base_dsn=dsn, root=tmp_path)
+    edge = public_edge
     try:
         edge.start()
         with httpx2.Client(trust_env=False, follow_redirects=False) as client:

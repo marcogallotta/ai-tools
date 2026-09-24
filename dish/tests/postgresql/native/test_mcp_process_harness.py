@@ -4,6 +4,7 @@ import signal
 
 import pytest
 
+from tests.support.postgresql import mcp_process
 from tests.support.postgresql.certification import postgresql_dsn
 from tests.support.postgresql.mcp_process import DisposableMCPProcess
 
@@ -30,4 +31,24 @@ def test_disposable_native_mcp_process_creates_reads_and_tears_down(tmp_path) ->
     assert receipt.descendants_remaining == ()
     assert receipt.database_name.startswith("dish_mcp_")
     assert receipt.database_name.endswith("_test")
+    assert receipt.database_dropped is True
+
+
+@pytest.mark.native_postgresql
+def test_option_like_token_survives_real_child_launch_and_authentication(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(mcp_process.secrets, "token_urlsafe", lambda _size: "-token")
+    harness = DisposableMCPProcess(base_dsn=postgresql_dsn(), root=tmp_path)
+    try:
+        harness.start()
+        created, readback = harness.create_readback()
+    finally:
+        receipt = harness.stop() if harness.process is not None else None
+
+    assert harness.token == "-token"
+    assert created["ok"] is True
+    assert readback["data"]["dish_id"] == created["data"]["dish_id"]
+    assert receipt is not None
+    assert receipt.descendants_remaining == ()
     assert receipt.database_dropped is True
