@@ -40,6 +40,11 @@ Commands are argv arrays, not shell strings. An optional canonical repository-re
 - isolated PostgreSQL 17.10: native PostgreSQL only;
 - maintained Chromium: browser acceptance only.
 
+For native PostgreSQL selections, the event workflow first provisions Caddy 2.10.2 from its
+SHA-256-pinned Linux amd64 release archive. Workflow-level setup also serves older exact candidate
+checkouts whose local composite action predates provisioning. After this lands, submit a fresh
+formal Review event for such candidates; rerunning an older workflow run retains its old workflow.
+
 The action is a composite action, not a hosted job. The PR workflow invokes it from exactly one conditional hosted runner job after planning and selector-map validation. Runtime setup is therefore never allocated for an unselected target. `flake diagnostics` additionally requests the optional dependency-bundle flake environment only when a selected command names it.
 
 ## Execution and evidence
