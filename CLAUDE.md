@@ -39,6 +39,10 @@ reviewable through this repo's own PR flow — not unreachable global config.
 In ai-tools, mutations genuinely part of an assigned task proceed without re-confirming each step;
 tool permission prompts are the gate. Elsewhere, or outside task scope, `~/.claude/CLAUDE.md` governs.
 
+Any substantial work not explicitly assigned requires Marco's clear authorization and sign-off.
+A request for policy or guidance changes authorizes only the requested documentation; it does not
+authorize hooks, enforcement, tooling, runtime, certification, deployment, or scope expansion.
+
 ## Marco-facing workflow policy
 
 Anything shown directly to Marco must explain the workflow state and next action in plain English rather than relying on internal codenames or unexplained process shorthand. Technical IDs may be included when useful, but they do not carry the meaning by themselves.
@@ -102,6 +106,14 @@ This context-efficiency rule never relaxes required startup/context preload, sta
 ### Claude Code and Codex
 
 Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment. For implementation/fix work, use the repository-owned `tools/agent-worktree` lifecycle rather than creating a competing branch/worktree or synchronizing the operator `main` checkout. First creation requires the coordinator-supplied exact base ref + SHA to still match `origin`; resume observes current origin state without automatically resetting, merging, rebasing, or chasing a moved `main`. Enter the returned owned path directly or use `tools/agent-worktree exec --task <gid> -- <agent-command>`.
+
+Never place a Dish worktree, resumable test checkout, continuation artifact, human handoff helper/result,
+or any other reboot-sensitive work under `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, or another volatile
+runtime directory. Use a purpose-specific persistent path under `~/.local/share/dish/` for working
+bytes and `~/.local/state/dish/` for state/evidence. Volatile temporary storage is permitted only for
+scratch whose loss before the next command cannot affect task continuation, diagnosis, or evidence.
+Raw `git worktree add` targeting volatile storage is prohibited by policy; use `tools/agent-worktree` for
+Implementation or a clearly named persistent Dish-owned audit/test directory for read-only work.
 
 Before changing repository-owned agent tooling, lifecycle tooling, development-workflow automation, or tests of those surfaces to unblock a product/PR task, local Claude Code/Codex agents need Marco's explicit authorization unless the assigned scope already includes that tooling change. Authorization to finish or merge the original task, work around a tool for a named PR, or log friction does not authorize repairing the tool. When tooling causes friction, log its concrete original root cause to Development Workflow Friction and continue through the smallest supported in-scope route; do not investigate or repair the tooling inside the original task. Ask Marco only when no supported route remains, in one clear plain-language question naming the needed tool change and consequence.
 
