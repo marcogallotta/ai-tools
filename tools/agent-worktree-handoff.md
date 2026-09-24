@@ -8,12 +8,21 @@ For an ordinary blocker, use exactly two lines: `Blocker:` naming one concrete f
 
 If the remaining operation genuinely requires Marco's sudo privileges or another human-only local capability after authorized fallbacks are exhausted, use this contract for PostgreSQL bootstrap, package/service setup, and equivalent privileged local work:
 
-1. Write a complete helper script to a concrete bounded path under `/tmp`, for example `/tmp/dish-pg-bootstrap.sh`.
+1. Write a complete helper script to a concrete bounded persistent path under
+   `~/.local/state/dish/handoffs/<task-or-purpose>/`, for example
+   `~/.local/state/dish/handoffs/pg-bootstrap/dish-pg-bootstrap.sh`. Create that directory owner-only.
 2. Put every required command in the helper. Never hand Marco an ellipsis, placeholder, partial heredoc, or shell fragment he must complete.
 3. Make shell helpers fail fast with `set -euo pipefail`, bounded to the named target, and idempotent where practical. Add an explicit refusal check when an accidental broader or remote target would be unsafe.
-4. Persist every result needed for later diagnosis or verification to one concrete predictable file, preferably structured JSON when useful; for example `/tmp/dish-pg-bootstrap.json`. Persist failure diagnostics as well as success evidence. Do not ask Marco to copy terminal output when the agent can consume that file.
+4. Persist every result needed for later diagnosis or verification to one concrete predictable file
+   in the same persistent handoff directory, preferably structured JSON when useful; for example
+   `~/.local/state/dish/handoffs/pg-bootstrap/dish-pg-bootstrap.json`.
+   Persist failure diagnostics as well as success evidence. Do not ask Marco to copy terminal output when the agent can consume that
+   file. Never use `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, or another reboot-volatile location for a
+   helper/result that must survive a human pause, agent handoff, restart, or reboot.
 5. Before the command, explain in one short sentence what the helper reads or changes and why its scope is bounded.
-6. Give exactly one runnable command, for example `sudo bash /tmp/dish-pg-bootstrap.sh`, then state the exact output-file path and one concise success signal.
+6. Give exactly one runnable command, for example
+   `sudo bash ~/.local/state/dish/handoffs/pg-bootstrap/dish-pg-bootstrap.sh`, then state the exact
+   output-file path and one concise success signal.
 7. After Marco reports completion, read the persisted output file when host/tooling permits and continue without re-requesting the same authorization or re-explaining prior context.
 
 Never send the privileged handoff before the complete helper and result path exist.
