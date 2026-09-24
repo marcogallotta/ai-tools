@@ -112,7 +112,7 @@ or any other reboot-sensitive work under `/tmp`, `/var/tmp`, `/run`, `/dev/shm`,
 runtime directory. Use a purpose-specific persistent path under `~/.local/share/dish/` for working
 bytes and `~/.local/state/dish/` for state/evidence. Volatile temporary storage is permitted only for
 scratch whose loss before the next command cannot affect task continuation, diagnosis, or evidence.
-Raw `git worktree add` targeting volatile storage is a guarded error; use `tools/agent-worktree` for
+Raw `git worktree add` targeting volatile storage is prohibited by policy; use `tools/agent-worktree` for
 Implementation or a clearly named persistent Dish-owned audit/test directory for read-only work.
 
 Before changing repository-owned agent tooling, lifecycle tooling, development-workflow automation, or tests of those surfaces to unblock a product/PR task, local Claude Code/Codex agents need Marco's explicit authorization unless the assigned scope already includes that tooling change. Authorization to finish or merge the original task, work around a tool for a named PR, or log friction does not authorize repairing the tool. When tooling causes friction, log its concrete original root cause to Development Workflow Friction and continue through the smallest supported in-scope route; do not investigate or repair the tooling inside the original task. Ask Marco only when no supported route remains, in one clear plain-language question naming the needed tool change and consequence.
