@@ -261,6 +261,17 @@ class PostgresRuntimeService:
 
         return validate_postgres_action_request(command, request)
 
+    @staticmethod
+    def action_error_envelope(
+        command: str, error: DishRuleError, *, http_status: int
+    ) -> dict[str, Any]:
+        """Project pre-dispatch Action failures into the public PostgreSQL shape."""
+
+        payload = error_envelope(command, error)
+        payload["http_status"] = http_status
+        payload["data"]["request_replayed"] = False
+        return payload
+
     def _identity(self) -> dict[str, Any]:
         try:
             with session_scope(self._session_maker) as session:
@@ -846,9 +857,14 @@ class PostgresRuntimeService:
             data = dict(payload.pop("data"))
             data["request_replayed"] = payload.pop("request_replayed")
             payload["data"] = data
-            if principal.owner_id == self.config.action_client_id:
+            if principal.owner_id == self.config.action_client_id or (
+                principal_class == "admin" and command == "archive"
+            ):
                 # Guidance is attached before JSON encoding, so normalize the
                 # immutable tuple fields to their public JSON array shape now.
+                # The private archive CLI consumes the same canonical command
+                # contract even though other native private clients retain the
+                # transitional compact PostgreSQL response family.
                 payload["allowed_actions"] = list(payload["allowed_actions"])
                 payload["errors"] = list(payload["errors"])
             else:

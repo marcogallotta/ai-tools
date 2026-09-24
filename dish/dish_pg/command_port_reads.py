@@ -25,7 +25,7 @@ from .document_authority import (
     CanonicalDocumentError,
     parse_canonical_document,
 )
-from .read_model import ReadModelError
+from .read_model import InvalidCursor, ReadModelError
 from .planner import AuthorityFence, AuthoritativeSnapshot
 from .repositories import (
     CoreAuthorityError,
@@ -66,12 +66,20 @@ class PostgresCommandReadMixin:
                     http_status=404,
                     data={"section_reference": str(reference)},
                 ) from exc
-            page = self.reads.section_tasks(
-                section_reference=str(reference),
-                cursor=call.arguments.get("cursor"),
-                page_size=int(call.arguments.get("page_size", 50)),
-                status=str(call.arguments.get("status", "incomplete")),
-            )
+            try:
+                page = self.reads.section_tasks(
+                    section_reference=str(reference),
+                    cursor=call.arguments.get("cursor"),
+                    page_size=int(call.arguments.get("page_size", 50)),
+                    status=str(call.arguments.get("status", "incomplete")),
+                )
+            except InvalidCursor as exc:
+                raise CommandRuleError(
+                    "INVALID_ARGUMENT",
+                    str(exc),
+                    http_status=400,
+                    data={"message": str(exc), "field": "cursor"},
+                ) from exc
             data = {
                 "tasks": [
                     asdict(item)

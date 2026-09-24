@@ -25,7 +25,6 @@ from dish_pg.planner import (
     plan_command,
 )
 from dish_pg.protocol import AuthenticationError, PostgresProtocolService, ScopedBearerAuthenticator
-from dish_pg.read_model import InvalidCursor
 from dish_pg.repositories import CatalogRepository, DishRepository, ScalarMutationSource
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import WorkflowAuthorityService
@@ -1432,18 +1431,24 @@ def test_authoritative_sections_and_registry_bound_pagination(workflow_db) -> No
             )
         )
         assert len(second.data["tasks"]) == 1
-        with pytest.raises(InvalidCursor):
-            port.execute(
-                _call(
-                    "section-tasks",
-                    run_id=_next(ids),
-                    arguments={
-                        "section_gid": "1217084805070731",
-                        "page_size": 3,
-                        "cursor": first.data["next_cursor"],
-                    },
-                )
+        invalid = port.execute(
+            _call(
+                "section-tasks",
+                run_id=_next(ids),
+                arguments={
+                    "section_gid": "1217084805070731",
+                    "page_size": 3,
+                    "cursor": first.data["next_cursor"],
+                },
             )
+        )
+        assert invalid.ok is False
+        assert invalid.code == "INVALID_ARGUMENT"
+        assert invalid.http_status == 400
+        assert invalid.data == {
+            "message": "cursor is stale or belongs to another list query",
+            "field": "cursor",
+        }
 
 
 def test_canonical_section_id_lists_tasks_without_section_gid(workflow_db) -> None:

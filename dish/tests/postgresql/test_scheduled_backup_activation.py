@@ -12,19 +12,15 @@ DEFAULT_LOCAL_ROOT = "/home/marco/.local/state/dish/prod/postgresql-backups"
 def test_first_activation_prepares_missing_default_local_root_before_backup() -> None:
     service = (SYSTEMD / "dish-postgres-backup.service").read_text(encoding="utf-8")
 
-    prepare = (
-        "ExecStartPre=+/usr/bin/install -d -m 0700 -o marco -g marco "
-        + DEFAULT_LOCAL_ROOT
+    # The user-manager unit no longer bootstraps the default writable root with a
+    # privileged ExecStartPre install; systemd's own StateDirectory= creates it
+    # (mode 0700, owned by the running user-manager user) before ExecStart runs.
+    relative_state_directory = DEFAULT_LOCAL_ROOT.removeprefix(
+        "/home/marco/.local/state/"
     )
-    start = (
-        "ExecStart=/home/marco/ai-tools/dish/.venv/bin/python "
-        "scripts/dish-pg-scheduled-backup run"
-    )
-
-    assert prepare in service
-    assert f"ReadWritePaths=-{DEFAULT_LOCAL_ROOT}" in service
+    assert f"StateDirectory={relative_state_directory}" in service
+    assert "StateDirectoryMode=0700" in service
     assert "ProtectHome=read-only" in service
-    assert service.index(prepare) < service.index(start)
 
 
 def test_prestart_directory_creation_handles_missing_parents_with_mode_0700(
