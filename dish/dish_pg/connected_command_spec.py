@@ -220,7 +220,6 @@ def result_envelope_schema(*, command: str | None = None) -> dict[str, Any]:
                 "properties": {
                     "data": {
                         "type": "object",
-                        "required": ["dish_id"],
                         "properties": {
                             "dish_id": deepcopy(CANONICAL_DISH_UUID_SCHEMA)
                         },
@@ -228,6 +227,7 @@ def result_envelope_schema(*, command: str | None = None) -> dict[str, Any]:
                     }
                 },
             },
+            {"if": {"properties": {"ok": {"const": True}}}, "then": {"properties": {"data": {"required": ["dish_id"]}}}},
         ],
         "type": "object",
     }

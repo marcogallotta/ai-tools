@@ -218,6 +218,23 @@ jobs:
           name: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}
           path: .test-artifacts/pr-certification
 
+      # Keep setup in the event workflow so older exact candidate checkouts benefit.
+      - name: Provision pinned Caddy for native public-edge conformance
+        if: contains(fromJSON(needs.plan.outputs.selected_groups), 'native-postgresql')
+        shell: bash
+        run: |
+          set -euo pipefail
+          caddy_dir="$RUNNER_TEMP/caddy-2.10.2"
+          mkdir -p "$caddy_dir"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_linux_amd64.tar.gz \
+            --output "$caddy_dir/caddy.tar.gz"
+          echo "5c218bc34c9197369263da7e9317a83acdbd80ef45d94dca5eff76e727c67cdd  $caddy_dir/caddy.tar.gz" | sha256sum --check --strict
+          tar -xzf "$caddy_dir/caddy.tar.gz" -C "$caddy_dir" caddy
+          test -x "$caddy_dir/caddy"
+          "$caddy_dir/caddy" version
+          echo "$caddy_dir" >> "$GITHUB_PATH"
+
       - name: Execute only planner-selected targets
         id: certification
         uses: ./.github/actions/run-certification
