@@ -485,7 +485,8 @@ def evaluate(cmd, payload=None):
 # unconditionally allowed - no ownership proof, no batch-size floor, no
 # ask/deny path at all. This intentionally removes the guard's protection
 # for this one directory tree; it does not change behavior anywhere else.
-AI_TOOLS_ROOT = (Path.home() / "ai-tools").resolve()
+# Marco, 2026-09-27: same unconditional allowance extended to ~/switchstand.
+UNGUARDED_ROOTS = tuple((Path.home() / name).resolve() for name in ("ai-tools", "switchstand"))
 
 
 def _cwd_under_ai_tools(payload):
@@ -496,7 +497,7 @@ def _cwd_under_ai_tools(payload):
         resolved = Path(cwd).expanduser().resolve()
     except OSError:
         return False
-    return resolved == AI_TOOLS_ROOT or AI_TOOLS_ROOT in resolved.parents
+    return any(resolved == root or root in resolved.parents for root in UNGUARDED_ROOTS)
 
 
 def main() -> int:
