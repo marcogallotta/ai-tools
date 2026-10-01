@@ -15,12 +15,35 @@ def test_dish_role_index_is_the_loud_first_action_before_generic_skills_or_tools
     for path in (CLAUDE, AGENTS):
         text = path.read_text()
         prefix = "\n".join(text.splitlines()[:12])
-        assert "DISH REQUESTS: READ THE ROLE INDEX BEFORE ANYTHING ELSE" in prefix
-        assert "FIRST Dish action" in prefix
-        assert "dish/docs/agents/index.md" in prefix
-        assert "/code-review" in prefix
-        assert "role routing happens first" in prefix
-        assert "mapped standing contract" in prefix
+        assert prefix.startswith("# Dish entry selector\n")
+        assert "For **every Dish-related request**" in prefix
+        assert "the first Dish action—before a skill, tool, subagent, shell" in prefix
+        assert "command, or another Dish file—is to apply `COMMON`" in prefix
+        assert "select exactly one process mode" in prefix
+
+        selector = text.split("\n## Git", 1)[0]
+        common, modes = selector.split("- `SWITCHSTAND_MANAGED_DISH`", 1)
+        managed, modes = modes.split("- `LEGACY_DISH`", 1)
+        legacy, unknown = modes.split("- `UNKNOWN`", 1)
+        assert "`COMMON` always applies: read `README.md`" in common
+        assert "dish/docs/architecture/index.md" in common
+        assert "technical, product, data, testing, deployment, rollback, recovery, and safety truth" in common
+        assert "requires explicit current authority" in managed
+        assert "exact Switchstand `WorkId`" in managed
+        assert "current assignment, or attributable direct Marco instruction" in managed
+        assert "must say the work is\n  Switchstand-managed" in managed
+        assert "identify or resolve the exact Dish source work" in managed
+        assert "dish/docs/switchstand-managed.md" in managed
+        assert "Switchstand governs\n  process; do not enter the legacy role index first" in managed
+        assert "unchanged default when no Switchstand-managed provenance exists" in legacy
+        assert "dish/docs/agents/index.md" in legacy
+        assert "select one standing role, and read its\n  mapped contract before any other Dish action" in legacy
+        assert "claimed Switchstand provenance is partial, stale, or conflicting" in unknown
+        assert "Read only\n  enough current governing work to resolve this mode" in unknown
+        assert "perform no Dish process or mutation meanwhile" in unknown
+        assert "Project membership, Switchstand tool availability, repository path, current directory, and host\nnever select a mode" in unknown
+        assert "Do not route from generic wording such as `review`, `fix`, or `implement`" in unknown
+        assert "rules apply only in\n`LEGACY_DISH`" in unknown
 
 
 def test_role_index_routes_every_role_through_one_shared_operator_contract():
