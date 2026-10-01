@@ -61,6 +61,7 @@ QUERY_COMMAND = "query"
 COOKED_UPDATES_COMMAND = "cooked-updates"
 COOKED_COMMAND = "cooked"
 ARCHIVE_COMMAND = "archive"
+UNARCHIVE_COMMAND = "unarchive"
 RECORD_COOK_LOG_COMMAND = "record-cook-log"
 COOK_LOGS_COMMAND = "cook-logs"
 SEARCH_PAGE_SIZE_DEFAULT = 50
@@ -291,6 +292,21 @@ def build_parser() -> JsonArgumentParser:
         "--yes", dest="confirmed", action="store_true",
         help="confirm archive without a separate confirmation round trip",
     )
+
+    unarchive = subparsers.add_parser(
+        UNARCHIVE_COMMAND,
+        help="restore one archived Dish to its Section",
+        description=(
+            "restore one archived Dish to its Section; runs from before the archive stay "
+            "revoked, so further work on it needs a new run"
+        ),
+    )
+    unarchive.add_argument("dish_id")
+    unarchive.add_argument(
+        "--agent", required=True, choices=_canonical_enum_choices(READ_COMMAND, "agent")
+    )
+    unarchive.add_argument("--run-id")
+    unarchive.add_argument("--request-id")
 
     inspect = subparsers.add_parser(
         INSPECT_COMMAND.name, help="inspect a prior tool operation's recorded state"
@@ -700,7 +716,9 @@ def main(
             command = parsed.pop("command")
             parsed.pop("profile", None)
             if (
-                command in {"start", "approve", "reject", "apply-proposal", "cooked", "archive"}
+                command in {
+                    "start", "approve", "reject", "apply-proposal", "cooked", "archive", "unarchive",
+                }
                 and isinstance(app, DishServiceClient)
             ):
                 argument_run_id = parsed.pop("run_id", None)

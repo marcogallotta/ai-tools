@@ -50,6 +50,7 @@ ADMIN_COMMAND_SPECS = {
         _spec("review-reject", operation_scoped=True),
         _spec("inspect", presentation="primary", lease_free=True),
         _spec("archive", presentation="primary"),
+        _spec("unarchive", presentation="primary"),
         _spec("kill", presentation="primary", lease_free=True),
         _spec("kill-all", presentation="primary", lease_free=True),
         _spec("kill-all-expired", presentation="primary", lease_free=True),

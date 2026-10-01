@@ -180,6 +180,9 @@ COMMAND_DEFINITIONS = {
         CommandDefinition(
             "archive", "L", "agent", True, True, False, admin_exposed=True
         ),
+        CommandDefinition(
+            "unarchive", "L", "agent", True, True, False, admin_exposed=True
+        ),
         CommandDefinition("reopen-planning", "L", "admin", True, True, False),
         CommandDefinition("reopen", "R", "admin", True, True, True, workflow_action="reopen"),
         CommandDefinition("supply-evidence", "R", "admin", True, True, True, workflow_action="supply-evidence"),

@@ -16,7 +16,7 @@ from .command_spec import REPLAY_SAFE_COMMANDS
 _AMBIGUOUS_RESPONSE_REPLAY_COMMANDS = frozenset(
     {"inspect", "apply-proposal", "safe-reclaim"}
 )
-_POSTGRESQL_CLIENT_MUTATIONS = frozenset({"cooked", "record-cook-log"})
+_POSTGRESQL_CLIENT_MUTATIONS = frozenset({"cooked", "record-cook-log", "unarchive"})
 
 ResultRequest = Callable[..., Any]
 JSONRequest = Callable[..., Any]

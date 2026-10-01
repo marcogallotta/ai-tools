@@ -232,6 +232,7 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
     expected_commands = (
         "inspect",
         "archive",
+        "unarchive",
         "queue",
         "audit",
         "active",

@@ -962,7 +962,7 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
     assert "/v1/action/cooked" in openapi["paths"]
 
 
-def test_postgresql_test_admin_allowlist_exposes_only_queue_and_archive(
+def test_postgresql_test_admin_allowlist_exposes_only_queue_archive_and_unarchive(
     workflow_db, tmp_path: Path
 ) -> None:
     factory, _ids, _context, _task_id = workflow_db
@@ -970,6 +970,7 @@ def test_postgresql_test_admin_allowlist_exposes_only_queue_and_archive(
     assert service._profile == "test"
     assert service.supports_http_route("admin", "queue") is True
     assert service.supports_http_route("admin", "archive") is True
+    assert service.supports_http_route("admin", "unarchive") is True
     assert service.supports_http_route("admin", "inspect") is False
     assert service.supports_http_route("admin", "recover") is False
     assert service.supports_http_route("admin", "recover-lease") is False
@@ -977,7 +978,7 @@ def test_postgresql_test_admin_allowlist_exposes_only_queue_and_archive(
     assert service.supports_http_route("admin-lease-expiry", "expire-lease") is False
 
 
-def test_postgresql_test_admin_queue_and_archive_through_cli(
+def test_postgresql_test_admin_queue_archive_and_unarchive_through_cli(
     workflow_db, tmp_path: Path, capsys
 ) -> None:
     factory, ids, context, task_id = workflow_db
@@ -1011,6 +1012,7 @@ def test_postgresql_test_admin_queue_and_archive_through_cli(
             archived = invoke(
                 "--profile", "test", "--json", "archive", str(task_id), "--yes"
             )
+            unarchived = invoke("--profile", "test", "--json", "unarchive", str(task_id))
             hidden_status, hidden = _post_json(
                 f"{base}/v1/admin/inspect",
                 token="postgres-admin-token",
@@ -1033,6 +1035,11 @@ def test_postgresql_test_admin_queue_and_archive_through_cli(
     assert archived["errors"] == []
     assert archived["data"]["completion_state"] == "archived"
     assert archived["data"]["system_reason"] == "admin_archive"
+    assert unarchived["ok"] is True
+    assert unarchived["command"] == "unarchive"
+    assert unarchived["data"]["completion_state"] == "active"
+    assert unarchived["data"]["system_reason"] == "admin_unarchive"
+    assert unarchived["data"]["fresh_run_required"] is True
     assert hidden_status == 404
     assert hidden == {"ok": False, "error": "not_found"}
 

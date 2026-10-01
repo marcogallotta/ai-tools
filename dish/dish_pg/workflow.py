@@ -49,6 +49,12 @@ class StaleAuthorityError(WorkflowAuthorityError):
     """A run, fence, claim, or generation is no longer current."""
 
 
+UNARCHIVE_FRESH_RUN_GUIDANCE = (
+    "Runs from before this Dish was archived are permanently revoked for it; "
+    "use a new client.run_id for further work on this Dish."
+)
+
+
 class ContentionLost(WorkflowAuthorityError):
     """Another compatible transaction won the exclusive authority race."""
 
@@ -1055,7 +1061,10 @@ class WorkflowAuthorityRepository:
             )
         )
         if revoked is not None:
-            raise StaleAuthorityError("service run is revoked for this archived task")
+            raise StaleAuthorityError(
+                "service run is revoked for this archived task. "
+                + UNARCHIVE_FRESH_RUN_GUIDANCE
+            )
 
     def lock_task_currentness(
         self, *, generation_id: uuid.UUID, task_id: uuid.UUID

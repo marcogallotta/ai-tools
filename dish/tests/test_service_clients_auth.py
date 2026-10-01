@@ -181,6 +181,11 @@ def test_renew_lease_clients_accept_postgres_command_result(
             "/v1/admin/archive",
         ),
         (
+            lambda client: client.execute("unarchive", dish_id=str(uuid.uuid4())),
+            "unarchive",
+            "/v1/admin/unarchive",
+        ),
+        (
             lambda client: client.recover_lease(
                 str(uuid.uuid4()), reason="expired worker"
             ),
@@ -214,7 +219,7 @@ def test_retained_admin_commands_accept_postgres_command_result(
 
 @pytest.mark.parametrize(
     ("command", "expects_request_id"),
-    [("queue", False), ("archive", True)],
+    [("queue", False), ("archive", True), ("unarchive", True)],
 )
 def test_admin_client_request_id_is_optional_only_for_queue(
     monkeypatch, command, expects_request_id
@@ -475,3 +480,17 @@ def test_private_admin_http_and_cli_cover_authorization_recovery_and_migration(t
     assert row["field_name"] == "Locks"
     assert json.loads(row["before_json"]) == "Keep crisp"
     assert json.loads(row["after_json"]) == "Keep very crisp"
+
+
+def test_agent_unarchive_cli_parses_and_mints_request_id() -> None:
+    from dish_service._client_ambiguity import request_id_for_command
+    from dish_service.cli import build_parser
+
+    dish_id = str(uuid.uuid4())
+    parsed = vars(build_parser().parse_args(["unarchive", dish_id, "--agent", "claude"]))
+
+    assert parsed["command"] == "unarchive"
+    assert parsed["dish_id"] == dish_id
+    assert parsed["agent"] == "claude"
+    assert "yes" not in parsed
+    assert request_id_for_command("unarchive", None) is not None

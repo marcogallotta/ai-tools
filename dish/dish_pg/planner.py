@@ -190,10 +190,18 @@ def plan_command(
             fence=snapshot.fence,
             audit_event_type="task_missing",
         )
+    if intent.command_name == "unarchive" and not snapshot.archived:
+        return CommandPlan(
+            definition=definition,
+            legal=False,
+            result_code="TASK_NOT_ARCHIVED",
+            fence=snapshot.fence,
+            audit_event_type="unarchive_task_not_archived",
+        )
     if (
         snapshot.archived
         and definition.profile != "Q"
-        and intent.command_name != "record-cook-log"
+        and intent.command_name not in {"record-cook-log", "unarchive"}
     ):
         return CommandPlan(
             definition=definition,

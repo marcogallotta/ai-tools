@@ -82,6 +82,8 @@ class ScalarDishMutation:
         ] | None = None
         self._completion: tuple[bool, str] | None = None
         self._archived_at: datetime | None = None
+        # None cannot mean "clear archived_at": it already means nothing is staged.
+        self._unarchive = False
         self._finalized = False
 
         self.state = session.scalar(
@@ -223,6 +225,13 @@ class ScalarDishMutation:
             raise CoreAuthorityError("Dish is already archived")
         self._archived_at = self.source.occurred_at
 
+    def unarchive(self) -> None:
+        if self._archived_at is not None or self._unarchive:
+            raise CoreAuthorityError("archive state is already staged")
+        if self.state.archived_at is None:
+            raise CoreAuthorityError("Dish is not archived")
+        self._unarchive = True
+
     def finalize(self) -> ScalarDishMutationResult:
         if self._finalized:
             raise CoreAuthorityError("scalar mutation was already finalized")
@@ -233,7 +242,7 @@ class ScalarDishMutation:
                 ("content", self._content),
                 ("placement", self._placement),
                 ("completion", self._completion),
-                ("archive", self._archived_at),
+                ("archive", self._archived_at if not self._unarchive else True),
             )
             if staged is not None
         )
@@ -280,6 +289,8 @@ class ScalarDishMutation:
             )
         elif self._archived_at is not None:
             values["archived_at"] = self._archived_at
+        if self._unarchive:
+            values["archived_at"] = None
         currentness = [
             models.DishState.generation_id == self.generation_id,
             models.DishState.task_id == self.task_id,
