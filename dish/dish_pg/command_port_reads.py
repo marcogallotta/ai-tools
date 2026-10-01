@@ -246,6 +246,9 @@ class PostgresCommandReadMixin:
                 "content_version_id": str(view.content_version_id),
                 "section_id": str(view.section_id),
                 "operation_id": str(view.operation_id) if view.operation_id else None,
+                "archived_at": (
+                    view.archived_at.isoformat() if view.archived_at is not None else None
+                ),
                 "projection_freshness": freshness,
                 "identity_binding": {
                     "dish_id": str(view.task_id),

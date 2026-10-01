@@ -44,6 +44,8 @@ Principal = Literal["reader", "agent", "verification", "admin", "historical"]
 SEARCH_COMMAND = "search"
 QUERY_COMMAND = "query"
 COOKED_COMMAND = "cooked"
+ARCHIVE_COMMAND = "archive"
+UNARCHIVE_COMMAND = "unarchive"
 COOKED_UPDATES_COMMAND = "cooked-updates"
 RECORD_COOK_LOG_COMMAND = "record-cook-log"
 COOK_LOGS_COMMAND = "cook-logs"
@@ -178,10 +180,32 @@ COMMAND_DEFINITIONS = {
             description="Mark one active resting Dish cooked through PostgreSQL authority.",
         ),
         CommandDefinition(
-            "archive", "L", "agent", True, True, False, admin_exposed=True
+            ARCHIVE_COMMAND,
+            "L",
+            "agent",
+            True,
+            True,
+            False,
+            action_exposed=True,
+            description=(
+                "Archive one active Dish: closes its open workflow work and revokes prior runs; "
+                "history preserved; reversible with unarchive."
+            ),
+            admin_exposed=True,
         ),
         CommandDefinition(
-            "unarchive", "L", "agent", True, True, False, admin_exposed=True
+            UNARCHIVE_COMMAND,
+            "L",
+            "agent",
+            True,
+            True,
+            False,
+            action_exposed=True,
+            description=(
+                "Restore one archived Dish to its section; start a new client.run_id for further "
+                "work on it."
+            ),
+            admin_exposed=True,
         ),
         CommandDefinition("reopen-planning", "L", "admin", True, True, False),
         CommandDefinition("reopen", "R", "admin", True, True, True, workflow_action="reopen"),
@@ -216,7 +240,7 @@ RETIRED_COMMANDS = tuple(
     name for name, definition in COMMAND_DEFINITIONS.items() if not definition.retained
 )
 
-# Every previously connected command remains retained. Search and Cooked are
+# Every previously connected command remains retained. The added commands are
 # intentional PostgreSQL-native additions for no-Asana operation.
 CONNECTED_COMMAND_DISPOSITIONS: dict[str, str] = {
     command: "retained" for command in ACTION_COMMANDS
@@ -228,6 +252,8 @@ POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (
     COOKED_UPDATES_COMMAND,
     COOK_LOGS_COMMAND,
     RECORD_COOK_LOG_COMMAND,
+    ARCHIVE_COMMAND,
+    UNARCHIVE_COMMAND,
 )
 POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = ()
 # Connected on the legacy SQLite/Asana Action surface but not yet ported to the
@@ -247,6 +273,10 @@ if set(ACTION_COMMANDS) != set(_PARITY_EXPECTED_CONNECTED_COMMANDS) | set(
     POSTGRESQL_ACTION_ADDED_COMMANDS
 ):
     raise ValueError("PostgreSQL connected-command inventory drifted")
+
+# Agent Dish-lifecycle mutations share one {dish_id, agent} argument contract.
+# No confirmation argument: confirmation is a private-admin transport concern.
+_DISH_LIFECYCLE_COMMANDS = frozenset({COOKED_COMMAND, ARCHIVE_COMMAND, UNARCHIVE_COMMAND})
 
 
 def _add_canonical_identity_alias(
@@ -473,7 +503,7 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
         return _search_argument_schema()
     if command in {QUERY_COMMAND, COOKED_UPDATES_COMMAND}:
         return _cooked_updates_argument_schema()
-    if command == COOKED_COMMAND:
+    if command in _DISH_LIFECYCLE_COMMANDS:
         return {
             "type": "object",
             "required": ["dish_id", "agent"],
@@ -619,15 +649,16 @@ def _validate_search_action_request(
     return client, normalize_postgres_search_arguments(raw_arguments)
 
 
-def _validate_cooked_action_request(
+def _validate_dish_lifecycle_action_request(
+    command: str,
     request: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     raw_arguments = request.get("arguments") if isinstance(request, Mapping) else None
     adapted = dict(request) if isinstance(request, Mapping) else request
     if isinstance(adapted, dict):
-        # Reuse the shared mutation envelope validator without adding Cooked to
-        # the legacy SQLite/Asana Action inventory.
-        adapted["arguments"] = {"agent": "gpt", "title": "Cooked validation"}
+        # Reuse the shared mutation envelope validator without adding these
+        # commands to the legacy SQLite/Asana Action inventory.
+        adapted["arguments"] = {"agent": "gpt", "title": f"{command} validation"}
     client, _ = validate_legacy_action_request(CREATE_COMMAND.name, adapted)
     if not isinstance(raw_arguments, Mapping):
         raise DishRuleError(
@@ -639,7 +670,7 @@ def _validate_cooked_action_request(
     if unknown:
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            "cooked arguments contain unsupported fields",
+            f"{command} arguments contain unsupported fields",
             rule="argument_field_forbidden",
             details={"fields": unknown},
         )
@@ -715,8 +746,8 @@ def validate_postgres_action_request(
         return _validate_search_action_request(request)
     if command in {QUERY_COMMAND, COOKED_UPDATES_COMMAND}:
         return _validate_cooked_updates_action_request(request)
-    if command == COOKED_COMMAND:
-        return _validate_cooked_action_request(request)
+    if command in _DISH_LIFECYCLE_COMMANDS:
+        return _validate_dish_lifecycle_action_request(command, request)
     if command in {RECORD_COOK_LOG_COMMAND, COOK_LOGS_COMMAND}:
         return _validate_cook_log_action_request(command, request)
     if not isinstance(request, Mapping):

@@ -73,6 +73,8 @@ SERVER_INSTRUCTIONS = (
     "lease, proposal, recovery, or review identifiers. Independent Verification uses a genuinely "
     "different run from the run that authored or materially edited the candidate. An ok:false Dish "
     "envelope is an authoritative normal tool result, not an MCP transport failure. "
+    "Archive a Dish only when Marco explicitly asks; after unarchive, use a fresh client.run_id "
+    "for any further work on that Dish. "
     "Use dish_honest_read to read current Honest Pantry files; it updates main first and serves "
     "nothing if that update fails. Start with current CLAUDE.md and follow its routed stage "
     "protocol. Dish Planning must read dish-planning-protocol.md, planning/index.md, "
