@@ -297,7 +297,15 @@ def assert_committed_command_effects(
     if scalar_receipt is not None and scalar_receipt.completion_changed:
         observed.add("set_completion")
     if scalar_receipt is not None and scalar_receipt.archive_changed:
-        observed.add("archive_task")
+        # Column select reads the committed-in-transaction row; the scalar
+        # writer updates with synchronize_session=False.
+        archived_at = session.scalar(
+            select(models.DishState.archived_at).where(
+                models.DishState.generation_id == scalar_receipt.generation_id,
+                models.DishState.task_id == scalar_receipt.task_id,
+            )
+        )
+        observed.add("unarchive_task" if archived_at is None else "archive_task")
     if scalar_receipt is not None and scalar_receipt.content_changed:
         observed.add(
             "activate_corrected_content_version"

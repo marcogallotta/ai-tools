@@ -115,7 +115,8 @@ evidence, migrate, and lease recovery/expiry) are reachable only through the pri
 `/v1/admin/<command>` and the admin lease routes when the runtime is bound to the PROD profile; the
 agent/action surfaces expose only retained non-admin commands, and retired/non-retained historical
 commands (backup-create, backup-restore) stay unroutable everywhere. A TEST-profile runtime exposes
-only `queue` and `archive` through that private bearer so their operator paths can be qualified;
+only `queue`, `archive`, and `unarchive` through that private bearer so their operator paths can be
+qualified;
 every recovery, destructive-maintenance, lease-admin, and other admin route remains `not_found`.
 The private lease recovery (`/v1/admin/leases/<operation_id>/recover`)
 and expiry (`/v1/admin/leases/expire`) routes bridge onto canonical `recover-lease`/`expire-lease`
@@ -132,7 +133,7 @@ contract.
 
 `dish-admin` intentionally has a small normal operator surface even though older recovery and
 maintenance commands remain callable for exact handoffs and scripting. Root help presents the normal
-entry points in operator order: `inspect`, `archive`, `queue`, `audit`, `active`, `kill`,
+entry points in operator order: `inspect`, `archive`, `unarchive`, `queue`, `audit`, `active`, `kill`,
 `kill-all-expired`, then `kill-all`. `issues`, `attention`, `review-queue`, and `active-leases`
 remain hidden compatibility/detail aliases; low-level recovery, migration, backup, governance, and
 direct review mutation commands remain callable escape hatches. Hiding a command from root help does
@@ -182,9 +183,18 @@ holds/review requirements/challenges/abandonment attempts are closed, pending/cl
 are retired, safe undispatched projection intents are superseded, and every run committed on the
 pre-archive side receives a task-scoped revocation. Exact history remains readable. Dispatched,
 uncertain, or blocked external-effect work fails archive closed rather than reporting partial success.
-Every later mutating command is rejected while archived; after any future explicit unarchive, the
-pre-archive run tombstones and archive-version grant barrier keep old principals permanently stale.
-Private admin inspection remains read-only and available. `cooked` remains resting-only.
+Every later mutating command except `unarchive` is rejected while archived. Private admin inspection
+remains read-only and available. `cooked` remains resting-only.
+
+`unarchive <dish>` is the PostgreSQL inverse of archive, reachable by agents (`dish unarchive`) and
+by the private admin bearer (`dish-admin unarchive`, no confirmation; provenance
+`system_reason=admin_unarchive`). It requires an archived Dish and only clears `archived_at` through
+an `archive_changed` scalar receipt: completion, Section, and content are untouched, so the Dish
+returns active in the Section it was archived from (Section retirement refuses while an archived Dish
+remains, so that Section is current). Work terminalized by archive stays terminalized. The pre-archive
+run tombstones and archive-version grant barrier keep old principals permanently stale; the result
+carries `fresh_run_required=true` and further work needs a new run. It is not yet an
+Action/MCP capability.
 In PostgreSQL authority the same private admin command is a narrow additional principal for the
 existing agent-owned `archive` semantic. Agent exposure and semantics remain unchanged, and the
 PostgreSQL path creates no Asana projection. The private admin transport also retains exact-ID

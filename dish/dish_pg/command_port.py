@@ -78,6 +78,7 @@ from dish_tool.task_document import (
 )
 from dish_tool.workflow_policy import RestingTaskSnapshot, required_resting_start_kind
 from .workflow import (
+    UNARCHIVE_FRESH_RUN_GUIDANCE,
     ContentionLost,
     ExecutionSpec,
     RequestSpec,
@@ -947,6 +948,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "reconcile-abandonment": self._reconcile_abandonment,
             "cooked": self._complete_semantically,
             "archive": self._archive,
+            "unarchive": self._unarchive,
             "reopen-planning": self._reopen_planning,
             "reopen": self._reopen,
             "supply-evidence": self._supply_evidence,
@@ -3981,6 +3983,35 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         }
         if call.principal_class == "admin":
             data.update(system_reason="admin_archive", authority_mode="postgresql")
+        return data
+
+    def _unarchive(self, call, generation, _binding, execution, task, _operation) -> dict[str, Any]:
+        """Clear archive state only; pre-archive authority stays revoked."""
+        assert task is not None
+        self.workflow.repo.assert_task_fence(execution.execution_id)
+        current = self.session.get(models.DishState, (generation.generation_id, task.task_id))
+        if current is None:
+            raise CommandRuleError("ARCHIVE_AUTHORITY_MISSING", "task archive authority is incomplete")
+        if current.archived_at is None:
+            raise CommandRuleError("TASK_NOT_ARCHIVED", "Unarchive requires an archived Dish")
+        self._scalar_mutation(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            execution_id=execution.execution_id,
+            at=call.now,
+        ).unarchive()
+        data = {
+            "dish_id": str(task.task_id),
+            "task_id": str(task.task_id),
+            "completed": current.completed,
+            "completion_reason": current.completion_reason,
+            "completion_state": "active" if not current.completed else "completed",
+            "section_id": None if current.section_id is None else str(current.section_id),
+            "fresh_run_required": True,
+            "agent_guidance": UNARCHIVE_FRESH_RUN_GUIDANCE,
+        }
+        if call.principal_class == "admin":
+            data.update(system_reason="admin_unarchive", authority_mode="postgresql")
         return data
 
     def _reopen_planning(self, call, generation, _binding, execution, task, _operation) -> dict[str, Any]:

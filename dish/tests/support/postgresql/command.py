@@ -47,6 +47,24 @@ def _call(command, *, run_id, request_id=None, arguments=None, principal="agent"
     )
 
 
+def _unarchive(port: PostgresCommandPort, session, ids, context, task_id):
+    """Unarchive through the real admin command with a fresh post-archive run."""
+    run_id = _next(ids)
+    _register_run(session, generation_id=context["generation_id"], run_id=run_id, owner="Marco")
+    result = port.execute(
+        _call(
+            "unarchive",
+            run_id=run_id,
+            request_id=_next(ids),
+            owner="Marco",
+            principal="admin",
+            arguments={"task_id": str(task_id)},
+        )
+    )
+    assert result.ok, result
+    return result
+
+
 def _add_verification_queue(session, ids, context) -> uuid.UUID:
     section_id = _next(ids)
     session.add(

@@ -111,6 +111,16 @@ def build_parser() -> JsonArgumentParser:
         help="confirm archive without a separate confirmation round trip",
     )
 
+    unarchive = subparsers.add_parser(
+        _admin_name("unarchive"),
+        help="restore one archived Dish to its Section",
+        description=(
+            "restore one archived Dish to its Section; runs from before the archive stay "
+            "revoked, so further work on it needs a new run"
+        ),
+    )
+    unarchive.add_argument("dish", metavar="DISH", help=_dish_target_help)
+
     queue = subparsers.add_parser(
         _admin_name("queue"),
         help="work through everything currently waiting for Marco",

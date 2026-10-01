@@ -120,7 +120,7 @@ _ADMIN_EXPOSED_COMMANDS = frozenset(
     for name in ADMIN_COMMANDS
     if COMMAND_DEFINITIONS[name].retained
 )
-_TEST_ADMIN_EXPOSED_COMMANDS = frozenset({"archive", "queue"})
+_TEST_ADMIN_EXPOSED_COMMANDS = frozenset({"archive", "unarchive", "queue"})
 _AGENT_EXPOSED_COMMANDS = frozenset(
     name
     for name, definition in COMMAND_DEFINITIONS.items()
@@ -233,7 +233,7 @@ class PostgresRuntimeService:
         commands remain hidden rather than falling through to another backend.
         Admin-principal commands are reachable only through the admin
         transport, never the agent route. PROD retains the complete supported
-        admin inventory; TEST exposes only the non-recovery queue and archive
+        admin inventory; TEST exposes only the non-recovery queue, archive, and unarchive
         commands needed to qualify the operator surface.
         """
 
@@ -858,7 +858,7 @@ class PostgresRuntimeService:
             data["request_replayed"] = payload.pop("request_replayed")
             payload["data"] = data
             if principal.owner_id == self.config.action_client_id or (
-                principal_class == "admin" and command == "archive"
+                principal_class == "admin" and command in {"archive", "unarchive"}
             ):
                 # Guidance is attached before JSON encoding, so normalize the
                 # immutable tuple fields to their public JSON array shape now.

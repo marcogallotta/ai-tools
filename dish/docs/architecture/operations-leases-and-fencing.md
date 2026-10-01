@@ -113,6 +113,6 @@ Legacy and PostgreSQL ownership mechanisms coexist. Stage B is expected to reduc
 Successful PostgreSQL archive is a terminal authority transition, not only an `archived_at` scalar.
 Archive serializes ServiceRun registration with `LOCK TABLE service_runs IN SHARE MODE`, then records a
 task-scoped revocation for every run committed on the pre-archive side. Those revocations are checked
-at the task-fence boundary when the Dish is active, so a future unarchive cannot revive an old run even
+at the task-fence boundary when the Dish is active, so `unarchive` cannot revive an old run even
 if that run presents a fresh request/execution identity. The same run remains usable on unrelated Dishes.
 Archive also terminalizes the task's open operation/cycle/lease authority while preserving all history.

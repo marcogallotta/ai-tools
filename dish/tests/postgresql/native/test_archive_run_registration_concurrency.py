@@ -23,7 +23,8 @@ from tests.support.postgresql.concurrency import (
 )
 from tests.support.postgresql.core import core_db
 from tests.support.postgresql.projection_attempts import native_workflow_db
-from tests.support.postgresql.workflow import NOW, _register_run, _simulate_future_unarchive
+from tests.support.postgresql.command import _unarchive
+from tests.support.postgresql.workflow import NOW, _register_run
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
 SECRET = b"native-archive-registration-secret"
@@ -169,8 +170,9 @@ def test_registration_wins_and_is_inside_archive_tombstone_boundary(core_db) -> 
                 models.DishMutationReceipt.archive_changed.is_(True),
             )
         ) == 1
-        _simulate_future_unarchive(session, ids, context, task_id)
-        stale = _port(session).execute(_start_call(run_id=registration_run, task_id=task_id))
+        port = _port(session)
+        _unarchive(port, session, ids, context, task_id)
+        stale = port.execute(_start_call(run_id=registration_run, task_id=task_id))
         assert stale.ok is False
         assert stale.code == "AUTHORITY_MISMATCH"
 
@@ -249,6 +251,7 @@ def test_archive_wins_and_late_registration_is_fresh_after_boundary(core_db) -> 
                 models.DishMutationReceipt.archive_changed.is_(True),
             )
         ) == 1
-        _simulate_future_unarchive(session, ids, context, task_id)
-        fresh = _port(session).execute(_start_call(run_id=late_run, task_id=task_id))
+        port = _port(session)
+        _unarchive(port, session, ids, context, task_id)
+        fresh = port.execute(_start_call(run_id=late_run, task_id=task_id))
         assert fresh.ok, fresh
