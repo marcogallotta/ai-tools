@@ -30,12 +30,12 @@ def _agent_archive(port, ids, *, task_id, run_id):
     return result
 
 
-def test_unarchive_is_agent_and_admin_reachable_but_not_yet_action_exposed() -> None:
+def test_unarchive_is_agent_admin_and_action_reachable() -> None:
     definition = definition_for("unarchive")
     assert definition.principal == "agent"
     assert definition.admin_exposed is True
-    assert definition.action_exposed is False
-    assert "unarchive" not in ACTION_COMMANDS
+    assert definition.action_exposed is True
+    assert "unarchive" in ACTION_COMMANDS
 
 
 def test_agent_unarchive_restores_active_dish_in_its_section_and_requires_fresh_run(
