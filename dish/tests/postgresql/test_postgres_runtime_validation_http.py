@@ -1228,6 +1228,73 @@ def test_postgresql_action_cooked_replays_and_leaves_exact_read_available(
     assert search["data"]["results"] == []
 
 
+def test_postgresql_action_agent_archive_then_unarchive_round_trip(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    archive_request, unarchive_request, rejected_request = _next(ids), _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="gpt-action",
+            agent="gpt",
+        )
+
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(service.config, action_token="postgres-action-token")
+
+    def mutation(request_id, **extra):
+        return {
+            "client": {"run_id": str(run_id), "request_id": str(request_id)},
+            "arguments": {"dish_id": str(task_id), "agent": "gpt", **extra},
+        }
+
+    read_body = {
+        "client": {"run_id": str(run_id)},
+        "arguments": {"dish_id": str(task_id), "agent": "gpt"},
+    }
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="postgres-archive-action-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+
+        def post(command, body):
+            return _post_json(f"{base}/v1/action/{command}", token="postgres-action-token", body=body)
+
+        try:
+            rejected_status, rejected = post("archive", mutation(rejected_request, confirmed=True))
+            archived_status, archived = post("archive", mutation(archive_request))
+            replay_status, replay = post("archive", mutation(archive_request))
+            archived_read_status, archived_read = post("read", read_body)
+            unarchived_status, unarchived = post("unarchive", mutation(unarchive_request))
+            active_read_status, active_read = post("read", read_body)
+        finally:
+            stop_server(server, thread)
+
+    # Validation failures are authoritative ok:false envelopes, not transport errors.
+    assert rejected_status == 200
+    assert rejected["ok"] is False
+    assert rejected["code"] == "INVALID_ARGUMENT"
+    assert rejected["data"]["message"] == "archive arguments contain unsupported fields"
+    assert archived_status == replay_status == archived_read_status == 200
+    assert unarchived_status == active_read_status == 200
+    assert archived["ok"] is True
+    assert archived["data"]["completion_state"] == "archived"
+    assert "system_reason" not in archived["data"]
+    assert replay["data"]["request_replayed"] is True
+    assert archived_read["data"]["completion_state"] == "archived"
+    # Regression: an archived read once failed JSON encoding on a raw datetime.
+    assert isinstance(archived_read["data"]["archived_at"], str)
+    assert unarchived["ok"] is True
+    assert unarchived["data"]["completion_state"] == "active"
+    assert unarchived["data"]["fresh_run_required"] is True
+    assert "system_reason" not in unarchived["data"]
+    assert active_read["data"]["completion_state"] == "active"
+    assert active_read["data"]["archived_at"] is None
+
+
 def test_postgresql_cli_routes_native_uuid_and_preserves_imported_gid(
     workflow_db, tmp_path: Path, capsys
 ) -> None:

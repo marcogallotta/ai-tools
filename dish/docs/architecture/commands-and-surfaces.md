@@ -88,8 +88,8 @@ for its retained product paths:
 
 The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `search`,
 `query`, `cooked-updates`, `cook-logs`, `record-cook-log`, `read`, `proposals`, `apply-proposal`,
-`safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `renew-lease`, and
-`cooked`. `query` is an exact alias of `cooked-updates`. `cooked-updates` is the supported incremental cooked-history discovery surface: it returns
+`safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `renew-lease`,
+`cooked`, `archive`, and `unarchive`. `query` is an exact alias of `cooked-updates`. `cooked-updates` is the supported incremental cooked-history discovery surface: it returns
 only Dishes that are currently cooked when a page is evaluated and whose current cooked transition
 or an immutable cook-log entry qualifies in the fixed `[since, through)` window. The first page
 acquires the active authority-generation row exclusively before minting authoritative service-time
@@ -172,10 +172,12 @@ Other. Semantic proposals retain exact governed before/after bundles. The queue 
 interactions directly, but it remains presentation and routing: PostgreSQL workflow commands and
 policy retain mutation authority.
 
-`archive <dish>` is a private-admin lifecycle command shown in root help, never an Action/OpenAPI
-capability. It has no operator-supplied reason: the durable invocation provenance records
-`system_reason=admin_archive`. In the SQLite/Asana authority it requires confirmation, an active
-incomplete Dish, and a distinct configured Cooking History project; it then marks the task complete,
+`archive <dish>` is an agent lifecycle command on the connected surface (MCP/Action
+`{dish_id, agent}`, no confirmation argument; the MCP tool is marked destructive) and a private-admin
+command shown in root help. Admin archive has no operator-supplied reason: the durable invocation
+provenance records `system_reason=admin_archive`, and only the admin path requires confirmation.
+In the SQLite/Asana authority it requires confirmation, an active incomplete Dish, and a distinct
+configured Cooking History project; it then marks the task complete,
 adds Cooking History, removes Cooking last, and confirms preserved identity from an exact reread.
 PostgreSQL archive owns terminalization of ordinary effect-free workflow authority in the same
 transaction as `archived_at`: open operations/cycles are abandoned, active leases are released, open
@@ -185,21 +187,20 @@ pre-archive side receives a task-scoped revocation. Exact history remains readab
 uncertain, or blocked external-effect work fails archive closed rather than reporting partial success.
 Every later mutating command except `unarchive` is rejected while archived. Private admin inspection
 remains read-only and available. `cooked` remains resting-only.
+In PostgreSQL authority the private admin command is a narrow additional principal for the same
+`archive` semantic agents use, and the PostgreSQL path creates no Asana projection. The private admin
+transport also retains exact-ID `inspect` as a PostgreSQL-local read so an archived Dish remains
+diagnosable after it leaves active and title-search views; this does not widen the agent/Action
+inspect contract.
 
-`unarchive <dish>` is the PostgreSQL inverse of archive, reachable by agents (`dish unarchive`) and
-by the private admin bearer (`dish-admin unarchive`, no confirmation; provenance
-`system_reason=admin_unarchive`). It requires an archived Dish and only clears `archived_at` through
+`unarchive <dish>` is the PostgreSQL inverse of archive, reachable by agents (`dish unarchive` and
+the connected MCP/Action surface with `{dish_id, agent}`) and by the private admin bearer
+(`dish-admin unarchive`, no confirmation; provenance `system_reason=admin_unarchive`). It requires an archived Dish and only clears `archived_at` through
 an `archive_changed` scalar receipt: completion, Section, and content are untouched, so the Dish
 returns active in the Section it was archived from (Section retirement refuses while an archived Dish
 remains, so that Section is current). Work terminalized by archive stays terminalized. The pre-archive
 run tombstones and archive-version grant barrier keep old principals permanently stale; the result
-carries `fresh_run_required=true` and further work needs a new run. It is not yet an
-Action/MCP capability.
-In PostgreSQL authority the same private admin command is a narrow additional principal for the
-existing agent-owned `archive` semantic. Agent exposure and semantics remain unchanged, and the
-PostgreSQL path creates no Asana projection. The private admin transport also retains exact-ID
-`inspect` as a PostgreSQL-local read so an archived Dish remains diagnosable after it leaves active
-and title-search views; this does not widen the agent/Action inspect contract.
+carries `fresh_run_required=true` and further work needs a new run.
 
 ## Failure, replay, recovery, and concurrency
 
