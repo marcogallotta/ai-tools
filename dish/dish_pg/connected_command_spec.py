@@ -151,8 +151,8 @@ CONNECTED_COMMAND_SPECS = tuple(_spec(name) for name in CONNECTED_COMMANDS)
 CONNECTED_COMMAND_DEFINITIONS = {spec.name: spec for spec in CONNECTED_COMMAND_SPECS}
 TOOL_COMMANDS = {spec.tool_name: spec.name for spec in CONNECTED_COMMAND_SPECS}
 
-if len(CONNECTED_COMMANDS) != 22:
-    raise ValueError("connected-agent inventory must remain exactly 22 commands")
+if len(CONNECTED_COMMANDS) != 23:
+    raise ValueError("connected-agent inventory must remain exactly 23 commands")
 if len(TOOL_COMMANDS) != len(CONNECTED_COMMANDS):
     raise ValueError("connected-agent MCP tool names are not unique")
 

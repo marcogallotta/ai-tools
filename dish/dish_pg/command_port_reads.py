@@ -1235,25 +1235,11 @@ class PostgresCommandReadMixin:
                                 },
                             )
                 else:
-                    signal(
-                        kind="human_decision",
-                        category="needs_marco",
-                        summary="Dish is waiting for a Marco decision.",
-                        detail=requirement.question,
-                        action={
-                            "kind": "record_human_decision",
-                            "dish_id": str(operation.task_id),
-                            "operation_id": str(operation.operation_id),
-                            "requirement_id": str(requirement.requirement_id),
-                            "cycle_id": str(requirement.cycle_id) if requirement.cycle_id else None,
-                            "hold_identity": version.content_identity if version is not None else None,
-                            "resume_status": (
-                                "pending-research"
-                                if requirement.cycle_id is None
-                                else "pending-verification"
-                            ),
-                        },
-                    )
+                    # The connected Dish agent owns this continuation: it asks Marco
+                    # in the active conversation, records the answer, and resumes.
+                    # Keeping it out of the private admin queue prevents a second,
+                    # cryptic approval ceremony for the same human decision.
+                    pass
             elif (
                 operation.phase == "held_human"
                 and latest_cycle is not None

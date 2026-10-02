@@ -49,6 +49,7 @@ UNARCHIVE_COMMAND = "unarchive"
 COOKED_UPDATES_COMMAND = "cooked-updates"
 RECORD_COOK_LOG_COMMAND = "record-cook-log"
 COOK_LOGS_COMMAND = "cook-logs"
+RECORD_HUMAN_DECISION_COMMAND = "record-human-decision"
 COOK_LOG_TEXT_MAX_LENGTH = 8000
 SEARCH_QUERY_MAX_LENGTH = 160
 SEARCH_PAGE_SIZE_DEFAULT = 50
@@ -210,7 +211,21 @@ COMMAND_DEFINITIONS = {
         CommandDefinition("reopen-planning", "L", "admin", True, True, False),
         CommandDefinition("reopen", "R", "admin", True, True, True, workflow_action="reopen"),
         CommandDefinition("supply-evidence", "R", "admin", True, True, True, workflow_action="supply-evidence"),
-        CommandDefinition("record-human-decision", "R", "admin", True, True, True, workflow_action="record-human-decision"),
+        CommandDefinition(
+            RECORD_HUMAN_DECISION_COMMAND,
+            "R",
+            "agent",
+            True,
+            True,
+            True,
+            action_exposed=True,
+            description=(
+                "Record Marco's direct answer to the exact open Human Review question and "
+                "resume the held Dish workflow."
+            ),
+            workflow_action=RECORD_HUMAN_DECISION_COMMAND,
+            admin_exposed=True,
+        ),
         CommandDefinition("resolve-legacy-attention", "R", "admin", True, False, False),
         CommandDefinition("resolved", "R", "admin", True, True, True, workflow_action="resolved"),
         CommandDefinition("review-reject", "R", "admin", True, True, True),
@@ -254,6 +269,7 @@ POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (
     RECORD_COOK_LOG_COMMAND,
     ARCHIVE_COMMAND,
     UNARCHIVE_COMMAND,
+    RECORD_HUMAN_DECISION_COMMAND,
 )
 POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = ()
 # Connected on the legacy SQLite/Asana Action surface but not yet ported to the
@@ -491,6 +507,31 @@ def _cook_log_argument_schema(*, mutation: bool) -> dict[str, Any]:
     return {"type": "object", "required": required, "additionalProperties": False, "properties": properties}
 
 
+def _human_decision_argument_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": [
+            "submission_id",
+            "requirement_id",
+            "decision",
+            "agent",
+        ],
+        "additionalProperties": False,
+        "properties": {
+            "submission_id": deepcopy(CANONICAL_DISH_UUID_SCHEMA),
+            "requirement_id": deepcopy(CANONICAL_DISH_UUID_SCHEMA),
+            "decision": {"type": "string", "minLength": 1, "maxLength": 8000},
+            "rationale": {"type": "string", "minLength": 1, "maxLength": 8000},
+            "expected_cycle_id": {
+                **deepcopy(CANONICAL_DISH_UUID_SCHEMA),
+                "description": "Required for a Verification Human Review; omit before construction.",
+            },
+            "expected_hold_identity": {"type": "string", "minLength": 1, "maxLength": 128},
+            "agent": {"type": "string", "enum": list(_SEARCH_AGENT_VALUES)},
+        },
+    }
+
+
 def postgres_action_argument_schema(command: str) -> dict[str, Any]:
     """Return the no-Asana PostgreSQL Action argument schema.
 
@@ -517,6 +558,8 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
         return _cook_log_argument_schema(mutation=True)
     if command == COOK_LOGS_COMMAND:
         return _cook_log_argument_schema(mutation=False)
+    if command == RECORD_HUMAN_DECISION_COMMAND:
+        return _human_decision_argument_schema()
     base = action_openapi_argument_schema(command)
     if command == "section-tasks":
         return _add_canonical_identity_alias(
@@ -725,6 +768,74 @@ def _validate_cook_log_action_request(command: str, request: Mapping[str, Any]) 
     return client, _normalize_cook_log_arguments(raw_arguments, mutation=mutation)
 
 
+def _validate_human_decision_action_request(
+    request: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw_arguments = request.get("arguments") if isinstance(request, Mapping) else None
+    adapted = dict(request) if isinstance(request, Mapping) else request
+    if isinstance(adapted, dict):
+        adapted["arguments"] = {"agent": "gpt", "title": "Human Review decision"}
+    client, _ = validate_legacy_action_request(CREATE_COMMAND.name, adapted)
+    if not isinstance(raw_arguments, Mapping):
+        raise DishRuleError(
+            "INVALID_ARGUMENT", "arguments must be an object", rule="argument_object_required"
+        )
+    schema = _human_decision_argument_schema()
+    allowed = set(schema["properties"])
+    unknown = sorted(set(raw_arguments) - allowed)
+    if unknown:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "record-human-decision arguments contain unsupported fields",
+            rule="argument_field_forbidden",
+            details={"fields": unknown},
+        )
+    missing = [field for field in schema["required"] if field not in raw_arguments]
+    if missing:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "record-human-decision is missing required fields",
+            rule="argument_required",
+            details={"fields": missing},
+        )
+    normalized = dict(raw_arguments)
+    for field in ("submission_id", "requirement_id"):
+        normalized[field] = require_dish_uuid(raw_arguments.get(field), field=field)
+    cycle_id = raw_arguments.get("expected_cycle_id")
+    if cycle_id is not None:
+        normalized["expected_cycle_id"] = require_dish_uuid(
+            cycle_id, field="expected_cycle_id"
+        )
+    for field in ("decision", "rationale", "expected_hold_identity"):
+        value = raw_arguments.get(field)
+        if value is None and field != "decision":
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                f"{field} must be a non-empty string",
+                rule="argument_value_invalid",
+                details={"field": field},
+            )
+        if len(value) > int(schema["properties"][field]["maxLength"]):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                f"{field} is too long",
+                rule="argument_range_invalid",
+                details={"field": field},
+            )
+        normalized[field] = value.strip()
+    agent = raw_arguments.get("agent")
+    if agent not in _SEARCH_AGENT_VALUES:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "agent must name a supported agent family",
+            rule="argument_value_invalid",
+            details={"field": "agent", "allowed": list(_SEARCH_AGENT_VALUES)},
+        )
+    return client, normalized
+
+
 def validate_postgres_action_request(
     command: str, request: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -750,6 +861,8 @@ def validate_postgres_action_request(
         return _validate_dish_lifecycle_action_request(command, request)
     if command in {RECORD_COOK_LOG_COMMAND, COOK_LOGS_COMMAND}:
         return _validate_cook_log_action_request(command, request)
+    if command == RECORD_HUMAN_DECISION_COMMAND:
+        return _validate_human_decision_action_request(request)
     if not isinstance(request, Mapping):
         return validate_legacy_action_request(command, request)
     raw_arguments = request.get("arguments")

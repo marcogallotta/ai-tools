@@ -113,8 +113,9 @@ _SEARCH_PROJECTION_DELAY = timedelta(seconds=1)
 
 # Retained admin-principal commands are exposed only through the private admin
 # transport; every other retained command remains reachable from the agent
-# surface. Retired/non-retained commands (e.g. historical backup-create/
-# backup-restore) stay unroutable on both surfaces.
+# surface. A small number of agent commands retain private-admin compatibility
+# while their normal user interaction happens directly in the connected agent.
+# Retired/non-retained commands stay unroutable on both surfaces.
 _ADMIN_EXPOSED_COMMANDS = frozenset(
     name
     for name in ADMIN_COMMANDS

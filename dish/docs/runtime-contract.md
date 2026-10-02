@@ -327,11 +327,10 @@ not the discovery mechanism for lineage conflicts. Approval with `correction: no
 inspected candidate and does not accept `file_text`; `correction: small` requires the complete
 corrected candidate as `file_text`.
 
-Marco-only continuations such as `supply-evidence`, `record-human-decision`, and `reopen` never
-appear in an agent response's `allowed_actions`. When one is required, agent responses return an
-empty action list and identify the exact private continuation in `data.required_admin_action`.
-For an Evidence or Human Review hold (`required_admin_action: supply-evidence` or
-`record-human-decision`), `read`, `inspect`, `reject`, and a `start` blocked by the existing held
+Marco-only continuations such as `supply-evidence` and `reopen` never appear in an agent response's
+`allowed_actions`. `record-human-decision` is different: the connected agent asks Marco directly,
+records his exact answer, and resumes without a second private-admin confirmation. For an Evidence
+hold (`required_admin_action: supply-evidence`), `read`, `inspect`, `reject`, and a `start` blocked by the existing held
 operation all also return `data.submission_id` (the operation UUID the admin command itself
 requires — not the task GID), `data.continuation_surface: private-admin`,
 `data.connected_action_available: false`, an exact `data.admin_command` (including
@@ -528,14 +527,13 @@ not keep mutating the parked operation. The same flag is returned after a durabl
 Evidence, or completed Large-correction handoff. In an explicit batch, the agent tracks handled task
 GIDs for that run and skips them if section pagination returns them again.
 
-The normal operator entry point for pending semantic proposals and Verification Human Review holds is
-`dish-admin queue`. Each item carries a compact `review_summary`: outcome, material issue, quantified
+The normal operator entry point for pending semantic proposals is `dish-admin queue`. Each item carries a compact `review_summary`: outcome, material issue, quantified
 blocker when one was recorded, the decision where applicable, and the simplest next step. The hidden
 `review-queue` command remains a detail view, and `review-inspect` accepts either the durable UUID or
 the current queue number. Semantic bundles use `review-approve`/`review-reject` only when Dish returns
-those exact next actions. For an unanswered Verification Human Review item, `review-inspect` presents
-`review-approve REVIEW_ID --reason '<Marco decision>'` or `review-reject REVIEW_ID --reason '<why the escalation is invalid>'`; low-level hold IDs and
-`record-human-decision` remain internal/compatibility mechanics rather than the normal UX. Formal
+those exact next actions. For an unanswered Verification Human Review item, the connected agent
+presents the question in ordinary language and records Marco's answer with
+`record-human-decision`; the private admin command is compatibility only. Formal
 Human Review is reserved for consequential governed authorization. Ordinary clarification/preference
 may be used directly, while an intentional choice worth preserving may be appended as an attributed
 `Human — Marco:` Decision without formal admin authorization; such an append does not itself authorize

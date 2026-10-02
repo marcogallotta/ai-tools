@@ -36,6 +36,7 @@ EXPECTED_COMMANDS = (
     "cooked",
     "archive",
     "unarchive",
+    "record-human-decision",
 )
 RUN_ID = "11111111-1111-4111-8111-111111111111"
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"
@@ -133,7 +134,7 @@ def test_mcp_tool_inventory_is_exact_postgresql_connected_contract():
     assert tuple(mcp_server.TOOL_COMMANDS) == tuple(
         f"dish_{command.replace('-', '_')}" for command in EXPECTED_COMMANDS
     )
-    assert len(mcp_server.MCP_TOOLS) == 22
+    assert len(mcp_server.MCP_TOOLS) == 23
     assert "dish_qualify_file_transport" not in mcp_server.TOOL_COMMANDS
     assert "dish_queue" not in mcp_server.TOOL_COMMANDS
     for command in ("archive", "unarchive"):

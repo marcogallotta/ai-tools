@@ -1,22 +1,32 @@
-# 🚨 DISH REQUESTS: READ THE ROLE INDEX BEFORE ANYTHING ELSE
+# Dish entry selector
 
-For **ANY Dish-related request in this repository**, your **FIRST Dish action** — before invoking a skill (including `/code-review`), tool, subagent/background agent, shell command, or reading another Dish file — is to read [`dish/docs/agents/index.md`](dish/docs/agents/index.md). Use it to select the single standing role, then read that role's mapped standing contract **before acting**.
+For **every Dish-related request**, the first Dish action—before a skill, tool, subagent, shell
+command, or another Dish file—is to apply `COMMON` and select exactly one process mode below.
 
-Do **not** route directly from the user's wording to a generic skill. Requests such as `review it`, `fix it`, `research it`, or `implement it` are still Dish work when they concern Dish; **role routing happens first**. If you have not read the current role index and mapped contract for this request, stop and do that before anything else.
+`COMMON` always applies: read `README.md` for repository purpose and preserve current Dish
+technical, product, data, testing, deployment, rollback, recovery, and safety truth. For a change
+under `dish/`, start at [`dish/docs/architecture/index.md`](dish/docs/architecture/index.md) and
+follow its focused routing. Operational commands belong in runbooks; maintained architecture claims
+belong only in the architecture knowledge base.
 
-# ai-tools agent map
+- `SWITCHSTAND_MANAGED_DISH` requires explicit current authority: an exact Switchstand `WorkId` /
+  current assignment, or attributable direct Marco instruction, must say the work is
+  Switchstand-managed and identify or resolve the exact Dish source work. Read
+  [`dish/docs/switchstand-managed.md`](dish/docs/switchstand-managed.md) next. Switchstand governs
+  process; do not enter the legacy role index first.
+- `LEGACY_DISH` is the unchanged default when no Switchstand-managed provenance exists. Read
+  [`dish/docs/agents/index.md`](dish/docs/agents/index.md), select one standing role, and read its
+  mapped contract before any other Dish action.
+- `UNKNOWN` applies when claimed Switchstand provenance is partial, stale, or conflicting. Read only
+  enough current governing work to resolve this mode; perform no Dish process or mutation meanwhile.
 
-Read `README.md` for repository purpose and host integration. For every change under `dish/`, start at [`dish/docs/architecture/index.md`](dish/docs/architecture/index.md) and follow its task routing to the relevant ownership and invariant documents. Operational commands belong in runbooks; maintained architecture claims belong only in the architecture knowledge base.
+Project membership, Switchstand tool availability, repository path, current directory, and host
+never select a mode. Do not route from generic wording such as `review`, `fix`, or `implement`.
 
-## Agent roles
-
-For Dish work, role routing lives in [`dish/docs/agents/index.md`](dish/docs/agents/index.md).
-
-If you are told to assume, act as, or hand work to a named Dish role, read that index first and then the mapped standing role contract before acting. Do not infer role policy from a nearby file or repeat stable role rules in task handoffs.
-
-Every request in this repository is routed through `dish/docs/agents/index.md` first, with no exception for phrasing or path. Read the index, evaluate the request against the role table, and select the single role matching the current task shape. Read that role's standing contract before acting. Assume only one role at a time. Switch roles only when Marco changes the requested task or the applicable standing contract explicitly requires a handoff; a role switch does not itself authorize additional actions. If no listed role matches, follow the index's unlisted-role fallback.
-
-Standing role contracts contain stable policy so task handoffs can stay short and contain only the task-specific delta. If a handoff conflicts with a standing role contract, flag the conflict rather than silently choosing a new policy.
+The remaining Dish role, Development Workflow lifecycle/orchestration, and Project-kernel rules apply only in
+`LEGACY_DISH`. If told to assume or hand work to a named role, read the index and mapped contract;
+do not infer or repeat stable policy from nearby files. Assume one role at a time, use the index
+fallback, and switch only on changed authority or an explicit handoff; flag conflicts.
 
 For exact-reviewed-PR-head integration, local integration certification, commit/promotion to `main`, push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract in `dish/docs/agents/integration.md`. Integration V1-A final landing is local Claude/Codex only; ChatGPT connector-native Integration/merge is not an authorized fallback. Implementation/fix agents do not inherit final integration authority merely because they produced the implementation.
 

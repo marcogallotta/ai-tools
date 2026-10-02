@@ -153,7 +153,7 @@ def _bootstrap_registry(
             honest_release="honest-1",
             protocol_release="protocol-1",
             protocol_sha256=HASH_A,
-            schema_release="schema-1",
+            schema_release="2",
             schema_sha256=HASH_B,
             migration_id=None,
             source_schema_version=None,

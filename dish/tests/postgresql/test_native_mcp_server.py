@@ -125,16 +125,21 @@ def _adapter(
     )
 
 
-def test_connected_registry_is_exact_22_command_product_contract() -> None:
+def test_connected_registry_is_exact_23_command_product_contract() -> None:
     assert CONNECTED_COMMANDS == ACTION_COMMANDS
-    assert len(CONNECTED_COMMANDS) == 22
+    assert len(CONNECTED_COMMANDS) == 23
     assert TOOL_COMMANDS["dish_query"] == "query"
     assert tuple(spec.name for spec in CONNECTED_COMMAND_SPECS) == CONNECTED_COMMANDS
     assert tuple(TOOL_COMMANDS.values()) == CONNECTED_COMMANDS
     assert tuple(mcp_server.TOOL_COMMANDS.values()) == CONNECTED_COMMANDS
     assert "qualify-file-transport" not in CONNECTED_COMMANDS
     assert "queue" not in CONNECTED_COMMANDS
-    assert CONNECTED_COMMANDS[-3:] == ("cooked", "archive", "unarchive")
+    assert CONNECTED_COMMANDS[-4:] == (
+        "cooked",
+        "archive",
+        "unarchive",
+        "record-human-decision",
+    )
 
 
 def test_registry_derives_identity_classification_and_annotations() -> None:
