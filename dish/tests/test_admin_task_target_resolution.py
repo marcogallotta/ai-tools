@@ -82,8 +82,26 @@ def test_admin_cli_reopen_planning_routes_canonical_and_legacy_identity(
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize(
+    ("reference", "expected_arguments"),
+    [
+        (
+            "12345678-1234-5678-9234-567812345678",
+            {"dish_id": "12345678-1234-5678-9234-567812345678"},
+        ),
+        (_NUMERIC_TASK_GID, {"task_gid": _NUMERIC_TASK_GID}),
+    ],
+)
+def test_admin_cli_migrate_routes_canonical_and_legacy_identity(
+    reference, expected_arguments, capsys
+):
+    client = _RecordingAdminServiceClient()
 
+    status = admin_cli.main(["migrate", reference], application=client)
 
+    assert status == 0
+    assert client.calls == [("migrate", expected_arguments)]
+    assert capsys.readouterr().err == ""
 
 def test_abandon_operation_resolves_task_gid_to_open_operation():
     conn = initialize_database(":memory:")
