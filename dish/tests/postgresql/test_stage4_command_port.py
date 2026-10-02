@@ -4,6 +4,7 @@ import json
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import func, select
@@ -13,7 +14,11 @@ from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as projection
 from dish_pg.command_contract import ACTION_COMMANDS
 from dish_pg.command_port import CommandCall, PostgresCommandPort, _task_reference_from_dish
-from dish_pg.document_authority import destination_section_id, parse_canonical_document
+from dish_pg.document_authority import (
+    destination_section_id,
+    parse_canonical_document,
+    prepared_document as authority_prepared_document,
+)
 from dish_pg.database import session_scope
 from dish_pg.openapi import postgres_action_openapi
 from dish_pg.planner import (
@@ -710,6 +715,185 @@ def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) 
         assert "Verified by: None" in version.body
         assert "Status detail: None" in version.body
         assert "Resume status: None" in version.body
+
+
+def test_initial_prepare_rejects_document_from_noncurrent_schema(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        author_run = _next(ids)
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=author_run
+        )
+        port = _port(session, ids)
+        started = _start_initial(
+            port, ids, task_id=task_id, run_id=author_run, agent="gpt"
+        )
+        state = session.get(
+            models.DishState, (context["generation_id"], task_id)
+        )
+        prior_content_version_id = state.current_content_version_id
+
+        result = port.execute(
+            _call(
+                "prepare",
+                run_id=author_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": TASK.replace("Schema version: 2", "Schema version: 1"),
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                },
+            )
+        )
+
+        assert not result.ok
+        assert result.code == "VALIDATION_FAILED"
+        assert any(
+            error["rule"] == "schema.version-mismatch"
+            for error in result.data["errors"]
+        )
+        session.refresh(state)
+        assert state.current_content_version_id == prior_content_version_id
+
+
+def test_migrate_repairs_open_schema_one_verification_occurrence(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        author_run = _next(ids)
+        verifier_run = _next(ids)
+        admin_run = _next(ids)
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=author_run
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="marco-admin",
+            agent="marco",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        stale_candidate = TASK.replace("Schema version: 2", "Schema version: 1")
+        with patch(
+            "dish_pg.command_port.prepared_document",
+            side_effect=lambda file_text, **kwargs: authority_prepared_document(
+                file_text,
+                agent=kwargs["agent"],
+                model=kwargs["model"],
+                at=kwargs["at"],
+                protocol_release=kwargs["protocol_release"],
+                schema_release="1",
+            ),
+        ):
+            prepared = port.execute(
+                _call(
+                    "prepare",
+                    run_id=author_run,
+                    request_id=_next(ids),
+                    arguments={
+                        "task_id": str(task_id),
+                        "operation_id": started.data["operation_id"],
+                        "file_text": stale_candidate,
+                        "agent": "claude",
+                        "model": "test-model",
+                    },
+                )
+            )
+        assert prepared.ok, (prepared.code, prepared.http_status, prepared.data)
+        stale_version = session.get(
+            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+        )
+        verification = _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        old_cycle = session.get(
+            wf.VerificationCycle, uuid.UUID(prepared.data["cycle_id"])
+        )
+        old_lease = session.get(
+            wf.ServiceLease, uuid.UUID(verification.data["lease_id"])
+        )
+        blocked_inspection = port.execute(
+            _call(
+                "inspect",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "agent": "codex",
+                    "independence_attestation": (
+                        "I independently inspected this exact candidate."
+                    ),
+                },
+            )
+        )
+        assert not blocked_inspection.ok
+        assert blocked_inspection.code == "VALIDATION_FAILED"
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.VerificationInspectionOccurrence)
+            .where(wf.VerificationInspectionOccurrence.cycle_id == old_cycle.cycle_id)
+        ) == 0
+
+        result = port.execute(
+            _call(
+                "migrate",
+                run_id=admin_run,
+                request_id=_next(ids),
+                principal="admin",
+                owner="marco-admin",
+                arguments={"task_id": str(task_id)},
+            )
+        )
+
+        assert result.ok, (result.code, result.http_status, result.data)
+        assert result.data["operation_id"] == started.data["operation_id"]
+        assert result.data["source_schema_version"] == "1"
+        assert result.data["schema_version"] == "2"
+        assert result.data["reset_cycle_id"] == str(old_cycle.cycle_id)
+        assert result.data["placement_projection_event_id"] is None
+        migrated = session.get(
+            models.ContentVersion, uuid.UUID(result.data["content_version_id"])
+        )
+        assert migrated.body == stale_version.body.replace(
+            "Schema version: 1", "Schema version: 2"
+        )
+        assert migrated.predecessor_content_version_id == stale_version.content_version_id
+        session.refresh(old_cycle)
+        session.refresh(old_lease)
+        assert (old_cycle.lifecycle, old_cycle.outcome) == (
+            "reset",
+            "schema_migrated",
+        )
+        assert old_lease.state == "released"
+        new_cycle = session.get(
+            wf.VerificationCycle, uuid.UUID(result.data["cycle_id"])
+        )
+        assert new_cycle.lifecycle == "open"
+        assert new_cycle.reviewed_content_version_id == migrated.content_version_id
+        operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
+        )
+        assert operation.phase == "await_verification"
+        assert operation.persisted_actions == ["inspect"]
 
 
 def test_prepare_material_change_stamps_pending_verification_from_signed_baseline(

@@ -133,6 +133,7 @@ def prepared_document(
     model: str,
     at: datetime,
     protocol_release: str,
+    schema_release: str,
 ) -> CanonicalDocumentParts:
     """Parse a fresh initial-operation Research candidate and stamp provenance.
 
@@ -172,7 +173,11 @@ def prepared_document(
     state["Researched by"] = actor_line
     state["Self-verified"] = actor_line
     stamped = dataclasses.replace(document, state=TaskState(state))
-    return _validated_parts(stamped, expected_status="pending-verification")
+    return _validated_parts(
+        stamped,
+        expected_status="pending-verification",
+        expected_schema_version=schema_release,
+    )
 
 
 def prepared_change_document(
@@ -186,6 +191,7 @@ def prepared_change_document(
     model: str,
     at: datetime,
     protocol_release: str,
+    schema_release: str,
 ) -> PreparedChangeDocument:
     """Prepare a post-signoff change using legacy's existing materiality authority.
 
@@ -262,7 +268,11 @@ def prepared_change_document(
                 state=TaskState(state),
                 material_changes=tuple(material_changes),
             )
-            parts = _validated_parts(prepared, expected_status="pending-verification")
+            parts = _validated_parts(
+                prepared,
+                expected_status="pending-verification",
+                expected_schema_version=schema_release,
+            )
         elif effective_classification == "non-material":
             assert_transition(
                 action="non_material_edit",
@@ -274,7 +284,11 @@ def prepared_change_document(
                 state=prior.state,
                 material_changes=tuple(material_changes),
             )
-            parts = _validated_parts(prepared, expected_status="ready")
+            parts = _validated_parts(
+                prepared,
+                expected_status="ready",
+                expected_schema_version=schema_release,
+            )
         else:
             prepared = dataclasses.replace(
                 candidate,
@@ -284,6 +298,7 @@ def prepared_change_document(
             parts = _validated_parts(
                 prepared,
                 expected_status=prior.state.values["Status"],
+                expected_schema_version=schema_release,
             )
     except DocumentParseError as exc:
         raise CanonicalDocumentError(
@@ -468,8 +483,12 @@ def _validated_parts(
     document: CanonicalTaskDocument,
     *,
     expected_status: str,
+    expected_schema_version: str | None = None,
 ) -> CanonicalDocumentParts:
-    validation = validate_task_document(document)
+    validation = validate_task_document(
+        document,
+        expected_schema_version=expected_schema_version,
+    )
     errors = [finding_payload(item) for item in validation.findings]
     if document.state.values["Status"] != expected_status:
         errors.append(
