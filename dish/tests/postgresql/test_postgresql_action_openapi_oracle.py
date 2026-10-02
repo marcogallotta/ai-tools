@@ -114,6 +114,7 @@ def test_human_decision_is_a_direct_connected_agent_continuation() -> None:
         "decision",
         "agent",
     ]
+    assert "resume_status" not in schema["properties"]
     assert schema["properties"]["decision"]["maxLength"] == 8000
 
     client, arguments = validate_postgres_action_request(

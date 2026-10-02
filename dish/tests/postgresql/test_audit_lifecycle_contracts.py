@@ -161,11 +161,14 @@ def test_human_review_decision_resumes_same_operation_from_connected_agent(
                     "submission_id": started.data["operation_id"],
                     "requirement_id": rejected.data["requirement_id"],
                     "decision": decision_text,
+                    "resume_status": "pending-research",
                     "agent": "codex",
                 },
             )
         )
         assert decided.ok
+        # The requirement's construction phase is authoritative; callers cannot
+        # steer a Verification hold back into Research.
         assert decided.data["resume_status"] == "pending-verification"
         assert decided.data["cycle_id"] != rejected.data["cycle_id"]
         requirement = session.get(

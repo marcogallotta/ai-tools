@@ -522,10 +522,6 @@ def _human_decision_argument_schema() -> dict[str, Any]:
             "requirement_id": deepcopy(CANONICAL_DISH_UUID_SCHEMA),
             "decision": {"type": "string", "minLength": 1, "maxLength": 8000},
             "rationale": {"type": "string", "minLength": 1, "maxLength": 8000},
-            "resume_status": {
-                "type": "string",
-                "enum": ["pending-research", "pending-verification"],
-            },
             "expected_cycle_id": {
                 **deepcopy(CANONICAL_DISH_UUID_SCHEMA),
                 "description": "Required for a Verification Human Review; omit before construction.",
@@ -829,17 +825,6 @@ def _validate_human_decision_action_request(
                 details={"field": field},
             )
         normalized[field] = value.strip()
-    resume_status = raw_arguments.get("resume_status")
-    if resume_status is not None and resume_status not in {
-        "pending-research",
-        "pending-verification",
-    }:
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            "resume_status must be pending-research or pending-verification",
-            rule="argument_value_invalid",
-            details={"field": "resume_status"},
-        )
     agent = raw_arguments.get("agent")
     if agent not in _SEARCH_AGENT_VALUES:
         raise DishRuleError(
