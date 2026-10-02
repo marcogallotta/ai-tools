@@ -1089,7 +1089,7 @@ class HumanReviewDecision(Base):
     requirement_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("human_review_requirements.requirement_id", ondelete="RESTRICT"), nullable=False, unique=True
     )
-    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    decision: Mapped[str] = mapped_column(Text, nullable=False)
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     actor: Mapped[str] = mapped_column(String(256), nullable=False)
     request_id: Mapped[uuid.UUID] = mapped_column(

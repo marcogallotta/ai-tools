@@ -4344,7 +4344,12 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 http_status=400,
             )
         resume_status = str(
-            call.arguments.get("resume_status", "pending-verification")
+            call.arguments.get(
+                "resume_status",
+                "pending-research"
+                if requirement.cycle_id is None
+                else "pending-verification",
+            )
         ).strip()
         if resume_status not in {"pending-research", "pending-verification"}:
             raise CommandRuleError(

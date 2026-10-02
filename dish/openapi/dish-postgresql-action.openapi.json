@@ -71,7 +71,8 @@
                 "renew-lease",
                 "cooked",
                 "archive",
-                "unarchive"
+                "unarchive",
+                "record-human-decision"
               ],
               "type": "string"
             },
@@ -103,7 +104,8 @@
               "renew-lease",
               "cooked",
               "archive",
-              "unarchive"
+              "unarchive",
+              "record-human-decision"
             ],
             "type": "string"
           },
@@ -1559,6 +1561,141 @@
           }
         ],
         "summary": "Run PostgreSQL-backed dish record-cook-log",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/record-human-decision": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_record_human_decision",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "decision": {
+                        "maxLength": 8000,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "expected_cycle_id": {
+                        "description": "Required for a Verification Human Review; omit before construction.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "expected_hold_identity": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "rationale": {
+                        "maxLength": 8000,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "requirement_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "resume_status": {
+                        "enum": [
+                          "pending-research",
+                          "pending-verification"
+                        ],
+                        "type": "string"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "requirement_id",
+                      "decision",
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish record-human-decision",
         "x-openai-isConsequential": true
       }
     },

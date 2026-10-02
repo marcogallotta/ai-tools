@@ -102,7 +102,7 @@ def test_approval_creates_ready_occurrence_and_submit_derives_destination(workfl
         assert state.completed is False
 
 
-def test_human_review_decision_resumes_same_operation_with_legacy_arguments(
+def test_human_review_decision_resumes_same_operation_from_connected_agent(
     workflow_db,
 ) -> None:
     factory, ids, context, task_id = workflow_db
@@ -139,37 +139,29 @@ def test_human_review_decision_resumes_same_operation_with_legacy_arguments(
             _call("queue", run_id=admin_run, owner="Marco", principal="admin")
         )
         assert queued.ok
-        item = queued.data["issue_items"][0]
-        assert item["queue_group"] == "human_review"
-        action = item["signals"][0]["queue_action"]
-        held_state = session.get(
-            models.DishState, (context["generation_id"], task_id)
+        assert queued.data["issue_items"] == []
+        assert queued.data["needs_you_count"] == 0
+        direct_agent_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=direct_agent_run,
+            owner="agent-owner",
+            agent="codex",
         )
-        held_version = session.get(
-            models.ContentVersion, held_state.current_content_version_id
-        )
-        assert action == {
-            "kind": "record_human_decision",
-            "dish_id": str(task_id),
-            "operation_id": started.data["operation_id"],
-            "requirement_id": rejected.data["requirement_id"],
-            "cycle_id": rejected.data["cycle_id"],
-            "hold_identity": held_version.content_identity,
-            "resume_status": "pending-verification",
-        }
+        decision_text = "[nutrition-kcal] [nutrition-protein] approved by Marco"
         decided = port.execute(
             _call(
                 "record-human-decision",
-                run_id=admin_run,
+                run_id=direct_agent_run,
                 request_id=_next(ids),
-                owner="Marco",
-                principal="admin",
+                owner="agent-owner",
+                principal="agent",
                 arguments={
                     "submission_id": started.data["operation_id"],
-                    "detail": "Use the dry route to preserve the intended crisp texture",
-                    "resume_status": "pending-verification",
-                    "expected_task_gid": "123456789",
-                    "expected_cycle_id": rejected.data["cycle_id"],
+                    "requirement_id": rejected.data["requirement_id"],
+                    "decision": decision_text,
+                    "agent": "codex",
                 },
             )
         )
@@ -179,6 +171,12 @@ def test_human_review_decision_resumes_same_operation_with_legacy_arguments(
         requirement = session.get(
             wf.HumanReviewRequirement, uuid.UUID(rejected.data["requirement_id"])
         )
+        decision = session.scalar(
+            select(wf.HumanReviewDecision).where(
+                wf.HumanReviewDecision.requirement_id == requirement.requirement_id
+            )
+        )
+        assert decision.decision == decision_text
         assert requirement.state == "decided"
         state = session.get(models.DishState, (context["generation_id"], task_id))
         resumed = session.get(models.ContentVersion, state.current_content_version_id)
@@ -188,7 +186,10 @@ def test_human_review_decision_resumes_same_operation_with_legacy_arguments(
             expected_status="pending-verification",
         )
         assert any(
-            line.startswith("Human — Marco: human_review resolved — Use the dry route")
+            line.startswith(
+                "Human — Marco: human_review resolved — "
+                "[nutrition-kcal] [nutrition-protein] approved by Marco"
+            )
             for line in parsed.document.decisions
         )
         operation = session.get(
