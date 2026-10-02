@@ -77,7 +77,7 @@
   ],
   "governing_source_sha256": {
     "dish_pg/release.py": "e2295fec87e85366013d3906c2ce79f48f9eb726a7fa687a74a34bce660e3648",
-    "dish_service/admin_cli.py": "31ee1bfdd8226f1cd17ea1b56ba04ad70f7f1ec5b39580842f07d4cbc2a128ed",
+    "dish_service/admin_cli.py": "78ccd7c17b229057980dd8f13dda479c2a1a7e8478b7e2376542b74ff2399956",
     "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
     "dish_service/command_spec.py": "dbcc953a3c3fa5ca19fed42f64dda155c1d6f190ac95a0542df0f5a119a43fa7",
@@ -95,7 +95,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Task 1219066010521233 exposes agent archive and unarchive on the PostgreSQL connected (MCP/Action) surface; refresh the runtime-contract command-list hash",
+  "last_rebaseline_reason": "Native UUID routing for dish-admin migrate changes the governed admin CLI source hash; behavior reviewed in PR #471",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
