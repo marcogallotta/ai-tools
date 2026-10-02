@@ -4523,15 +4523,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "human decision still contains the unfilled command placeholder",
                 http_status=400,
             )
-        resume_status = str(
-            call.arguments.get("resume_status", "pending-verification")
-        ).strip()
-        if resume_status not in {"pending-research", "pending-verification"}:
-            raise CommandRuleError(
-                "INVALID_RESUME_STATUS",
-                "resume_status must be pending-research or pending-verification",
-                http_status=400,
-            )
+        resume_status = (
+            "pending-research"
+            if requirement.cycle_id is None
+            else "pending-verification"
+        )
         candidate_file_text = call.arguments.get("file_text")
         if call.arguments.get("file_path") and candidate_file_text is None:
             raise CommandRuleError(

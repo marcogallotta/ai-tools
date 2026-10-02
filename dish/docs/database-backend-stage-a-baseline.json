@@ -90,7 +90,7 @@
     "dish_tool/database_schema_migrations.py": "c3ca81d3bebdd68564069b061220d7b8a9af42b274cd632aaaff5f0bf7449982",
     "dish_tool/database_schema_validation.py": "1e234fe7b2b0c3e70dae1da41de6d2c553ce128695bd7f5d6c166a1d009c96b2",
     "dish_tool/workflow_policy.py": "213219dfc857a65b9720043426f9ddb6c7ea68706086322648051da3f7775fe9",
-    "docs/runtime-contract.md": "acfb2319a328b3f7353455f8fe3578ce09dedc2dca2aaecacdc1a67090af725b",
+    "docs/runtime-contract.md": "43eed6c9442624b7a992145dfd68de787ec48611fca81f90f78b527099d98443",
     "openapi/dish-action.openapi.json": "35d5539c0d23340d77da08adf8410a7c1530c2453f51ca47a206bd16a80d07e2",
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
@@ -103,7 +103,7 @@
     "The evidence characterizes immutable source commit 7dff85921f005c62929c46d347a7ab29ae463480; this evidence-only commit follows it and does not alter characterized runtime source."
   ],
   "production_change_epoch": "2026-08-05",
-  "schema_head": "0054_authorization_consumed_result_not_unique",
+  "schema_head": "0055_human_review_decision_text",
   "source_commit": "7dff85921f005c62929c46d347a7ab29ae463480",
   "source_commit_time": "2026-08-05T11:09:00+00:00",
   "source_only_commands": [

@@ -16,6 +16,7 @@ from dish_pg.command_contract import (
     POSTGRES_DISH_ID_SCHEMA,
     POSTGRESQL_ACTION_ADDED_COMMANDS,
     POSTGRESQL_ACTION_RETIRED_COMMANDS,
+    RECORD_HUMAN_DECISION_COMMAND,
     SEARCH_COMMAND,
     SEARCH_PAGE_SIZE_DEFAULT,
     SEARCH_PAGE_SIZE_MAX,
@@ -97,6 +98,42 @@ def test_postgresql_action_metadata_reuses_current_principal_and_replay_policy()
 
 def test_generated_postgresql_action_openapi_matches_command_contract() -> None:
     _assert_postgresql_action_contract(postgres_action_openapi())
+
+
+def test_human_decision_is_a_direct_connected_agent_continuation() -> None:
+    assert RECORD_HUMAN_DECISION_COMMAND in ACTION_COMMANDS
+    assert RECORD_HUMAN_DECISION_COMMAND in POSTGRESQL_ACTION_ADDED_COMMANDS
+    definition = COMMAND_DEFINITIONS[RECORD_HUMAN_DECISION_COMMAND]
+    assert definition.principal == "agent"
+    assert definition.admin_exposed is True
+    schema = postgres_action_argument_schema(RECORD_HUMAN_DECISION_COMMAND)
+    assert "decision" in schema["required"]
+    assert schema["required"] == [
+        "submission_id",
+        "requirement_id",
+        "decision",
+        "agent",
+    ]
+    assert "resume_status" not in schema["properties"]
+    assert schema["properties"]["decision"]["maxLength"] == 8000
+
+    client, arguments = validate_postgres_action_request(
+        RECORD_HUMAN_DECISION_COMMAND,
+        {
+            "client": {
+                "run_id": "11111111-1111-4111-8111-111111111111",
+                "request_id": "33333333-3333-4333-8333-333333333333",
+            },
+            "arguments": {
+                "submission_id": "44444444-4444-4444-8444-444444444444",
+                "requirement_id": "55555555-5555-4555-8555-555555555555",
+                "decision": "[nutrition-kcal] [nutrition-protein]",
+                "agent": "codex",
+            },
+        },
+    )
+    assert client["request_id"] == "33333333-3333-4333-8333-333333333333"
+    assert arguments["decision"] == "[nutrition-kcal] [nutrition-protein]"
 
 
 def test_checked_in_postgresql_action_openapi_matches_command_contract() -> None:

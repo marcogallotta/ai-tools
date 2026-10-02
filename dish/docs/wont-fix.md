@@ -81,16 +81,17 @@ Partial, pending, uncertain, or contradictory effects are reconciled/fenced rath
 guessed or converted into safe reclaim. This private unsafe-recovery authority is intentionally not
 exposed as an ordinary connected action.
 
-### private-evidence-human-review-resolution-wont-fix
+### private-evidence-resolution-wont-fix
 
-Evidence and Human Review holds deliberately have no connected recovery Actions. The connected
-agent stops and identifies the required Marco/admin continuation. Marco resolves the hold through
-the narrow private `supply-evidence` or `record-human-decision` command, after which an eligible
-agent continues the operation. Editing the Asana task directly is not authoritative because it
+Evidence holds deliberately have no connected recovery Action. The connected agent stops and
+identifies the required Marco/admin continuation. Marco resolves the hold through the narrow private
+`supply-evidence` command, after which an eligible agent continues the operation. Human Review is
+different: the connected agent asks Marco directly and durably records his answer with
+`record-human-decision`; no second admin confirmation is required. Editing the Asana task directly is not authoritative because it
 bypasses Dish's durable hold and audit state.
 
-This is accepted as won't-fix for launch: the human checkpoint is intentional, the private recovery
-is simple, and the expected operational impact is low. Revisit only if real post-launch holds create
+The Evidence behavior is accepted as won't-fix for launch: the checkpoint is intentional, the private recovery
+is simple, and the expected operational impact is low. Revisit only if real post-launch Evidence holds create
 meaningful recurring operator friction.
 
 ### connected-request-status-inspection-wont-fix

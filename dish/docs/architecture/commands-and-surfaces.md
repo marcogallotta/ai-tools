@@ -110,10 +110,13 @@ publishing an exact linked successor. None of these commands falls through to a 
 Their retained disposition is executable in
 `dish_pg.command_contract.CONNECTED_COMMAND_DISPOSITIONS`.
 
-Retained PostgreSQL admin-principal commands (queue, recovery, discard/abandon, Human Review,
+Retained PostgreSQL admin-principal commands (queue, recovery, discard/abandon,
 evidence, migrate, and lease recovery/expiry) are reachable only through the private admin bearer on
 `/v1/admin/<command>` and the admin lease routes when the runtime is bound to the PROD profile; the
-agent/action surfaces expose only retained non-admin commands, and retired/non-retained historical
+agent/action surfaces expose only retained non-admin commands. `record-human-decision` is an
+agent-owned continuation: the connected agent asks Marco directly, records his exact answer, and
+resumes the held workflow. Its private-admin exposure is compatibility only, not a required operator
+step. Retired/non-retained historical
 commands (backup-create, backup-restore) stay unroutable everywhere. A TEST-profile runtime exposes
 only `queue`, `archive`, and `unarchive` through that private bearer so their operator paths can be
 qualified;
@@ -140,9 +143,10 @@ direct review mutation commands remain callable escape hatches. Hiding a command
 not remove or weaken its backend authority checks.
 
 `queue` is the primary "what Marco needs to do now" surface over durable Dish state. It groups
-Marco-required work by human consequence (Human Review, Evidence, change approval, then recovery),
-hides system/auto-recoverable rows by default, and enters Human Review or Evidence interaction
-directly from the rendered snapshot. Queue numbering is presentation only: every PostgreSQL
+admin-required work by human consequence (Evidence, change approval, then recovery),
+hides system/auto-recoverable rows by default, and enters those interactions directly from the
+rendered snapshot. Ordinary Human Review answers are excluded because the connected agent records
+Marco's answer in the active conversation. Queue numbering is presentation only: every PostgreSQL
 mutation uses the exact operation, hold, requirement, cycle, proposal, and content identities from
 that rendered snapshot. Human Review and Evidence use their existing PostgreSQL commands; semantic
 approval records each exact required authorization; and semantic rejection uses only the narrow
@@ -168,7 +172,8 @@ expected/manual lifecycle rows are hidden by default and available with `--verbo
 decide workflow legality; `inspect --verbose <dish>` remains the bounded per-Dish diagnostic view.
 
 Human Review items retain durable ranked choices with A as the recommended route plus free-text
-Other. Semantic proposals retain exact governed before/after bundles. The queue may enter these
+Other. Semantic proposals retain exact governed before/after bundles. The connected agent presents
+and records ordinary Human Review choices; the admin queue may enter the remaining admin-owned
 interactions directly, but it remains presentation and routing: PostgreSQL workflow commands and
 policy retain mutation authority.
 
