@@ -64,6 +64,7 @@ from dish_tool.governed_diff import (
     governed_changes_requiring_authorization,
     validate_semantic_proposal,
 )
+from dish_tool.migrations import migrate_task_document
 from dish_tool.errors import DishRuleError
 from dish_tool.task_document import (
     DESTINATION_RE,
@@ -2289,6 +2290,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 model=str(call.arguments.get("model")),
                 at=call.now,
                 protocol_release=binding.protocol_release,
+                schema_release=binding.schema_release,
             )
         elif operation.kind == "change" and file_text is not None:
             requested_classification = call.arguments.get("material_classification")
@@ -2310,6 +2312,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 model=str(call.arguments.get("model")),
                 at=call.now,
                 protocol_release=binding.protocol_release,
+                schema_release=binding.schema_release,
             )
             parts = change_preparation.parts
             if change_preparation.effective_classification != "material":
@@ -2340,6 +2343,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 title=str(call.arguments.get("title", prior.title)),
                 body=str(body_value) if body_value is not None else None,
                 expected_status="pending-verification",
+                expected_schema_version=binding.schema_release,
             )
         version_id = self._activate_document(
             generation_id=generation.generation_id,
@@ -2539,7 +2543,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             }
         return result
 
-    def _inspect(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
+    def _inspect(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         cycle = self._latest_cycle(operation.operation_id)
         self._assert_cycle_is_current(generation.generation_id, task.task_id, cycle)
@@ -2624,6 +2628,20 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "inspect must repeat the exact attestation bound by Verification start",
             )
 
+        reviewed = self.session.get(
+            models.ContentVersion, cycle.reviewed_content_version_id
+        )
+        if reviewed is None:
+            raise CommandRuleError(
+                "REVIEWED_CONTENT_MISSING", "reviewed content version is missing"
+            )
+        parse_canonical_document(
+            title=reviewed.title,
+            body=reviewed.body,
+            expected_status="pending-verification",
+            expected_schema_version=binding.schema_release,
+        )
+
         inspection = self.workflow.record_inspection(
             inspection_id=self.uuid_factory(),
             execution_id=execution.execution_id,
@@ -2635,13 +2653,6 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         )
         operation.persisted_actions = ["approve", "reject"]
         operation.operation_revision += 1
-        reviewed = self.session.get(
-            models.ContentVersion, cycle.reviewed_content_version_id
-        )
-        if reviewed is None:
-            raise CommandRuleError(
-                "REVIEWED_CONTENT_MISSING", "reviewed content version is missing"
-            )
         return {
             "inspection_id": str(inspection.inspection_id),
             "cycle_id": str(cycle.cycle_id),
@@ -2705,6 +2716,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             title=reviewed.title,
             body=reviewed.body,
             expected_status="pending-verification",
+            expected_schema_version=binding.schema_release,
         )
 
         source_parts = reviewed_parts
@@ -2717,7 +2729,9 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     http_status=400,
                 )
             source_parts = parse_canonical_document(
-                file_text=str(file_text), expected_status="pending-verification"
+                file_text=str(file_text),
+                expected_status="pending-verification",
+                expected_schema_version=binding.schema_release,
             )
             candidate_identity = content_identity(source_parts.title, source_parts.body)
             if candidate_identity == reviewed.content_identity:
@@ -2887,6 +2901,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             title=reviewed.title,
             body=reviewed.body,
             expected_status="pending-verification",
+            expected_schema_version=binding.schema_release,
         )
 
         prior_nonapproved_cycles = int(
@@ -2915,7 +2930,9 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     http_status=400,
                 )
             corrected = parse_canonical_document(
-                file_text=str(file_text), expected_status="pending-verification"
+                file_text=str(file_text),
+                expected_status="pending-verification",
+                expected_schema_version=binding.schema_release,
             )
             identity = content_identity(corrected.title, corrected.body)
             if identity == reviewed.content_identity:
@@ -4651,7 +4668,188 @@ class PostgresCommandPort(PostgresCommandReadMixin):
 
     def _migrate(self, call, generation, binding, execution, task, _operation) -> dict[str, Any]:
         assert task is not None
-        return self._prepare(call, generation, binding, execution, task, self._ensure_migration_operation(call, generation, binding, execution, task))
+        operation = self._ensure_migration_operation(
+            call, generation, binding, execution, task
+        )
+        self.workflow.repo.assert_task_fence(execution.execution_id)
+        self.workflow.repo.assert_operation_fence(execution.execution_id)
+
+        state = self.session.get(
+            models.DishState, (generation.generation_id, task.task_id)
+        )
+        if state is None:
+            raise CommandRuleError(
+                "CONTENT_AUTHORITY_MISSING", "task has no DishState"
+            )
+        prior = self.session.get(
+            models.ContentVersion, state.current_content_version_id
+        )
+        if prior is None:
+            raise CommandRuleError(
+                "CONTENT_AUTHORITY_MISSING", "current content is missing"
+            )
+        source = parse_canonical_document(
+            title=prior.title,
+            body=prior.body,
+            expected_status="pending-verification",
+        )
+        source_schema = source.document.schema_version
+        if source_schema == binding.schema_release:
+            raise CommandRuleError(
+                "CONFLICT",
+                "task already uses the current schema",
+                data={"rule": "migration_not_required"},
+            )
+        if source_schema != "1" or binding.schema_release != "2":
+            raise CommandRuleError(
+                "VALIDATION_FAILED",
+                "no supported migration path",
+                http_status=400,
+                data={
+                    "rule": "migration_path_missing",
+                    "from": source_schema,
+                    "to": binding.schema_release,
+                },
+            )
+        migrated = migrate_task_document(
+            f"{prior.title}\n{prior.body}",
+            {
+                "from_schema_version": "1",
+                "to_schema_version": "2",
+                "operations": [{"type": "canonical-parse-render"}],
+            },
+        )
+        if not migrated.ok or migrated.transformed_content is None:
+            raise CanonicalDocumentError(
+                "migration could not safely produce the current schema",
+                errors=[finding_payload(item) for item in migrated.findings],
+            )
+        rendered = migrated.transformed_content.splitlines()
+        title = rendered[0]
+        body = "\n".join(rendered[1:]) + "\n"
+        version_id = self._activate_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            binding_id=binding.binding_id,
+            execution_id=execution.execution_id,
+            title=title,
+            body=body,
+            predecessor_content_version_id=prior.content_version_id,
+            at=call.now,
+        )
+
+        verification_section_id = self._section_for_role(
+            generation.generation_id,
+            "verification_queue",
+            missing_code="VERIFICATION_QUEUE_MISSING",
+            missing_message="active registry has no Verification Queue",
+        )
+        placement_changed = state.section_id != verification_section_id
+        if placement_changed:
+            self._set_placement(
+                generation.generation_id,
+                task.task_id,
+                verification_section_id,
+                execution.execution_id,
+                call.now,
+            )
+
+        prior_cycle = self.session.scalar(
+            select(wf.VerificationCycle)
+            .where(
+                wf.VerificationCycle.operation_id == operation.operation_id,
+                wf.VerificationCycle.lifecycle == "open",
+            )
+            .order_by(wf.VerificationCycle.cycle_sequence.desc())
+            .limit(1)
+        )
+        if operation.phase == "await_verification" and prior_cycle is None:
+            raise CommandRuleError(
+                "VERIFICATION_CYCLE_REQUIRED",
+                "await-verification migration requires the current open cycle",
+            )
+        if prior_cycle is not None:
+            prior_cycle.lifecycle = "reset"
+            prior_cycle.outcome = "schema_migrated"
+            prior_cycle.terminal_at = call.now
+            active_leases = self.session.scalars(
+                select(wf.ServiceLease).where(
+                    wf.ServiceLease.operation_id == operation.operation_id,
+                    wf.ServiceLease.state == "active",
+                )
+            ).all()
+            for lease in active_leases:
+                self._terminalize_lease(
+                    lease,
+                    "released",
+                    execution,
+                    call.now,
+                    "schema migration reset the reviewed content occurrence",
+                )
+
+        operation.phase = "await_verification"
+        operation.persisted_actions = ["inspect"]
+        operation.operation_revision += 1
+        self.session.add(
+            wf.OperationStep(
+                step_id=self.uuid_factory(),
+                operation_id=operation.operation_id,
+                step_name=f"migrate-{operation.operation_revision}",
+                step_sequence=self._next_step(operation.operation_id),
+                outcome="complete",
+                command_execution_id=execution.execution_id,
+                evidence={
+                    "source_schema_version": source_schema,
+                    "target_schema_version": binding.schema_release,
+                    "source_content_version_id": str(prior.content_version_id),
+                    "content_version_id": str(version_id),
+                    "reset_cycle_id": (
+                        str(prior_cycle.cycle_id) if prior_cycle is not None else None
+                    ),
+                },
+                occurred_at=call.now,
+            )
+        )
+        self._finalize_scalar_mutations()
+        cycle = self.workflow.open_verification_cycle(
+            cycle_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            operation_id=operation.operation_id,
+            reviewed_content_version_id=version_id,
+            created_at=call.now,
+        )
+        projection_id = self._project(
+            generation.generation_id,
+            execution.execution_id,
+            task.task_id,
+            "update_task_document",
+            {"content_version_id": str(version_id)},
+            call.now,
+        )
+        placement_projection_id = None
+        if placement_changed:
+            placement_projection_id = self._project(
+                generation.generation_id,
+                execution.execution_id,
+                task.task_id,
+                "move_task",
+                {"section_id": str(verification_section_id)},
+                call.now,
+            )
+        return {
+            "operation_id": str(operation.operation_id),
+            "source_content_version_id": str(prior.content_version_id),
+            "content_version_id": str(version_id),
+            "source_schema_version": source_schema,
+            "schema_version": binding.schema_release,
+            "reset_cycle_id": (
+                str(prior_cycle.cycle_id) if prior_cycle is not None else None
+            ),
+            "cycle_id": str(cycle.cycle_id),
+            "projection_event_id": projection_id,
+            "placement_projection_event_id": placement_projection_id,
+            "_placement_changed": placement_changed,
+        }
 
     def _ensure_migration_operation(self, call, generation, _binding, execution, task):
         statement = select(wf.WorkflowOperation).where(
@@ -4664,7 +4862,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         operation = self.session.scalar(
             statement.execution_options(populate_existing=True)
         )
-        if operation is not None and operation.kind != "migration":
+        if operation is not None and (
+            operation.kind != "migration"
+            and operation.phase != "await_verification"
+        ):
             raise CommandRuleError(
                 "CONFLICT",
                 "task already has an open operation",

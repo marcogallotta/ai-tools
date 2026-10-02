@@ -55,6 +55,20 @@ def effect_spec_for(
     if command_name == "inspect":
         return CommandEffectSpec(("record_inspection_occurrence", "advance_operation"))
     if command_name in {"prepare", "migrate"}:
+        if command_name == "migrate":
+            mutations = [
+                "ensure_migration_operation",
+                "activate_content_version",
+                "append_operation_step",
+                "open_verification_cycle",
+                "advance_operation",
+            ]
+            if placement_changed:
+                mutations.insert(2, "place_verification_queue")
+            projections = ["update_task_document"]
+            if placement_changed:
+                projections.append("move_task")
+            return CommandEffectSpec(tuple(mutations), tuple(projections))
         if command_name == "prepare" and planning_handoff:
             mutations = [
                 "activate_content_version",
@@ -81,8 +95,6 @@ def effect_spec_for(
                 verify_mutation_effects=True,
             )
         mutations = (
-            ("ensure_migration_operation",) if command_name == "migrate" else ()
-        ) + (
             "activate_content_version",
             "place_verification_queue",
             "append_operation_step",
