@@ -707,11 +707,81 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         if result_operation is not None:
             result_data.setdefault("operation_kind", result_operation.kind)
 
+        if (
+            call.command_name == "read"
+            and task is not None
+            and result_operation is not None
+            and allowed_actions == ["start"]
+            and result_data.get("required_start_kind") == "verification"
+        ):
+            conflicting = self._verification_conflict(
+                operation=result_operation,
+                call=call,
+            )
+            if conflicting is not None:
+                result_data.update(
+                    self._ineligible_verification_metadata(
+                        task.task_id,
+                        conflicting.actor_fact_id,
+                    )
+                )
+                result_data.pop("required_start_kind", None)
+                result_data.pop("agent_action", None)
+                allowed_actions = []
+
         return result_data, {
             "task_gid": None,
             "submission_id": submission_id,
             "state": result_operation.phase if result_operation is not None else None,
             "allowed_actions": allowed_actions,
+        }
+
+    @staticmethod
+    def _verification_handoff(task_id: object) -> dict[str, Any]:
+        return {
+            "required": True,
+            "requirement": "independent_verifier",
+            "instruction": (
+                "Hand this task to an independent caller. That caller must read the current "
+                "task and follow its returned Verification continuation."
+            ),
+            "action_template": {
+                "command": "read",
+                "arguments": {"dish_id": str(task_id)},
+                "required_caller_arguments": ["agent"],
+            },
+        }
+
+    def _verification_conflict(
+        self,
+        *,
+        operation: wf.WorkflowOperation | None,
+        call: CommandCall,
+    ) -> wf.OperationActorFact | None:
+        if operation is None or operation.phase != "await_verification":
+            return None
+        return self.session.scalar(
+            select(wf.OperationActorFact)
+            .where(
+                wf.OperationActorFact.operation_id == operation.operation_id,
+                wf.OperationActorFact.actor_role != "verification",
+                wf.OperationActorFact.run_id == call.run_id,
+            )
+            .limit(1)
+        )
+
+    def _ineligible_verification_metadata(
+        self,
+        task_id: object,
+        actor_fact_id: object,
+    ) -> dict[str, Any]:
+        return {
+            "verification_eligibility": {
+                "eligible": False,
+                "rule": "VERIFIER_NOT_INDEPENDENT",
+                "conflicting_actor_fact_id": str(actor_fact_id),
+            },
+            "verification_handoff": self._verification_handoff(task_id),
         }
 
     def _verification_continuation(
@@ -902,6 +972,19 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         task: models.DishTask | None,
         operation: wf.WorkflowOperation | None,
     ) -> CommandResult:
+        if (
+            exc.code == "VERIFIER_NOT_INDEPENDENT"
+            and task is not None
+            and operation is not None
+        ):
+            conflicting_actor_fact_id = exc.data.get("conflicting_actor_fact_id")
+            if conflicting_actor_fact_id is not None:
+                exc.data.update(
+                    self._ineligible_verification_metadata(
+                        task.task_id,
+                        conflicting_actor_fact_id,
+                    )
+                )
         data = {"message": str(exc), **exc.data}
         self._store_outcome(
             call=call,
