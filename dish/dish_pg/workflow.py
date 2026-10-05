@@ -1119,7 +1119,35 @@ class WorkflowAuthorityRepository:
         request = self.session.get(wf.ServiceRequest, execution.request_id)
         if request is None:
             raise WorkflowAuthorityError("execution has no request authority")
-        state, membership, catalog_version_id = self.lock_task_currentness(
+
+        observed_state_fence = None
+        observed_membership_revision = None
+        if request.command_name != "record-cook-log":
+            # The final PostgreSQL lock refreshes identity-map rows with
+            # ``populate_existing``. Copy only authority this transaction already
+            # observed before the refresh can rebind it to a concurrent winner.
+            observed_state = self.session.identity_map.get(
+                self.session.identity_key(
+                    models.DishState, (generation_id, task_id)
+                )
+            )
+            observed_membership = self.session.identity_map.get(
+                self.session.identity_key(
+                    models.TaskMembershipHead, (generation_id, task_id)
+                )
+            )
+            if observed_state is not None:
+                observed_state_fence = (
+                    observed_state.dish_version,
+                    observed_state.placement_version,
+                    observed_state.catalog_version_id,
+                )
+            if observed_membership is not None:
+                observed_membership_revision = (
+                    observed_membership.membership_revision
+                )
+
+        state, membership, locked_catalog_version_id = self.lock_task_currentness(
             generation_id=generation_id, task_id=task_id
         )
         # While archived, preserve the canonical TASK_ARCHIVED surface. The
@@ -1130,14 +1158,29 @@ class WorkflowAuthorityRepository:
             self.assert_task_run_not_revoked(
                 generation_id=generation_id, task_id=task_id, run_id=request.run_id
             )
+        if observed_state_fence is None:
+            expected_dish_version = state.dish_version
+            expected_placement_version = state.placement_version
+            catalog_version_id = locked_catalog_version_id
+        else:
+            (
+                expected_dish_version,
+                expected_placement_version,
+                catalog_version_id,
+            ) = observed_state_fence
+        expected_membership_revision = (
+            membership.membership_revision
+            if observed_membership_revision is None
+            else observed_membership_revision
+        )
         row = wf.TaskExecutionFence(
             execution_id=execution_id,
             generation_id=generation_id,
             task_id=task_id,
-            expected_dish_version=state.dish_version,
-            expected_membership_revision=membership.membership_revision,
+            expected_dish_version=expected_dish_version,
+            expected_membership_revision=expected_membership_revision,
             expected_placement_version=(
-                state.placement_version if catalog_version_id is not None else None
+                expected_placement_version if catalog_version_id is not None else None
             ),
             catalog_version_id=catalog_version_id,
             captured_at=at,
