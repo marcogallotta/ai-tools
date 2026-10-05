@@ -23,7 +23,7 @@ NOW = datetime(2026, 8, 1, 20, 0, tzinfo=timezone.utc)
     ("command_name", "binds_prelock_observation"),
     (("start", True), ("record-cook-log", False)),
 )
-def test_task_fence_capture_preserves_mutation_observation_but_cook_log_rebinds(
+def test_task_fence_owner_preserves_mutation_observation_but_cook_log_rebinds(
     workflow_db, monkeypatch, command_name: str, binds_prelock_observation: bool
 ) -> None:
     factory, ids, context, task_id = workflow_db

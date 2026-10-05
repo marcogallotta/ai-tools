@@ -949,6 +949,13 @@ def test_native_archive_commits_before_final_fence_and_stale_start_rejects(
 
     def stale_start():
         with managed_session(stale_connection) as session:
+            stale_state = session.get(
+                models.DishState, (context["generation_id"], task_id)
+            )
+            stale_membership = session.get(
+                models.TaskMembershipHead, (context["generation_id"], task_id)
+            )
+            assert stale_state is not None and stale_membership is not None
             return _task_fence_port(session, before_lock=before_lock).execute(
                 CommandCall(
                     command_name="start",
@@ -1007,9 +1014,17 @@ def test_native_cook_log_binds_post_transition_when_cooked_wins_before_fence_cap
     log_run, cooked_run = _seed_task_fence_runs(factory, ids, context)
     before_lock = TransactionGate(label="cook log waits before final task-fence lock")
     engine = factory.kw["bind"]
+    log_request_id = uuid.uuid4()
 
     def stale_log():
         with managed_session(log_connection) as session:
+            stale_state = session.get(
+                models.DishState, (context["generation_id"], task_id)
+            )
+            stale_membership = session.get(
+                models.TaskMembershipHead, (context["generation_id"], task_id)
+            )
+            assert stale_state is not None and stale_membership is not None
             return _task_fence_port(session, before_lock=before_lock).execute(
                 CommandCall(
                     command_name="record-cook-log",
@@ -1017,7 +1032,7 @@ def test_native_cook_log_binds_post_transition_when_cooked_wins_before_fence_cap
                     owner_id="owner-1",
                     principal_class="agent",
                     run_id=log_run,
-                    request_id=uuid.uuid4(),
+                    request_id=log_request_id,
                     now=NOW + timedelta(seconds=1),
                 )
             )
@@ -1046,8 +1061,26 @@ def test_native_cook_log_binds_post_transition_when_cooked_wins_before_fence_cap
     assert result.ok is True
     with session_scope(factory) as session:
         state = session.get(models.DishState, (context["generation_id"], task_id))
+        membership = session.get(
+            models.TaskMembershipHead, (context["generation_id"], task_id)
+        )
+        execution = session.scalar(
+            select(wf.CommandExecution).where(
+                wf.CommandExecution.request_id == log_request_id
+            )
+        )
+        fence = (
+            session.get(wf.TaskExecutionFence, execution.execution_id)
+            if execution is not None
+            else None
+        )
         entry = session.scalar(select(wf.CookLogEntry))
-        assert state is not None and state.completed is True
+        assert state is not None and membership is not None and state.completed is True
+        assert fence is not None
+        assert fence.expected_dish_version == state.dish_version
+        assert fence.expected_membership_revision == membership.membership_revision
+        assert fence.expected_placement_version is None
+        assert fence.catalog_version_id is None
         assert entry is not None
         assert entry.dish_version == state.dish_version
         assert entry.content_version_id == state.current_content_version_id

@@ -21,7 +21,6 @@ _install_native_section_command_contract()
 from .services import CoreAuthorityService, ImportedTaskResult, ImportedTaskSpec
 from .command_port import CommandCall, CommandResult, PostgresCommandPort
 from .read_model import PostgresReadModel
-from .task_fence_snapshot_patch import install as _install_task_fence_snapshot_patch
 from .transition import ProjectionService, ShadowService, SourceImportService
 from .release import CandidateEvaluation, ReleaseCandidateService
 from .workflow import (
@@ -29,11 +28,9 @@ from .workflow import (
     RequestAdmission,
     RequestSpec,
     StoredOutcome,
-    WorkflowAuthorityRepository,
     WorkflowAuthorityService,
 )
 
-_install_task_fence_snapshot_patch(WorkflowAuthorityRepository)
 _install_native_section_port(PostgresCommandPort)
 
 __all__ = [
