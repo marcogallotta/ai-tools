@@ -329,7 +329,10 @@ corrected candidate as `file_text`.
 
 Marco-only continuations such as `supply-evidence` and `reopen` never appear in an agent response's
 `allowed_actions`. `record-human-decision` is different: the connected agent asks Marco directly,
-records his exact answer, and resumes without a second private-admin confirmation. For an Evidence
+records his exact answer, and resumes without a second private-admin confirmation. For an open
+Human Review hold, `read` and `reject` return `data.human_review` and a ready `data.agent_action`
+carrying the exact `requirement_id`, `expected_cycle_id` (Verification reviews) and
+`expected_hold_identity`; the caller adds only `decision`, `agent`, and request fields. For an Evidence
 hold (`required_admin_action: supply-evidence`), `read`, `inspect`, `reject`, and a `start` blocked by the existing held
 operation all also return `data.submission_id` (the operation UUID the admin command itself
 requires — not the task GID), `data.continuation_surface: private-admin`,

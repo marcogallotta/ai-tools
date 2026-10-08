@@ -149,6 +149,29 @@ def test_human_review_decision_resumes_same_operation_from_connected_agent(
             owner="agent-owner",
             agent="codex",
         )
+        # The connected agent must be able to learn the exact review identifiers
+        # from Dish itself, both from the rejection and from a later read.
+        read = port.execute(
+            _call(
+                "read",
+                run_id=direct_agent_run,
+                owner="agent-owner",
+                principal="agent",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert read.ok
+        assert read.allowed_actions == ("record-human-decision",)
+        continuation = read.data["agent_action"]
+        assert continuation["command"] == "record-human-decision"
+        assert continuation["arguments"] == {
+            "submission_id": started.data["operation_id"],
+            "requirement_id": rejected.data["requirement_id"],
+            "expected_cycle_id": rejected.data["cycle_id"],
+            "expected_hold_identity": read.data["human_review"]["expected_hold_identity"],
+        }
+        assert read.data["human_review"]["requirement_id"] == rejected.data["requirement_id"]
+        assert rejected.data["agent_action"]["arguments"] == continuation["arguments"]
         decision_text = "[nutrition-kcal] [nutrition-protein] approved by Marco"
         decided = port.execute(
             _call(
@@ -158,8 +181,7 @@ def test_human_review_decision_resumes_same_operation_from_connected_agent(
                 owner="agent-owner",
                 principal="agent",
                 arguments={
-                    "submission_id": started.data["operation_id"],
-                    "requirement_id": rejected.data["requirement_id"],
+                    **continuation["arguments"],
                     "decision": decision_text,
                     "resume_status": "pending-research",
                     "agent": "codex",
