@@ -691,7 +691,18 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             )
         elif len(allowed_actions) == 1 and submission_id is not None:
             next_action = allowed_actions[0]
-            if next_action in {"prepare", "inspect", "submit"}:
+            if next_action == "record-human-decision":
+                review = self._open_human_review_continuation(result_operation)
+                if review is not None:
+                    result_data.setdefault("human_review", review)
+                    result_data.setdefault(
+                        "agent_action",
+                        {
+                            "command": next_action,
+                            "arguments": {"submission_id": submission_id, **review},
+                        },
+                    )
+            elif next_action in {"prepare", "inspect", "submit"}:
                 arguments = {"submission_id": submission_id}
                 if next_action == "inspect" and result_data.get(
                     "independence_attestation"
@@ -783,6 +794,37 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             },
             "verification_handoff": self._verification_handoff(task_id),
         }
+
+    def _open_human_review_continuation(
+        self, operation: wf.WorkflowOperation | None
+    ) -> dict[str, str] | None:
+        """Return the exact identifiers `record-human-decision` requires, if a plain Human Review is open."""
+
+        if operation is None or operation.phase != "held_human":
+            return None
+        requirement = self.session.scalar(
+            select(wf.HumanReviewRequirement)
+            .where(
+                wf.HumanReviewRequirement.operation_id == operation.operation_id,
+                wf.HumanReviewRequirement.state == "open",
+            )
+            .order_by(
+                wf.HumanReviewRequirement.opened_at.desc(),
+                wf.HumanReviewRequirement.requirement_id.desc(),
+            )
+            .limit(1)
+        )
+        if requirement is None or requirement.question.startswith(_SEMANTIC_PROPOSAL_PREFIX):
+            return None
+        baseline = self.session.get(
+            models.ContentVersion, requirement.baseline_content_version_id
+        )
+        review = {"requirement_id": str(requirement.requirement_id)}
+        if requirement.cycle_id is not None:
+            review["expected_cycle_id"] = str(requirement.cycle_id)
+        if baseline is not None:
+            review["expected_hold_identity"] = baseline.content_identity
+        return review
 
     def _verification_continuation(
         self,
