@@ -215,7 +215,7 @@ def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
 def test_honest_read_reports_missing_planning_start_paths(tmp_path):
     checkout = tmp_path / "checkout"
     subprocess.run(["git", "init", "-b", "main", str(checkout)], check=True, capture_output=True)
-    for path in ("dish-planning-protocol.md", *mcp_server.HONEST_PLANNING_START_PATHS[1:]):
+    for path in mcp_server.HONEST_PLANNING_START_PATHS:
         target = checkout / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(f"{path}\n")
@@ -234,12 +234,7 @@ def test_honest_read_reports_missing_planning_start_paths(tmp_path):
         "CLAUDE.md",
         *mcp_server.HONEST_PLANNING_START_PATHS,
     ]
-    assert result["reading_guidance"]["missing_recommended_paths"] == [
-        "CLAUDE.md",
-        "planning/index.md",
-        "dish-classes.md",
-        "planning/blocks/index.md",
-    ]
+    assert result["reading_guidance"]["missing_recommended_paths"] == ["CLAUDE.md"]
 
 
 def test_honest_read_fails_without_serving_when_pull_fails(tmp_path):
