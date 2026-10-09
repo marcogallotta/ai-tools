@@ -57,6 +57,75 @@ Keep a currently authorized MCP bearer token in
 `/home/marco/.config/dish-service/mcp-conformance-token` with mode `0600`. This credential is read
 only in process; it is never passed on the command line or written to the receipt.
 
+The token is the GitHub-OAuth access token the MCP server issues; it lasts about 8 hours, so renew
+it immediately before every `activate`. A 401 from the MCP conformance check means the file is
+stale. Marco has standing-authorized the activating agent to renew it without asking.
+
+Run the script below. It first renews silently from the stored refresh token
+(`mcp-conformance-refresh.json`, mode `0600`, valid about a year) and prints
+`token refreshed silently`. Only when that fails (first use, or the refresh token expired or was
+revoked) does it print `OPEN THIS LINK TO SIGN IN:`; then send Marco that link, which he opens on the
+laptop (the callback is `localhost`), and the script stores a new refresh token. Run `activate` once
+it prints `token refreshed silently` or `token written`.
+
+```python
+import asyncio, json, os, urllib.parse, urllib.request
+from fastmcp import Client
+from fastmcp.client.auth import OAuth
+
+URL = "https://laptop.tail46f0b9.ts.net/dish/mcp"
+TOKEN_URL = "https://laptop.tail46f0b9.ts.net/dish/token"
+DIR = "/home/marco/.config/dish-service/"
+ACCESS_FILE = DIR + "mcp-conformance-token"
+STATE_FILE = DIR + "mcp-conformance-refresh.json"
+
+def write_private(path, text):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
+
+def save(client_id, tokens):
+    write_private(ACCESS_FILE, tokens["access_token"].strip())
+    if tokens.get("refresh_token"):
+        write_private(STATE_FILE, json.dumps(
+            {"client_id": client_id, "refresh_token": tokens["refresh_token"]}))
+
+def refresh():
+    state = json.load(open(STATE_FILE))
+    body = urllib.parse.urlencode({
+        "grant_type": "refresh_token", "refresh_token": state["refresh_token"],
+        "client_id": state["client_id"], "resource": URL}).encode()
+    with urllib.request.urlopen(urllib.request.Request(TOKEN_URL, body), timeout=30) as r:
+        tokens = json.load(r)
+    tokens.setdefault("refresh_token", state["refresh_token"])
+    save(state["client_id"], tokens)
+
+class PrintLinkOAuth(OAuth):
+    async def redirect_handler(self, authorization_url):
+        print("OPEN THIS LINK TO SIGN IN:", authorization_url, flush=True)
+
+async def sign_in():
+    auth = PrintLinkOAuth(mcp_url=URL, client_name="dish-release-conformance",
+                          callback_timeout=1500.0)
+    async with Client(URL, auth=auth) as client:
+        await client.list_tools()
+        tokens = await auth.token_storage_adapter.get_tokens()
+        info = await auth.token_storage_adapter.get_client_info()
+    save(info.client_id, tokens.model_dump(mode="json"))
+
+try:
+    refresh()
+    print("token refreshed silently")
+except Exception as exc:
+    print("refresh unavailable (%s); signing in" % type(exc).__name__, flush=True)
+    asyncio.run(sign_in())
+    print("token written")
+```
+
+Save it outside the repository and run it with a release's interpreter
+(`releases/<commit>/dish/.venv/bin/python -u -I <file>`), in the background with unpiped stdout so
+the link, if needed, appears immediately.
+
 ```sh
 dish/scripts/dish-prod-release activate <exact-40-character-commit>
 ```
