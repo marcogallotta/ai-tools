@@ -54,12 +54,7 @@ HONEST_MAX_BYTES = 512 * 1024
 HONEST_LOCK = threading.Lock()
 HONEST_GIT_SSH_COMMAND = "/usr/bin/ssh -F /dev/null"
 LOG = logging.getLogger("dish.mcp")
-HONEST_PLANNING_START_PATHS = (
-    "dish-planning-protocol.md",
-    "planning/index.md",
-    "dish-classes.md",
-    "planning/blocks/index.md",
-)
+HONEST_PLANNING_START_PATHS = ("dish-planning-protocol.md",)
 SERVER_INSTRUCTIONS = (
     "Dish PostgreSQL workflow authority is behind these tools. Before any Dish MCP use or "
     "unavailable claim, select the installed Dish app in the current turn. After Marco attaches "
@@ -77,9 +72,9 @@ SERVER_INSTRUCTIONS = (
     "for any further work on that Dish. "
     "Use dish_honest_read to read current Honest Pantry files; it updates main first and serves "
     "nothing if that update fails. Start with current CLAUDE.md and follow its routed stage "
-    "protocol. Dish Planning must read dish-planning-protocol.md, planning/index.md, "
-    "dish-classes.md, and planning/blocks/index.md, then use Dish cooked discovery and immutable "
-    "cook logs as that protocol directs."
+    "protocol. Dish Planning must read dish-planning-protocol.md and follow its Route by intent "
+    "for which docs to read, then use Dish cooked discovery and immutable cook logs as that "
+    "protocol directs."
 )
 
 
@@ -159,8 +154,8 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
                 "instructions": [
                     "Read current CLAUDE.md first, then follow the stage protocol it routes.",
                     (
-                        "For Dish Planning, read the planning protocol plus the compact cuisine, "
-                        "class, and block indexes before opening conditional detail."
+                        "For Dish Planning, read the planning protocol and follow its Route by "
+                        "intent for which docs a named dish or broad request reads."
                     ),
                 ],
                 "recommended_paths": recommended,

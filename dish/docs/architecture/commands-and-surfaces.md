@@ -17,8 +17,9 @@ Stable connected-agent command names are owned below transport composition by `d
 The MCP app additionally exposes `dish_honest_read` as a transport-local, read-only repository
 context tool. It updates the single host Honest Pantry checkout before returning bounded text files;
 it is not a Dish workflow command and does not join the connected command identity set. Its response
-may identify missing recommended routing files, including Planning's compact cuisine, class, and
-block indexes. That is discovery feedback, not proof that the caller read or followed those files.
+may identify missing recommended routing files, including the Planning protocol, whose "Route by
+intent" decides which further docs a request reads. That is discovery feedback, not proof that the
+caller read or followed those files.
 
 ## Actors, processes, and stores
 
