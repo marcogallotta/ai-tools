@@ -1462,7 +1462,10 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
         validation_scope=trace.validation_scope,
     )
 
-def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, blocker_metric: str | None = None, blocker_actual: float | None = None, blocker_limit: float | None = None, blocker_delta: float | None = None, blocker_unit: str | None = None, blocker_basis: str | None = None, human_review_confirmed: bool = False, human_review_basis: str | None = None, repairs_considered: str | None = None, human_review_options=None, governed_change_fields=None) -> dict[str, Any]:
+def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, blocker_metric: str | None = None, blocker_actual: float | None = None, blocker_limit: float | None = None, blocker_delta: float | None = None, blocker_unit: str | None = None, blocker_basis: str | None = None, human_review_confirmed: bool = False, human_review_basis: str | None = None, repairs_considered: str | None = None, human_review_options=None, governed_change_fields=None, human_review_category: str | None = None) -> dict[str, Any]:
+    # human_review_category is admitted by the PostgreSQL authority; the legacy
+    # SQLite route keeps its own Human Review preflight and ignores it.
+    del human_review_category
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     reason = validate_rejection_reason(reason)
     route_release = self._load_release(None)

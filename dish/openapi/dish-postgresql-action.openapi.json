@@ -1870,46 +1870,24 @@
                             "description": "The specific unresolved choice, waiver, classification, or authority that remains for Marco.",
                             "type": "string"
                           },
+                          "human_review_category": {
+                            "description": "Dish admits route=human-review only with one of these categories. Formal Human Review is only for a nutrition exemption, reversing an authenticated Decision/Lock/Exemption, or a change Dish returns as needing Marco's authorization. Anything else is a chat question to Marco: ask him and continue from his answer instead of rejecting.",
+                            "enum": [
+                              "nutrition_exemption",
+                              "reverse_authenticated_decision",
+                              "governed_authorization"
+                            ],
+                            "type": "string"
+                          },
                           "human_review_confirmed": {
                             "description": "Set true only after completing Dish's Human Review escalation preflight.",
                             "type": "boolean"
                           },
                           "human_review_options": {
-                            "description": "Concrete human choices for this Human Review, ordered best-first. The first item is always the agent's recommended route. Include plausible alternatives; Dish always gives Marco a free-text Other choice in the admin UI. If an option authorizes an Exemptions change, before/after must be the complete exact field values. Nutrition waivers use the canonical tags [nutrition-kcal], [nutrition-protein], or [nutrition-fat] in the after value, not prose substitutes.",
+                            "description": "Concrete human choices for this Human Review, ordered best-first. The first item is always the agent's recommended route. Include plausible alternatives; Dish always gives Marco a free-text Other choice. Each decision is the exact text recorded if Marco picks it; nutrition waivers use the canonical tags [nutrition-kcal], [nutrition-protein], or [nutrition-fat]. When you can construct the exact governed change, use route=large instead so Dish queues it as a semantic proposal.",
                             "items": {
                               "additionalProperties": false,
                               "properties": {
-                                "authorization": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "after": {
-                                      "type": "string"
-                                    },
-                                    "before": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "enum": [
-                                        "Dish candidate",
-                                        "Purpose",
-                                        "Role",
-                                        "Priors",
-                                        "Locks",
-                                        "Exemptions",
-                                        "Research emphasis",
-                                        "Destination section",
-                                        "Researched by"
-                                      ],
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "field",
-                                    "before",
-                                    "after"
-                                  ],
-                                  "type": "object"
-                                },
                                 "decision": {
                                   "type": "string"
                                 },
@@ -1935,8 +1913,8 @@
                             "type": "string"
                           },
                           "resume_status": {
+                            "description": "A Verification Human Review always resumes to pending-verification.",
                             "enum": [
-                              "pending-research",
                               "pending-verification"
                             ],
                             "type": "string"

@@ -28,6 +28,7 @@ from .command_effect_runtime import (
     record_projection_intent,
 )
 from .legacy_attention import RESOLUTION_EVENT, unresolved_legacy_attention
+from .human_review_preflight import human_review_admission
 from .document_authority import (
     CanonicalDocumentError,
     destination_gid,
@@ -3017,6 +3018,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "reject requires a non-blank reason",
                 http_status=400,
             )
+        human_review = (
+            human_review_admission(call.arguments, reason=reason)
+            if route == "human-review"
+            else None
+        )
         reviewed = self.session.get(models.ContentVersion, cycle.reviewed_content_version_id)
         if reviewed is None:
             raise CommandRuleError(
@@ -3211,12 +3217,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "projection_event_id": projection_id,
                 }
             else:
+                assert human_review is not None
                 requirement = self.workflow.open_human_review(
                     requirement_id=self.uuid_factory(),
                     execution_id=execution.execution_id,
                     operation_id=operation.operation_id,
                     route="human_review",
-                    question=reason,
+                    question=human_review["question"],
                     baseline_content_version_id=held_version_id,
                     opened_at=call.now,
                     cycle_id=cycle.cycle_id,
@@ -3226,6 +3233,9 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 result = {
                     "route": "human-review",
                     "requirement_id": str(requirement.requirement_id),
+                    "human_review_category": human_review["category"],
+                    "human_review_options": human_review["options"],
+                    "quantified_blocker": human_review["quantified_blocker"],
                     "held_content_version_id": str(held_version_id),
                     "projection_event_id": projection_id,
                 }

@@ -337,6 +337,22 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "blocker_delta": {"type": "number"},
             "blocker_unit": {"type": "string"},
             "blocker_basis": {"type": "string"},
+            "human_review_category": {
+                "type": "string",
+                "enum": [
+                    "nutrition_exemption",
+                    "reverse_authenticated_decision",
+                    "governed_authorization",
+                ],
+                "description": (
+                    "Dish admits route=human-review only with one of these categories. "
+                    "Formal Human Review is only for a "
+                    "nutrition exemption, reversing an authenticated Decision/Lock/Exemption, "
+                    "or a change Dish returns as needing Marco's authorization. Anything else is "
+                    "a chat question to Marco: ask him and continue from his answer instead of "
+                    "rejecting."
+                ),
+            },
             "human_review_confirmed": {
                 "type": "boolean",
                 "description": "Set true only after completing Dish's Human Review escalation preflight.",
@@ -643,8 +659,9 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         ),
         "human-review": dict(
             extra=(
-                "resume_status", *blocker_fields, "human_review_confirmed",
-                "human_review_basis", "repairs_considered", "human_review_options",
+                "resume_status", *blocker_fields, "human_review_category",
+                "human_review_confirmed", "human_review_basis", "repairs_considered",
+                "human_review_options",
             ),
             required=("resume_status", "human_review_options"),
         ),

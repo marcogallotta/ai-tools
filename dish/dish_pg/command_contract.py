@@ -596,7 +596,42 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
             ),
         }
         return result
+    if command == "reject":
+        return _postgres_reject_argument_schema(base)
     return deepcopy(base)
+
+
+def _postgres_reject_argument_schema(base: Mapping[str, Any]) -> dict[str, Any]:
+    """PostgreSQL Human Review choices are decision text, never bound authorizations.
+
+    Exact governed changes travel as a Large correction, which Dish queues as a
+    semantic proposal; the PostgreSQL reject therefore does not advertise the legacy
+    per-option authorization object.
+    """
+
+    result = deepcopy(dict(base))
+    for variant in result.get("oneOf", ()):
+        properties = variant.get("properties", {})
+        options = properties.get("human_review_options")
+        if not isinstance(options, dict):
+            continue
+        options["items"]["properties"].pop("authorization", None)
+        options["description"] = (
+            "Concrete human choices for this Human Review, ordered best-first. The first "
+            "item is always the agent's recommended route. Include plausible alternatives; "
+            "Dish always gives Marco a free-text Other choice. Each decision is the exact "
+            "text recorded if Marco picks it; nutrition waivers use the canonical tags "
+            "[nutrition-kcal], [nutrition-protein], or [nutrition-fat]. When you can "
+            "construct the exact governed change, use route=large instead so Dish queues it "
+            "as a semantic proposal."
+        )
+        resume = properties.get("resume_status")
+        if isinstance(resume, dict):
+            resume["enum"] = ["pending-verification"]
+            resume["description"] = (
+                "A Verification Human Review always resumes to pending-verification."
+            )
+    return result
 
 
 def normalize_postgres_search_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:

@@ -123,6 +123,20 @@ def test_human_review_decision_resumes_same_operation_from_connected_agent(
                     "agent": "codex",
                     "route": "human-review",
                     "reason": "Marco must choose the route",
+                    "human_review_category": "nutrition_exemption",
+                    "human_review_basis": "Waive the kcal and protein targets for this dish?",
+                    "human_review_options": [
+                        {
+                            "label": "Waive both",
+                            "decision": "[nutrition-kcal] [nutrition-protein] approved by Marco",
+                        }
+                    ],
+                    "blocker_metric": "kcal",
+                    "blocker_actual": 980,
+                    "blocker_limit": 800,
+                    "blocker_delta": 180,
+                    "blocker_unit": "kcal",
+                    "blocker_basis": "ingredient calculation",
                 },
             )
         )

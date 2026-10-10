@@ -102,6 +102,22 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "already construct the exact governed fix, use a Large correction so Dish queues that exact proposal for review. "
                 "Use Human Review only when a material Marco-only choice remains before an exact candidate can exist."
             )
+        if code == "HUMAN_REVIEW_NOT_ALLOWED":
+            instructions.append(
+                "No hold was opened. Do not park the task: ask Marco the question in plain English in chat, with "
+                "the concern, its consequence, and your recommendation, then continue the same Verification from "
+                "his answer. Record a material answer as an agent-attested Human — Marco Decision. Retry "
+                "route=human-review only for a nutrition exemption, reversing an authenticated "
+                "Decision/Lock/Exemption, or a change Dish returns as needing Marco's authorization."
+            )
+        if code in {"HUMAN_REVIEW_PREFLIGHT_REQUIRED", "QUANTIFIED_BLOCKER_REQUIRED"}:
+            instructions.append(
+                "No hold was opened. Do the Human Review preflight yourself rather than dumping protocol questions "
+                "on Marco. Supply the category, the one question Marco is deciding, and one to six concrete choices "
+                "ordered best-first (choice A is your recommendation); Marco always also gets a free-text Other "
+                "choice. A nutrition exemption also states its quantified blocker: one defensible estimate, the "
+                "limit, and the excess. Retry with a fresh request ID."
+            )
         if error_rule in {
             "planning_handoff_requires_initial",
             "planning_handoff_requires_fresh_research_run",
