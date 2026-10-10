@@ -4485,9 +4485,14 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "evidence detail still contains the unfilled command placeholder",
                 http_status=400,
             )
-        resume_status = str(
-            call.arguments.get("resume_status", "pending-verification")
-        ).strip()
+        requested_resume_status = call.arguments.get("resume_status")
+        if requested_resume_status in {None, ""}:
+            # Omitted means "derive from the exact hold", matching the queue.
+            resume_status = (
+                "pending-research" if hold.cycle_id is None else "pending-verification"
+            )
+        else:
+            resume_status = str(requested_resume_status).strip()
         if resume_status not in {"pending-research", "pending-verification"}:
             raise CommandRuleError(
                 "INVALID_RESUME_STATUS",
@@ -5092,10 +5097,17 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     models.TaskExternalAlias.state == "active",
                 )
             )
-            if str(expected_task_gid).strip() != str(actual_task_gid or ""):
+            expected = str(expected_task_gid).strip()
+            # Absent means no task check. A Dish without an Asana task has no
+            # GID, so its canonical Dish UUID is accepted as the same pin.
+            if expected not in {str(actual_task_gid or ""), str(task.task_id)}:
                 raise CommandRuleError(
                     "HOLD_TASK_MISMATCH",
                     "resolution command does not match the held task",
+                    data={
+                        "dish_id": str(task.task_id),
+                        "task_gid": None if actual_task_gid is None else str(actual_task_gid),
+                    },
                 )
 
         expected_cycle_id = call.arguments.get("expected_cycle_id")
