@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from dish_tool.constants import NO_EVIDENCE_HOLD_MESSAGE, SAFETY_FINDING_GUIDANCE
+
 
 def _text(value: object) -> str | None:
     if not isinstance(value, str):
@@ -226,8 +228,8 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
             instructions.append(
                 "Inspect this Verification candidate before making any semantic approval or rejection decision. "
                 "Use a reasonable defensible estimate with stated assumptions for unknowable yield/portion values; do not "
-                "invent false precision when no single estimate is defensible. Uncertainty is blocking only when it could "
-                "materially change a safety, nutrition, settled-intent, or executability conclusion. A structured threshold "
+                "invent false precision when no single estimate is defensible. " + SAFETY_FINDING_GUIDANCE + " "
+                + NO_EVIDENCE_HOLD_MESSAGE + " A structured threshold "
                 "blocker must give one defensible estimate versus the limit and the material excess/shortfall. For multi-task review, report one short block per task: "
                 "outcome, quantified material issue if any, simplest fix, and only the Marco decision actually needed."
             )
@@ -240,9 +242,13 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
             )
         if "reject" in actions:
             instructions.append(
-                "For Verification rejection, route is closed to large, evidence, or human-review. "
-                "A Small correction is not a rejection route; apply it through approve with correction=small."
+                "For Verification rejection, route is closed to large or human-review. "
+                "A Small correction is not a rejection route; apply it through approve with correction=small. "
+                + NO_EVIDENCE_HOLD_MESSAGE
             )
+            instructions.append(SAFETY_FINDING_GUIDANCE)
+        if command == "reject":
+            instructions.append(SAFETY_FINDING_GUIDANCE)
         if command == "approve" and "submit" in actions:
             instructions.append("Call submit in this same run.")
 

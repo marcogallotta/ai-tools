@@ -14,6 +14,7 @@ from dish_service.command_spec import validate_action_request
 from dish_service.http import build_server
 from dish_tool.identifiers import validate_identifier_fields
 from dish_tool.backend import map_backend_exception
+from dish_tool.constants import NO_EVIDENCE_HOLD_MESSAGE, SAFETY_FINDING_GUIDANCE
 from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.models import RequestPhase
 from dish_tool.results import error_envelope
@@ -588,7 +589,9 @@ def test_action_guidance_treats_verification_uncertainty_as_defensible_estimatio
     text = " ".join(guidance["instructions"])
     assert "reasonable defensible estimate" in text
     assert "do not invent false precision" in text
-    assert "Uncertainty is blocking only" in text
+    assert "Uncertainty is blocking only" not in text
+    assert SAFETY_FINDING_GUIDANCE in text
+    assert NO_EVIDENCE_HOLD_MESSAGE in text
     assert "one defensible estimate versus the limit" in text
     assert "plausible range" not in text
 
@@ -695,8 +698,45 @@ def test_action_guidance_spells_out_verification_correction_and_route_vocabulari
     text = " ".join(guidance["instructions"])
     assert "correction=none" in text
     assert "correction=small" in text
-    assert "large, evidence, or human-review" in text
+    assert "route is closed to large or human-review" in text
+    assert "evidence, or human-review" not in text
+    assert NO_EVIDENCE_HOLD_MESSAGE in text
+    assert SAFETY_FINDING_GUIDANCE in text
     assert "Small correction is not a rejection route" in text
+
+
+def test_reject_result_guidance_carries_the_safety_finding_rule() -> None:
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "reject",
+        "code": "OK",
+        "allowed_actions": [],
+        "data": {},
+    })
+    assert SAFETY_FINDING_GUIDANCE in guidance["instructions"]
+
+
+def test_action_request_validation_refuses_evidence_route_with_chat_instruction() -> None:
+    for route in ("evidence", "Evidence", " evidence "):
+        with pytest.raises(DishRuleError) as raised:
+            validate_action_request(
+                "reject",
+                {
+                    "client": {
+                        "run_id": "11111111-1111-4111-8111-111111111111",
+                        "request_id": "33333333-3333-4333-8333-333333333333",
+                    },
+                    "arguments": {
+                        "submission_id": "44444444-4444-4444-8444-444444444444",
+                        "agent": "codex",
+                        "reason": "unknown fact",
+                        "route": route,
+                        "resume_status": "pending-verification",
+                    },
+                },
+            )
+        assert raised.value.rule == "evidence_hold_removed"
+        assert str(raised.value) == NO_EVIDENCE_HOLD_MESSAGE
 
 
 def test_action_argument_schemas_are_executable_on_the_legacy_backend() -> None:

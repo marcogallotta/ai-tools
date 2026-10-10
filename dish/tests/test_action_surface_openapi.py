@@ -135,11 +135,11 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
 
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
-    assert set(variants) == set(REJECTION_ROUTES)
+    assert set(variants) == set(REJECTION_ROUTES) == {"large", "human-review"}
     assert {"model", "file_text"}.issubset(variants["large"]["required"])
     assert "resume_status" not in variants["large"]["properties"]
     assert "independence_attestation" not in variants["large"]["properties"]
-    for route in ("evidence", "human-review"):
+    for route in ("human-review",):
         props = variants[route]["properties"]
         assert "resume_status" in variants[route]["required"]
         assert "file_text" not in props
@@ -363,4 +363,4 @@ def test_verification_action_schema_exposes_closed_correction_and_route_values()
         branch["properties"]["route"]["enum"][0]
         for branch in reject["oneOf"]
     }
-    assert reject_values == {"large", "evidence", "human-review"}
+    assert reject_values == {"large", "human-review"}

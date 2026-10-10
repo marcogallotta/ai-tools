@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from dish_tool import command_identity as command_ids
-from dish_tool.constants import APPROVAL_CORRECTIONS, REJECTION_ROUTES
+from dish_tool.constants import APPROVAL_CORRECTIONS, NO_EVIDENCE_HOLD_MESSAGE, REJECTION_ROUTES
 from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import (
     CANONICAL_DISH_UUID_SCHEMA,
@@ -637,10 +637,6 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             extra=("model", "file_text", "governed_change_fields"),
             required=("model", "file_text"),
         ),
-        "evidence": dict(
-            extra=("resume_status", *blocker_fields),
-            required=("resume_status",),
-        ),
         "human-review": dict(
             extra=(
                 "resume_status", *blocker_fields, "human_review_confirmed",
@@ -811,6 +807,14 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
     if not isinstance(arguments, dict):
         raise _argument_error(
             "arguments must be an object", "arguments_object_required", field="arguments"
+        )
+    if (
+        command == REJECT_COMMAND.name
+        and isinstance(arguments.get("route"), str)
+        and arguments["route"].replace("_", "-").strip().lower() == "evidence"
+    ):
+        raise _argument_error(
+            NO_EVIDENCE_HOLD_MESSAGE, "evidence_hold_removed", field="route"
         )
     schema = action_argument_schema(command)
     properties = schema["properties"]

@@ -33,6 +33,7 @@ from dish_pg.shadow_worker import (
     _shadow_uuid,
 )
 from dish_pg.workflow import RequestIdentityConflict, StaleAuthorityError
+from dish_tool.constants import NO_EVIDENCE_HOLD_MESSAGE
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 from tests.support.postgresql.core import _import_one
@@ -398,7 +399,7 @@ def test_hold_reject_creates_only_preconstruction_evidence_hold_and_replays(work
         ) == 1
 
 
-def test_verification_evidence_reject_remains_verification_reject(workflow_db) -> None:
+def test_verification_evidence_reject_is_refused_without_opening_a_hold(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         port, _author_run, verifier_run, started, prepared, _inspected = _verification_ready(
@@ -425,10 +426,15 @@ def test_verification_evidence_reject_remains_verification_reject(workflow_db) -
         hold = session.scalar(
             select(wf.EvidenceHold).where(wf.EvidenceHold.operation_id == operation_id)
         )
-        assert rejected.ok is True and rejected.command == "reject"
-        assert hold is not None and hold.cycle_id is not None
-        assert hold.baseline_content_version_id != uuid.UUID(prepared.data["content_version_id"])
-        assert session.scalar(select(func.count()).select_from(tx.ProjectionOutboxEvent)) == projection_count + 1
+        assert rejected.ok is False and rejected.command == "reject"
+        assert rejected.code == "INVALID_REJECTION_ROUTE"
+        assert rejected.data["message"] == NO_EVIDENCE_HOLD_MESSAGE
+        assert hold is None
+        assert session.scalar(select(func.count()).select_from(tx.ProjectionOutboxEvent)) == projection_count
+        cycle = session.scalar(
+            select(wf.VerificationCycle).where(wf.VerificationCycle.operation_id == operation_id)
+        )
+        assert cycle is not None and cycle.lifecycle == "open"
 
 
 def test_shadow_reject_translation_requires_source_preconstruction_proof_and_namespaces_request() -> None:

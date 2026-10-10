@@ -24,6 +24,7 @@ from tests.support.postgresql.command import (
     _start_verification,
     _verification_ready,
 )
+from tests.support.postgresql.legacy_evidence_hold import install_legacy_evidence_reject
 from tests.support.postgresql.workflow import _next, _register_run, workflow_db
 
 
@@ -176,8 +177,11 @@ def test_third_large_rejection_enters_verification_hold_and_resolved_reopens_cyc
 
 
 def test_evidence_hold_resumes_as_distinct_canonical_verification_occurrence(
-    workflow_db,
+    workflow_db, monkeypatch
 ) -> None:
+    # Agents can no longer open Evidence holds; seed a legacy one and prove that
+    # admin supply-evidence still resumes it.
+    install_legacy_evidence_reject(monkeypatch)
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         port, _author_run, verifier_run, started, _prepared, _inspection = _verification_ready(

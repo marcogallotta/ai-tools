@@ -57,6 +57,7 @@ from .repositories import (
     registry_source_import_run,
 )
 from .transition import ProjectionService, TransitionAuthorityError
+from dish_tool.constants import NO_EVIDENCE_HOLD_MESSAGE
 from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
 from dish_tool.governed_diff import (
     GOVERNED_FIELDS,
@@ -3004,10 +3005,16 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         self._assert_cycle_is_current(generation.generation_id, task.task_id, cycle)
         _inspection, actor = self._exact_verifier_inspection(call, cycle)
         route = str(call.arguments.get("route", "large")).replace("_", "-")
-        if route not in {"large", "evidence", "human-review"}:
+        if route.strip().lower() == "evidence":
             raise CommandRuleError(
                 "INVALID_REJECTION_ROUTE",
-                "route must be large, evidence, or human-review",
+                NO_EVIDENCE_HOLD_MESSAGE,
+                http_status=400,
+            )
+        if route not in {"large", "human-review"}:
+            raise CommandRuleError(
+                "INVALID_REJECTION_ROUTE",
+                "route must be large or human-review",
                 http_status=400,
             )
         reason = str(call.arguments.get("reason", "")).strip()
@@ -3167,11 +3174,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "projection_event_id": projection_id,
                 }
         else:
-            target_status = (
-                "pending-evidence" if route == "evidence" else "pending-human-review"
-            )
             held_parts = held_document(
-                reviewed_parts.document, target=target_status, detail=reason
+                reviewed_parts.document, target="pending-human-review", detail=reason
             )
             held_version_id = self._activate_document(
                 generation_id=generation.generation_id,
@@ -3192,43 +3196,24 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 {"content_version_id": str(held_version_id)},
                 call.now,
             )
-            if route == "evidence":
-                hold = self.workflow.open_evidence_hold(
-                    hold_id=self.uuid_factory(),
-                    execution_id=execution.execution_id,
-                    operation_id=operation.operation_id,
-                    baseline_content_version_id=held_version_id,
-                    reason=reason,
-                    opened_at=call.now,
-                    cycle_id=cycle.cycle_id,
-                )
-                operation.phase = "held_evidence"
-                operation.persisted_actions = ["supply-evidence"]
-                result = {
-                    "route": "evidence",
-                    "hold_id": str(hold.hold_id),
-                    "held_content_version_id": str(held_version_id),
-                    "projection_event_id": projection_id,
-                }
-            else:
-                requirement = self.workflow.open_human_review(
-                    requirement_id=self.uuid_factory(),
-                    execution_id=execution.execution_id,
-                    operation_id=operation.operation_id,
-                    route="human_review",
-                    question=reason,
-                    baseline_content_version_id=held_version_id,
-                    opened_at=call.now,
-                    cycle_id=cycle.cycle_id,
-                )
-                operation.phase = "held_human"
-                operation.persisted_actions = ["record-human-decision"]
-                result = {
-                    "route": "human-review",
-                    "requirement_id": str(requirement.requirement_id),
-                    "held_content_version_id": str(held_version_id),
-                    "projection_event_id": projection_id,
-                }
+            requirement = self.workflow.open_human_review(
+                requirement_id=self.uuid_factory(),
+                execution_id=execution.execution_id,
+                operation_id=operation.operation_id,
+                route="human_review",
+                question=reason,
+                baseline_content_version_id=held_version_id,
+                opened_at=call.now,
+                cycle_id=cycle.cycle_id,
+            )
+            operation.phase = "held_human"
+            operation.persisted_actions = ["record-human-decision"]
+            result = {
+                "route": "human-review",
+                "requirement_id": str(requirement.requirement_id),
+                "held_content_version_id": str(held_version_id),
+                "projection_event_id": projection_id,
+            }
         result["cycle_id"] = str(cycle.cycle_id)
         self._release_verifier_lease(
             call=call, execution=execution, cycle=cycle, actor=actor, reason=f"verification rejected: {route}"
