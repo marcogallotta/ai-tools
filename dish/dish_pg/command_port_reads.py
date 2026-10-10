@@ -1004,17 +1004,25 @@ class PostgresCommandReadMixin:
             "read_only": True,
         }
 
-    def _queue(self) -> Mapping[str, Any]:
-        """Return Marco's PostgreSQL-native queue from canonical workflow facts."""
+    def _queue(self, *, task_id: uuid.UUID | None = None) -> Mapping[str, Any]:
+        """Return Marco's PostgreSQL-native queue from canonical workflow facts.
+
+        ``task_id`` narrows the same derivation to one Dish so admin inspect can
+        show exactly the queue's safe next action for that Dish.
+        """
 
         generation = self.reads.active_generation()
         now = datetime.now().astimezone()
+        task_filter = (
+            () if task_id is None else (wf.WorkflowOperation.task_id == task_id,)
+        )
         operations = list(
             self.session.scalars(
                 select(wf.WorkflowOperation)
                 .where(
                     wf.WorkflowOperation.generation_id == generation.generation_id,
                     wf.WorkflowOperation.lifecycle == "open",
+                    *task_filter,
                 )
                 .order_by(
                     wf.WorkflowOperation.created_at,
@@ -1324,6 +1332,10 @@ class PostgresCommandReadMixin:
             items.append(item)
 
         legacy_items = unresolved_legacy_attention(self.session, generation.generation_id)
+        if task_id is not None:
+            legacy_items = [
+                item for item in legacy_items if str(item.get("task_id")) == str(task_id)
+            ]
         for item in legacy_items:
             item["operation_id"] = None; category_counts[str(item["category"])] += 1
         items.extend(legacy_items)

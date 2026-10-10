@@ -228,6 +228,7 @@ tests/postgresql/pglite/test_0035_persistence_constraint_integrity.py,test,1,6,i
 tests/postgresql/pglite/test_pglite_migrations.py,test,1,6,isolated-test; migration-graph; native-pg; pglite-required; quarantined,,,none,,PGlite primary; PGlite quarantine; exact changed test/module,,
 tests/postgresql/pglite/test_shadow_delivery_authority.py,test,1,7,isolated-test; native-pg; pglite-required; transaction-boundary,,,none,,PGlite primary; exact changed test/module,,
 tests/postgresql/test_0022_candidate_state_manifest_import_linkage.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
+tests/postgresql/test_admin_hold_ergonomics.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_audit_hold_contracts.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_backup_restore_rehearsal_tooling.py,test,1,5,isolated-test; operator-runner; recovery-filesystem,,,none,,exact changed test/module,,
 tests/postgresql/test_cutover_authority_populated_migration.py,test,1,7,isolated-test; migration-graph; native-pg; sqlite-boundary; transaction-boundary,,,none,,SQLite database-boundary; exact changed test/module,,

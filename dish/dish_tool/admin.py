@@ -3660,7 +3660,7 @@ def _resolve_protocol_hold(
     submission_id: str,
     resolution_kind: str,
     detail: str,
-    resume_status: str,
+    resume_status: str | None,
     file_path: str | None = None,
     editor: str | None = None,
     model: str | None = None,
@@ -3670,6 +3670,14 @@ def _resolve_protocol_hold(
     expected_hold_identity: str | None = None,
     record_human_decision: bool = True,
 ) -> dict[str, Any]:
+    if not resume_status:
+        # Only the PostgreSQL authority derives the resume status from the hold.
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "--resume-status is required in local SQLite mode",
+            rule="resume_status_required",
+            details={"field": "resume_status"},
+        )
     if self.backend is None or self.release_loader is None:
         raise DishRuleError("INTERNAL_ERROR", "hold resolution requires backend and Honest release", rule="hold_resolution_unavailable")
     from .step8 import resolve_hold
@@ -3704,14 +3712,14 @@ def _resolve_protocol_hold(
     )
 
 
-def _command_supply_evidence(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None, expected_task_gid: str | None = None, expected_cycle_id: str | None = None, expected_hold_identity: str | None = None) -> dict[str, Any]:
+def _command_supply_evidence(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str | None = None, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None, expected_task_gid: str | None = None, expected_cycle_id: str | None = None, expected_hold_identity: str | None = None) -> dict[str, Any]:
     return _resolve_protocol_hold(
         self, trace=trace, submission_id=submission_id, resolution_kind="evidence", expected_task_gid=expected_task_gid, expected_cycle_id=expected_cycle_id, expected_hold_identity=expected_hold_identity,
         detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, model=model, run_id=run_id,
     )
 
 
-def _command_record_human_decision(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None, expected_task_gid: str | None = None, expected_cycle_id: str | None = None, expected_hold_identity: str | None = None) -> dict[str, Any]:
+def _command_record_human_decision(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str | None = None, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None, expected_task_gid: str | None = None, expected_cycle_id: str | None = None, expected_hold_identity: str | None = None) -> dict[str, Any]:
     return _resolve_protocol_hold(
         self, trace=trace, submission_id=submission_id, resolution_kind="human_review", expected_task_gid=expected_task_gid, expected_cycle_id=expected_cycle_id, expected_hold_identity=expected_hold_identity,
         detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, model=model, run_id=run_id,

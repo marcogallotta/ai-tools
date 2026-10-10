@@ -39,6 +39,15 @@ from dish_service.process_lock import DatabaseProcessLock
 
 
 
+_HOLD_RESOLUTION_COMMANDS = frozenset({"supply-evidence", "record-human-decision"})
+_HOLD_OPTIONAL_FIELDS = (
+    "resume_status",
+    "expected_task_gid",
+    "expected_cycle_id",
+    "expected_hold_identity",
+)
+
+
 class JsonArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise DishRuleError(
@@ -447,14 +456,30 @@ def build_parser() -> JsonArgumentParser:
         hold = subparsers.add_parser(name, help=argparse.SUPPRESS, description=help_text)
         hold.add_argument("submission_id", help=_submission_target_help)
         hold.add_argument("--detail", required=True, help=_hold_detail_help[name])
-        hold.add_argument("--resume-status", required=True, choices=("pending-research", "pending-verification"))
+        hold.add_argument(
+            "--resume-status",
+            choices=("pending-research", "pending-verification"),
+            help="status to resume to; derived from the exact hold when omitted",
+        )
         hold.add_argument("--file", dest="file_path")
         hold.add_argument("--editor", choices=("claude", "gpt", "codex"))
         hold.add_argument("--model")
         hold.add_argument("--run-id")
-        hold.add_argument("--expected-task-gid", required=True)
-        hold.add_argument("--expected-cycle-id")
-        hold.add_argument("--expected-hold-identity")
+        hold.add_argument(
+            "--expected-task-gid",
+            help=(
+                "optional pin: the held Dish's Asana task GID or Dish UUID; "
+                "omit to skip this check (a Dish with no Asana task has no GID)"
+            ),
+        )
+        hold.add_argument(
+            "--expected-cycle-id",
+            help="optional pin: the hold's Verification cycle ID as shown by inspect/queue",
+        )
+        hold.add_argument(
+            "--expected-hold-identity",
+            help="optional pin: the held content identity as shown by inspect/queue",
+        )
 
     # Keep compatibility/escape-hatch commands callable without presenting them as
     # normal operator choices in the root help. argparse does not natively hide
@@ -751,7 +776,13 @@ def _prompt_review(input_fn, prompt: str) -> str:
         return "q"
 
 
+def _action_kind(value: object) -> str:
+    """Normalize queue (``supply_evidence``) and admin (``supply-evidence``) kinds."""
+    return str(value or "").strip().replace("_", "-")
+
+
 def _human_action_of_kind(result: dict[str, object], kind: str) -> dict[str, object] | None:
+    kind = _action_kind(kind)
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     candidates: list[object] = []
     action = data.get("human_action")
@@ -761,7 +792,7 @@ def _human_action_of_kind(result: dict[str, object], kind: str) -> dict[str, obj
     if isinstance(actions, list):
         candidates.extend(actions)
     for candidate in candidates:
-        if isinstance(candidate, dict) and str(candidate.get("kind") or "") == kind:
+        if isinstance(candidate, dict) and _action_kind(candidate.get("kind")) == kind:
             return candidate
     return None
 
@@ -1302,6 +1333,12 @@ def main(
             verbose_requested = bool(parsed.pop("verbose", False))
             non_interactive = bool(parsed.pop("non_interactive", False))
             _route_service_canonical_task_reference(command, parsed, app)
+            if command in _HOLD_RESOLUTION_COMMANDS:
+                # Omitted optional pins/derivable fields are not sent at all, so
+                # Dish applies "no check" / "derive from the hold" semantics.
+                for field in _HOLD_OPTIONAL_FIELDS:
+                    if parsed.get(field) in {None, ""}:
+                        parsed.pop(field, None)
             if command == "inspect":
                 parsed["verbose"] = verbose_requested
             interactive_terminal = (
