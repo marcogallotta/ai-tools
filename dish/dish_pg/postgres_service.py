@@ -49,6 +49,7 @@ from .database import DatabaseSettings, create_database_engine, session_factory,
 from .frontend_board_query import FrontendBoardQuery
 from .openapi import postgres_action_openapi
 from .read_model import InvalidCursor, PostgresReadModel, ReadModelError
+from .stage_context import STAGE_CONTEXT_FORMAT, role_for_start_kind, stage_context_for_start
 from .workflow import (
     RequestIdentityConflict,
     WorkflowAuthorityError,
@@ -857,6 +858,12 @@ class PostgresRuntimeService:
             payload = asdict(result)
             data = dict(payload.pop("data"))
             data["request_replayed"] = payload.pop("request_replayed")
+            if command == "start" and payload.get("ok"):
+                stage_context = self._stage_context(
+                    arguments, request_id=parsed_request_id, data=data
+                )
+                if stage_context is not None:
+                    data["stage_context"] = stage_context
             payload["data"] = data
             if principal.owner_id == self.config.action_client_id or (
                 principal_class == "admin" and command in {"archive", "unarchive"}
@@ -891,6 +898,33 @@ class PostgresRuntimeService:
             raise database_failure_error(
                 exc, outcome="governed mutation was not admitted", request_id=request_id
             ) from exc
+
+    def _stage_context(
+        self,
+        arguments: Mapping[str, Any],
+        *,
+        request_id: uuid.UUID | None,
+        data: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Attach the frozen governing protocol text after the start committed."""
+
+        try:
+            with session_scope(self._session_maker) as session:
+                return stage_context_for_start(
+                    session,
+                    kind=arguments.get("kind"),
+                    request_id=request_id,
+                    data=data,
+                    honest_root=self.config.honest_root,
+                )
+        except SQLAlchemyError:
+            LOGGER.exception("stage_context_database_failure")
+            return {
+                "available": False,
+                "format": STAGE_CONTEXT_FORMAT,
+                "role": role_for_start_kind(arguments.get("kind")),
+                "reason": "frozen contract binding could not be read",
+            }
 
     def execute_agent(
         self,

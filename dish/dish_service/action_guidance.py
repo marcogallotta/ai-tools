@@ -222,6 +222,21 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                     "recommendation is history-grounded."
                 )
 
+        stage_context = data.get("stage_context")
+        if command == "start" and isinstance(stage_context, Mapping):
+            if stage_context.get("available") is True:
+                instructions.append(
+                    "The stage protocol is included here; do not re-read it from GitHub. "
+                    "data.stage_context.files holds the exact text of the protocol release Dish "
+                    "froze for this run (and CLAUDE.md at the same commit when listed)."
+                )
+            else:
+                instructions.append(
+                    "Dish could not include the frozen stage protocol "
+                    "(data.stage_context.reason); read the current stage protocol through "
+                    "dish_honest_read instead."
+                )
+
         if command == "start" and "inspect" in actions:
             instructions.append(
                 "Inspect this Verification candidate before making any semantic approval or rejection decision. "
