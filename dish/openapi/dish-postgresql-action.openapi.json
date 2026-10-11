@@ -384,6 +384,18 @@
                             "minLength": 36,
                             "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                             "type": "string"
+                          },
+                          "governed_change_fields": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "Exemptions",
+                                "Decisions"
+                              ]
+                            },
+                            "uniqueItems": true,
+                            "description": "Use only when Marco accepts the already-reviewed high-fat dish unchanged: attest the appended Decision and matching nutrition-fat Exemptions update."
                           }
                         },
                         "required": [
