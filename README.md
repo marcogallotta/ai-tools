@@ -28,9 +28,9 @@ asana batch-apply <plan.json>                 # multi-step plans in one pass
 Gets and sets notes, moves tasks between sections, creates tasks and subtasks, and adds comments.
 Reads the API token from `~/.config/asana-cli/.env`. Every write goes through a hook prompt.
 
-**`dish/`** — the `dish` protocol tool: the one validated path for writing protocol-governed
-dish-task notes to Asana. Live multi-agent use runs through the laptop-hosted `dish-service`;
-local direct mode is limited to controlled single-agent testing. See `dish/README.md`.
+**`dish/`** — the guarded Dish system for protocol-governed Cooking tasks. Production task/workflow
+authority is PostgreSQL behind `dish-service`; archived Asana Cooking and SQLite are legacy/
+forensic compatibility only. See `dish/README.md`.
 
 **`hooks/`** — host adapters and shared classifiers used by Claude Code and Codex
 PreToolUse guards. They block carpet-bomb `git`/`rm` patterns, unsafe repository mutation paths, raw redirects,

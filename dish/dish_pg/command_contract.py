@@ -218,10 +218,10 @@ COMMAND_DEFINITIONS = {
             True,
             True,
             True,
-            action_exposed=True,
+            action_exposed=False,
             description=(
-                "Record Marco's direct answer to the exact open Human Review question and "
-                "resume the held Dish workflow."
+                "Legacy/admin recovery: record Marco's direct answer to an existing Human Review "
+                "requirement and resume the held Dish workflow."
             ),
             workflow_action=RECORD_HUMAN_DECISION_COMMAND,
             admin_exposed=True,
@@ -269,7 +269,6 @@ POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (
     RECORD_COOK_LOG_COMMAND,
     ARCHIVE_COMMAND,
     UNARCHIVE_COMMAND,
-    RECORD_HUMAN_DECISION_COMMAND,
 )
 POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = ()
 # Connected on the legacy SQLite/Asana Action surface but not yet ported to the

@@ -33,6 +33,7 @@ from .repositories import (
 )
 from dish_tool.content_versions import content_identity
 from dish_tool.governed_diff import (
+    GOVERNED_FIELDS,
     agent_attested_decision_appends,
     canonical_diff,
     governed_changes_requiring_authorization,
@@ -329,13 +330,27 @@ class PostgresCommandReadMixin:
         source_cycle_id: uuid.UUID,
         governed_change_fields: Any,
     ) -> dict[str, Any] | None:
+        """Validate exact chat-authorized governed edits without opening Human Review.
+
+        Legacy semantic-proposal rows remain readable/applicable elsewhere. New connected-agent
+        work either has no governed change, or carries Marco's exact chat Decision plus explicit
+        attestation of every governed field that answer authorizes.
+        """
         declared = {
-            str(value)
+            str(value).strip()
             for value in (governed_change_fields or ())
             if str(value).strip()
         }
         if not declared:
             return None
+        unknown = sorted(declared - set(GOVERNED_FIELDS))
+        if unknown:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                "governed_change_fields contains unsupported field names",
+                http_status=400,
+                data={"unsupported": unknown, "allowed": list(GOVERNED_FIELDS)},
+            )
         try:
             validate_semantic_proposal(before, after)
             attested = (
@@ -355,46 +370,37 @@ class PostgresCommandReadMixin:
                 http_status=409,
                 data=dict(getattr(exc, "details", {}) or {}),
             ) from exc
-        if not required:
-            return None
         required_fields = {change.field for change in required}
-        if not required_fields.issubset(declared):
+        missing = sorted(required_fields - declared)
+        if missing:
             raise CommandRuleError(
                 "GOVERNED_CHANGE_FIELDS_INCOMPLETE",
-                "governed_change_fields must name every governed field changed by the semantic proposal",
+                "governed_change_fields must name every governed field Marco authorized",
                 http_status=409,
-                data={"missing_fields": sorted(required_fields - declared)},
+                data={"missing_fields": missing},
             )
-        linked = canonical_diff(before, after)
-        rendered = after.render().splitlines()
-        candidate_title = rendered[0]
-        candidate_body = "\n".join(rendered[1:]) + "\n"
-        candidate_identity = content_identity(candidate_title, candidate_body)
-        return {
-            "version": 1,
-            "proposal_id": str(proposal_id),
-            "proposal_class": "large",
-            "source_cycle_id": str(source_cycle_id),
-            "reason": reason,
-            "candidate": {
-                "title": candidate_title,
-                "body": candidate_body,
-                "identity": candidate_identity,
-            },
-            "agent_attested_decisions": list(attested),
-            "required_authorizations": [
-                {
-                    "field": change.field,
-                    "before": _json_safe(change.before),
-                    "after": _json_safe(change.after),
-                }
-                for change in required
-            ],
-            "linked_changes": [
-                {"path": path, "before": old, "after": new}
-                for path, (old, new) in sorted(linked.items())
-            ],
-        }
+        if required and not attested:
+            raise CommandRuleError(
+                "CONFIRMATION_REQUIRED",
+                "Marco's chat authorization must be recorded before governed fields change",
+                data={
+                    "required_authorizations": [
+                        {
+                            "field": change.field,
+                            "before": _json_safe(change.before),
+                            "after": _json_safe(change.after),
+                        }
+                        for change in required
+                    ],
+                    "instruction": (
+                        "Ask Marco in chat. Append his exact answer as a Human — Marco Decision, "
+                        "then retry with governed_change_fields including Decisions and every "
+                        "authorized governed field."
+                    ),
+                    "fresh_request_id": True,
+                },
+            )
+        return None
 
     def _validate_semantic_proposal_requirement(
         self,
@@ -972,7 +978,9 @@ class PostgresCommandReadMixin:
                 else:
                     category, reason = "multi_step_safe", "abandonment has a deterministic continuation"
             elif operation.phase in {"held_evidence", "held_human"}:
-                category, reason = "needs_marco", "the workflow is waiting for Marco"
+                category, reason = "needs_marco", "the workflow is waiting on legacy held-state recovery"
+            elif operation.phase == "verification_stopped":
+                category, reason = "needs_marco", "Verification stopped after three unsuccessful passes; substantive reset required"
             elif lease is not None and lease.expires_at <= now:
                 category, reason = "multi_step_safe", "the actor lease has expired"
             elif lease is not None:
@@ -1373,7 +1381,7 @@ class PostgresCommandReadMixin:
             .where(
                 wf.WorkflowOperation.generation_id == generation.generation_id,
                 wf.WorkflowOperation.lifecycle == "open",
-                wf.WorkflowOperation.phase.in_(("held_evidence", "held_human")),
+                wf.WorkflowOperation.phase.in_(("held_evidence", "held_human", "verification_stopped")),
             )
             .order_by(wf.WorkflowOperation.created_at, wf.WorkflowOperation.operation_id)
         ).all()
@@ -1411,8 +1419,8 @@ class PostgresCommandReadMixin:
                 .limit(1)
             )
             if cycle is not None and cycle.outcome == "verification-hold":
-                hold_class = "verification_two_pass"
-                required_action = "resolved"
+                hold_class = "verification_three_pass"
+                required_action = "reopen"
             elif operation.phase == "held_evidence":
                 hold_class = (
                     "research_preconstruction_evidence"

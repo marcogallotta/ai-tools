@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from dish_tool import command_identity as command_ids
-from dish_tool.constants import APPROVAL_CORRECTIONS, NO_EVIDENCE_HOLD_MESSAGE, REJECTION_ROUTES
+from dish_tool.constants import (
+    APPROVAL_CORRECTIONS,
+    CONNECTED_REJECTION_ROUTES,
+    NO_EVIDENCE_HOLD_MESSAGE,
+)
 from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import (
     CANONICAL_DISH_UUID_SCHEMA,
@@ -288,12 +292,14 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "governed_change_fields": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["Decisions"]},
+                "items": {
+                    "type": "string",
+                    "enum": ["Dish candidate","Purpose","Role","Priors","Locks","Exemptions","Research emphasis","Destination section","Decisions","Researched by"],
+                },
                 "uniqueItems": True,
                 "description": (
-                    "Use only to explicitly attest an append-only `Human — Marco:` Decision "
-                    "that Marco actually stated in conversation. This records agent-attributed "
-                    "provenance; it does not authorize any other governed-field mutation."
+                    "Name every governed field Marco explicitly authorized in chat. "
+                    "Include Decisions when the candidate appends his exact `Human — Marco:` answer."
                 ),
             },
         },
@@ -326,85 +332,23 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
             "reason": {"type": "string"},
-            "route": {
-                "type": "string",
-                "enum": list(REJECTION_ROUTES),
-            },
+            "route": {"type": "string", "enum": list(CONNECTED_REJECTION_ROUTES)},
             "file_text": {"type": "string"},
-            "blocker_metric": {"type": "string"},
-            "blocker_actual": {"type": "number"},
-            "blocker_limit": {"type": "number"},
-            "blocker_delta": {"type": "number"},
-            "blocker_unit": {"type": "string"},
-            "blocker_basis": {"type": "string"},
-            "human_review_confirmed": {
-                "type": "boolean",
-                "description": "Set true only after completing Dish's Human Review escalation preflight.",
-            },
-            "human_review_basis": {
-                "type": "string",
-                "description": "The specific unresolved choice, waiver, classification, or authority that remains for Marco.",
-            },
-            "repairs_considered": {
-                "type": "string",
-                "description": "Specific plausible repairs considered and why they do not resolve the issue within existing authority.",
-            },
-            "human_review_options": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 6,
-                "description": (
-                    "Concrete human choices for this Human Review, ordered best-first. The first "
-                    "item is always the agent's recommended route. Include plausible alternatives; "
-                    "Dish always gives Marco a free-text Other choice in the admin UI. If an option "
-                    "authorizes an Exemptions change, before/after must be the complete exact field "
-                    "values. Nutrition waivers use the canonical tags [nutrition-kcal], "
-                    "[nutrition-protein], or [nutrition-fat] in the after value, not prose substitutes."
-                ),
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["label", "decision"],
-                    "properties": {
-                        "label": {"type": "string"},
-                        "decision": {"type": "string"},
-                        "authorization": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "required": ["field", "before", "after"],
-                            "properties": {
-                                "field": {
-                                    "type": "string",
-                                    "enum": [
-                                        "Dish candidate", "Purpose", "Role", "Priors", "Locks",
-                                        "Exemptions", "Research emphasis", "Destination section",
-                                        "Researched by",
-                                    ],
-                                },
-                                "before": {"type": "string"},
-                                "after": {"type": "string"},
-                            },
-                        },
-                    },
-                },
-            },
             "governed_change_fields": {
                 "type": "array",
+                "uniqueItems": True,
                 "items": {
                     "type": "string",
-                    "enum": ["Dish candidate", "Purpose", "Role", "Priors", "Locks", "Exemptions", "Research emphasis", "Destination section", "Decisions", "Researched by"],
+                    "enum": [
+                        "Dish candidate", "Purpose", "Role", "Priors", "Locks",
+                        "Exemptions", "Research emphasis", "Destination section",
+                        "Decisions", "Researched by",
+                    ],
                 },
-                "uniqueItems": True,
                 "description": (
-                    "On a Large-correction retry, name only governed fields Dish asked the agent "
-                    "to confirm as intentionally changed. Naming Decisions also attests that an "
-                    "append-only `Human — Marco:` entry reflects something Marco actually stated; "
-                    "it does not authorize another governed field."
+                    "Name every governed field Marco explicitly authorized in chat. "
+                    "Include Decisions when the candidate appends his exact Human — Marco answer."
                 ),
-            },
-            "resume_status": {
-                "type": "string",
-                "enum": ["pending-research", "pending-verification"],
             },
         },
     },
@@ -637,16 +581,9 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             extra=("model", "file_text", "governed_change_fields"),
             required=("model", "file_text"),
         ),
-        "human-review": dict(
-            extra=(
-                "resume_status", *blocker_fields, "human_review_confirmed",
-                "human_review_basis", "repairs_considered", "human_review_options",
-            ),
-            required=("resume_status", "human_review_options"),
-        ),
     }
     return {
-        "oneOf": [variant(route, **variants[route]) for route in REJECTION_ROUTES],
+        "oneOf": [variant(route, **variants[route]) for route in CONNECTED_REJECTION_ROUTES],
         "discriminator": {"propertyName": "route"},
     }
 

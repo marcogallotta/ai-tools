@@ -14,21 +14,21 @@ Current anchors include `dish_tool/releases.py`, `dish_tool/task_document.py`, `
 
 ## Actors, processes, and stores
 
-Current production combines Honest assets, service-owned SQLite, and Asana. PostgreSQL is the target authority. Sidecars and dark-launch artifacts are supporting evidence/storage, not automatically new authority.
+Current production combines Honest contract assets with PostgreSQL canonical Dish state/workflow. SQLite, archived Asana Cooking, and dark-launch artifacts are legacy/forensic compatibility evidence, not live authority.
 
 ## Authority and data ownership
 
 | Fact | Current authority | Notes |
 |---|---|---|
 | Supported document contract | Honest assets | Parsed/validated forms are derived |
-| Live title/notes/placement/completion | Asana as coordinated and exactly reread by Dish | Transitional until frontend/backend replacement |
-| Workflow operations, replay, leases, audit | SQLite | Intended to migrate to PostgreSQL |
-| Legal workflow transitions | Workflow/application policy over authoritative state | Rendered actions are projections |
-| Request identity/outcome | Replay authority | Permanent identity semantics |
-| Kill request-to-revocation binding | SQLite replay/kill authority | Exact immutable request, operation, owner, run, source authority, and revocation identity; written atomically with revocation |
-| PostgreSQL canonical state | PostgreSQL only after explicit cutover | Before cutover it is target/shadow evidence |
-| Native Section identity and catalog definition | `Section`, immutable catalog versions/entries/activations, and the CAS `ActiveSectionCatalog` pointer | Definition authority is independent of Project/Asana topology; the legacy registry remains runtime placement authority until the separately reviewed runtime switch |
-| Dark-launch artifacts | No live authority | Evidence only |
+| Live title/notes/placement/completion | PostgreSQL Dish state and projections | Canonical |
+| Workflow operations, replay, leases, audit | PostgreSQL workflow authority | Canonical |
+| Legal workflow transitions | PostgreSQL command/workflow policy over authoritative state | Rendered actions are projections |
+| Request identity/outcome | PostgreSQL replay authority | Permanent identity semantics |
+| Kill request-to-revocation binding | PostgreSQL replay/run authority | Exact immutable request, operation, owner, run, source authority, and revocation identity |
+| Native Section identity and catalog definition | `Section`, immutable catalog versions/entries/activations, and the CAS `ActiveSectionCatalog` pointer | Canonical definition and placement authority |
+| SQLite / archived Asana | Legacy migration, forensic, and compatibility evidence | Never live Cooking authority |
+| Dark-launch artifacts | Historical evidence only | Never current authority |
 | Frontend password/session/limiter/audit state | Frontend security store | Access support only; never task or workflow authority |
 | Frontend board/detail DTOs | Derived from the active canonical read source | Presentation snapshots; never writer or legality authority |
 | Cooking recommendation evidence | The source authority named by immutable provenance (for example explicit user evidence, Cooking History, Scratchpad, Profile, or a runtime fact) | Recommendation state consumes evidence; it does not rewrite or duplicate the source lifecycle |
@@ -39,10 +39,9 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 - A consequential durable fact has one authoritative writer/decision boundary at a time.
 - Derived views, caches, renderers, and transports may contain logic, but must not independently contradict the authoritative fact they represent.
 - Missing or contradictory evidence is handled explicitly rather than treated as permission.
-- Dark-launch evidence cannot silently become current authority.
-- Native catalog definition currentness does not by itself switch task placement or runtime reads
-  away from the legacy Section registry.
-- After PostgreSQL authority activation, Asana observations do not promote themselves back into canonical backend state.
+- Historical dark-launch evidence cannot silently supersede current authority.
+- PostgreSQL native catalog/state owns current task placement and runtime reads.
+- Archived Asana observations do not promote themselves back into canonical backend state.
 - Frontend read projections, caches, presentation registries, and browser state cannot become
   task, placement, completion, workflow, or projection authority.
 - Cooking recommendation state cannot become a competing Scratchpad/Profile lifecycle or safety/halal authority; inferred soft evidence cannot create a hard blocker or durable exclusion.
@@ -50,14 +49,13 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
   stable fact key. Independent or unkeyed blockers and prerequisites remain active even when
   source, candidate, scope, and lifecycle shape match; clearing one event does not retire another.
 
-During pre-cutover observation, the writable frontend security database is physically distinct
-from the PostgreSQL task-observation database. Observation credentials are read-only. Restoring
-security storage cannot by itself revive an expired, revoked, or superseded browser session; a
-deployment-owned fence outside the restored database participates in current session validity.
+Frontend security/session storage remains distinct from canonical PostgreSQL Dish authority.
+Restoring security storage cannot by itself revive an expired, revoked, or superseded browser
+session or rewrite task/workflow state.
 
 ## Process and transaction boundaries
 
-The current SQLite and PostgreSQL implementations use different transaction mechanisms. Their exact transaction-owner modules are implementation details; the architectural requirement is atomicity where identity/admission/outcome must agree and durable intent before uncertain external effects when recovery depends on it.
+Current PostgreSQL transaction-owner modules are implementation details; the architectural requirement is atomicity where identity/admission/outcome must agree and durable intent before uncertain effects when recovery depends on it.
 
 ## Normal flow
 
@@ -77,7 +75,7 @@ Evidence is distributed across workflow, replay, Asana lifecycle, recovery, and 
 
 ## Current debt and temporary compatibility
 
-The current Asana/SQLite split and several migration-era artifacts are temporary. Sidecars and compatibility state should be justified by concrete recovery/operational needs, not by a blanket architectural prohibition or permission. The `submissions` table and associated read/migration diagnostics remain compatibility state; production exposes no API that creates, transitions, or recovers a legacy submission.
+SQLite/Asana and other migration-era artifacts are legacy compatibility state and should remain only for concrete recovery/forensic needs. The `submissions` table and associated diagnostics remain compatibility state; production exposes no API that creates, transitions, or recovers a legacy submission.
 
 ## Related documents
 

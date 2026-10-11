@@ -2046,11 +2046,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         before: Any,
         after: Any,
     ) -> tuple[tuple[str, ...], list[tuple[uuid.UUID, uuid.UUID]], list[dict[str, Any]]]:
-        """Apply legacy-equivalent governed-change and Decision-attestation gates.
+        """Authorize governed changes from legacy grants or Marco's exact chat decision.
 
-        ``governed_change_fields`` is only an explicit provenance attestation for
-        an append-only attributed Marco Decision. Formal authority for every
-        other governed field comes from exact durable PostgreSQL Marco grants.
+        Existing durable grants remain valid. New agent work may instead append an exact
+        `Human — Marco:` Decision and explicitly attest every governed field that answer authorizes.
         """
         declared = tuple(
             dict.fromkeys(
@@ -2069,16 +2068,6 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "rule": "governed_change_field_invalid",
                     "unsupported": unknown,
                     "allowed": list(GOVERNED_FIELDS),
-                },
-            )
-        if set(declared) - {"Decisions"}:
-            raise CommandRuleError(
-                "INVALID_ARGUMENT",
-                "prepare accepts governed_change_fields only to attest an appended Marco Decision",
-                http_status=400,
-                data={
-                    "rule": "prepare_governed_change_field_not_applicable",
-                    "allowed": ["Decisions"],
                 },
             )
 
@@ -2113,8 +2102,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "required_governed_change_field": "Decisions",
                     "instruction": (
                         "Retry the same exact candidate with governed_change_fields including "
-                        "Decisions only if Marco actually stated these choices in the conversation. "
-                        "This records agent-attested provenance, not formal governed authorization."
+                        "Decisions only if Marco actually stated the choice in this conversation."
                     ),
                     "fresh_request_id": True,
                 },
@@ -2145,24 +2133,43 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             operation_id=operation.operation_id,
             required=required,
         )
-        if len(grants) != len(required):
-            raise CommandRuleError(
-                "GOVERNED_AUTHORIZATION_REQUIRED",
-                "change prepare is not authorized for every exact governed change",
-                data={"required_authorizations": required},
-            )
+        if len(grants) == len(required):
+            reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
+            for grant, _state in grants:
+                token = self.uuid_factory()
+                self.workflow.reserve_marco_authorization(
+                    grant_id=grant.grant_id,
+                    reservation_token=token,
+                    execution_id=execution.execution_id,
+                    reserved_at=call.now,
+                )
+                reservations.append((grant.grant_id, token))
+            return attested, reservations, required
 
-        reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
-        for grant, _state in grants:
-            token = self.uuid_factory()
-            self.workflow.reserve_marco_authorization(
-                grant_id=grant.grant_id,
-                reservation_token=token,
-                execution_id=execution.execution_id,
-                reserved_at=call.now,
+        required_fields = {item["field"] for item in required}
+        missing = sorted(required_fields - set(declared))
+        if missing:
+            raise CommandRuleError(
+                "GOVERNED_CHANGE_FIELDS_INCOMPLETE",
+                "governed_change_fields must name every governed field Marco authorized",
+                http_status=409,
+                data={"missing_fields": missing, "required_authorizations": required},
             )
-            reservations.append((grant.grant_id, token))
-        return attested, reservations, required
+        if required and not attested:
+            raise CommandRuleError(
+                "CONFIRMATION_REQUIRED",
+                "Marco's chat authorization must be recorded before governed fields change",
+                data={
+                    "required_authorizations": required,
+                    "instruction": (
+                        "Ask Marco in chat. Append his exact answer as a Human — Marco Decision, "
+                        "then retry with governed_change_fields including Decisions and every "
+                        "authorized governed field."
+                    ),
+                    "fresh_request_id": True,
+                },
+            )
+        return attested, [], required
 
     def _validate_planning_destination(
         self,
@@ -3009,17 +3016,17 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         cycle = self._latest_cycle(operation.operation_id)
         self._assert_cycle_is_current(generation.generation_id, task.task_id, cycle)
         _inspection, actor = self._exact_verifier_inspection(call, cycle)
-        route = str(call.arguments.get("route", "large")).replace("_", "-")
-        if route.strip().lower() == "evidence":
+        route = str(call.arguments.get("route", "large")).replace("_", "-").strip().lower()
+        if route == "evidence":
             raise CommandRuleError(
                 "INVALID_REJECTION_ROUTE",
                 NO_EVIDENCE_HOLD_MESSAGE,
                 http_status=400,
             )
-        if route not in {"large", "human-review"}:
+        if route != "large":
             raise CommandRuleError(
                 "INVALID_REJECTION_ROUTE",
-                "route must be large or human-review",
+                "connected Verification reject supports only route=large; ask Marco in chat for choices",
                 http_status=400,
             )
         reason = str(call.arguments.get("reason", "")).strip()
@@ -3040,6 +3047,36 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             expected_status="pending-verification",
             expected_schema_version=binding.schema_release,
         )
+        file_text = call.arguments.get("file_text")
+        if file_text is None:
+            raise CommandRuleError(
+                "LARGE_CORRECTION_CONTENT_REQUIRED",
+                "large rejection requires a complete canonical file_text",
+                http_status=400,
+            )
+        corrected = parse_canonical_document(
+            file_text=str(file_text),
+            expected_status="pending-verification",
+            expected_schema_version=binding.schema_release,
+        )
+        identity = content_identity(corrected.title, corrected.body)
+        if identity == reviewed.content_identity:
+            raise CommandRuleError(
+                "LARGE_CORRECTION_REQUIRED",
+                "large rejection must create a distinct canonical candidate",
+            )
+
+        # This validates any governed edits. New agent work uses Marco's exact chat
+        # Decision plus explicit governed_change_fields; legacy proposal rows remain
+        # recoverable through their existing admin paths.
+        self._semantic_proposal_bundle(
+            proposal_id=uuid.UUID(int=0),
+            before=reviewed_parts.document,
+            after=corrected.document,
+            reason=reason,
+            source_cycle_id=cycle.cycle_id,
+            governed_change_fields=call.arguments.get("governed_change_fields"),
+        )
 
         prior_nonapproved_cycles = int(
             self.session.scalar(
@@ -3054,174 +3091,77 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             )
             or 0
         )
-        verification_hold = route == "large" and prior_nonapproved_cycles + 1 >= 3
+        verification_hold = prior_nonapproved_cycles + 1 >= 3
         cycle.lifecycle = "rejected"
         cycle.outcome = "verification-hold" if verification_hold else "rejected"
         cycle.terminal_at = call.now
-        if route == "large":
-            file_text = call.arguments.get("file_text")
-            if file_text is None:
-                raise CommandRuleError(
-                    "LARGE_CORRECTION_CONTENT_REQUIRED",
-                    "large rejection requires a complete canonical file_text",
-                    http_status=400,
-                )
-            corrected = parse_canonical_document(
-                file_text=str(file_text),
-                expected_status="pending-verification",
-                expected_schema_version=binding.schema_release,
-            )
-            identity = content_identity(corrected.title, corrected.body)
-            if identity == reviewed.content_identity:
-                raise CommandRuleError(
-                    "LARGE_CORRECTION_REQUIRED",
-                    "large rejection must create a distinct canonical candidate",
-                )
-            proposal_payload = self._semantic_proposal_bundle(
-                proposal_id=uuid.UUID(int=0),
-                before=reviewed_parts.document,
-                after=corrected.document,
+
+        version_id = self._activate_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            binding_id=binding.binding_id,
+            execution_id=execution.execution_id,
+            title=corrected.title,
+            body=corrected.body,
+            predecessor_content_version_id=reviewed.content_version_id,
+            at=call.now,
+        )
+        self._finalize_scalar_mutations()
+        self.session.add(
+            wf.VerificationCorrection(
+                correction_id=self.uuid_factory(),
+                cycle_id=cycle.cycle_id,
+                source_content_version_id=cycle.reviewed_content_version_id,
+                corrected_content_version_id=version_id,
+                correction_class="large",
                 reason=reason,
-                source_cycle_id=cycle.cycle_id,
-                governed_change_fields=call.arguments.get("governed_change_fields"),
+                command_execution_id=execution.execution_id,
+                recorded_at=call.now,
             )
-            if proposal_payload is not None:
-                proposal_id = self.uuid_factory()
-                proposal_payload["proposal_id"] = str(proposal_id)
-                cycle.outcome = "rejected"
-                verification_hold = False
-                requirement = self.workflow.open_human_review(
-                    requirement_id=proposal_id,
-                    execution_id=execution.execution_id,
-                    operation_id=operation.operation_id,
-                    route="human_review",
-                    question=_semantic_proposal_text(proposal_payload),
-                    baseline_content_version_id=reviewed.content_version_id,
-                    opened_at=call.now,
-                    cycle_id=cycle.cycle_id,
-                )
-                operation.phase = "held_human"
-                operation.persisted_actions = []
-                result = {
-                    "route": "large",
-                    "semantic_proposal_queued": True,
-                    "proposal_id": str(requirement.requirement_id),
-                    "candidate_identity": proposal_payload["candidate"]["identity"],
-                    "required_authorizations": proposal_payload[
-                        "required_authorizations"
-                    ],
-                    "new_cycle_id": None,
-                    "verification_hold": False,
-                    "projection_event_id": None,
-                }
-            else:
-                target_parts = corrected
-                if verification_hold:
-                    target_parts = held_document(
-                        corrected.document,
-                        target="pending-human-review",
-                        detail=(
-                            "Three consecutive Verification rounds ended without a "
-                            f"signable task: {reason}"
-                        ),
-                    )
-                version_id = self._activate_document(
-                    generation_id=generation.generation_id,
-                    task_id=task.task_id,
-                    binding_id=binding.binding_id,
-                    execution_id=execution.execution_id,
-                    title=target_parts.title,
-                    body=target_parts.body,
-                    predecessor_content_version_id=reviewed.content_version_id,
-                    at=call.now,
-                )
-                self._finalize_scalar_mutations()
-                self.session.add(
-                    wf.VerificationCorrection(
-                        correction_id=self.uuid_factory(),
-                        cycle_id=cycle.cycle_id,
-                        source_content_version_id=cycle.reviewed_content_version_id,
-                        corrected_content_version_id=version_id,
-                        correction_class="large",
-                        reason=reason,
-                        command_execution_id=execution.execution_id,
-                        recorded_at=call.now,
-                    )
-                )
-                self.session.flush()
-                next_cycle = None
-                if verification_hold:
-                    operation.phase = "held_human"
-                    operation.persisted_actions = ["resolved", "reopen"]
-                else:
-                    next_cycle = self.workflow.open_verification_cycle(
-                        cycle_id=self.uuid_factory(),
-                        execution_id=execution.execution_id,
-                        operation_id=operation.operation_id,
-                        reviewed_content_version_id=version_id,
-                        created_at=call.now,
-                    )
-                    operation.phase = "await_verification"
-                    operation.persisted_actions = ["inspect"]
-                projection_id = self._project(
-                    generation.generation_id,
-                    execution.execution_id,
-                    task.task_id,
-                    "update_task_document",
-                    {"content_version_id": str(version_id)},
-                    call.now,
-                )
-                result = {
-                    "route": "large",
-                    "corrected_content_version_id": str(version_id),
-                    "new_cycle_id": str(next_cycle.cycle_id) if next_cycle else None,
-                    "verification_hold": verification_hold,
-                    "projection_event_id": projection_id,
-                }
+        )
+        self.session.flush()
+
+        next_cycle = None
+        if verification_hold:
+            operation.phase = "verification_stopped"
+            operation.persisted_actions = ["reopen"]
         else:
-            held_parts = held_document(
-                reviewed_parts.document, target="pending-human-review", detail=reason
-            )
-            held_version_id = self._activate_document(
-                generation_id=generation.generation_id,
-                task_id=task.task_id,
-                binding_id=binding.binding_id,
-                execution_id=execution.execution_id,
-                title=held_parts.title,
-                body=held_parts.body,
-                predecessor_content_version_id=reviewed.content_version_id,
-                at=call.now,
-            )
-            self._finalize_scalar_mutations()
-            projection_id = self._project(
-                generation.generation_id,
-                execution.execution_id,
-                task.task_id,
-                "update_task_document",
-                {"content_version_id": str(held_version_id)},
-                call.now,
-            )
-            requirement = self.workflow.open_human_review(
-                requirement_id=self.uuid_factory(),
+            next_cycle = self.workflow.open_verification_cycle(
+                cycle_id=self.uuid_factory(),
                 execution_id=execution.execution_id,
                 operation_id=operation.operation_id,
-                route="human_review",
-                question=reason,
-                baseline_content_version_id=held_version_id,
-                opened_at=call.now,
-                cycle_id=cycle.cycle_id,
+                reviewed_content_version_id=version_id,
+                created_at=call.now,
             )
-            operation.phase = "held_human"
-            operation.persisted_actions = ["record-human-decision"]
-            result = {
-                "route": "human-review",
-                "requirement_id": str(requirement.requirement_id),
-                "held_content_version_id": str(held_version_id),
-                "projection_event_id": projection_id,
-            }
-        result["cycle_id"] = str(cycle.cycle_id)
+            operation.phase = "await_verification"
+            operation.persisted_actions = ["inspect"]
+        projection_id = self._project(
+            generation.generation_id,
+            execution.execution_id,
+            task.task_id,
+            "update_task_document",
+            {"content_version_id": str(version_id)},
+            call.now,
+        )
+        result = {
+            "route": "large",
+            "corrected_content_version_id": str(version_id),
+            "new_cycle_id": str(next_cycle.cycle_id) if next_cycle else None,
+            "verification_hold": verification_hold,
+            "verification_stop_reason": (
+                "three consecutive Verification rounds ended without a signable task"
+                if verification_hold
+                else None
+            ),
+            "projection_event_id": projection_id,
+            "cycle_id": str(cycle.cycle_id),
+        }
         self._release_verifier_lease(
-            call=call, execution=execution, cycle=cycle, actor=actor, reason=f"verification rejected: {route}"
+            call=call,
+            execution=execution,
+            cycle=cycle,
+            actor=actor,
+            reason="verification rejected: large",
         )
         operation.operation_revision += 1
         return result
@@ -4154,12 +4094,25 @@ class PostgresCommandPort(PostgresCommandReadMixin):
 
     def _reopen(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
+        cycle = self._latest_cycle(operation.operation_id)
+        if operation.phase == "verification_stopped" and cycle.outcome == "verification-hold":
+            self._assert_exact_verification_hold_target(
+                call=call, generation_id=generation.generation_id, task_id=task.task_id, cycle=cycle
+            )
+            return self._reopen_verification_hold(
+                call=call,
+                generation=generation,
+                binding=binding,
+                execution=execution,
+                task=task,
+                operation=operation,
+                cycle=cycle,
+            )
         if operation.phase != "held_human":
             raise CommandRuleError(
-                "HUMAN_REVIEW_HOLD_REQUIRED",
-                "reopen requires the exact Human Review hold",
+                "REOPEN_TARGET_REQUIRED",
+                "reopen requires the exact mechanical Verification stop or a legacy Human Review hold",
             )
-        cycle = self._latest_cycle(operation.operation_id)
         if cycle.outcome == "verification-hold":
             self._assert_exact_verification_hold_target(
                 call=call, generation_id=generation.generation_id, task_id=task.task_id, cycle=cycle
@@ -4372,7 +4325,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         parse_canonical_document(
             title=baseline.title,
             body=baseline.body,
-            expected_status="pending-human-review",
+            expected_status=(
+                "pending-verification"
+                if operation.phase == "verification_stopped"
+                else "pending-human-review"
+            ),
         )
         candidate = parse_canonical_document(
             file_text=str(file_text), expected_status="pending-verification"
@@ -5655,8 +5612,8 @@ def _require_small_correction_scope(before, after) -> None:
                     " Because governed fields changed, the reject must also carry "
                     "governed_change_fields naming every changed governed field ("
                     + ", ".join(governed_fields)
-                    + "); it then becomes a proposal awaiting Marco's approval rather than "
-                    "an applied correction."
+                    + "); if Marco has not already authorized those exact changes, ask him in "
+                    "chat, append his exact Human — Marco Decision, and retry including Decisions."
                     if governed_fields
                     else ""
                 )

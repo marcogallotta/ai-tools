@@ -67,57 +67,27 @@ def test_human_review_requires_agent_authored_options_before_parking(tmp_path):
     assert retry["human_review_options"][0]["label"] == "<recommended route>"
 
 
-def test_public_reject_schema_requires_options_for_human_review_and_accepts_nested_authorization():
+def test_public_reject_schema_excludes_human_review_route():
     schema = action_openapi_argument_schema("reject")
-    human = next(
-        item for item in schema["oneOf"]
-        if item["properties"]["route"]["const"] == "human-review"
-    )
-    assert "human_review_options" in human["required"]
-    options = human["properties"]["human_review_options"]
-    assert options["minItems"] == 1
-    assert options["maxItems"] == 6
-    assert options["items"]["required"] == ["label", "decision"]
-    assert options["items"]["properties"]["authorization"]["required"] == [
-        "field", "before", "after"
-    ]
-    assert "[nutrition-protein]" in options["description"]
-    assert "complete exact field values" in options["description"]
+    routes = [item["properties"]["route"]["const"] for item in schema["oneOf"]]
+    assert routes == ["large"]
 
-    # The server-side scalar validator must understand the same nested shape.
-    client, arguments = validate_action_request(
-        "reject",
-        {
-            "client": {
-                "run_id": "11111111-1111-4111-8111-111111111111",
-                "request_id": "22222222-2222-4222-8222-222222222222",
+    with pytest.raises(Exception):
+        validate_action_request(
+            "reject",
+            {
+                "client": {
+                    "run_id": "11111111-1111-4111-8111-111111111111",
+                    "request_id": "22222222-2222-4222-8222-222222222222",
+                },
+                "arguments": {
+                    "submission_id": "33333333-3333-4333-8333-333333333333",
+                    "agent": "codex",
+                    "reason": "Marco must choose.",
+                    "route": "human-review",
+                },
             },
-            "arguments": {
-                "submission_id": "33333333-3333-4333-8333-333333333333",
-                "agent": "codex",
-                "reason": "Dish is below the protein target.",
-                "route": "human-review",
-                "resume_status": "pending-verification",
-                "human_review_confirmed": True,
-                "human_review_basis": "How should the shortfall be handled?",
-                "repairs_considered": "Two plausible routes remain.",
-                "human_review_options": [
-                    {
-                        "label": "Approve an exemption",
-                        "decision": "Approve a protein exemption.",
-                        "authorization": {
-                            "field": "Exemptions",
-                            "before": "None",
-                            "after": "[nutrition-protein] — Marco approved for this dish",
-                        },
-                    }
-                ],
-            },
-        },
-    )
-    assert client["request_id"].startswith("2222")
-    assert arguments["human_review_options"][0]["authorization"]["field"] == "Exemptions"
-
+        )
 
 def test_review_queue_persists_ranked_choices_and_A_is_recommended(tmp_path):
     app, backend, _operation_id, _ = make_app(tmp_path)
