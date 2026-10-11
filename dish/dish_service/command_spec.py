@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from dish_tool import command_identity as command_ids
-from dish_tool.constants import APPROVAL_CORRECTIONS, CONNECTED_REJECTION_ROUTES, NO_EVIDENCE_HOLD_MESSAGE
+from dish_tool.constants import (
+    APPROVAL_CORRECTIONS,
+    CONNECTED_REJECTION_ROUTES,
+    NO_EVIDENCE_HOLD_MESSAGE,
+)
 from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import (
     CANONICAL_DISH_UUID_SCHEMA,
