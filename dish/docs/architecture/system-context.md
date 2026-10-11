@@ -16,15 +16,13 @@ Current anchors include `dish_service/__main__.py`, `dish_service/http.py`, `dis
 
 ```mermaid
 flowchart LR
-    Agent[Agent CLI] --> S[Dish service]
+    Agent[Agent CLI / MCP] --> S[Dish service]
     Admin[Admin CLI] --> S
     GPT[GPT Action] --> S
     Frontend[Frontend] --> S
     Honest[Honest assets] --> S
-    S --> SQLite[(SQLite - current workflow evidence)]
-    S --> Asana[Asana - current live task surface]
-    S -. capture .-> Spool[(Dark-launch spool)]
-    Spool -. shadow .-> PG[(PostgreSQL target)]
+    S --> PG[(PostgreSQL canonical authority)]
+    S -. legacy / forensic compatibility .-> Legacy[SQLite / archived Asana]
 ```
 
 The important boundary is the Dish service authority, not a particular client. CLI, GPT Action, admin tools, and frontend may have different presentation, capability, and authentication logic while sharing the same mutation authority.
@@ -35,7 +33,7 @@ from the public Action listener. The browser never connects to PostgreSQL or Asa
 
 ## Authority and data ownership
 
-Clients do not own durable workflow truth. The service coordinates current workflow authority and current Asana effects. PostgreSQL is the intended replacement canonical backend after cutover. Asana is transitional; for the approved cutover contract the frozen final source boundary is its final involvement, and rollback burn disables further external projection rather than entering a long-lived read-only-Asana phase.
+Clients do not own durable workflow truth. The service coordinates canonical PostgreSQL state and workflow. The production cutover has completed; archived Asana Cooking and SQLite workflow state are legacy/forensic compatibility only and cannot promote themselves back into live authority.
 
 ## Invariants
 
@@ -44,8 +42,8 @@ Clients do not own durable workflow truth. The service coordinates current workf
 - Frontend browser sessions authorize only frontend reads and their own lifecycle. They are not
   agent, admin, or Action credentials and confer no mutation capability.
 - Clients do not receive database paths or backend credentials.
-- Dark launch does not transfer authority.
-- Shadow-origin work cannot cause live external effects.
+- Historical dark-launch/shadow evidence does not transfer or supersede current PostgreSQL authority.
+- Legacy/shadow-origin work cannot cause live external effects.
 
 ## Process and transaction boundaries
 
@@ -69,7 +67,7 @@ Current relevant evidence includes `tests/test_action_surface.py`, `tests/test_t
 
 ## Current debt and temporary compatibility
 
-SQLite + Asana are the current production split. PostgreSQL and the frontend are replacement directions. The architecture should not treat Asana or current module topology as permanent end-state constraints.
+PostgreSQL is the current production authority. SQLite/Asana migration artifacts remain only where concrete compatibility, forensic, or recovery needs justify them; the frontend remains a separate presentation/access surface.
 
 ## Related documents
 
