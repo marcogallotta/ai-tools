@@ -130,8 +130,10 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     prepare_attestation = prepare["properties"]["governed_change_fields"]
     assert prepare_attestation["type"] == "array"
-    assert set(prepare_attestation["items"]["enum"]) == {"Decisions"}
-    assert "provenance" in prepare_attestation["description"]
+    assert set(prepare_attestation["items"]["enum"]) >= {
+        "Purpose", "Locks", "Exemptions", "Decisions"
+    }
+    assert "authorized in chat" in prepare_attestation["description"]
 
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
