@@ -8,10 +8,13 @@ chat and continues from his answer without a Dish hold.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping
 from typing import Any
 
 from .command_port_common import CommandRuleError
+
+_OPTION_ID = re.compile(r"[A-Z]")
 
 HUMAN_REVIEW_CATEGORIES: dict[str, str] = {
     "nutrition_exemption": "a nutrition exemption",
@@ -210,7 +213,8 @@ def _question_text(*, reason: str, packet: Mapping[str, Any]) -> str:
             f"{option['option_id']}{marker}. {option['label']} — {option['decision']}"
         )
     if packet.get("repairs_considered"):
-        lines.append(f"Repairs considered: {packet['repairs_considered']}")
+        repairs = " ".join(str(packet["repairs_considered"]).split())
+        lines.append(f"Repairs considered: {repairs}")
     return "\n".join(lines)
 
 
@@ -229,9 +233,10 @@ def question_options(question: str) -> dict[str, str] | None:
     options: dict[str, str] = {}
     for line in lines[start:]:
         option_id, sep, rest = line.partition(". ")
-        if not sep:
+        option_id = option_id.removesuffix(" (recommended)")
+        if not sep or not _OPTION_ID.fullmatch(option_id):
             break
-        options[option_id.removesuffix(" (recommended)")] = rest.strip()
+        options[option_id] = rest.strip()
     return options
 
 

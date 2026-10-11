@@ -418,3 +418,14 @@ def test_human_review_action_schemas_require_category_and_omit_pg_authorization(
     items = postgres["properties"]["human_review_options"]["items"]
     assert "authorization" not in items["properties"]
     assert postgres["properties"]["resume_status"]["enum"] == ["pending-verification"]
+
+
+def test_question_options_ignores_repairs_considered_line():
+    from dish_pg.human_review_preflight import question_options
+
+    question = (
+        "Why: fat over limit\nOptions:\nA (recommended). Waive fat — approve\n"
+        "B. Cut oil — reduce. Retest\nRepairs considered: Tried cutting oil. It failed."
+    )
+
+    assert question_options(question) == {"A": "Waive fat — approve", "B": "Cut oil — reduce. Retest"}
