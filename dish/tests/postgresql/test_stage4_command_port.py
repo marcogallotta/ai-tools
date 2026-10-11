@@ -1317,14 +1317,14 @@ def test_prepare_change_rejects_decision_attestation_without_new_decision(workfl
         assert blocked.data["rule"] == "decision_attestation_not_applicable"
 
 
-def test_prepare_decision_attestation_does_not_authorize_unrelated_governed_change(
+def test_prepare_decision_attestation_requires_every_changed_governed_field(
     workflow_db,
 ) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         port, signed = _signed_ready_baseline(session, ids, context, task_id)
         run_id, started = _start_change(port, ids, context, task_id, reason="mixed governed diff")
-        decision = "Human — Marco: Keep the finish crisp at serving time"
+        decision = "Human — Marco: Change the purpose to compare texture and aroma"
         candidate = (signed.title + "\n" + signed.body).replace(
             "Purpose: Compare texture",
             "Purpose: Compare texture and aroma",
@@ -1344,9 +1344,21 @@ def test_prepare_decision_attestation_does_not_authorize_unrelated_governed_chan
             governed_change_fields=["Decisions"],
         )
         assert not blocked.ok
-        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED"
-        assert {item["field"] for item in blocked.data["required_authorizations"]} == {"Purpose"}
+        assert blocked.code == "GOVERNED_CHANGE_FIELDS_INCOMPLETE"
+        assert blocked.data["missing_fields"] == ["Purpose"]
         assert port._current_content_version_id(context["generation_id"], task_id) == current_before
+
+        accepted = _prepare_change(
+            port,
+            ids,
+            task_id,
+            run_id,
+            started.data["operation_id"],
+            candidate,
+            governed_change_fields=["Purpose", "Decisions"],
+        )
+        assert accepted.ok, (accepted.code, accepted.http_status, accepted.data)
+        assert accepted.data["agent_attested_decisions"] == [decision]
 
 
 def test_prepare_change_consumes_exact_durable_grant_before_governed_activation(
