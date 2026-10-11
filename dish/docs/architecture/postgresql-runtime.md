@@ -6,7 +6,7 @@ Read this when changing PostgreSQL authority, models, command execution, replay,
 
 ## Scope
 
-This document describes the PostgreSQL replacement architecture and current migration boundary. It does not treat today's module decomposition as permanent.
+This document describes the canonical PostgreSQL architecture and retained migration/recovery boundary. It does not treat today's module decomposition as permanent.
 
 ## Authoritative implementation
 
@@ -14,7 +14,7 @@ Current anchors include PostgreSQL models/migrations under `dish_pg/`, `dish_pg/
 
 ## Actors, processes, and stores
 
-The PostgreSQL target contains command/replay/workflow/projection/reconciliation/release state. Before cutover it is non-authoritative for production mutations; after explicit cutover it becomes canonical backend authority.
+PostgreSQL contains canonical command/replay/workflow/projection/reconciliation/release state. Production cutover is complete; pre-cutover imports/shadow evidence remain historical provenance only.
 
 ## Authority and data ownership
 
@@ -27,7 +27,7 @@ Authority transfer is explicit and one-way for the activated generation. Importe
 - PostgreSQL-backed service promotion is schema-gated: for each explicit TEST or PROD target, the exact release/source commit and repository `ALEMBIC_HEAD` must be bound to durable migration evidence, and that target must be re-read at the exact expected head before its corresponding service is restarted/promoted. TEST evidence never proves PROD. Migration failure blocks promotion; startup validation remains fail closed and never performs DDL.
 - `dish-service`'s PostgreSQL runtime (`DISH_AUTHORITY_BACKEND=postgresql`, or the TEST-only `--postgresql-test-runtime` entrypoint) admits exactly `DISH_PROFILE=test` or `DISH_PROFILE=prod`; any other profile, any populated `ASANA*` environment key, or a database name not shaped for its profile (`dish_*_test` for TEST, explicit `dish_*_prod` for PROD) fails closed before listeners open. The `--postgresql-test-runtime` entrypoint additionally requires `DISH_PROFILE=test`. `PostgresRuntimeService` reports its bound profile in `startup_check`/`health`.
 - During the required dual-stack TEST qualification, the normal TEST service is this PostgreSQL/no-Asana runtime on the canonical TEST ports. The optional legacy comparator runs on separate loopback ports, a separate SQLite state root, and a designated disposable TEST Asana project; it is comparison evidence only, never load-balanced, synchronized, or used as automatic failover. The active TEST PostgreSQL generation must keep external effects disabled while comparator mutations are exercised.
-- Retained admin-principal PostgreSQL commands (recovery, evidence, lease recovery/expiry, and equivalents) are reachable only through the private admin bearer on `/v1/admin/<command>` (and the admin lease routes) when the bound runtime profile is PROD; the agent surface exposes only retained non-admin commands. `record-human-decision` is agent-owned and connected so the agent that asks Marco can durably record his answer and resume; private-admin exposure remains compatibility only. Retired/non-retained commands stay unroutable on every surface. A TEST-profile runtime exposes only `queue`, `archive`, and `unarchive` through the private admin bearer for bounded operator qualification; every recovery, destructive-maintenance, lease-admin, and other admin route returns `not_found`, consistent with TEST evidence never proving PROD recovery authority. Private lease recovery/expiry resolve operation/task/lease identity exclusively from PostgreSQL (`ServiceLease`, `TaskExternalAlias`); they never construct or query Asana.
+- Retained admin-principal PostgreSQL commands (including legacy Evidence/Human Review recovery, lease recovery/expiry, and equivalents) are reachable only through the private admin bearer on `/v1/admin/<command>` (and admin lease routes) in PROD. Connected agents expose neither Evidence/Human Review reject nor `record-human-decision`; current Marco choices are recorded in chat as exact `Human — Marco:` Decisions with governed-field attestation when needed. Legacy held rows remain admin-recoverable. Retired/non-retained commands stay unroutable on every surface. A TEST-profile runtime exposes only `queue`, `archive`, and `unarchive` through the private admin bearer for bounded operator qualification; every recovery, destructive-maintenance, lease-admin, and other admin route returns `not_found`, consistent with TEST evidence never proving PROD recovery authority. Private lease recovery/expiry resolve operation/task/lease identity exclusively from PostgreSQL (`ServiceLease`, `TaskExternalAlias`); they never construct or query Asana.
 - Validation-only failures are recorded through the target replay authority (`record_replay_validation_failure` / `record_validation_failure`) where applicable.
 - On an active `initial_cutover` generation, the first authenticated PostgreSQL mutation may create
   its exact `ServiceRun` in the same caller-owned transaction immediately before request admission.
@@ -75,7 +75,7 @@ evidence that a current rehearsal still passes after relevant code changes.
 
 ## Current debt and temporary compatibility
 
-Legacy and PostgreSQL implementations overlap during migration. The migration chain, release tooling, and compatibility adapters may be simplified after retained invariants/data are known. Exact current modules/tables are not themselves architecture commitments.
+Legacy SQLite/Asana compatibility and PostgreSQL coexist only where migration, forensic, or recovery needs remain. Those adapters may be simplified once retained invariants/data are known; exact current modules/tables are not themselves architecture commitments.
 
 ## Related documents
 
