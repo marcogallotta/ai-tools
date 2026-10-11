@@ -128,9 +128,9 @@ def test_small_correction_binds_inspection_correction_activation_and_signoff(wor
                     "agent": "codex",
                     "model": "o3",
                     "correction": "small",
-                    "file_text": __import__("tests.support.canonical", fromlist=["TASK"]).TASK.replace(
-                        "A compact side dish for testing texture.",
-                        "A compact corrected side dish for testing texture.",
+                    "file_text": f"{reviewed.title}\n{reviewed.body}".replace(
+                        "1. Cook it.",
+                        "1. Cook it.\n2. Finish freshly just before serving.",
                     ),
                     "reviewed_identity": reviewed.content_identity,
                     "semantic_review_complete": True,
