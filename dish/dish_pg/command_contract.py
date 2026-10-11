@@ -214,14 +214,14 @@ COMMAND_DEFINITIONS = {
         CommandDefinition(
             RECORD_HUMAN_DECISION_COMMAND,
             "R",
-            "agent",
+            "admin",
             True,
             True,
             True,
-            action_exposed=True,
+            action_exposed=False,
             description=(
-                "Record Marco's direct answer to the exact open Human Review question and "
-                "resume the held Dish workflow."
+                "Legacy/admin recovery for an already-open Human Review record. "
+                "New connected-agent work never creates this state."
             ),
             workflow_action=RECORD_HUMAN_DECISION_COMMAND,
             admin_exposed=True,
@@ -269,9 +269,8 @@ POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (
     RECORD_COOK_LOG_COMMAND,
     ARCHIVE_COMMAND,
     UNARCHIVE_COMMAND,
-    RECORD_HUMAN_DECISION_COMMAND,
 )
-POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = ()
+POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = (RECORD_HUMAN_DECISION_COMMAND,)
 # Connected on the legacy SQLite/Asana Action surface but not yet ported to the
 # PostgreSQL command-execution stack: no PG workflow/transaction handler exists
 # for these. Each entry here must also be a "source_only_commands" entry in
