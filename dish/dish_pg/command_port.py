@@ -5681,26 +5681,15 @@ def _require_small_correction_scope(
     Uses the same ``require_small_scope`` classifier as legacy
     ``step8.approve_small`` but is deliberately stricter in two ways:
 
-    * every governed planning/Decision change is refused, even one Marco has
-      authorized (legacy accepted those via ``require_governed_authorization``);
-      a verifier never signs its own governed edit, so it must go the Large route;
+    * governed planning/Decision changes are Large except the narrow case where Marco accepts
+      an already-reviewed high-fat dish unchanged and only `Exemptions` plus an append-only
+      Decision change;
     * an edited ``Researched by`` (or frozen protocol release) is refused as
       Large, where legacy silently restored the original value.
 
     Any rewrite of the tool-owned Material changes history is tampering, not a
     Large correction, and is refused with its own code.
     """
-
-    declared = tuple(dict.fromkeys(governed_change_fields))
-    if _same_pass_fat_exemption(before, after, declared):
-        return
-    if declared:
-        raise CommandRuleError(
-            "INVALID_ARGUMENT",
-            "governed_change_fields on approve apply only to an exemption-only Marco Decision",
-            http_status=400,
-            data={"rule": "approve_governed_change_attestation_not_applicable"},
-        )
 
     if tuple(before.material_changes) != tuple(after.material_changes):
         raise CommandRuleError(
@@ -5716,6 +5705,32 @@ def _require_small_correction_scope(
                 ),
             },
         )
+
+    declared = tuple(dict.fromkeys(governed_change_fields))
+    frozen_changed = [
+        field
+        for field in _SMALL_FROZEN_STATE_FIELDS
+        if before.state.values.get(field) != after.state.values.get(field)
+    ]
+    if not frozen_changed and _same_pass_fat_exemption(before, after, declared):
+        try:
+            validate_semantic_proposal(before, after)
+        except DishRuleError as exc:
+            raise CommandRuleError(
+                str(exc.code),
+                str(exc),
+                http_status=409,
+                data=dict(getattr(exc, "details", {}) or {}),
+            ) from exc
+        return
+    if declared:
+        raise CommandRuleError(
+            "INVALID_ARGUMENT",
+            "governed_change_fields on approve apply only to an exemption-only Marco Decision",
+            http_status=400,
+            data={"rule": "approve_governed_change_attestation_not_applicable"},
+        )
+
     fields: list[str] = []
     material_reasons: list[str] = []
     try:
