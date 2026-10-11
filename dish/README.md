@@ -350,6 +350,13 @@ Start one blocked task with `dish-admin inspect TASK_GID_OR_OPERATION_ID`; it
 resolves internal operation, cycle, lease, hold, and abandonment bindings and shows the safe next
 command.
 
+When Dish returns an advanced hold-resolution command (`supply-evidence`,
+`record-human-decision`, `resolved`) as the exact next action, it accepts an exact
+operation ID, a Dish UUID, or a Dish/Asana URL as the target. A Dish target resolves only when that
+Dish has exactly one open operation; zero or several is refused, and the result names the resolved
+operation ID. The `--expected-task-gid`/`--expected-cycle-id` pins are optional, and
+`--resume-status` is derived from the exact hold when omitted.
+
 In service mode, normal operator navigation is intentionally small:
 
 - `queue` works through everything currently waiting for Marco; use `--non-interactive` for a read-only listing;

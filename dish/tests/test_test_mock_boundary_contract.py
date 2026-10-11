@@ -5,6 +5,9 @@ from pathlib import Path
 
 
 REVIEWED_PRIVATE_FAULT_SEAMS = {
+    ("postgresql/test_admin_hold_ergonomics.py", "_queue"): (
+        "Queue-derivation fault injection proving admin inspect still reports the hold."
+    ),
     ("support/postgresql/legacy_evidence_hold.py", "_reject"): (
         "Seeds legacy Evidence holds for compatibility tests; the public route was removed."
     ),

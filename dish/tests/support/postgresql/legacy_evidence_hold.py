@@ -8,6 +8,7 @@ state matches exactly what the legacy route persisted.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
 from dish_pg.command_port import PostgresCommandPort
@@ -96,3 +97,32 @@ def install_legacy_evidence_reject(monkeypatch) -> None:
         return current(self, call, generation, binding, execution, task, operation)
 
     monkeypatch.setattr(PostgresCommandPort, "_reject", _reject)
+
+@contextmanager
+def legacy_evidence_reject_enabled():
+    """Temporarily seed Verification Evidence holds for legacy-resolution tests only."""
+
+    current = PostgresCommandPort._reject
+
+    def _reject(self, call, generation, binding, execution, task, operation):
+        route = str(call.arguments.get("route", "")).replace("_", "-").strip()
+        if route == "evidence":
+            return _legacy_evidence_reject(
+                self, call, generation, binding, execution, task, operation
+            )
+        return current(self, call, generation, binding, execution, task, operation)
+
+    PostgresCommandPort._reject = _reject
+    try:
+        yield
+    finally:
+        PostgresCommandPort._reject = current
+
+
+def run_legacy_preconstruction_evidence_hold(port: PostgresCommandPort, call):
+    """Run the retained internal-only preconstruction hold path as historical test setup."""
+
+    if call.command_name != "hold-reject":
+        raise AssertionError("legacy preconstruction fixture requires hold-reject")
+    return port.execute(call)
+
