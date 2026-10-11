@@ -10,7 +10,6 @@ import copy
 import dataclasses
 import hashlib
 import json
-import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
@@ -5692,8 +5691,8 @@ def _same_pass_fat_exemption(
     if (
         len(added) != 1
         or not added[0].strip().startswith("[nutrition-fat]")
-        or re.findall(r"\\[[^\\]\
-]+\\]", added[0]) != ["[nutrition-fat]"]
+        or added[0].count("[") != 1
+        or added[0].count("]") != 1
     ):
         return False
     if not agent_attested_decision_appends(before, after):
