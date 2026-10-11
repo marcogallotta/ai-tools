@@ -106,6 +106,10 @@ Project files and Project memory are convenience context only. Neither is a poli
 or handoff authority. Both Projects must remain correct with an empty chat history and no Project
 files.
 
+> **Superseded:** the Project instructions below are historical v1 payloads, kept unedited. The
+> current pasted ChatGPT settings live in `marcogallotta/honest-pantry` `chatgpt-settings/*.md` and
+> read repository files through `dish_honest_read`; paste those instead.
+
 ### Required connections
 
 Both Projects are **MCP-app-only**. Connect the installed **Dish MCP app** and **GitHub MCP app** to
