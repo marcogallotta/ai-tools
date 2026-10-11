@@ -399,15 +399,18 @@ def assert_committed_command_effects(
         "approve": "await_submission",
         "hold-reject": "held_evidence",
         "reject": (
-            "held_human"
+            "verification_hold"
             if result_data.get("verification_hold")
-            or result_data.get("semantic_proposal_queued")
-            else {
+            else (
+                "held_human"
+                if result_data.get("semantic_proposal_queued")
+                else {
                 "large": "await_verification",
                 "evidence": "held_evidence",
                 "human-review": "held_human",
                 "human_review": "held_human",
-            }.get(str(arguments.get("route", "large")), "held_human")
+                }.get(str(arguments.get("route", "large")), "await_verification")
+            )
         ),
         "apply-proposal": "await_verification",
     }[command_name]
