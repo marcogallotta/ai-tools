@@ -65,7 +65,6 @@ from dish_tool.governed_diff import (
     GOVERNED_FIELDS,
     agent_attested_decision_appends,
     canonical_diff,
-    governed_changes,
     governed_changes_requiring_authorization,
     require_small_scope,
     validate_semantic_proposal,
