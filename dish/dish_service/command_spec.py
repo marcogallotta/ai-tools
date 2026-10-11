@@ -337,57 +337,6 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "blocker_delta": {"type": "number"},
             "blocker_unit": {"type": "string"},
             "blocker_basis": {"type": "string"},
-            "human_review_confirmed": {
-                "type": "boolean",
-                "description": "Set true only after completing Dish's Human Review escalation preflight.",
-            },
-            "human_review_basis": {
-                "type": "string",
-                "description": "The specific unresolved choice, waiver, classification, or authority that remains for Marco.",
-            },
-            "repairs_considered": {
-                "type": "string",
-                "description": "Specific plausible repairs considered and why they do not resolve the issue within existing authority.",
-            },
-            "human_review_options": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 6,
-                "description": (
-                    "Concrete human choices for this Human Review, ordered best-first. The first "
-                    "item is always the agent's recommended route. Include plausible alternatives; "
-                    "Dish always gives Marco a free-text Other choice in the admin UI. If an option "
-                    "authorizes an Exemptions change, before/after must be the complete exact field "
-                    "values. Nutrition waivers use the canonical tags [nutrition-kcal], "
-                    "[nutrition-protein], or [nutrition-fat] in the after value, not prose substitutes."
-                ),
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["label", "decision"],
-                    "properties": {
-                        "label": {"type": "string"},
-                        "decision": {"type": "string"},
-                        "authorization": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "required": ["field", "before", "after"],
-                            "properties": {
-                                "field": {
-                                    "type": "string",
-                                    "enum": [
-                                        "Dish candidate", "Purpose", "Role", "Priors", "Locks",
-                                        "Exemptions", "Research emphasis", "Destination section",
-                                        "Researched by",
-                                    ],
-                                },
-                                "before": {"type": "string"},
-                                "after": {"type": "string"},
-                            },
-                        },
-                    },
-                },
-            },
             "governed_change_fields": {
                 "type": "array",
                 "items": {
@@ -396,10 +345,10 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                 },
                 "uniqueItems": True,
                 "description": (
-                    "On a Large-correction retry, name only governed fields Dish asked the agent "
-                    "to confirm as intentionally changed. Naming Decisions also attests that an "
-                    "append-only `Human — Marco:` entry reflects something Marco actually stated; "
-                    "it does not authorize another governed field."
+                    "Name every governed field intentionally changed after Marco settled that exact "
+                    "choice in chat, and include Decisions when the candidate appends the matching "
+                    "`Human — Marco:` entry. This attests the conversation; it never authorizes "
+                    "rewriting prior Decision history or Researched by."
                 ),
             },
             "resume_status": {
@@ -613,7 +562,6 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
 
     base = ARGUMENT_SCHEMAS["reject"]["properties"]
     common = {name: deepcopy(base[name]) for name in ("submission_id", "agent", "reason")}
-    blocker_fields = ("blocker_metric", "blocker_actual", "blocker_limit", "blocker_delta", "blocker_unit", "blocker_basis")
 
     def variant(route: str, *, extra: tuple[str, ...], required: tuple[str, ...]) -> dict[str, Any]:
         properties = deepcopy(common)
@@ -636,13 +584,6 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         "large": dict(
             extra=("model", "file_text", "governed_change_fields"),
             required=("model", "file_text"),
-        ),
-        "human-review": dict(
-            extra=(
-                "resume_status", *blocker_fields, "human_review_confirmed",
-                "human_review_basis", "repairs_considered", "human_review_options",
-            ),
-            required=("resume_status", "human_review_options"),
         ),
     }
     return {
