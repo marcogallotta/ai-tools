@@ -7,6 +7,7 @@ all workflow legality is delegated to the shared planner/current policy.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import uuid
@@ -37,6 +38,7 @@ from .document_authority import (
     prepared_change_document,
     prepared_document,
     ready_document,
+    render_parts,
     resumed_document,
 )
 from .planner import (
@@ -78,6 +80,7 @@ from dish_tool.task_document import (
     parse_canonical_planning_notes,
     parse_planning_brief,
     render_planning_brief_notes,
+    TaskState,
     validate_planning_brief,
 )
 from dish_tool.workflow_policy import RestingTaskSnapshot, required_resting_start_kind
@@ -2092,6 +2095,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 data=dict(getattr(exc, "details", {}) or {}),
             ) from exc
 
+        if "Decisions" in declared and not newly_attributed:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                "Decisions attestation requires a newly appended Marco Decision",
+                http_status=400,
+                data={"rule": "decision_attestation_not_applicable"},
+            )
         if newly_attributed and "Decisions" not in declared:
             raise CommandRuleError(
                 "CONFIRMATION_REQUIRED",
@@ -3081,6 +3091,16 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 expected_status="pending-verification",
                 expected_schema_version=binding.schema_release,
             )
+            corrected_state = dict(corrected.document.state.values)
+            corrected_state["Researched by"] = reviewed_parts.document.state.values[
+                "Researched by"
+            ]
+            corrected = render_parts(
+                dataclasses.replace(
+                    corrected.document,
+                    state=TaskState(corrected_state),
+                )
+            )
             identity = content_identity(corrected.title, corrected.body)
             if identity == reviewed.content_identity:
                 raise CommandRuleError(
@@ -3127,6 +3147,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     data=dict(getattr(exc, "details", {}) or {}),
                 ) from exc
 
+            if "Decisions" in declared and not newly_attributed:
+                raise CommandRuleError(
+                    "INVALID_ARGUMENT",
+                    "Decisions attestation requires a newly appended Marco Decision",
+                    http_status=400,
+                    data={"rule": "decision_attestation_not_applicable"},
+                )
             if newly_attributed and "Decisions" not in declared:
                 raise CommandRuleError(
                     "CONFIRMATION_REQUIRED",
