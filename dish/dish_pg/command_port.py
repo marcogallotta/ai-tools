@@ -2046,11 +2046,12 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         before: Any,
         after: Any,
     ) -> tuple[tuple[str, ...], list[tuple[uuid.UUID, uuid.UUID]], list[dict[str, Any]]]:
-        """Apply legacy-equivalent governed-change and Decision-attestation gates.
+        """Authorize exact governed changes from legacy grants or Marco's chat Decision.
 
-        ``governed_change_fields`` is only an explicit provenance attestation for
-        an append-only attributed Marco Decision. Formal authority for every
-        other governed field comes from exact durable PostgreSQL Marco grants.
+        Existing durable grants remain consumable for legacy/recovery work. New connected-agent
+        work instead appends Marco's exact choice to Decisions and attests every governed field that
+        choice intentionally changes. Existing Decision history and Researched by are never
+        rewriteable through chat attestation.
         """
         declared = tuple(
             dict.fromkeys(
@@ -2071,56 +2072,15 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "allowed": list(GOVERNED_FIELDS),
                 },
             )
-        if set(declared) - {"Decisions"}:
-            raise CommandRuleError(
-                "INVALID_ARGUMENT",
-                "prepare accepts governed_change_fields only to attest an appended Marco Decision",
-                http_status=400,
-                data={
-                    "rule": "prepare_governed_change_field_not_applicable",
-                    "allowed": ["Decisions"],
-                },
-            )
 
         try:
             validate_semantic_proposal(before, after)
             newly_attributed = agent_attested_decision_appends(before, after)
-        except DishRuleError as exc:
-            raise CommandRuleError(
-                str(exc.code),
-                str(exc),
-                http_status=409,
-                data=dict(getattr(exc, "details", {}) or {}),
-            ) from exc
-
-        attested: tuple[str, ...] = ()
-        if "Decisions" in declared:
-            if not newly_attributed:
-                raise CommandRuleError(
-                    "INVALID_ARGUMENT",
-                    "Decisions attestation applies only to newly recorded attributed Marco choices",
-                    http_status=400,
-                    data={"rule": "decision_attestation_not_applicable"},
-                )
-            attested = newly_attributed
-        elif newly_attributed:
-            raise CommandRuleError(
-                "CONFIRMATION_REQUIRED",
-                "an attributed Marco Decision append requires explicit agent attestation",
-                data={
-                    "rule": "decision_attestation_required",
-                    "appended_decisions": list(newly_attributed),
-                    "required_governed_change_field": "Decisions",
-                    "instruction": (
-                        "Retry the same exact candidate with governed_change_fields including "
-                        "Decisions only if Marco actually stated these choices in the conversation. "
-                        "This records agent-attested provenance, not formal governed authorization."
-                    ),
-                    "fresh_request_id": True,
-                },
+            attested = (
+                newly_attributed
+                if "Decisions" in declared
+                else ()
             )
-
-        try:
             required_changes = governed_changes_requiring_authorization(
                 before, after, agent_attested_decisions=attested
             )
@@ -2131,6 +2091,23 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 http_status=409,
                 data=dict(getattr(exc, "details", {}) or {}),
             ) from exc
+
+        if newly_attributed and "Decisions" not in declared:
+            raise CommandRuleError(
+                "CONFIRMATION_REQUIRED",
+                "an appended Marco Decision requires explicit conversation attestation",
+                data={
+                    "rule": "decision_attestation_required",
+                    "appended_decisions": list(newly_attributed),
+                    "required_governed_change_field": "Decisions",
+                    "instruction": (
+                        "Retry the same exact candidate with governed_change_fields including "
+                        "Decisions only if Marco actually stated this choice in the conversation."
+                    ),
+                    "fresh_request_id": True,
+                },
+            )
+
         required = [
             {
                 "field": change.field,
@@ -2139,30 +2116,63 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             }
             for change in required_changes
         ]
+        if not required:
+            return attested, [], []
+
         grants = self._available_governed_change_grants(
             generation_id=generation_id,
             task_id=task.task_id,
             operation_id=operation.operation_id,
             required=required,
         )
-        if len(grants) != len(required):
+        if len(grants) == len(required):
+            reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
+            for grant, _state in grants:
+                token = self.uuid_factory()
+                self.workflow.reserve_marco_authorization(
+                    grant_id=grant.grant_id,
+                    reservation_token=token,
+                    execution_id=execution.execution_id,
+                    reserved_at=call.now,
+                )
+                reservations.append((grant.grant_id, token))
+            return attested, reservations, required
+
+        required_fields = {change.field for change in required_changes}
+        unsupported = sorted(required_fields - set(GOVERNED_FIELDS[:8]))
+        if unsupported:
             raise CommandRuleError(
                 "GOVERNED_AUTHORIZATION_REQUIRED",
-                "change prepare is not authorized for every exact governed change",
-                data={"required_authorizations": required},
+                "existing Decision history and provenance cannot be changed by chat attestation",
+                data={
+                    "required_authorizations": required,
+                    "unsupported_chat_fields": unsupported,
+                },
             )
-
-        reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
-        for grant, _state in grants:
-            token = self.uuid_factory()
-            self.workflow.reserve_marco_authorization(
-                grant_id=grant.grant_id,
-                reservation_token=token,
-                execution_id=execution.execution_id,
-                reserved_at=call.now,
+        if not newly_attributed:
+            raise CommandRuleError(
+                "CONFIRMATION_REQUIRED",
+                "Marco must settle these governed changes in chat before they are applied",
+                data={
+                    "rule": "marco_chat_decision_required",
+                    "required_governed_fields": sorted(required_fields),
+                    "instruction": (
+                        "Ask Marco the concrete choice in chat. Then append his answer as a "
+                        "Human — Marco: Decision and retry the exact candidate with Decisions plus "
+                        "every changed governed field in governed_change_fields."
+                    ),
+                    "fresh_request_id": True,
+                },
             )
-            reservations.append((grant.grant_id, token))
-        return attested, reservations, required
+        missing = sorted(required_fields - set(declared))
+        if missing:
+            raise CommandRuleError(
+                "GOVERNED_CHANGE_FIELDS_INCOMPLETE",
+                "governed_change_fields must name every governed field changed by Marco's choice",
+                http_status=409,
+                data={"missing_fields": missing},
+            )
+        return attested, [], required
 
     def _validate_planning_destination(
         self,
