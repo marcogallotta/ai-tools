@@ -965,23 +965,33 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
     assert "/v1/action/cooked" in openapi["paths"]
 
 
-def test_postgresql_test_admin_allowlist_exposes_only_queue_archive_and_unarchive(
+def test_postgresql_test_and_prod_expose_every_admin_command(
     workflow_db, tmp_path: Path
 ) -> None:
+    from dish_pg.postgres_service import _ADMIN_EXPOSED_COMMANDS
+
     factory, _ids, _context, _task_id = workflow_db
     service = runtime_service(factory, tmp_path)
     assert service._profile == "test"
-    assert service.supports_http_route("admin", "queue") is True
-    assert service.supports_http_route("admin", "archive") is True
-    assert service.supports_http_route("admin", "unarchive") is True
-    assert service.supports_http_route("admin", "inspect") is False
-    assert service.supports_http_route("admin", "recover") is False
-    assert service.supports_http_route("admin", "recover-lease") is False
-    assert service.supports_http_route("admin-lease", "recover-lease") is False
-    assert service.supports_http_route("admin-lease-expiry", "expire-lease") is False
+    assert {"queue", "archive", "unarchive", "inspect", "recover", "recover-lease"} <= (
+        _ADMIN_EXPOSED_COMMANDS
+    )
+    admin_surfaces = ("admin", "admin-lease", "admin-lease-expiry")
+    for profile in ("test", "prod"):
+        service._profile = profile
+        for surface in admin_surfaces:
+            for command in _ADMIN_EXPOSED_COMMANDS:
+                assert service.supports_http_route(surface, command) is True, (
+                    profile,
+                    surface,
+                    command,
+                )
+            assert service.supports_http_route(surface, "backup-create") is False
+        assert service.supports_http_route("agent", "recover") is False
+        assert service.supports_http_route("agent", "recover-lease") is False
 
 
-def test_postgresql_test_admin_queue_archive_and_unarchive_through_cli(
+def test_postgresql_test_admin_queue_archive_unarchive_and_inspect_through_cli(
     workflow_db, tmp_path: Path, capsys
 ) -> None:
     factory, ids, context, task_id = workflow_db
@@ -1016,14 +1026,7 @@ def test_postgresql_test_admin_queue_archive_and_unarchive_through_cli(
                 "--profile", "test", "--json", "archive", str(task_id), "--yes"
             )
             unarchived = invoke("--profile", "test", "--json", "unarchive", str(task_id))
-            hidden_status, hidden = _post_json(
-                f"{base}/v1/admin/inspect",
-                token="postgres-admin-token",
-                body={
-                    "client": {"run_id": str(run_id)},
-                    "arguments": {"dish": str(task_id)},
-                },
-            )
+            inspected = invoke("--profile", "test", "--json", "inspect", str(task_id))
         finally:
             stop_server(server, thread)
 
@@ -1043,8 +1046,8 @@ def test_postgresql_test_admin_queue_archive_and_unarchive_through_cli(
     assert unarchived["data"]["completion_state"] == "active"
     assert unarchived["data"]["system_reason"] == "admin_unarchive"
     assert unarchived["data"]["fresh_run_required"] is True
-    assert hidden_status == 404
-    assert hidden == {"ok": False, "error": "not_found"}
+    assert inspected["ok"] is True, inspected
+    assert inspected["command"] == "inspect"
 
 
 def test_postgresql_action_canonical_ids_work_without_asana_identity(

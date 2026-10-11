@@ -121,7 +121,6 @@ _ADMIN_EXPOSED_COMMANDS = frozenset(
     for name in ADMIN_COMMANDS
     if COMMAND_DEFINITIONS[name].retained
 )
-_TEST_ADMIN_EXPOSED_COMMANDS = frozenset({"archive", "unarchive", "queue"})
 # ``hold-reject`` opens an Evidence hold. Dish no longer accepts new Evidence
 # holds from any caller; the command survives only for the shadow worker's
 # in-process translation of legacy SQLite ``reject`` records, which calls the
@@ -240,21 +239,16 @@ class PostgresRuntimeService:
         implemented PostgreSQL command contract; unsupported legacy Action
         commands remain hidden rather than falling through to another backend.
         Admin-principal commands are reachable only through the admin
-        transport, never the agent route. PROD retains the complete supported
-        admin inventory; TEST exposes only the non-recovery queue, archive, and unarchive
-        commands needed to qualify the operator surface.
+        transport, never the agent route. TEST and PROD expose the same complete
+        supported admin inventory so TEST can exercise every admin command.
         """
 
         if surface == "agent":
             return command in _AGENT_EXPOSED_COMMANDS
         if surface == "action":
             return command in ACTION_COMMANDS
-        if surface == "admin":
-            if self._profile == "test":
-                return command in _TEST_ADMIN_EXPOSED_COMMANDS
+        if surface in {"admin", "admin-lease", "admin-lease-expiry"}:
             return command in _ADMIN_EXPOSED_COMMANDS
-        if surface in {"admin-lease", "admin-lease-expiry"}:
-            return self._profile == "prod" and command in _ADMIN_EXPOSED_COMMANDS
         return False
 
     def action_openapi(self, *, server_url: str) -> dict[str, Any]:
