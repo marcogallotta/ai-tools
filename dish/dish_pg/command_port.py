@@ -62,7 +62,9 @@ from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
 from dish_tool.governed_diff import (
     GOVERNED_FIELDS,
     agent_attested_decision_appends,
+    canonical_diff,
     governed_changes_requiring_authorization,
+    require_small_scope,
     validate_semantic_proposal,
 )
 from dish_tool.migrations import migrate_task_document
@@ -2865,6 +2867,9 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "SMALL_CORRECTION_REQUIRED",
                     "small correction must create a distinct canonical candidate",
                 )
+            _require_small_correction_scope(
+                reviewed_parts.document, source_parts.document
+            )
 
         signed_parts = ready_document(
             source_parts.document,
@@ -5563,3 +5568,86 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             obligation_id=self.uuid_factory(),
             invocation_metadata={"surface": "postgresql-port", "protocol_release": call.protocol_release},
         )
+
+
+_SMALL_FROZEN_STATE_FIELDS = ("Researched by", "Verification protocol release")
+
+
+def _require_small_correction_scope(before, after) -> None:
+    """Reject a Verification Small correction that is really a Large one.
+
+    Uses the same ``require_small_scope`` classifier as legacy
+    ``step8.approve_small`` but is deliberately stricter in two ways:
+
+    * every governed planning/Decision change is refused, even one Marco has
+      authorized (legacy accepted those via ``require_governed_authorization``);
+      a verifier never signs its own governed edit, so it must go the Large route;
+    * an edited ``Researched by`` (or frozen protocol release) is refused as
+      Large, where legacy silently restored the original value.
+
+    Any rewrite of the tool-owned Material changes history is tampering, not a
+    Large correction, and is refused with its own code.
+    """
+
+    if tuple(before.material_changes) != tuple(after.material_changes):
+        raise CommandRuleError(
+            "MATERIAL_CHANGE_HISTORY_MODIFIED",
+            "Material changes is tool-owned history; preserve every existing entry exactly",
+            data={
+                "rule": "material_change_history_modified",
+                "expected_entry_count": len(before.material_changes),
+                "supplied_entry_count": len(after.material_changes),
+                "required_action": (
+                    "Restore the Material changes section exactly as reviewed. Dish appends "
+                    "and finalizes workflow entries; no correction route may rewrite them."
+                ),
+            },
+        )
+    fields: list[str] = []
+    material_reasons: list[str] = []
+    try:
+        require_small_scope(before, after)
+    except DishRuleError as exc:
+        details = dict(getattr(exc, "details", {}) or {})
+        fields.extend(
+            "Researched by" if field == "researched_by" else str(field)
+            for field in details.get("fields", ())
+        )
+        material_reasons.extend(str(reason) for reason in details.get("material_reasons", ()))
+    for field in _SMALL_FROZEN_STATE_FIELDS:
+        if before.state.values.get(field) != after.state.values.get(field) and field not in fields:
+            fields.append(field)
+    governed_fields = list(
+        dict.fromkeys(
+            change.field
+            for change in governed_changes_requiring_authorization(before, after)
+            if change.field not in fields
+        )
+    )
+    if not (fields or material_reasons or governed_fields):
+        return
+    raise CommandRuleError(
+        "SMALL_CORRECTION_SCOPE_EXCEEDED",
+        "Small correction exceeds its permitted scope; use the Large route",
+        data={
+            "rule": "large_correction_required",
+            "governed_fields": governed_fields,
+            "fields": fields,
+            "material_reasons": material_reasons,
+            "changed_paths": sorted(canonical_diff(before, after)),
+            "required_action": (
+                "This change is Large. Do not approve it. Use reject with route=large and "
+                "the complete corrected file_text so it stays pending-verification for a "
+                "fresh independent Verification run; never sign your own Large correction."
+                + (
+                    " Because governed fields changed, the reject must also carry "
+                    "governed_change_fields naming every changed governed field ("
+                    + ", ".join(governed_fields)
+                    + "); it then becomes a proposal awaiting Marco's approval rather than "
+                    "an applied correction."
+                    if governed_fields
+                    else ""
+                )
+            ),
+        },
+    )

@@ -169,6 +169,30 @@ def test_material_storage_changes_still_require_large(old, new, expected_reason)
     assert exc.value.rule == "large_correction_required"
 
 
+@pytest.mark.parametrize(
+    "new",
+    ["", "Keep crisp topping separate until just before serving.", "Serve warm."],
+    ids=["delete", "rewrite", "replace"],
+)
+def test_watch_out_for_line_removal_requires_large(new):
+    before = _with_section(_doc(), "WATCH OUT FOR", "Keep crisp topping separate until serving.")
+    after = _with_section(before, "WATCH OUT FOR", new)
+    assert "section:watch_out_for" in explicit_material_reasons(before, after)
+    with pytest.raises(DishRuleError) as exc:
+        require_small_scope(before, after)
+    assert exc.value.rule == "large_correction_required"
+
+
+def test_watch_out_for_bounded_addition_stays_small():
+    old = "Keep crisp topping separate until serving."
+    before = _with_section(_doc(), "WATCH OUT FOR", old)
+    after = _with_section(
+        before, "WATCH OUT FOR", f"{old}\nAdd fresh herbs just before serving."
+    )
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
 def test_real_small_route_accepts_fresh_basil_after_reheating(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = _review(app)

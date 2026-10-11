@@ -243,6 +243,7 @@ tests/postgresql/test_release_evidence_contracts.py,test,1,8,isolated-test; nati
 tests/postgresql/test_revise_section_registry_trigger.py,test,1,8,isolated-test; import; native-pg,,,none,,exact changed test/module; smoke,,
 tests/postgresql/test_runtime_wiring_review_corrections.py,test,1,7,isolated-test; operator-runner; service-transport,,,none,,exact changed test/module; smoke,,
 tests/postgresql/test_shadow_delivery_authority.py,test,1,8,dark-launch; isolated-test; native-pg,,,none,,exact changed test/module,,
+tests/postgresql/test_small_correction_scope.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_stage2_core_authority.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_stage3_marco_authorization_identity.py,test,1,4,isolated-test; native-pg; sqlite-boundary,,,none,,SQLite database-boundary; exact changed test/module,,
 tests/postgresql/test_stage4_command_port.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,

@@ -310,6 +310,15 @@ def _tokens(text: str) -> list[str]:
     return re.findall(r"[a-z]+|\d+(?:[.,]\d+)?", text.casefold())
 
 
+def _removes_existing_line(old: str, new: str) -> bool:
+    """Return whether any existing non-blank line is deleted or rewritten."""
+    import difflib
+    old_lines = [line.strip() for line in old.splitlines() if line.strip()]
+    new_lines = [line.strip() for line in new.splitlines() if line.strip()]
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    return any(tag in {"delete", "replace"} for tag, *_ in matcher.get_opcodes())
+
+
 def _handling_only_change(old: str, new: str) -> bool:
     """Recognise bounded freshness and per-sitting handling without material drift."""
     if any(
@@ -418,7 +427,11 @@ def explicit_material_reasons(before, after) -> tuple[str, ...]:
         if path.startswith("section."):
             section = path.split(".", 1)[1]
             if section in _HANDLING_SECTIONS:
-                if _handling_only_change(old, new):
+                # Removing or rewriting a WATCH OUT FOR warning is always Large;
+                # only adding a new bounded handling line may stay Small.
+                if not (
+                    section == "WATCH OUT FOR" and _removes_existing_line(old, new)
+                ) and _handling_only_change(old, new):
                     continue
                 reasons.append(
                     "method"
