@@ -65,6 +65,7 @@ from dish_tool.governed_diff import (
     GOVERNED_FIELDS,
     agent_attested_decision_appends,
     canonical_diff,
+    governed_changes,
     governed_changes_requiring_authorization,
     require_small_scope,
     validate_semantic_proposal,
@@ -5683,8 +5684,8 @@ def _same_pass_fat_exemption(
         return False
     # 'None' is the empty baseline; otherwise additions must be a single line.
     remainder = new_value if old_value.strip() == "None" else (
-        new_value[len(old_value):].lstrip("\\n")
-        if new_value.startswith(old_value + "\\n") else ""
+        new_value[len(old_value):].lstrip("\n")
+        if new_value.startswith(old_value + "\n") else ""
     )
     added = remainder.splitlines()
     if len(added) != 1 or not added[0].strip().startswith("[nutrition-fat]"):
