@@ -966,8 +966,6 @@ def _interactive_pg_queue_action(
             run_id=run_id,
             file_path=file_path,
             date=date,
-            cycle_id=str(action.get("cycle_id") or ""),
-            hold_identity=str(action.get("hold_identity") or ""),
         )
     elif kind == "semantic_proposal":
         linked = action.get("linked_changes")
