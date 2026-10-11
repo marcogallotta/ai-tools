@@ -918,7 +918,7 @@ def _interactive_pg_queue_action(
     elif kind == "resolve_verification_hold":
         choice = _prompt_review(
             input_fn,
-            "[R] Release hold to fresh Verification  [0] Back  [Q] Quit: ",
+            "[R] Release legacy hold to fresh Verification  [0] Back  [Q] Quit: ",
         ).lower()
         if choice in {"q", "quit", "exit"}:
             return True
@@ -927,6 +927,45 @@ def _interactive_pg_queue_action(
         result = app.execute(
             "resolved",
             submission_id=operation_id,
+            cycle_id=str(action.get("cycle_id") or ""),
+            hold_identity=str(action.get("hold_identity") or ""),
+        )
+    elif kind == "reopen_verification_stop":
+        print(
+            "Three Verification rounds failed. Reopen requires a corrected canonical task and "
+            "one concrete reset in evidence, premise, method, or scope.\n"
+        )
+        category = _prompt_review(input_fn, "Reset category [evidence/premise/method/scope]: ").lower()
+        if category in {"q", "quit", "exit"}:
+            return True
+        if category not in {"evidence", "premise", "method", "scope"}:
+            print("Choose evidence, premise, method, or scope.\n")
+            return False
+        before = _prompt_review(input_fn, "Exact old text: ")
+        after = _prompt_review(input_fn, "Exact new text: ")
+        editor = _prompt_review(input_fn, "Editor [claude/gpt/codex]: ").lower()
+        model = _prompt_review(input_fn, "Model: ")
+        file_path = _prompt_review(input_fn, "Corrected canonical task file: ")
+        date = _prompt_review(input_fn, "Date [YYYY-MM-DD]: ")
+        run_id = str(getattr(app, "run_id", "") or "").strip()
+        if not run_id:
+            run_id = _prompt_review(input_fn, "Run ID: ")
+        if not all((before, after, model, file_path, date, run_id)) or editor not in {
+            "claude", "gpt", "codex"
+        }:
+            print("Reopen needs complete reset evidence, editor/model, run ID, date, and file.\n")
+            return False
+        result = app.execute(
+            "reopen",
+            submission_id=operation_id,
+            category=category,
+            before=before,
+            after=after,
+            editor=editor,
+            model=model,
+            run_id=run_id,
+            file_path=file_path,
+            date=date,
             cycle_id=str(action.get("cycle_id") or ""),
             hold_identity=str(action.get("hold_identity") or ""),
         )
