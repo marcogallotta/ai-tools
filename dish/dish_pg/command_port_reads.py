@@ -977,7 +977,9 @@ class PostgresCommandReadMixin:
                 else:
                     category, reason = "multi_step_safe", "abandonment has a deterministic continuation"
             elif operation.phase in {"held_evidence", "held_human"}:
-                category, reason = "needs_marco", "the workflow is waiting for Marco"
+                category, reason = "needs_marco", "the workflow is waiting on legacy held-state recovery"
+            elif operation.phase == "verification_stopped":
+                category, reason = "needs_marco", "Verification stopped after three unsuccessful passes; substantive reset required"
             elif lease is not None and lease.expires_at <= now:
                 category, reason = "multi_step_safe", "the actor lease has expired"
             elif lease is not None:
@@ -1378,7 +1380,7 @@ class PostgresCommandReadMixin:
             .where(
                 wf.WorkflowOperation.generation_id == generation.generation_id,
                 wf.WorkflowOperation.lifecycle == "open",
-                wf.WorkflowOperation.phase.in_(("held_evidence", "held_human")),
+                wf.WorkflowOperation.phase.in_(("held_evidence", "held_human", "verification_stopped")),
             )
             .order_by(wf.WorkflowOperation.created_at, wf.WorkflowOperation.operation_id)
         ).all()
@@ -1416,8 +1418,8 @@ class PostgresCommandReadMixin:
                 .limit(1)
             )
             if cycle is not None and cycle.outcome == "verification-hold":
-                hold_class = "verification_two_pass"
-                required_action = "resolved"
+                hold_class = "verification_three_pass"
+                required_action = "reopen"
             elif operation.phase == "held_evidence":
                 hold_class = (
                     "research_preconstruction_evidence"
