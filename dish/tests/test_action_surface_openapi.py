@@ -130,22 +130,41 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     prepare_attestation = prepare["properties"]["governed_change_fields"]
     assert prepare_attestation["type"] == "array"
-    assert set(prepare_attestation["items"]["enum"]) == {
-        "Dish candidate", "Purpose", "Role", "Priors", "Locks", "Exemptions",
-        "Research emphasis", "Destination section", "Decisions",
-    }
-    assert "chat" in prepare_attestation["description"]
+    assert set(prepare_attestation["items"]["enum"]) == {"Decisions"}
+    assert "provenance" in prepare_attestation["description"]
 
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
-    assert set(variants) == set(REJECTION_ROUTES) == {"large"}
+    assert set(variants) == set(REJECTION_ROUTES) == {"large", "human-review"}
     assert {"model", "file_text"}.issubset(variants["large"]["required"])
     assert "resume_status" not in variants["large"]["properties"]
     assert "independence_attestation" not in variants["large"]["properties"]
+    for route in ("human-review",):
+        props = variants[route]["properties"]
+        assert "resume_status" in variants[route]["required"]
+        assert "file_text" not in props
+        assert "model" not in props
+        assert "independence_attestation" not in props
     assert "governed_change_fields" in variants["large"]["properties"]
     assert set(variants["large"]["properties"]["governed_change_fields"]["items"]["enum"]) >= {
         "Purpose", "Locks", "Decisions"
     }
+    human_review = variants["human-review"]
+    human_review_props = human_review["properties"]
+    for name in ("human_review_confirmed", "human_review_basis", "repairs_considered"):
+        assert name in human_review_props
+        assert name not in human_review["required"]
+    assert "human_review_options" in human_review["required"]
+    options = human_review_props["human_review_options"]
+    assert options["minItems"] == 1
+    assert options["maxItems"] == 6
+    option = options["items"]
+    assert option["required"] == ["label", "decision"]
+    assert option["additionalProperties"] is False
+    authorization = option["properties"]["authorization"]
+    assert authorization["required"] == ["field", "before", "after"]
+    assert authorization["additionalProperties"] is False
+    assert "Exemptions" in authorization["properties"]["field"]["enum"]
 
     start = spec["paths"]["/v1/action/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     start_variants = {item["properties"]["kind"]["const"]: item for item in start["oneOf"]}
@@ -344,4 +363,4 @@ def test_verification_action_schema_exposes_closed_correction_and_route_values()
         branch["properties"]["route"]["enum"][0]
         for branch in reject["oneOf"]
     }
-    assert reject_values == {"large"}
+    assert reject_values == {"large", "human-review"}
