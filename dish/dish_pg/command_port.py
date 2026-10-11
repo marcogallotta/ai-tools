@@ -65,6 +65,7 @@ from dish_tool.governed_diff import (
     GOVERNED_FIELDS,
     agent_attested_decision_appends,
     canonical_diff,
+    governed_changes,
     governed_changes_requiring_authorization,
     require_small_scope,
     validate_semantic_proposal,
@@ -2888,7 +2889,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "small correction must create a distinct canonical candidate",
                 )
             _require_small_correction_scope(
-                reviewed_parts.document, source_parts.document
+                reviewed_parts.document,
+                source_parts.document,
+                governed_change_fields=tuple(
+                    str(value).strip()
+                    for value in (call.arguments.get("governed_change_fields") or ())
+                    if str(value).strip()
+                ),
             )
 
         signed_parts = ready_document(
@@ -5643,7 +5650,33 @@ class PostgresCommandPort(PostgresCommandReadMixin):
 _SMALL_FROZEN_STATE_FIELDS = ("Researched by", "Verification protocol release")
 
 
-def _require_small_correction_scope(before, after) -> None:
+def _same_pass_fat_exemption(
+    before, after, governed_change_fields: tuple[str, ...]
+) -> bool:
+    """Return whether only Marco's fat exemption metadata was added."""
+
+    if set(governed_change_fields) != {"Exemptions", "Decisions"}:
+        return False
+    if set(canonical_diff(before, after)) != {"planning.Exemptions", "decisions"}:
+        return False
+    if not agent_attested_decision_appends(before, after):
+        return False
+    old_exemptions = str(before.planning_brief.values.get("Exemptions", ""))
+    new_exemptions = str(after.planning_brief.values.get("Exemptions", ""))
+    tags = {"[nutrition-kcal]", "[nutrition-protein]", "[nutrition-fat]"}
+    old_tags = {tag for tag in tags if tag in old_exemptions}
+    new_tags = {tag for tag in tags if tag in new_exemptions}
+    return (
+        "[nutrition-fat]" not in old_tags
+        and "[nutrition-fat]" in new_tags
+        and old_tags.issubset(new_tags)
+        and new_tags - old_tags == {"[nutrition-fat]"}
+    )
+
+
+def _require_small_correction_scope(
+    before, after, *, governed_change_fields: tuple[str, ...] = ()
+) -> None:
     """Reject a Verification Small correction that is really a Large one.
 
     Uses the same ``require_small_scope`` classifier as legacy
@@ -5658,6 +5691,17 @@ def _require_small_correction_scope(before, after) -> None:
     Any rewrite of the tool-owned Material changes history is tampering, not a
     Large correction, and is refused with its own code.
     """
+
+    declared = tuple(dict.fromkeys(governed_change_fields))
+    if _same_pass_fat_exemption(before, after, declared):
+        return
+    if declared:
+        raise CommandRuleError(
+            "INVALID_ARGUMENT",
+            "governed_change_fields on approve apply only to an exemption-only Marco Decision",
+            http_status=400,
+            data={"rule": "approve_governed_change_attestation_not_applicable"},
+        )
 
     if tuple(before.material_changes) != tuple(after.material_changes):
         raise CommandRuleError(
