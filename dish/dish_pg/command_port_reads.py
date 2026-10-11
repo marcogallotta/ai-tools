@@ -971,8 +971,13 @@ class PostgresCommandReadMixin:
                     category, reason = "multi_step_safe", "an abandonment successor is waiting for continuation"
                 else:
                     category, reason = "multi_step_safe", "abandonment has a deterministic continuation"
+            elif operation.phase == "verification_hold":
+                category, reason = (
+                    "needs_marco",
+                    "three Verification rounds failed; a substantive reset is required",
+                )
             elif operation.phase in {"held_evidence", "held_human"}:
-                category, reason = "needs_marco", "the workflow is waiting for Marco"
+                category, reason = "needs_marco", "a legacy held workflow is waiting for recovery"
             elif lease is not None and lease.expires_at <= now:
                 category, reason = "multi_step_safe", "the actor lease has expired"
             elif lease is not None:
@@ -1249,16 +1254,19 @@ class PostgresCommandReadMixin:
                     # cryptic approval ceremony for the same human decision.
                     pass
             elif (
-                operation.phase == "held_human"
+                operation.phase == "verification_hold"
                 and latest_cycle is not None
                 and latest_cycle.outcome == "verification-hold"
             ):
                 signal(
-                    kind="verification_hold",
+                    kind="verification_stop",
                     category="needs_marco",
-                    summary="Repeated Verification stopped for Marco's decision.",
+                    summary=(
+                        "Three Verification rounds failed; restart only after evidence, premise, "
+                        "method, or scope changes concretely."
+                    ),
                     action={
-                        "kind": "resolve_verification_hold",
+                        "kind": "reopen_verification_stop",
                         "dish_id": str(operation.task_id),
                         "operation_id": str(operation.operation_id),
                         "cycle_id": str(latest_cycle.cycle_id),
@@ -1309,7 +1317,9 @@ class PostgresCommandReadMixin:
             kinds = {str(row["kind"]) for row in signals}
             if category == "unsafe":
                 group = "recovery"
-            elif "human_decision" in kinds or "verification_hold" in kinds:
+            elif "verification_stop" in kinds:
+                group = "verification_stop"
+            elif "human_decision" in kinds:
                 group = "human_review"
             elif "evidence_hold" in kinds:
                 group = "evidence"
@@ -1373,7 +1383,7 @@ class PostgresCommandReadMixin:
             .where(
                 wf.WorkflowOperation.generation_id == generation.generation_id,
                 wf.WorkflowOperation.lifecycle == "open",
-                wf.WorkflowOperation.phase.in_(("held_evidence", "held_human")),
+                wf.WorkflowOperation.phase.in_(("held_evidence", "held_human", "verification_hold")),
             )
             .order_by(wf.WorkflowOperation.created_at, wf.WorkflowOperation.operation_id)
         ).all()
