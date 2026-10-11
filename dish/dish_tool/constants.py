@@ -121,6 +121,7 @@ if RECOVERY_QUARANTINE_SECONDS <= (
 # Current Honest compatibility contract. These are engine capabilities, not a
 # task-pinned protocol release. The exact pair must match Honest/DISH_VERSION.
 HONEST_PATH_ENV = "DISH_HONEST_PATH"
+DEFAULT_HONEST_ROOT = "/home/marco/honest-pantry"
 DISH_VERSION_FILENAME = "DISH_VERSION"
 TASK_SCHEMA_FILENAME = "dish-task-schema.json"
 SCHEMA_MIGRATION_DIRECTORY = "dish-schema-migrations"

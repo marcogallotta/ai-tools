@@ -17,7 +17,7 @@ from tests.support.postgresql.runtime_wiring_rehearsal import _free_port
 
 from dish_pg import runtime_wiring_rehearsal as rehearsal
 from dish_service import __main__ as service_main
-from dish_service.config import ServiceConfig
+from dish_service.config import DEFAULT_HONEST_ROOT, ServiceConfig
 from dish_service.http import DishHTTPServer
 from dish_tool.errors import DishRuleError
 from tests.support.postgresql import process_failure as process_support
@@ -348,6 +348,25 @@ def test_postgresql_service_mode_reuses_loopback_service_configuration(
     assert config.action_bind_host == "127.0.0.1"
     assert config.action_public_base_url == "https://dish.example.invalid/test"
     assert config.legacy_writer_fence_path is None
+
+
+def test_postgresql_service_mode_reads_stage_context_from_honest_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_service_env(monkeypatch)
+    for key in list(os.environ):
+        if "ASANA" in key.upper():
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("DISH_HONEST_PATH", raising=False)
+    config = service_main._postgresql_runtime_config(_service_args(tmp_path))
+    # Stage context must read the Honest checkout, never the authority state dir.
+    assert config.honest_root == Path(DEFAULT_HONEST_ROOT).resolve()
+
+    honest = tmp_path / "honest-checkout"
+    honest.mkdir()
+    monkeypatch.setenv("DISH_HONEST_PATH", str(honest))
+    config = service_main._postgresql_runtime_config(_service_args(tmp_path))
+    assert config.honest_root == honest.resolve()
 
 
 

@@ -18,6 +18,7 @@ from dish_pg.connected_command_spec import (
 )
 from dish_pg.openapi import postgres_action_openapi
 from dish_service import mcp_server, native_mcp_server
+from dish_service.config import DEFAULT_HONEST_ROOT
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
 
@@ -479,6 +480,7 @@ def test_runtime_uses_authenticated_owner_without_action_credentials(
     monkeypatch.setenv("DISH_PG_EXPECTED_GENERATION_ID", generation)
     monkeypatch.setenv("DISH_PG_CURSOR_SECRET", "x" * 24)
     monkeypatch.setenv("DISH_PG_AUTHORITY_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("DISH_HONEST_PATH", raising=False)
     monkeypatch.setattr(native_mcp_server, "ALEMBIC_HEAD", "head-1")
     captured: dict[str, Any] = {}
 
@@ -505,6 +507,14 @@ def test_runtime_uses_authenticated_owner_without_action_credentials(
     assert captured["expected_generation_id"] == __import__("uuid").UUID(generation)
     assert captured["config"].action_token is None
     assert captured["config"].action_client_id == OWNER_ID
+    # Stage context must read the Honest checkout, never the authority state dir.
+    assert captured["config"].honest_root == Path(DEFAULT_HONEST_ROOT).resolve()
+
+    honest = tmp_path / "honest-checkout"
+    honest.mkdir()
+    monkeypatch.setenv("DISH_HONEST_PATH", str(honest))
+    native_mcp_server.runtime_service_from_environment(authenticated_owner_id=OWNER_ID)
+    assert captured["config"].honest_root == honest.resolve()
 
 
 def _schema_exposes_agent(schema: Any) -> bool:

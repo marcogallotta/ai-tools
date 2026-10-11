@@ -49,6 +49,7 @@ from .database import DatabaseSettings, create_database_engine, session_factory,
 from .frontend_board_query import FrontendBoardQuery
 from .openapi import postgres_action_openapi
 from .read_model import InvalidCursor, PostgresReadModel, ReadModelError
+from .stage_context import stage_context_for_start
 from .workflow import (
     RequestIdentityConflict,
     WorkflowAuthorityError,
@@ -858,6 +859,13 @@ class PostgresRuntimeService:
             payload = asdict(result)
             data = dict(payload.pop("data"))
             data["request_replayed"] = payload.pop("request_replayed")
+            if command == "start" and payload.get("ok"):
+                stage_context = stage_context_for_start(
+                    kind=arguments.get("kind"),
+                    honest_root=self.config.honest_root,
+                )
+                if stage_context is not None:
+                    data["stage_context"] = stage_context
             payload["data"] = data
             if principal.owner_id == self.config.action_client_id or (
                 principal_class == "admin" and command in {"archive", "unarchive"}

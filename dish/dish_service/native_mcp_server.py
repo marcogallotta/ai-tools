@@ -18,7 +18,7 @@ from dish_pg.postgres_service import PostgresRuntimeService, database_failure_er
 from dish_pg.schema_identity import ALEMBIC_HEAD
 from dish_pg.workflow import RequestIdentityConflict, WorkflowAuthorityError
 from dish_service.action_guidance import attach_connected_agent_guidance
-from dish_service.config import ServiceConfig
+from dish_service.config import ServiceConfig, runtime_honest_root
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
@@ -359,7 +359,7 @@ def runtime_service_from_environment(
 
     config = ServiceConfig(
         db_path=state_dir / "unused-legacy-authority.sqlite3",
-        honest_root=state_dir,
+        honest_root=runtime_honest_root(),
         action_client_id=owner,
         legacy_writer_fence_path=None,
     )
