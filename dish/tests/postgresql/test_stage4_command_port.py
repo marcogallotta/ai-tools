@@ -15,6 +15,7 @@ from dish_pg import stage5_models as projection
 from dish_pg.command_contract import ACTION_COMMANDS
 from dish_pg.command_port import (
     CommandCall,
+    CommandRuleError,
     PostgresCommandPort,
     _require_small_correction_scope,
     _task_reference_from_dish,
@@ -1191,8 +1192,9 @@ def test_exemption_only_marco_acceptance_is_same_pass_small_scope() -> None:
         after,
         governed_change_fields=("Exemptions", "Decisions"),
     )
-    with pytest.raises(Exception):
+    with pytest.raises(CommandRuleError) as error:
         _require_small_correction_scope(before, after)
+    assert error.value.code == "SMALL_CORRECTION_SCOPE_EXCEEDED"
 
 
 def _start_change(port, ids, context, task_id, *, reason="governed parity"):
