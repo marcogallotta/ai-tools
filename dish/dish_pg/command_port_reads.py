@@ -33,6 +33,7 @@ from .repositories import (
 )
 from dish_tool.content_versions import content_identity
 from dish_tool.governed_diff import (
+    GOVERNED_FIELDS,
     agent_attested_decision_appends,
     canonical_diff,
     governed_changes_requiring_authorization,
