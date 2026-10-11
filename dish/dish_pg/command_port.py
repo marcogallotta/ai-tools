@@ -3026,10 +3026,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 NO_EVIDENCE_HOLD_MESSAGE,
                 http_status=400,
             )
-        if route not in {"large", "human-review"}:
+        if route != "large":
             raise CommandRuleError(
                 "INVALID_REJECTION_ROUTE",
-                "route must be large or human-review",
+                "route must be large",
                 http_status=400,
             )
         reason = str(call.arguments.get("reason", "")).strip()
@@ -3087,146 +3087,153 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "LARGE_CORRECTION_REQUIRED",
                     "large rejection must create a distinct canonical candidate",
                 )
-            proposal_payload = self._semantic_proposal_bundle(
-                proposal_id=uuid.UUID(int=0),
-                before=reviewed_parts.document,
-                after=corrected.document,
-                reason=reason,
-                source_cycle_id=cycle.cycle_id,
-                governed_change_fields=call.arguments.get("governed_change_fields"),
-            )
-            if proposal_payload is not None:
-                proposal_id = self.uuid_factory()
-                proposal_payload["proposal_id"] = str(proposal_id)
-                cycle.outcome = "rejected"
-                verification_hold = False
-                requirement = self.workflow.open_human_review(
-                    requirement_id=proposal_id,
-                    execution_id=execution.execution_id,
-                    operation_id=operation.operation_id,
-                    route="human_review",
-                    question=_semantic_proposal_text(proposal_payload),
-                    baseline_content_version_id=reviewed.content_version_id,
-                    opened_at=call.now,
-                    cycle_id=cycle.cycle_id,
+            declared = {
+                str(value).strip()
+                for value in (call.arguments.get("governed_change_fields") or ())
+                if str(value).strip()
+            }
+            unknown = sorted(declared - set(GOVERNED_FIELDS))
+            if unknown:
+                raise CommandRuleError(
+                    "INVALID_ARGUMENT",
+                    "governed_change_fields contains unsupported field names",
+                    http_status=400,
+                    data={
+                        "rule": "governed_change_field_invalid",
+                        "unsupported": unknown,
+                        "allowed": list(GOVERNED_FIELDS),
+                    },
                 )
-                operation.phase = "held_human"
-                operation.persisted_actions = []
-                result = {
-                    "route": "large",
-                    "semantic_proposal_queued": True,
-                    "proposal_id": str(requirement.requirement_id),
-                    "candidate_identity": proposal_payload["candidate"]["identity"],
-                    "required_authorizations": proposal_payload[
-                        "required_authorizations"
-                    ],
-                    "new_cycle_id": None,
-                    "verification_hold": False,
-                    "projection_event_id": None,
-                }
-            else:
-                target_parts = corrected
-                if verification_hold:
-                    target_parts = held_document(
-                        corrected.document,
-                        target="pending-human-review",
-                        detail=(
-                            "Three consecutive Verification rounds ended without a "
-                            f"signable task: {reason}"
-                        ),
+            try:
+                validate_semantic_proposal(
+                    reviewed_parts.document, corrected.document
+                )
+                newly_attributed = agent_attested_decision_appends(
+                    reviewed_parts.document, corrected.document
+                )
+                attested = (
+                    newly_attributed if "Decisions" in declared else ()
+                )
+                required_changes = governed_changes_requiring_authorization(
+                    reviewed_parts.document,
+                    corrected.document,
+                    agent_attested_decisions=attested,
+                )
+            except DishRuleError as exc:
+                raise CommandRuleError(
+                    str(exc.code),
+                    str(exc),
+                    http_status=409,
+                    data=dict(getattr(exc, "details", {}) or {}),
+                ) from exc
+
+            if newly_attributed and "Decisions" not in declared:
+                raise CommandRuleError(
+                    "CONFIRMATION_REQUIRED",
+                    "an appended Marco Decision requires explicit conversation attestation",
+                    data={
+                        "rule": "decision_attestation_required",
+                        "appended_decisions": list(newly_attributed),
+                        "required_governed_change_field": "Decisions",
+                        "fresh_request_id": True,
+                    },
+                )
+
+            required_fields = {change.field for change in required_changes}
+            if required_fields:
+                unsupported = sorted(required_fields - set(GOVERNED_FIELDS[:8]))
+                if unsupported:
+                    raise CommandRuleError(
+                        "GOVERNED_AUTHORIZATION_REQUIRED",
+                        "existing Decision history and provenance cannot be changed by chat attestation",
+                        data={
+                            "required_authorizations": [
+                                {
+                                    "field": change.field,
+                                    "before": _json_safe(change.before),
+                                    "after": _json_safe(change.after),
+                                }
+                                for change in required_changes
+                            ],
+                            "unsupported_chat_fields": unsupported,
+                        },
                     )
-                version_id = self._activate_document(
-                    generation_id=generation.generation_id,
-                    task_id=task.task_id,
-                    binding_id=binding.binding_id,
-                    execution_id=execution.execution_id,
-                    title=target_parts.title,
-                    body=target_parts.body,
-                    predecessor_content_version_id=reviewed.content_version_id,
-                    at=call.now,
-                )
-                self._finalize_scalar_mutations()
-                self.session.add(
-                    wf.VerificationCorrection(
-                        correction_id=self.uuid_factory(),
-                        cycle_id=cycle.cycle_id,
-                        source_content_version_id=cycle.reviewed_content_version_id,
-                        corrected_content_version_id=version_id,
-                        correction_class="large",
-                        reason=reason,
-                        command_execution_id=execution.execution_id,
-                        recorded_at=call.now,
+                if not newly_attributed:
+                    raise CommandRuleError(
+                        "CONFIRMATION_REQUIRED",
+                        "Marco must settle these governed changes in chat before the Large correction is applied",
+                        data={
+                            "rule": "marco_chat_decision_required",
+                            "required_governed_fields": sorted(required_fields),
+                            "instruction": (
+                                "Return the concrete choice to Marco (or to the parent when child-dispatched). "
+                                "Then append his answer as a Human — Marco: Decision and retry with Decisions "
+                                "plus every changed governed field in governed_change_fields."
+                            ),
+                            "fresh_request_id": True,
+                        },
                     )
-                )
-                self.session.flush()
-                next_cycle = None
-                if verification_hold:
-                    operation.phase = "held_human"
-                    operation.persisted_actions = ["resolved", "reopen"]
-                else:
-                    next_cycle = self.workflow.open_verification_cycle(
-                        cycle_id=self.uuid_factory(),
-                        execution_id=execution.execution_id,
-                        operation_id=operation.operation_id,
-                        reviewed_content_version_id=version_id,
-                        created_at=call.now,
+                missing = sorted(required_fields - declared)
+                if missing:
+                    raise CommandRuleError(
+                        "GOVERNED_CHANGE_FIELDS_INCOMPLETE",
+                        "governed_change_fields must name every governed field changed by Marco's choice",
+                        http_status=409,
+                        data={"missing_fields": missing},
                     )
-                    operation.phase = "await_verification"
-                    operation.persisted_actions = ["inspect"]
-                projection_id = self._project(
-                    generation.generation_id,
-                    execution.execution_id,
-                    task.task_id,
-                    "update_task_document",
-                    {"content_version_id": str(version_id)},
-                    call.now,
-                )
-                result = {
-                    "route": "large",
-                    "corrected_content_version_id": str(version_id),
-                    "new_cycle_id": str(next_cycle.cycle_id) if next_cycle else None,
-                    "verification_hold": verification_hold,
-                    "projection_event_id": projection_id,
-                }
-        else:
-            held_parts = held_document(
-                reviewed_parts.document, target="pending-human-review", detail=reason
-            )
-            held_version_id = self._activate_document(
+
+            target_parts = corrected
+            version_id = self._activate_document(
                 generation_id=generation.generation_id,
                 task_id=task.task_id,
                 binding_id=binding.binding_id,
                 execution_id=execution.execution_id,
-                title=held_parts.title,
-                body=held_parts.body,
+                title=target_parts.title,
+                body=target_parts.body,
                 predecessor_content_version_id=reviewed.content_version_id,
                 at=call.now,
             )
             self._finalize_scalar_mutations()
+            self.session.add(
+                wf.VerificationCorrection(
+                    correction_id=self.uuid_factory(),
+                    cycle_id=cycle.cycle_id,
+                    source_content_version_id=cycle.reviewed_content_version_id,
+                    corrected_content_version_id=version_id,
+                    correction_class="large",
+                    reason=reason,
+                    command_execution_id=execution.execution_id,
+                    recorded_at=call.now,
+                )
+            )
+            self.session.flush()
+            next_cycle = None
+            if verification_hold:
+                operation.phase = "verification_hold"
+                operation.persisted_actions = ["reopen"]
+            else:
+                next_cycle = self.workflow.open_verification_cycle(
+                    cycle_id=self.uuid_factory(),
+                    execution_id=execution.execution_id,
+                    operation_id=operation.operation_id,
+                    reviewed_content_version_id=version_id,
+                    created_at=call.now,
+                )
+                operation.phase = "await_verification"
+                operation.persisted_actions = ["inspect"]
             projection_id = self._project(
                 generation.generation_id,
                 execution.execution_id,
                 task.task_id,
                 "update_task_document",
-                {"content_version_id": str(held_version_id)},
+                {"content_version_id": str(version_id)},
                 call.now,
             )
-            requirement = self.workflow.open_human_review(
-                requirement_id=self.uuid_factory(),
-                execution_id=execution.execution_id,
-                operation_id=operation.operation_id,
-                route="human_review",
-                question=reason,
-                baseline_content_version_id=held_version_id,
-                opened_at=call.now,
-                cycle_id=cycle.cycle_id,
-            )
-            operation.phase = "held_human"
-            operation.persisted_actions = ["record-human-decision"]
             result = {
-                "route": "human-review",
-                "requirement_id": str(requirement.requirement_id),
-                "held_content_version_id": str(held_version_id),
+                "route": "large",
+                "corrected_content_version_id": str(version_id),
+                "new_cycle_id": str(next_cycle.cycle_id) if next_cycle else None,
+                "verification_hold": verification_hold,
                 "projection_event_id": projection_id,
             }
         result["cycle_id"] = str(cycle.cycle_id)
