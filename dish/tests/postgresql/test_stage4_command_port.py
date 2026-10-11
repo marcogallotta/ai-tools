@@ -1206,6 +1206,7 @@ def test_exemption_only_marco_acceptance_is_same_pass_small_scope() -> None:
         ("extra_exemption_same_line", False),
         ("recipe", False),
         ("decision_only", False),
+        ("two_decisions", False),
     ],
 )
 def test_same_pass_fat_exemption_rejects_every_other_change(edit, allowed):
@@ -1216,13 +1217,13 @@ def test_same_pass_fat_exemption_rejects_every_other_change(edit, allowed):
     after_text = before_text.replace(
         "Exemptions: None",
         "Exemptions: [nutrition-fat] — exceptional high-fat dish accepted by Marco",
-    ).replace("### Research basis", f"{decision}\\n### Research basis")
+    ).replace("### Research basis", f"{decision}\n### Research basis")
     if edit == "priors":
         after_text = after_text.replace("Priors: None", "Priors: Tested elsewhere")
     elif edit == "extra_exemption":
         after_text = after_text.replace(
             "[nutrition-fat] — exceptional high-fat dish accepted by Marco",
-            "[nutrition-fat] — exceptional high-fat dish accepted by Marco\\n"
+            "[nutrition-fat] — exceptional high-fat dish accepted by Marco\n"
             "[equipment] skip wok hei",
         )
     elif edit == "extra_exemption_same_line":
@@ -1230,9 +1231,13 @@ def test_same_pass_fat_exemption_rejects_every_other_change(edit, allowed):
             "accepted by Marco", "accepted by Marco [equipment] skip wok hei"
         )
     elif edit == "recipe":
-        after_text = after_text.replace("1. Cook it.", "1. Cook it.\\n2. Change the construction.")
+        after_text = after_text.replace("1. Cook it.", "1. Cook it.\n2. Change the construction.")
     elif edit == "decision_only":
-        after_text = before_text.replace("### Research basis", f"{decision}\\n### Research basis")
+        after_text = before_text.replace("### Research basis", f"{decision}\n### Research basis")
+    elif edit == "two_decisions":
+        after_text = after_text.replace(
+            "### Research basis", f"{decision.replace('unchanged', 'as built')}\n### Research basis"
+        )
     before = parse_canonical_document(file_text=before_text).document
     after = parse_canonical_document(file_text=after_text).document
     if allowed:

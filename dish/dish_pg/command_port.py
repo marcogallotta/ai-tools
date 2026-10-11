@@ -5697,6 +5697,8 @@ def _same_pass_fat_exemption(
         return False
     if not agent_attested_decision_appends(before, after):
         return False
+    if len(after.decisions) != len(before.decisions) + 1:
+        return False
     # Run the ordinary scope checker on a candidate with only the permitted
     # metadata additions removed, so construction changes cannot bypass it.
     normalized = dataclasses.replace(
