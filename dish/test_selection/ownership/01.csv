@@ -224,6 +224,7 @@ tests/postgresql/test_dark_launch_void_failed_delivery.py,test,1,8,dark-launch; 
 tests/postgresql/test_frontend_admin_read.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/test_frontend_detail_read.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/test_honest_binding_populated_migration.py,test,1,6,isolated-test; migration-graph; native-pg; sqlite-boundary,,,none,,SQLite database-boundary; exact changed test/module,,
+tests/postgresql/test_human_review_admission.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_location_manifest_filesystem_safety.py,test,1,8,import; isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_operations_evidence_tooling.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module,,
 tests/postgresql/test_pglite_governed_runner.py,shared-test-infrastructure,1,1,isolated-test; pglite-required; shared-test-infrastructure,tests/postgresql/test_pglite_governed_runner.py,,narrow,,exact changed test/module,,

@@ -28,7 +28,11 @@ from .command_effect_runtime import (
     record_projection_intent,
 )
 from .legacy_attention import RESOLUTION_EVENT, unresolved_legacy_attention
-from .human_review_preflight import human_review_admission
+from .human_review_preflight import (
+    chosen_option_text,
+    human_review_admission,
+    question_options,
+)
 from .document_authority import (
     CanonicalDocumentError,
     destination_gid,
@@ -4662,7 +4666,24 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         decision_value = str(
             call.arguments.get("detail", call.arguments.get("decision", ""))
         ).strip()
-        rationale = str(call.arguments.get("rationale", decision_value)).strip()
+        valid_options = question_options(requirement.question)
+        if (
+            valid_options is not None
+            and len(decision_value) == 1
+            and decision_value.isalpha()
+            and decision_value.upper() not in valid_options
+        ):
+            raise CommandRuleError(
+                "HUMAN_DECISION_UNKNOWN_OPTION",
+                "decision letter matches no Human Review option",
+                http_status=400,
+                data={"decision": decision_value, "valid_options": sorted(valid_options)},
+            )
+        option_text = chosen_option_text(requirement.question, decision_value)
+        decision_line_text = (
+            f"{decision_value.upper()}: {option_text}" if option_text else decision_value
+        )
+        rationale = str(call.arguments.get("rationale", decision_line_text)).strip()
         if not decision_value or not rationale:
             raise CommandRuleError(
                 "HUMAN_DECISION_INCOMPLETE",
@@ -4721,7 +4742,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             binding_id=binding.binding_id,
             baseline_content_version_id=requirement.baseline_content_version_id,
             expected_status="pending-human-review",
-            decision_line=f"Human — Marco: human_review resolved — {decision_value}",
+            decision_line=f"Human — Marco: human_review resolved — {decision_line_text}",
             at=call.now,
             resume_status=resume_status,
             candidate_file_text=(

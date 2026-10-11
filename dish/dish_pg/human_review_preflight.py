@@ -106,8 +106,9 @@ def _validated_options(raw_options: object) -> list[dict[str, Any]]:
                     ),
                 },
             )
-        label = _text(raw.get("label"))
-        decision = _text(raw.get("decision"))
+        # The question stores one line per option, so collapse internal whitespace.
+        label = " ".join(_text(raw.get("label")).split())
+        decision = " ".join(_text(raw.get("decision")).split())
         if not label or not decision:
             raise _preflight_error(
                 "Each Human Review choice needs a label and a concrete decision",
@@ -211,6 +212,36 @@ def _question_text(*, reason: str, packet: Mapping[str, Any]) -> str:
     if packet.get("repairs_considered"):
         lines.append(f"Repairs considered: {packet['repairs_considered']}")
     return "\n".join(lines)
+
+
+def question_options(question: str) -> dict[str, str] | None:
+    """Return ``{letter: "<label> — <decision>"}`` from the question's ``Options:`` block.
+
+    The admitted packet persists only inside the requirement question, so the
+    options are recovered from its ``Options:`` lines. Returns None when the
+    question has no ``Options:`` block.
+    """
+
+    lines = question.splitlines()
+    if "Options:" not in lines:
+        return None
+    start = len(lines) - lines[::-1].index("Options:")
+    options: dict[str, str] = {}
+    for line in lines[start:]:
+        option_id, sep, rest = line.partition(". ")
+        if not sep:
+            break
+        options[option_id.removesuffix(" (recommended)")] = rest.strip()
+    return options
+
+
+def chosen_option_text(question: str, choice: str) -> str | None:
+    """Return ``"<label> — <decision>"`` for a bare option letter, else None."""
+
+    choice = choice.strip().upper()
+    if len(choice) != 1:
+        return None
+    return (question_options(question) or {}).get(choice) or None
 
 
 def human_review_admission(
