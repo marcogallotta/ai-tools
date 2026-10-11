@@ -1203,6 +1203,7 @@ def test_exemption_only_marco_acceptance_is_same_pass_small_scope() -> None:
         ("clean", True),
         ("priors", False),
         ("extra_exemption", False),
+        ("extra_exemption_same_line", False),
         ("recipe", False),
         ("decision_only", False),
     ],
@@ -1223,6 +1224,10 @@ def test_same_pass_fat_exemption_rejects_every_other_change(edit, allowed):
             "[nutrition-fat] — exceptional high-fat dish accepted by Marco",
             "[nutrition-fat] — exceptional high-fat dish accepted by Marco\\n"
             "[equipment] skip wok hei",
+        )
+    elif edit == "extra_exemption_same_line":
+        after_text = after_text.replace(
+            "accepted by Marco", "accepted by Marco [equipment] skip wok hei"
         )
     elif edit == "recipe":
         after_text = after_text.replace("1. Cook it.", "1. Cook it.\\n2. Change the construction.")
