@@ -7,7 +7,7 @@ import pytest
 from dish_service import command_spec
 from dish_service import openapi
 from dish_service.openapi import action_openapi, implementation_action_openapi
-from dish_tool.constants import APPROVAL_CORRECTIONS, REJECTION_ROUTES
+from dish_tool.constants import APPROVAL_CORRECTIONS, CONNECTED_REJECTION_ROUTES
 from tests.support.action_contract import (
     EXPECTED_ACTION_COMMANDS,
     EXPECTED_CONSEQUENTIAL,
@@ -135,7 +135,7 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
 
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
-    assert set(variants) == set(REJECTION_ROUTES) == {"large"}
+    assert set(variants) == set(CONNECTED_REJECTION_ROUTES) == {"large"}
     assert {"model", "file_text"}.issubset(variants["large"]["required"])
     assert "resume_status" not in variants["large"]["properties"]
     assert "human_review_options" not in variants["large"]["properties"]
