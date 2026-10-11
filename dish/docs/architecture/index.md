@@ -6,32 +6,31 @@ This directory describes the system's durable boundaries, authorities, safety in
 
 ## One-page system overview
 
-Dish currently coordinates protocol-governed Cooking tasks through one service authority. The service accepts authenticated CLI/admin/GPT Action requests, persists workflow and recovery evidence in SQLite, and performs governed effects against Asana. Honest protocol/schema assets define the task-document contract.
-
-PostgreSQL is the replacement authority under development. During dark launch it receives imported/shadow evidence but does not become live authority. Asana is also transitional: once the frontend sufficiently replaces its user-facing role and the backend is reliable enough, Asana is intended to retire rather than remain a permanent architectural dependency.
+Dish coordinates protocol-governed Cooking tasks through PostgreSQL authority. Authenticated
+agent/admin/front-end surfaces share the connected command contract, while Honest protocol/schema
+assets define the task-document contract. Archived Asana Cooking and the former SQLite workflow are
+migration/forensic compatibility only, not live task authority.
 
 ```mermaid
 flowchart LR
-    CLI[Agent/Admin clients] --> Service[Dish service authority]
-    GPT[GPT Action] --> Service
-    Frontend[Frontend] -->|current/future shared service authority| Service
+    CLI[Agent/Admin clients] --> Service[Dish service]
+    GPT[Connected agent / Action] --> Service
+    Frontend[Frontend] --> Service
     Honest[Honest assets] --> Service
-    Service --> SQLite[(Current workflow authority: SQLite)]
-    Service --> Asana[Current live task surface: Asana]
-    Service -. dark-launch evidence .-> PG[(PostgreSQL target)]
+    Service --> PG[(PostgreSQL canonical authority)]
+    Service -. legacy compatibility / audit only .-> Legacy[SQLite / archived Asana]
 ```
 
 ## Current authority summary
 
 | Concern | Current authority | Direction |
 |---|---|---|
-| Supported task-document contract | Honest assets resolved by `dish_tool/releases.py` | Stable contract source |
-| Live task content/placement/completion | Exact Asana reads/writes coordinated by Dish | Transitional; intended to retire after frontend/backend replacement |
-| Workflow intent, operations, replay, leases, audit | Service-owned SQLite | Intended to move to PostgreSQL |
-| Legal workflow actions | `dish_tool/workflow_policy.py` over authoritative state facts | Consumers may adapt/present but not independently authorize transitions |
-| Command/surface contract | Shared command specifications plus transport/auth rules | Multiple surfaces may expose overlapping capabilities explicitly |
-| PostgreSQL target state | `dish_pg/` | Non-authoritative before cutover; canonical after explicit cutover |
-| Dark-launch evidence | Capture/spool/shadow/reconciliation stores | Evidence only; never current authority |
+| Supported task-document contract | Current Honest assets served with stage context | Stable contract source |
+| Live task content/placement/completion | PostgreSQL Dish state/projections | Canonical |
+| Workflow intent, operations, replay, leases, audit | PostgreSQL workflow authority under `dish_pg/` | Canonical |
+| Legal workflow actions | PostgreSQL command/workflow policy over authoritative state facts | Consumers present; they do not authorize contradictory transitions |
+| Command/surface contract | Shared connected command specifications plus transport/auth rules | Keep MCP/Action/admin exposure explicit and synchronized |
+| SQLite / archived Asana | Legacy migration, forensic, and compatibility evidence only | Never live Cooking authority |
 
 ## Start here for…
 
@@ -47,7 +46,7 @@ flowchart LR
 | Operations/leases/fencing | [Operations, leases, and fencing](operations-leases-and-fencing.md) |
 | External effects/Asana | [External effects and Asana](external-effects-and-asana.md) |
 | Read-only Asana project migration planning | [`../asana-project-migration-runbook.md`](../asana-project-migration-runbook.md) |
-| PostgreSQL target/runtime | [PostgreSQL runtime](postgresql-runtime.md) |
+| PostgreSQL runtime | [PostgreSQL runtime](postgresql-runtime.md) |
 | Dark launch | [Dark launch](dark-launch.md) |
 | Review V2 design-generation lineage | [Review V2 design lineage](review-v2-design-lineage.md) |
 | Development Workflow system | [Development Workflow architecture](development-workflow/index.md) |
