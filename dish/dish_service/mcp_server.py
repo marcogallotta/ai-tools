@@ -55,6 +55,15 @@ HONEST_LOCK = threading.Lock()
 HONEST_GIT_SSH_COMMAND = "/usr/bin/ssh -F /dev/null"
 LOG = logging.getLogger("dish.mcp")
 HONEST_PLANNING_START_PATHS = ("dish-planning-protocol.md",)
+HONEST_PLANNING_TRIGGER_PATHS = (*HONEST_PLANNING_START_PATHS, "dish-classes.md", "cuisine-map.md")
+HONEST_STAGE_READING = (
+    "ChatGPT stage agents read the files their Project settings name; repository agents follow "
+    "their own instructions."
+)
+HONEST_PLANNING_READING = (
+    "Planning reads dish-planning-protocol.md at the start of any planning conversation, before "
+    "suggesting anything, then follows its Route by intent."
+)
 SERVER_INSTRUCTIONS = (
     "Dish PostgreSQL workflow authority is behind these tools. Before any Dish MCP use or "
     "unavailable claim, select the installed Dish app in the current turn. After Marco attaches "
@@ -71,10 +80,8 @@ SERVER_INSTRUCTIONS = (
     "Archive a Dish only when Marco explicitly asks; after unarchive, use a fresh client.run_id "
     "for any further work on that Dish. "
     "Use dish_honest_read to read current Honest Pantry files; it updates main first and serves "
-    "nothing if that update fails. Start with current CLAUDE.md and follow its routed stage "
-    "protocol. Dish Planning must read dish-planning-protocol.md and follow its Route by intent "
-    "for which docs to read, then use Dish cooked discovery and immutable cook logs as that "
-    "protocol directs."
+    f"nothing if that update fails. {HONEST_STAGE_READING} {HONEST_PLANNING_READING} "
+    "Use Dish cooked discovery and immutable cook logs as that protocol directs."
 )
 
 
@@ -139,12 +146,10 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
             files.append({"path": path, "text": text})
         requested = set(paths)
         planning_requested = bool(
-            requested.intersection(HONEST_PLANNING_START_PATHS)
+            requested.intersection(HONEST_PLANNING_TRIGGER_PATHS)
             or any(path.startswith("planning/") for path in requested)
         )
-        recommended = ["CLAUDE.md"]
-        if planning_requested:
-            recommended.extend(HONEST_PLANNING_START_PATHS)
+        recommended = list(HONEST_PLANNING_START_PATHS) if planning_requested else []
         missing = [path for path in recommended if path not in requested]
         return {
             "repository": "marcogallotta/honest-pantry",
@@ -152,11 +157,8 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
             "files": files,
             "reading_guidance": {
                 "instructions": [
-                    "Read current CLAUDE.md first, then follow the stage protocol it routes.",
-                    (
-                        "For Dish Planning, read the planning protocol and follow its Route by "
-                        "intent for which docs a named dish or broad request reads."
-                    ),
+                    HONEST_STAGE_READING,
+                    HONEST_PLANNING_READING,
                 ],
                 "recommended_paths": recommended,
                 "missing_recommended_paths": missing,
@@ -166,7 +168,7 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
 
 def build_honest_tool(checkout: Path = HONEST_CHECKOUT) -> FunctionTool:
     def dish_honest_read(paths: list[str]) -> dict[str, Any]:
-        """Read current Honest Pantry files and return guidance about required routed context."""
+        """Read current Honest Pantry files and return stage reading guidance."""
         try:
             result = read_honest_files(checkout, paths)
         except (RuntimeError, ValueError) as exc:

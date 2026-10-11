@@ -123,6 +123,10 @@ If Project-only memory is offered when the Projects are created, prefer it as is
 do not make any behavior or authority decision depend on it. Do not upload the repositories as
 Project files to make the Projects work.
 
+> **Superseded:** the two Project instruction blocks below are historical v1 payloads, kept
+> unedited. The current pasted ChatGPT settings live in `marcogallotta/honest-pantry`
+> `chatgpt-settings/*.md` and read repository files through `dish_honest_read`; paste those instead.
+
 ### General Dish Project instructions
 
 Paste the block below into the **General Dish** Project instructions.
