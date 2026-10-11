@@ -13,7 +13,12 @@ from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as projection
 from dish_pg.command_contract import ACTION_COMMANDS
-from dish_pg.command_port import CommandCall, PostgresCommandPort, _task_reference_from_dish
+from dish_pg.command_port import (
+    CommandCall,
+    PostgresCommandPort,
+    _require_small_correction_scope,
+    _task_reference_from_dish,
+)
 from dish_pg.document_authority import (
     destination_section_id,
     parse_canonical_document,
@@ -1163,6 +1168,31 @@ def test_prepare_non_material_change_preserves_prior_signed_state_and_checks_in(
             originating_signoff.cycle_id
         )
 
+
+
+def test_exemption_only_marco_acceptance_is_same_pass_small_scope() -> None:
+    before_text = TASK.replace("[non-main] ", "").replace(
+        "Role: non-main — small side for comparison",
+        "Role: main",
+    )
+    after_text = before_text.replace(
+        "Exemptions: None",
+        "Exemptions: [nutrition-fat] — exceptional high-fat dish accepted by Marco",
+    ).replace(
+        "### Research basis",
+        "Human — Marco: Accept this exceptional high-fat dish unchanged, 2026-10-11\n"
+        "### Research basis",
+    )
+    before = parse_canonical_document(file_text=before_text).document
+    after = parse_canonical_document(file_text=after_text).document
+
+    _require_small_correction_scope(
+        before,
+        after,
+        governed_change_fields=("Exemptions", "Decisions"),
+    )
+    with pytest.raises(Exception):
+        _require_small_correction_scope(before, after)
 
 
 def _start_change(port, ids, context, task_id, *, reason="governed parity"):
