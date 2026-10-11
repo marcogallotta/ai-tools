@@ -403,6 +403,15 @@ def test_printed_admin_commands_name_non_prod_profile(profile, prefix) -> None:
         profile=profile,
     )
     assert resolved["shell_command"] == f"{prefix}resolved {operation_id}"
+    reopen = postgres_service._admin_action_from_queue(
+        {"kind": "reopen_verification_stop", "operation_id": operation_id},
+        profile=profile,
+    )
+    assert reopen["shell_command"].startswith(f"{prefix}reopen {operation_id} ")
+    assert reopen["requires_input"] == [
+        "category", "before", "after", "editor", "model", "run_id", "file_path", "date"
+    ]
+    assert "--file" in reopen["shell_command"]
     proposal = postgres_service._admin_action_from_queue(
         {"kind": "semantic_proposal", "operation_id": operation_id}, profile=profile
     )
