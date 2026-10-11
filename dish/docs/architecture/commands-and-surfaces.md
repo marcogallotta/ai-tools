@@ -112,12 +112,10 @@ Their retained disposition is executable in
 `dish_pg.command_contract.CONNECTED_COMMAND_DISPOSITIONS`.
 
 Retained PostgreSQL admin-principal commands (queue, recovery, discard/abandon,
-evidence, migrate, and lease recovery/expiry) are reachable only through the private admin bearer on
-`/v1/admin/<command>` and the admin lease routes when the runtime is bound to the PROD profile; the
-agent/action surfaces expose only retained non-admin commands. `record-human-decision` is an
-agent-owned continuation: the connected agent asks Marco directly, records his exact answer, and
-resumes the held workflow. Its private-admin exposure is compatibility only, not a required operator
-step. Retired/non-retained historical
+legacy evidence/Human Review recovery, migrate, and lease recovery/expiry) are reachable only through
+the private admin bearer on `/v1/admin/<command>` and admin lease routes in PROD. Connected agents
+do not expose `record-human-decision`, Evidence reject, or Human Review reject; those remain legacy
+admin compatibility only. Retired/non-retained historical
 commands (backup-create, backup-restore) stay unroutable everywhere. A TEST-profile runtime exposes
 only `queue`, `archive`, and `unarchive` through that private bearer so their operator paths can be
 qualified;
@@ -144,15 +142,11 @@ direct review mutation commands remain callable escape hatches. Hiding a command
 not remove or weaken its backend authority checks.
 
 `queue` is the primary "what Marco needs to do now" surface over durable Dish state. It groups
-admin-required work by human consequence (Evidence, change approval, then recovery),
-hides system/auto-recoverable rows by default, and enters those interactions directly from the
-rendered snapshot. Ordinary Human Review answers are excluded because the connected agent records
-Marco's answer in the active conversation. Queue numbering is presentation only: every PostgreSQL
-mutation uses the exact operation, hold, requirement, cycle, proposal, and content identities from
-that rendered snapshot. Human Review and Evidence use their existing PostgreSQL commands; semantic
-approval records each exact required authorization; and semantic rejection uses only the narrow
-private `review-reject` dependency to cancel that exact unapproved proposal and reopen unchanged
-Verification. It does not port the legacy review queue/inspect/approve subsystem.
+legacy/admin-required recovery and other human consequences, hides system/auto-recoverable rows by
+default, and enters those interactions from the rendered snapshot. New connected-agent questions are
+handled in conversation and do not create queue items. Queue numbering is presentation only: every
+PostgreSQL mutation uses exact durable identities. Legacy Human Review/Evidence and semantic proposal
+commands remain available only for recovery of already-existing state.
 `--non-interactive`, `--json`, and non-TTY use remain
 one-shot. An expired lease on an otherwise open/recoverable operation is system/recoverable and does
 not by itself re-enter Marco's queue. `inspect <dish>` remains the exact drill-down for recovery and
@@ -172,11 +166,10 @@ them as context, but they must not by themselves produce `INCONSISTENT`. Healthy
 expected/manual lifecycle rows are hidden by default and available with `--verbose`. Audit does not
 decide workflow legality; `inspect --verbose <dish>` remains the bounded per-Dish diagnostic view.
 
-Human Review items retain durable ranked choices with A as the recommended route plus free-text
-Other. Semantic proposals retain exact governed before/after bundles. The connected agent presents
-and records ordinary Human Review choices; the admin queue may enter the remaining admin-owned
-interactions directly, but it remains presentation and routing: PostgreSQL workflow commands and
-policy retain mutation authority.
+Legacy Human Review items retain their durable choices and semantic proposals retain exact governed
+before/after bundles so existing state can be recovered. New connected work uses conversational
+`Human — Marco:` Decisions plus exact governed-field attestation instead; the admin queue remains
+presentation/routing and PostgreSQL workflow policy retains mutation authority.
 
 `archive <dish>` is an agent lifecycle command on the connected surface (MCP/Action
 `{dish_id, agent}`, no confirmation argument; the MCP tool is marked destructive) and a private-admin
