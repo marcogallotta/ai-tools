@@ -71,8 +71,7 @@
                 "renew-lease",
                 "cooked",
                 "archive",
-                "unarchive",
-                "record-human-decision"
+                "unarchive"
               ],
               "type": "string"
             },
@@ -104,8 +103,7 @@
               "renew-lease",
               "cooked",
               "archive",
-              "unarchive",
-              "record-human-decision"
+              "unarchive"
             ],
             "type": "string"
           },
@@ -1069,7 +1067,7 @@
                         "type": "string"
                       },
                       "governed_change_fields": {
-                        "description": "Use only to explicitly attest an append-only `Human \u2014 Marco:` Decision that Marco actually stated in conversation. This records agent-attributed provenance; it does not authorize any other governed-field mutation.",
+                        "description": "Use only to explicitly attest an append-only `Human — Marco:` Decision that Marco actually stated in conversation. This records agent-attributed provenance; it does not authorize any other governed-field mutation.",
                         "items": {
                           "enum": [
                             "Decisions"
@@ -1564,134 +1562,6 @@
         "x-openai-isConsequential": true
       }
     },
-    "/v1/action/record-human-decision": {
-      "post": {
-        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
-        "operationId": "dish_postgresql_record_human_decision",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": false,
-                "properties": {
-                  "arguments": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "agent": {
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ],
-                        "type": "string"
-                      },
-                      "decision": {
-                        "maxLength": 8000,
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "expected_cycle_id": {
-                        "description": "Required for a Verification Human Review; omit before construction.",
-                        "format": "uuid",
-                        "maxLength": 36,
-                        "minLength": 36,
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "type": "string"
-                      },
-                      "expected_hold_identity": {
-                        "maxLength": 128,
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "rationale": {
-                        "maxLength": 8000,
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "requirement_id": {
-                        "format": "uuid",
-                        "maxLength": 36,
-                        "minLength": 36,
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "type": "string"
-                      },
-                      "submission_id": {
-                        "format": "uuid",
-                        "maxLength": 36,
-                        "minLength": 36,
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "submission_id",
-                      "requirement_id",
-                      "decision",
-                      "agent"
-                    ],
-                    "type": "object"
-                  },
-                  "client": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "request_id": {
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
-                        "format": "uuid",
-                        "maxLength": 36,
-                        "minLength": 36,
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "type": "string"
-                      },
-                      "run_id": {
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
-                        "format": "uuid",
-                        "maxLength": 36,
-                        "minLength": 36,
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "run_id",
-                      "request_id"
-                    ],
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            },
-            "description": "Canonical Dish result envelope"
-          },
-          "401": {
-            "description": "Bearer authentication failed before body parsing"
-          }
-        },
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "summary": "Run PostgreSQL-backed dish record-human-decision",
-        "x-openai-isConsequential": true
-      }
-    },
     "/v1/action/reject": {
       "post": {
         "description": "Replay-bound authoritative mutation; exact request identity is durable.",
@@ -1722,7 +1592,7 @@
                             "type": "string"
                           },
                           "governed_change_fields": {
-                            "description": "On a Large-correction retry, name only governed fields Dish asked the agent to confirm as intentionally changed. Naming Decisions also attests that an append-only `Human \u2014 Marco:` entry reflects something Marco actually stated; it does not authorize another governed field.",
+                            "description": "Name every governed field Marco explicitly authorized in chat. Include Decisions when the candidate appends his exact `Human — Marco:` answer.",
                             "items": {
                               "enum": [
                                 "Dish candidate",
@@ -1770,136 +1640,6 @@
                           "route",
                           "model",
                           "file_text"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "agent": {
-                            "enum": [
-                              "claude",
-                              "gpt",
-                              "codex"
-                            ],
-                            "type": "string"
-                          },
-                          "blocker_actual": {
-                            "type": "number"
-                          },
-                          "blocker_basis": {
-                            "type": "string"
-                          },
-                          "blocker_delta": {
-                            "type": "number"
-                          },
-                          "blocker_limit": {
-                            "type": "number"
-                          },
-                          "blocker_metric": {
-                            "type": "string"
-                          },
-                          "blocker_unit": {
-                            "type": "string"
-                          },
-                          "human_review_basis": {
-                            "description": "The specific unresolved choice, waiver, classification, or authority that remains for Marco.",
-                            "type": "string"
-                          },
-                          "human_review_confirmed": {
-                            "description": "Set true only after completing Dish's Human Review escalation preflight.",
-                            "type": "boolean"
-                          },
-                          "human_review_options": {
-                            "description": "Concrete human choices for this Human Review, ordered best-first. The first item is always the agent's recommended route. Include plausible alternatives; Dish always gives Marco a free-text Other choice in the admin UI. If an option authorizes an Exemptions change, before/after must be the complete exact field values. Nutrition waivers use the canonical tags [nutrition-kcal], [nutrition-protein], or [nutrition-fat] in the after value, not prose substitutes.",
-                            "items": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "authorization": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "after": {
-                                      "type": "string"
-                                    },
-                                    "before": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "enum": [
-                                        "Dish candidate",
-                                        "Purpose",
-                                        "Role",
-                                        "Priors",
-                                        "Locks",
-                                        "Exemptions",
-                                        "Research emphasis",
-                                        "Destination section",
-                                        "Researched by"
-                                      ],
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "field",
-                                    "before",
-                                    "after"
-                                  ],
-                                  "type": "object"
-                                },
-                                "decision": {
-                                  "type": "string"
-                                },
-                                "label": {
-                                  "type": "string"
-                                }
-                              },
-                              "required": [
-                                "label",
-                                "decision"
-                              ],
-                              "type": "object"
-                            },
-                            "maxItems": 6,
-                            "minItems": 1,
-                            "type": "array"
-                          },
-                          "reason": {
-                            "type": "string"
-                          },
-                          "repairs_considered": {
-                            "description": "Specific plausible repairs considered and why they do not resolve the issue within existing authority.",
-                            "type": "string"
-                          },
-                          "resume_status": {
-                            "enum": [
-                              "pending-research",
-                              "pending-verification"
-                            ],
-                            "type": "string"
-                          },
-                          "route": {
-                            "const": "human-review",
-                            "description": "Select the human-review rejection route.",
-                            "enum": [
-                              "human-review"
-                            ],
-                            "type": "string"
-                          },
-                          "submission_id": {
-                            "format": "uuid",
-                            "maxLength": 36,
-                            "minLength": 36,
-                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "submission_id",
-                          "agent",
-                          "reason",
-                          "route",
-                          "resume_status",
-                          "human_review_options"
                         ],
                         "type": "object"
                       }
