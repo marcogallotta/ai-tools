@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .constants import COOKING_PROJECT_GID, MECHANICAL_PROPOSAL_AGENT, REJECTION_ROUTES
+from .constants import COOKING_PROJECT_GID, LEGACY_REJECTION_ROUTES, MECHANICAL_PROPOSAL_AGENT
 from .database import (
     complete_operation_step,
     confirm_task_content,
@@ -58,7 +58,7 @@ from .semantic_proposals import (
     validate_semantic_proposal_integrity,
 )
 
-ROUTES = frozenset(REJECTION_ROUTES)
+ROUTES = frozenset(LEGACY_REJECTION_ROUTES)
 RESET_CATEGORIES = {"evidence", "premise", "method", "scope"}
 
 
@@ -1049,7 +1049,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             "INVALID_ARGUMENT",
             "rejection route is not supported",
             rule="invalid_rejection_route",
-            details={"allowed": list(REJECTION_ROUTES), "actual": route},
+            details={"allowed": list(LEGACY_REJECTION_ROUTES), "actual": route},
         )
     _validate_rejection_route_arguments(
         route=route,

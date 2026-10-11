@@ -122,10 +122,17 @@ _ADMIN_EXPOSED_COMMANDS = frozenset(
     if COMMAND_DEFINITIONS[name].retained
 )
 _TEST_ADMIN_EXPOSED_COMMANDS = frozenset({"archive", "unarchive", "queue"})
+# ``hold-reject`` opens an Evidence hold. Dish no longer accepts new Evidence
+# holds from any caller; the command survives only for the shadow worker's
+# in-process translation of legacy SQLite ``reject`` records, which calls the
+# command port directly rather than any HTTP surface.
+_INTERNAL_ONLY_COMMANDS = frozenset({"hold-reject"})
 _AGENT_EXPOSED_COMMANDS = frozenset(
     name
     for name, definition in COMMAND_DEFINITIONS.items()
-    if definition.retained and definition.principal not in {"admin", "historical"}
+    if definition.retained
+    and definition.principal not in {"admin", "historical"}
+    and name not in _INTERNAL_ONLY_COMMANDS
 )
 
 
@@ -900,6 +907,12 @@ class PostgresRuntimeService:
         principal: ServicePrincipal | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
+        if command in _INTERNAL_ONLY_COMMANDS:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "command is not exposed to the PostgreSQL agent surface",
+                rule="agent_command_forbidden",
+            )
         return self._execute_command(
             command,
             arguments,

@@ -8,12 +8,15 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 from sqlalchemy import func, select
 
 from dish_pg import models
 from dish_pg import postgres_service as postgres_service_module
 from dish_pg import stage3_models as wf
+from dish_pg.command_contract import ACTION_COMMANDS
+from dish_pg.command_effects import effect_spec_for
 from dish_pg.command_port import CommandResult
 from dish_pg.connected_command_spec import result_envelope_schema
 from dish_pg.database import session_scope
@@ -1988,3 +1991,74 @@ def test_recovery_generations_never_auto_bootstrap_unknown_runs(
             assert exc.rule == "postgresql_command_rejected"
         with session_scope(factory) as session:
             assert session.get(wf.ServiceRun, run_id) is None
+
+
+def test_agent_route_refuses_hold_reject_and_opens_no_evidence_hold(
+    workflow_db, tmp_path: Path
+) -> None:
+    """``hold-reject`` is shadow-translation only; no caller may open a new Evidence hold."""
+
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    request_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+
+    service = runtime_service(factory, tmp_path)
+    for surface in ("agent", "action", "admin"):
+        assert service.supports_http_route(surface, "hold-reject") is False
+    with pytest.raises(DishRuleError) as refused:
+        service.execute_agent(
+            "hold-reject",
+            {"operation_id": str(_next(ids))},
+            principal=ServicePrincipal(owner_id="cli", run_id=str(run_id)),
+            request_id=str(request_id),
+        )
+    assert refused.value.rule == "agent_command_forbidden"
+
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-hold-reject-refused")
+        url = f"http://127.0.0.1:{server.server_address[1]}/v1/commands/hold-reject"
+        try:
+            status, payload = _post_json(
+                url,
+                body={
+                    "client": {"run_id": str(run_id), "request_id": str(request_id)},
+                    "arguments": {"dish": str(task_id), "operation_id": str(_next(ids))},
+                },
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert status == 404
+    assert payload == {"ok": False, "error": "not_found"}
+    with session_scope(factory) as session:
+        assert session.get(wf.ServiceRequest, request_id) is None
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(wf.WorkflowOperation)
+                .where(wf.WorkflowOperation.phase == "held_evidence")
+            )
+            == 0
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    sorted(postgres_service_module._AGENT_EXPOSED_COMMANDS | set(ACTION_COMMANDS)),
+)
+def test_no_externally_exposed_command_can_open_an_evidence_hold(command: str) -> None:
+    # ``reject`` keeps a describable legacy ``route=evidence`` effect spec, but request
+    # validation refuses that route; every other route must not open an Evidence hold.
+    routes = ("large", "human-review") if command == "reject" else (None,)
+    for route in routes:
+        arguments = {} if route is None else {"route": route}
+        for flags in (
+            {},
+            {"verification_hold": True},
+            {"semantic_proposal_queued": True},
+            {"preconstruction_hold": True},
+        ):
+            spec = effect_spec_for(command, arguments, **flags)
+            assert "open_evidence_hold" not in spec.mutation_kinds, (command, route, flags)

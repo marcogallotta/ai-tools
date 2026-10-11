@@ -36,7 +36,8 @@ def test_quantified_blocker_is_complete_and_arithmetic_is_checked():
 def test_reject_openapi_exposes_optional_quantified_blocker_fields_on_hold_routes():
     schema = action_openapi_argument_schema("reject")
     variants = {variant["properties"]["route"]["const"]: variant for variant in schema["oneOf"]}
-    for route in ("evidence", "human-review"):
+    assert "evidence" not in variants
+    for route in ("human-review",):
         properties = variants[route]["properties"]
         for name in ("blocker_metric", "blocker_actual", "blocker_limit", "blocker_delta", "blocker_unit", "blocker_basis"):
             assert name in properties

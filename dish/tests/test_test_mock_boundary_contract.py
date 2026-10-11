@@ -5,6 +5,9 @@ from pathlib import Path
 
 
 REVIEWED_PRIVATE_FAULT_SEAMS = {
+    ("support/postgresql/legacy_evidence_hold.py", "_reject"): (
+        "Seeds legacy Evidence holds for compatibility tests; the public route was removed."
+    ),
     ("postgresql/test_pglite_governed_runner.py", "_snapshot"): (
         "Descendant-tracker observation boundary used to synchronize real process discovery."
     ),
