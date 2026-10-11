@@ -4171,10 +4171,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
 
     def _reopen(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
-        if operation.phase != "held_human":
+        if operation.phase not in {"verification_hold", "held_human"}:
             raise CommandRuleError(
-                "HUMAN_REVIEW_HOLD_REQUIRED",
-                "reopen requires the exact Human Review hold",
+                "VERIFICATION_HOLD_REQUIRED",
+                "reopen requires the exact Verification stop or a legacy Human Review hold",
             )
         cycle = self._latest_cycle(operation.operation_id)
         if cycle.outcome == "verification-hold":
@@ -4389,7 +4389,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         parse_canonical_document(
             title=baseline.title,
             body=baseline.body,
-            expected_status="pending-human-review",
+            expected_status="pending-verification",
         )
         candidate = parse_canonical_document(
             file_text=str(file_text), expected_status="pending-verification"
@@ -5065,7 +5065,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         parse_canonical_document(
             title=current_version.title,
             body=current_version.body,
-            expected_status="pending-human-review",
+            expected_status="pending-verification",
         )
         if not cycle_id:
             return
