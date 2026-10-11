@@ -2166,6 +2166,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 data={
                     "rule": "marco_chat_decision_required",
                     "required_governed_fields": sorted(required_fields),
+                    "required_authorizations": required,
                     "instruction": (
                         "Ask Marco the concrete choice in chat. Then append his answer as a "
                         "Human — Marco: Decision and retry the exact candidate with Decisions plus "
@@ -5652,25 +5653,56 @@ _SMALL_FROZEN_STATE_FIELDS = ("Researched by", "Verification protocol release")
 def _same_pass_fat_exemption(
     before, after, governed_change_fields: tuple[str, ...]
 ) -> bool:
-    """Return whether only Marco's fat exemption metadata was added."""
+    """Permit only a single fat-exemption addition and append-only Marco Decision."""
 
     if set(governed_change_fields) != {"Exemptions", "Decisions"}:
         return False
-    if set(canonical_diff(before, after)) != {"planning.Exemptions", "decisions"}:
+    changes = governed_changes(before, after)
+    if {change.field for change in changes} != {"Exemptions", "Decisions"}:
+        return False
+    if (
+        before.title != after.title
+        or before.recognition != after.recognition
+        or before.introduction != after.introduction
+        or dict(before.sections) != dict(after.sections)
+        or before.research_basis != after.research_basis
+        or before.state.values != after.state.values
+        or tuple(before.material_changes) != tuple(after.material_changes)
+    ):
+        return False
+    # Compare all planning fields, including Priors (omitted by canonical_diff).
+    if any(
+        before.planning_brief.values.get(field) != after.planning_brief.values.get(field)
+        for field in set(before.planning_brief.values) | set(after.planning_brief.values)
+        if field != "Exemptions"
+    ):
+        return False
+    old_value = str(before.planning_brief.values.get("Exemptions", ""))
+    new_value = str(after.planning_brief.values.get("Exemptions", ""))
+    if "[nutrition-fat]" in old_value:
+        return False
+    # 'None' is the empty baseline; otherwise additions must be a single line.
+    remainder = new_value if old_value.strip() == "None" else (
+        new_value[len(old_value):].lstrip("\\n")
+        if new_value.startswith(old_value + "\\n") else ""
+    )
+    added = remainder.splitlines()
+    if len(added) != 1 or not added[0].strip().startswith("[nutrition-fat]"):
         return False
     if not agent_attested_decision_appends(before, after):
         return False
-    old_exemptions = str(before.planning_brief.values.get("Exemptions", ""))
-    new_exemptions = str(after.planning_brief.values.get("Exemptions", ""))
-    tags = {"[nutrition-kcal]", "[nutrition-protein]", "[nutrition-fat]"}
-    old_tags = {tag for tag in tags if tag in old_exemptions}
-    new_tags = {tag for tag in tags if tag in new_exemptions}
-    return (
-        "[nutrition-fat]" not in old_tags
-        and "[nutrition-fat]" in new_tags
-        and old_tags.issubset(new_tags)
-        and new_tags - old_tags == {"[nutrition-fat]"}
+    # Run the ordinary scope checker on a candidate with only the permitted
+    # metadata additions removed, so construction changes cannot bypass it.
+    normalized = dataclasses.replace(
+        after,
+        planning_brief=dataclasses.replace(after.planning_brief, values=before.planning_brief.values),
+        decisions=before.decisions,
     )
+    try:
+        require_small_scope(before, normalized)
+    except DishRuleError:
+        return False
+    return True
 
 
 def _require_small_correction_scope(

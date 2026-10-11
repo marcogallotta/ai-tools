@@ -102,9 +102,7 @@ def test_approval_creates_ready_occurrence_and_submit_derives_destination(workfl
         assert state.completed is False
 
 
-def test_human_review_decision_resumes_same_operation_from_connected_agent(
-    workflow_db,
-) -> None:
+def test_connected_rejection_refuses_retired_human_review_route(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         port, _author_run, verifier_run, started, _prepared, _inspection = _verification_ready(
@@ -126,102 +124,14 @@ def test_human_review_decision_resumes_same_operation_from_connected_agent(
                 },
             )
         )
-        assert rejected.ok
-        admin_run = _next(ids)
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=admin_run,
-            owner="Marco",
-            agent="claude",
-        )
-        queued = port.execute(
-            _call("queue", run_id=admin_run, owner="Marco", principal="admin")
-        )
-        assert queued.ok
-        assert queued.data["issue_items"] == []
-        assert queued.data["needs_you_count"] == 0
-        direct_agent_run = _next(ids)
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=direct_agent_run,
-            owner="agent-owner",
-            agent="codex",
-        )
-        # The connected agent must be able to learn the exact review identifiers
-        # from Dish itself, both from the rejection and from a later read.
-        read = port.execute(
-            _call(
-                "read",
-                run_id=direct_agent_run,
-                owner="agent-owner",
-                principal="agent",
-                arguments={"dish_id": str(task_id), "agent": "codex"},
+        assert not rejected.ok
+        assert rejected.code == "INVALID_REJECTION_ROUTE"
+        assert session.scalar(
+            select(wf.HumanReviewRequirement).where(
+                wf.HumanReviewRequirement.operation_id
+                == uuid.UUID(started.data["operation_id"])
             )
-        )
-        assert read.ok
-        assert read.allowed_actions == ("record-human-decision",)
-        continuation = read.data["agent_action"]
-        assert continuation["command"] == "record-human-decision"
-        assert continuation["arguments"] == {
-            "submission_id": started.data["operation_id"],
-            "requirement_id": rejected.data["requirement_id"],
-            "expected_cycle_id": rejected.data["cycle_id"],
-            "expected_hold_identity": read.data["human_review"]["expected_hold_identity"],
-        }
-        assert read.data["human_review"]["requirement_id"] == rejected.data["requirement_id"]
-        assert rejected.data["agent_action"]["arguments"] == continuation["arguments"]
-        decision_text = "[nutrition-kcal] [nutrition-protein] approved by Marco"
-        decided = port.execute(
-            _call(
-                "record-human-decision",
-                run_id=direct_agent_run,
-                request_id=_next(ids),
-                owner="agent-owner",
-                principal="agent",
-                arguments={
-                    **continuation["arguments"],
-                    "decision": decision_text,
-                    "resume_status": "pending-research",
-                    "agent": "codex",
-                },
-            )
-        )
-        assert decided.ok
-        # The requirement's construction phase is authoritative; callers cannot
-        # steer a Verification hold back into Research.
-        assert decided.data["resume_status"] == "pending-verification"
-        assert decided.data["cycle_id"] != rejected.data["cycle_id"]
-        requirement = session.get(
-            wf.HumanReviewRequirement, uuid.UUID(rejected.data["requirement_id"])
-        )
-        decision = session.scalar(
-            select(wf.HumanReviewDecision).where(
-                wf.HumanReviewDecision.requirement_id == requirement.requirement_id
-            )
-        )
-        assert decision.decision == decision_text
-        assert requirement.state == "decided"
-        state = session.get(models.DishState, (context["generation_id"], task_id))
-        resumed = session.get(models.ContentVersion, state.current_content_version_id)
-        parsed = parse_canonical_document(
-            title=resumed.title,
-            body=resumed.body,
-            expected_status="pending-verification",
-        )
-        assert any(
-            line.startswith(
-                "Human — Marco: human_review resolved — "
-                "[nutrition-kcal] [nutrition-protein] approved by Marco"
-            )
-            for line in parsed.document.decisions
-        )
-        operation = session.get(
-            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
-        )
-        assert operation.phase == "await_verification"
-        assert operation.persisted_actions == ["inspect"]
+        ) is None
 
 
 def test_expected_authority_failure_rolls_back_domain_mutations_and_replays(

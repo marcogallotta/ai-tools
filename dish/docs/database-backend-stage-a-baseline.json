@@ -77,7 +77,7 @@
   ],
   "governing_source_sha256": {
     "dish_pg/release.py": "e2295fec87e85366013d3906c2ce79f48f9eb726a7fa687a74a34bce660e3648",
-    "dish_service/admin_cli.py": "9b160877dc9c82e4772b0ea891a7563daf7073f1eb7e9b3900db880a0913236f",
+    "dish_service/admin_cli.py": "aa474cac851809edabeaecb1fb6bc974aa62ac01f557ee3248ab49cdf849fa10",
     "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
     "dish_service/command_spec.py": "881a2f37e5bfca71208fe2678cee5c1887152bdea2b5ca5d9ca90426cd861c4d",
@@ -95,7 +95,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Refresh governed source hashes after dish-admin operation ergonomics: required --lease-id, resolved-target output, inspect lease (admin_cli.py, runtime-contract.md); behavior reviewed in PR #477",
+  "last_rebaseline_reason": "Regenerate governed admin CLI source identity after PostgreSQL verification-stop recovery handler update (PR #485)",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",

@@ -1197,6 +1197,50 @@ def test_exemption_only_marco_acceptance_is_same_pass_small_scope() -> None:
     assert error.value.code == "SMALL_CORRECTION_SCOPE_EXCEEDED"
 
 
+@pytest.mark.parametrize(
+    ("edit", "allowed"),
+    [
+        ("clean", True),
+        ("priors", False),
+        ("extra_exemption", False),
+        ("recipe", False),
+        ("decision_only", False),
+    ],
+)
+def test_same_pass_fat_exemption_rejects_every_other_change(edit, allowed):
+    before_text = TASK.replace("[non-main] ", "").replace(
+        "Role: non-main — small side for comparison", "Role: main"
+    )
+    decision = "Human — Marco: Accept the high-fat dish unchanged, 2026-10-11"
+    after_text = before_text.replace(
+        "Exemptions: None",
+        "Exemptions: [nutrition-fat] — exceptional high-fat dish accepted by Marco",
+    ).replace("### Research basis", f"{decision}\\n### Research basis")
+    if edit == "priors":
+        after_text = after_text.replace("Priors: None", "Priors: Tested elsewhere")
+    elif edit == "extra_exemption":
+        after_text = after_text.replace(
+            "[nutrition-fat] — exceptional high-fat dish accepted by Marco",
+            "[nutrition-fat] — exceptional high-fat dish accepted by Marco\\n"
+            "[equipment] skip wok hei",
+        )
+    elif edit == "recipe":
+        after_text = after_text.replace("1. Cook it.", "1. Cook it.\\n2. Change the construction.")
+    elif edit == "decision_only":
+        after_text = before_text.replace("### Research basis", f"{decision}\\n### Research basis")
+    before = parse_canonical_document(file_text=before_text).document
+    after = parse_canonical_document(file_text=after_text).document
+    if allowed:
+        _require_small_correction_scope(
+            before, after, governed_change_fields=("Exemptions", "Decisions")
+        )
+    else:
+        with pytest.raises(CommandRuleError):
+            _require_small_correction_scope(
+                before, after, governed_change_fields=("Exemptions", "Decisions")
+            )
+
+
 def _start_change(port, ids, context, task_id, *, reason="governed parity"):
     run_id = _next(ids)
     _register_run(
@@ -1269,7 +1313,7 @@ def test_prepare_change_blocks_unauthorized_governed_field_before_activation_or_
             candidate,
         )
         assert not blocked.ok
-        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED"
+        assert blocked.code == "CONFIRMATION_REQUIRED"
         assert {item["field"] for item in blocked.data["required_authorizations"]} == {"Purpose"}
         assert port._current_content_version_id(context["generation_id"], task_id) == current_before
         assert session.scalar(select(func.count()).select_from(models.ContentVersion)) == version_count_before
@@ -1408,7 +1452,7 @@ def test_prepare_change_consumes_exact_durable_grant_before_governed_activation(
             port, ids, task_id, run_id, started.data["operation_id"], candidate
         )
         required = blocked.data["required_authorizations"]
-        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED" and len(required) == 1
+        assert blocked.code == "CONFIRMATION_REQUIRED" and len(required) == 1
 
         admin_run = _next(ids)
         _register_run(
