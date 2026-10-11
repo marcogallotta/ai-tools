@@ -14,7 +14,11 @@ Current anchors include `dish_tool/application_service.py`, `dish_tool/workflow_
 
 ## Actors, processes, and stores
 
-Agents perform workflow work; ordinary Marco clarification and attributed remembered choices may be recorded without formal admin authorization; Human Review authorizes consequential governed exceptions/decisions; service/admin surfaces expose available continuations; SQLite currently stores workflow evidence.
+Agents perform workflow work; current connected-agent Marco choices are recorded as attributed
+`Human — Marco:` Decisions and may attest the exact Planning fields that choice changes. Formal
+Human Review rows/commands remain only for legacy recovery of records already held before this
+change. Service/admin surfaces expose those compatibility continuations without making them a
+current workflow route.
 
 ## Authority and data ownership
 
@@ -35,16 +39,21 @@ Human approval is the authorization for the exact governed changes in an approve
 - Proposal validity/actionability is evaluated against governed semantic facts rather than irrelevant cosmetic/task metadata.
 - Verification/review evidence stays bound to the exact subject it reviewed.
 - Human Review and recovery continuations target durable recorded work rather than an ambiguous nearby operation.
-- Human input has three authority levels: ordinary clarification/preference may be used directly; a meaningful deliberate choice may be appended as an attributed `Human — Marco:` Decision without formal admin authorization; formal Human Review is reserved for consequential governed authority such as an exception, accepted material risk, governed reversal, or equivalent decision future work must not casually reopen. An attributed Decision does not itself authorize a separate governed field mutation.
-- Rewriting, removing, or reversing an existing attributed Decision remains governed; the append-only remembered-choice allowance is not permission to rewrite history.
-- Before an agent-created Verification Human Review hold is persisted, Dish may require a neutral preflight that identifies the evidence, repairs considered, and the unresolved Marco-only choice. The preflight must not imply that legitimate Human Review is undesirable. A reasonable defensible estimate with stated assumptions is valid when an exact value is unknowable; uncertainty alone is not a blocker. If no single estimate is defensible, do not invent false precision.
-- A Human Review is a question for Marco, not an abstract escalation object. The agent must state the real issue in ordinary language and persist 1..6 concrete plausible resolutions ordered best-first. Choice A is always the agent's recommended route; plausible alternatives must not be suppressed merely because they are less preferred. The admin surface always adds an Other path for free-text human instruction.
-- Selecting a structured choice records the exact agent-authored decision. Selecting Other records Marco's exact free-text instruction as durable authoritative human input for continuation; Dish must not infer an unrequested mutation or authorization from that prose.
-- A structured Verification choice may optionally carry one exact governed authorization `(field, before, after)`, but only when that authorization is bound to the reviewed candidate value. Selecting it records the authorization and the Human Review decision; it does not itself edit candidate content. Pre-construction Human Review has no reviewed candidate value to bind, so its choices cannot carry a governed authorization.
-- If Verification can already construct the exact governed candidate that resolves a concern, that candidate belongs in the semantic-proposal review path rather than an open-ended Human Review hold. Human Review is for the Marco-only choice that must be answered before an exact candidate can exist.
-- Human-facing review presentation is intentionally compressed: real issue first, quantified material consequence when applicable, then the agent-authored choices with A marked recommended plus Other. Workflow-state words such as escalation, hold, resume route, and low-level dismissal belong in verbose/diagnostic or exceptional admin surfaces rather than the normal decision UI. For a semantic proposal, however, the normal pre-approval inspect view must still show every linked candidate change covered by approval/application; verbose mode is only for rationale, evidence/provenance, protocol mechanics, IDs, and diagnostics.
-- Low-level dismissal of an unanswered Human Review remains an exceptional compatibility/admin operation. It preserves the original finding and reason, records the dismissal reason, returns the unchanged candidate to Verification, and creates no substantive Marco decision or governed authorization, but it is not advertised as a normal review choice.
-- When a deliberate Evidence/Human Review interruption resolves without a material candidate edit, the same still-live verifier run that was already independent of the constructor/material editor may resume the interrupted Verification pass on the new cycle. This is continuation, not a claim that the new cycle creates new independence. If resolution materially edits the candidate, the resolver is a material editor and fresh independent signoff is required.
+- Current connected human input has two levels: ordinary clarification/preference and a deliberate
+  choice recorded as an attributed `Human — Marco:` Decision. An appended Decision may attest only
+  the exact Planning fields Marco just chose in that conversation; existing Decisions and provenance
+  remain protected.
+- Rewriting, removing, or reordering an existing attributed Decision remains governed and is not
+  available through chat attestation.
+- New connected-agent Verification never creates Evidence or Human Review holds. If a governed
+  correction needs Marco's judgment, the agent asks in chat (or returns the question to its parent),
+  appends the exact answer as a Decision, names the exact governed fields changed, and continues
+  through the normal Large-correction/fresh-Verification path.
+- Historical Human Review and Evidence rows remain recoverable through private admin compatibility
+  commands. Their existence does not authorize creation of new held records.
+- Semantic proposals already persisted before this change remain recoverable/applicable through the
+  existing proposal/admin machinery; new connected Verification does not create them as a substitute
+  for a chat Decision.
 - A repeated-Verification cap is an operational loop detector, not a substantive Human Review decision. Releasing an unchanged candidate from that loop hold neither approves nor authorizes the dish.
 - Small governed-text edits that may be incidental cleanup require explicit agent intent before they can enter the governed proposal path. This is an intent check, not a semantic classifier: the agent must restore incidental text exactly or explicitly identify an intended governed edit.
 - "Allowed actions" are a derived view of authority, not a second state machine.
@@ -67,7 +76,14 @@ For semantic proposals, the durable lifecycle is:
 4. in the normal admin path, Dish mechanically claims/revalidates the exact approved proposal against current authoritative facts immediately after approval persistence, using an exact `(dish-mechanical, run_id)` principal and the canonical operation-execution mutation fence;
 5. apply that proposal unchanged, or leave the durable approval intact and fail/reconcile if application is no longer safe or applicable. Low-level application can retry the same approved object without reapproval, but an explicitly revoked exact mechanical principal can never reclaim or apply it. A distinct successor run identity remains independently eligible.
 
-For Verification Human Review, the agent first states the unresolved issue in ordinary language and, when useful, the supporting basis and repair routes considered. It should use a reasonable defensible estimate with stated assumptions instead of demanding false precision, and quantify any structured threshold blocker as one defensible estimate versus the limit and excess/shortfall. Nutrition estimates use the served edible portion expected to be consumed rather than gross raw inputs; non-consumed bones, shells, discarded liquid, and drained/rendered fat cannot establish a hard-limit breach. If no single estimate is defensible, the agent must not invent one merely to populate the blocker structure. If the exact governed repair is already knowable, Verification proposes that exact candidate through the semantic-proposal path. Otherwise the agent persists concrete choices best-first, with A recommended. The connected agent asks Marco in the active conversation; when Marco answers, that agent records the exact answer through `record-human-decision` and resumes the stored continuation. There is no separate required admin-queue confirmation. Dish records any explicitly bound governed authorization without editing the candidate. Pre-construction Human Review uses the same question/choices/Other interaction but cannot bind a governed authorization before a candidate exists.
+For a current connected-agent Marco choice, the agent presents the real issue, concrete options and
+the recommendation in ordinary conversation. Once Marco answers, the candidate appends that exact
+choice as `Human — Marco:`; `governed_change_fields` names Decisions plus every Planning field
+the answer intentionally changes. Verification Large corrections then remain pending Verification
+for a fresh independent run. No held workflow or second approval ceremony is created.
+
+Legacy Human Review/proposal records keep their historical recovery/application semantics only so
+already-held production records remain recoverable.
 
 More generally, workflow execution reads authoritative state, derives legal transitions, executes the selected transition through the owning application path, persists its outcome/evidence, then exposes resulting state/actions to callers.
 
@@ -88,7 +104,10 @@ Relevant evidence includes semantic proposal/Human Review workflow tests, workfl
 
 ## Current debt and temporary compatibility
 
-Legacy workflow, PostgreSQL target workflow, and migration-era recovery paths still overlap. Stage B is expected to consolidate them further. Current recovery mechanics should be documented as current behavior unless backed by an explicit accepted decision.
+Legacy Human Review/Evidence recovery and migration-era compatibility paths still coexist with the
+current PostgreSQL workflow. They are recovery surfaces, not current connected-agent design.
+Current recovery mechanics should remain documented until those historical records no longer need
+support.
 
 ## Related documents
 
