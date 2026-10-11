@@ -27,10 +27,10 @@ FAMILIES = frozenset(AGENT_FAMILIES.values())
 SUBMISSION_KINDS = frozenset({"planning", "initial", "change"})
 CHANGE_LEVELS = frozenset({"small", "large"})
 APPROVAL_CORRECTIONS = ("none", "small")
-# Agent-facing Verification rejection routes. There is no Evidence hold: an
-# unknown fact is a chat question to Marco, never a hold. Existing legacy
-# pending-evidence holds still resolve through admin supply-evidence.
-REJECTION_ROUTES = ("large", "human-review")
+# Agent-facing Verification rejection routes. Evidence and Human Review are not
+# connected-agent rejection routes: unknowns/choices go to Marco in chat; legacy
+# held records remain admin-recoverable.
+REJECTION_ROUTES = ("large",)
 # Forensic SQLite/Asana backend (dish_tool.step8) route set, retained only so
 # legacy history and comparator replay keep their original semantics.
 LEGACY_REJECTION_ROUTES = ("large", "evidence", "human-review")
