@@ -1,6 +1,9 @@
 # dish
 
-`dish` is the guarded interface for protocol-governed Cooking tasks. The live Asana task remains the content authority; the tool validates exact content, records durable operation evidence, enforces independent Verification, and confirms every write and movement by reread.
+`dish` is the guarded interface for protocol-governed Cooking tasks. PostgreSQL is the live
+canonical task/workflow authority; the service validates exact content, records durable operation
+evidence, enforces independent Verification, and confirms governed mutations from canonical state.
+Archived Asana Cooking and SQLite remain legacy/forensic compatibility only.
 
 ## Supported runtime modes
 
@@ -42,12 +45,11 @@ Funnel and Caddy router. The MCP server stays on loopback; FastMCP supplies the 
 uses GitHub only for login. Access is restricted to Marco's immutable GitHub user ID. Configure the
 GitHub OAuth app and supervise the service using [the MCP app runbook](deploy/mcp-app.md).
 
-### PostgreSQL development target
+### PostgreSQL runtime and development
 
-The PostgreSQL replacement runtime is implemented under `dish_pg/` and remains non-authoritative for
-production mutations until explicit cutover. `dish_service` also imports PostgreSQL modules for the
-replacement runtime and frontend paths, so package boundaries are not an authority boundary. Start a
-disposable local PostgreSQL database with:
+The PostgreSQL runtime under `dish_pg/` is current production authority. Package boundaries are not
+authority boundaries; `dish_service` imports PostgreSQL modules for connected-agent, admin, and
+frontend paths. For development, start a disposable local PostgreSQL database with:
 
 ```sh
 docker compose -f deploy/postgresql/compose.yaml up -d
