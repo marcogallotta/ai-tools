@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from dish_tool import command_identity as command_ids
-from dish_tool.constants import APPROVAL_CORRECTIONS, NO_EVIDENCE_HOLD_MESSAGE, REJECTION_ROUTES
+from dish_tool.constants import APPROVAL_CORRECTIONS, CONNECTED_REJECTION_ROUTES, NO_EVIDENCE_HOLD_MESSAGE
 from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import (
     CANONICAL_DISH_UUID_SCHEMA,
@@ -326,7 +326,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
             "reason": {"type": "string"},
-            "route": {"type": "string", "enum": list(REJECTION_ROUTES)},
+            "route": {"type": "string", "enum": list(CONNECTED_REJECTION_ROUTES)},
             "file_text": {"type": "string"},
             "governed_change_fields": {
                 "type": "array",
@@ -577,7 +577,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         ),
     }
     return {
-        "oneOf": [variant(route, **variants[route]) for route in REJECTION_ROUTES],
+        "oneOf": [variant(route, **variants[route]) for route in CONNECTED_REJECTION_ROUTES],
         "discriminator": {"propertyName": "route"},
     }
 
