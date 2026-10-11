@@ -1420,9 +1420,13 @@ class PostgresCommandReadMixin:
                 .order_by(wf.HumanReviewRequirement.opened_at.desc())
                 .limit(1)
             )
-            if cycle is not None and cycle.outcome == "verification-hold":
-                hold_class = "verification_two_pass"
-                required_action = "resolved"
+            if (
+                operation.phase == "verification_hold"
+                and cycle is not None
+                and cycle.outcome == "verification-hold"
+            ):
+                hold_class = "verification_stop"
+                required_action = "reopen"
             elif operation.phase == "held_evidence":
                 hold_class = (
                     "research_preconstruction_evidence"
