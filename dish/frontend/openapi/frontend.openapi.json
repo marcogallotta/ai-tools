@@ -1363,6 +1363,7 @@
                   "Await verification",
                   "Evidence hold",
                   "Human review",
+                  "Verification stopped",
                   "Await submission",
                   "Destination repair required",
                   "Recovery rehearsal"

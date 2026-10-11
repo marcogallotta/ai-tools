@@ -17,6 +17,7 @@ export const WORKFLOW_PHASE_LABELS = Object.freeze([
   "Await verification",
   "Evidence hold",
   "Human review",
+  "Verification stopped",
   "Await submission",
   "Destination repair required",
   "Recovery rehearsal",

@@ -669,21 +669,21 @@ def test_action_guidance_explains_fresh_request_after_governed_intent_confirmati
     assert "fresh request ID" in text
 
 
-def test_action_guidance_routes_exact_human_review_repairs_to_semantic_proposals():
+def test_action_guidance_routes_marco_choices_to_chat_decisions():
     guidance = action_agent_guidance({
         "ok": False,
         "command": "reject",
         "code": "CONFIRMATION_REQUIRED",
         "allowed_actions": ["reject"],
         "data": {},
-        "errors": [{"rule": "human_review_preflight_required"}],
+        "errors": [{"rule": "marco_chat_decision_required"}],
     })
     text = " ".join(guidance["instructions"])
-    assert "reasonable defensible estimate" in text
-    assert "Large correction" in text
-    assert "Marco-only choice remains" in text
-    assert "[nutrition-protein]" in text
-    assert "rather than prose" in text
+    assert "Ask Marco the concrete choice in chat" in text
+    assert "Human — Marco: Decision" in text
+    assert "governed_change_fields" in text
+    assert "[nutrition-fat]" in text
+    assert "There is no Human Review hold." in text
 
 
 def test_action_guidance_spells_out_verification_correction_and_route_vocabularies() -> None:
@@ -698,7 +698,7 @@ def test_action_guidance_spells_out_verification_correction_and_route_vocabulari
     text = " ".join(guidance["instructions"])
     assert "correction=none" in text
     assert "correction=small" in text
-    assert "route is closed to large or human-review" in text
+    assert "route is closed to large." in text
     assert "evidence, or human-review" not in text
     assert NO_EVIDENCE_HOLD_MESSAGE in text
     assert SAFETY_FINDING_GUIDANCE in text

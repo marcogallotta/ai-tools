@@ -54,7 +54,8 @@ Human approval is the authorization for the exact governed changes in an approve
 - Semantic proposals already persisted before this change remain recoverable/applicable through the
   existing proposal/admin machinery; new connected Verification does not create them as a substitute
   for a chat Decision.
-- A repeated-Verification cap is an operational loop detector, not a substantive Human Review decision. Releasing an unchanged candidate from that loop hold neither approves nor authorizes the dish.
+- A repeated-Verification cap is an operational loop detector, not a substantive Human Review decision. The third persisted rejected cycle moves the operation to the mechanical `verification_hold` phase. It reopens only through the admin `reopen` path with a canonical corrected candidate and an exact substantive reset (`evidence`, `premise`, `method`, or `scope`); an unchanged candidate cannot be released, and reopening neither approves nor authorizes the dish. Legacy loop holds in `held_human` / `pending-human-review` recover the same way.
+- Over-limit fat accepted by Marco is the one same-verifier exception: when the only changes are exactly one added `[nutrition-fat]` Exemptions line and exactly one appended `Human — Marco:` Decision, the same eligible verifier may sign. Any other change, including a construction edit, stays Large and needs fresh independent Verification.
 - Small governed-text edits that may be incidental cleanup require explicit agent intent before they can enter the governed proposal path. This is an intent check, not a semantic classifier: the agent must restore incidental text exactly or explicitly identify an intended governed edit.
 - "Allowed actions" are a derived view of authority, not a second state machine.
 - Resting-task start authority is shared by discovery and admission: a task with no active operation

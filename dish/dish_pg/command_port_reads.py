@@ -1038,11 +1038,12 @@ class PostgresCommandReadMixin:
         items: list[dict[str, Any]] = []
         category_counts = {"system": 0, "needs_marco": 0, "unsafe": 0}
         group_order = {
-            "human_review": 0,
-            "evidence": 1,
-            "change_review": 2,
-            "recovery": 3,
-            "system": 4,
+            "verification_stop": 0,
+            "human_review": 1,
+            "evidence": 2,
+            "change_review": 3,
+            "recovery": 4,
+            "system": 5,
         }
 
         for operation in operations:

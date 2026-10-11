@@ -33,7 +33,6 @@ from .document_authority import (
     CanonicalDocumentError,
     destination_gid,
     destination_section_id,
-    held_document,
     parse_canonical_document,
     prepared_change_document,
     prepared_document,
@@ -103,7 +102,6 @@ from .command_port_common import (
     CommandResult,
     CommandRuleError,
     json_safe as _json_safe,
-    semantic_proposal_text as _semantic_proposal_text,
     task_reference_from_dish as _task_reference_from_dish,
 )
 from .command_port_reads import PostgresCommandReadMixin

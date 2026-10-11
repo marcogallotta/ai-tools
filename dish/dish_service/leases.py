@@ -633,7 +633,7 @@ class LeaseManager:
                 self.active_for_operation(operation_id), principal, now=now
             )
             if op["status"] in {"open", "uncertain"} and op["phase"] not in {
-                "await_verification", "held_evidence", "held_human"
+                "await_verification", "held_evidence", "held_human", "verification_hold"
             }:
                 raise DishRuleError(
                     "WRONG_STATE",
@@ -699,6 +699,7 @@ class LeaseManager:
                 "await_verification",
                 "held_evidence",
                 "held_human",
+                "verification_hold",
             }:
                 raise DishRuleError(
                     "WRONG_STATE",

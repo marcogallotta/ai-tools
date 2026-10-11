@@ -12,6 +12,8 @@ from dish_pg.command_contract import ADMIN_COMMANDS, COMMAND_DEFINITIONS
 from dish_pg.database import session_scope
 from dish_pg.document_authority import parse_canonical_document
 from dish_pg.workflow import WorkflowAuthorityError
+from dish_service.frontend_advisory import workflow_advisory
+from dish_service.frontend_contract import operation_status
 from tests.support.canonical import TASK
 from tests.support.postgresql.command import (
     _add_destination_section,
@@ -165,6 +167,27 @@ def test_third_large_rejection_enters_mechanical_verification_stop_and_reopens_a
         assert third.data["new_cycle_id"] is None
         operation = session.get(wf.WorkflowOperation, uuid.UUID(operation_id))
         assert operation.phase == "verification_hold"
+        # Every reader of the stopped state must render it rather than crash.
+        queue_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=queue_run,
+            owner="Marco",
+            agent="claude",
+        )
+        queued = port.execute(
+            _call("queue", run_id=queue_run, owner="Marco", principal="admin")
+        )
+        assert queued.ok, queued.errors
+        stopped = [
+            item for item in queued.data["attention_items"] if item["task_id"] == str(task_id)
+        ]
+        assert [item["queue_group"] for item in stopped] == ["verification_stop"]
+        assert operation_status("verification", "verification_hold")["phase"] == (
+            "Verification stopped"
+        )
+        assert workflow_advisory("verification_hold")["code"] == "workflow.verification_hold"
         held = _active_content(session, context, task_id)
         parse_canonical_document(
             title=held.title, body=held.body, expected_status="pending-verification"
