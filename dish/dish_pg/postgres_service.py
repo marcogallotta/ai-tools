@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import socket
 import uuid
 from dataclasses import asdict, replace
@@ -27,6 +28,7 @@ from sqlalchemy.exc import (
 )
 
 from dish_service.leases import ServicePrincipal
+from dish_tool.admin_command_spec import RESOLVED_OPERATION_TARGET_COMMANDS
 from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope, result_envelope
 
@@ -107,6 +109,117 @@ def database_failure_error(
     )
 
 
+def _dish_admin_prefix(profile: str) -> list[str]:
+    """Return ``dish-admin`` plus ``--profile`` whenever the profile is not prod.
+
+    A bare ``dish-admin`` defaults to prod, so a printed command must name any
+    other profile or copying it would act on production.
+    """
+
+    clean = str(profile or "prod").strip().lower() or "prod"
+    return ["dish-admin"] if clean == "prod" else ["dish-admin", "--profile", clean]
+
+
+def _admin_action_from_queue(
+    action: Mapping[str, Any], *, profile: str
+) -> dict[str, Any] | None:
+    """Render one queue action as the exact ``dish-admin`` command for inspect.
+
+    The command carries every identifier the queue already derived, so the
+    operator never has to reconstruct operation, cycle, or hold identifiers.
+    Only Marco-supplied text remains a placeholder.
+    """
+
+    kind = str(action.get("kind") or "")
+    operation_id = str(action.get("operation_id") or "").strip()
+    if not operation_id:
+        return None
+    options: list[dict[str, Any]] = []
+    requires_input: list[str] = []
+    if kind == "supply_evidence":
+        command = "supply-evidence"
+        summary = "Supply the evidence Dish is waiting for."
+        options.append({"flag": "--detail", "value": "<evidence>"})
+        requires_input.append("detail")
+        if action.get("cycle_id"):
+            options.append({"flag": "--expected-cycle-id", "value": str(action["cycle_id"])})
+        if action.get("hold_identity"):
+            options.append(
+                {"flag": "--expected-hold-identity", "value": str(action["hold_identity"])}
+            )
+        effect = (
+            "record the evidence and resume the Dish at "
+            f"{action.get('resume_status') or 'its derived status'}"
+        )
+    elif kind == "resolve_verification_hold":
+        command = "resolved"
+        summary = "Release the Verification hold."
+        effect = "release the Verification hold into a fresh Verification round"
+    elif kind == "semantic_proposal":
+        # Proposal approval is a per-change ceremony owned by the queue.
+        return {
+            "kind": "queue",
+            "summary": "Review the proposed governed change in the queue.",
+            "effect": "review the exact proposed changes and authorize or reject them",
+            "shell_command": " ".join([*_dish_admin_prefix(profile), "queue"]),
+            "arguments": {"positional": [], "options": []},
+        }
+    else:
+        return None
+    parts = [*_dish_admin_prefix(profile), command, operation_id]
+    for option in options:
+        parts.extend([option["flag"], shlex.quote(str(option["value"]))])
+    rendered: dict[str, Any] = {
+        "kind": command,
+        "queue_kind": kind,
+        "summary": summary,
+        "effect": effect,
+        "shell_command": " ".join(parts),
+        "arguments": {"positional": [operation_id], "options": options},
+    }
+    if requires_input:
+        rendered["requires_input"] = requires_input
+    return rendered
+
+
+def _admin_inspect_next_actions(
+    queue: Mapping[str, Any], *, profile: str
+) -> dict[str, Any]:
+    """Project the single-Dish queue derivation into admin inspect fields."""
+
+    items = queue.get("issue_items") if isinstance(queue.get("issue_items"), list) else []
+    signals = [
+        signal
+        for item in items
+        if isinstance(item, Mapping)
+        for signal in (item.get("signals") or ())
+        if isinstance(signal, Mapping)
+    ]
+    actions: list[dict[str, Any]] = []
+    for signal in signals:
+        action = signal.get("queue_action")
+        if isinstance(action, Mapping):
+            rendered = _admin_action_from_queue(action, profile=profile)
+            if rendered is not None:
+                actions.append(rendered)
+    fields: dict[str, Any] = {"queue_signals": [dict(signal) for signal in signals]}
+    if actions:
+        fields["human_actions"] = actions
+    blocking = next(
+        (
+            signal
+            for signal in signals
+            if signal.get("category") in {"needs_marco", "unsafe"}
+        ),
+        signals[0] if signals else None,
+    )
+    if blocking is not None:
+        fields["problem"] = str(blocking.get("summary") or "")
+        if blocking.get("kind") == "evidence_hold" and blocking.get("detail"):
+            fields["hold_question"] = str(blocking["detail"])
+    return fields
+
+
 _SUPPORTED_PROFILES = ("test", "prod")
 _SEARCH_CURSOR_KIND = "active-title-search-v1"
 _SEARCH_PROJECTION_DELAY = timedelta(seconds=1)
@@ -121,9 +234,9 @@ _ADMIN_EXPOSED_COMMANDS = frozenset(
     for name in ADMIN_COMMANDS
     if COMMAND_DEFINITIONS[name].retained
 )
-# ``hold-reject`` opens an Evidence hold. Dish no longer accepts new Evidence
+# `hold-reject` opens an Evidence hold. Dish no longer accepts new Evidence
 # holds from any caller; the command survives only for the shadow worker's
-# in-process translation of legacy SQLite ``reject`` records, which calls the
+# in-process translation of legacy SQLite `reject` records, which calls the
 # command port directly rather than any HTTP surface.
 _INTERNAL_ONLY_COMMANDS = frozenset({"hold-reject"})
 _AGENT_EXPOSED_COMMANDS = frozenset(
@@ -239,8 +352,9 @@ class PostgresRuntimeService:
         implemented PostgreSQL command contract; unsupported legacy Action
         commands remain hidden rather than falling through to another backend.
         Admin-principal commands are reachable only through the admin
-        transport, never the agent route. TEST and PROD expose the same complete
-        supported admin inventory so TEST can exercise every admin command.
+        transport, never the agent route. PROD retains the complete supported
+        admin inventory; TEST exposes only the non-recovery queue, archive, and unarchive
+        commands needed to qualify the operator surface.
         """
 
         if surface == "agent":
@@ -951,6 +1065,12 @@ class PostgresRuntimeService:
                         "NOT_FOUND", str(exc), rule="admin_dish_target_not_found"
                     ),
                 )
+            next_actions = self._admin_inspect_queue_fields(view.task_id)
+            active_lease_id = (
+                None
+                if view.operation_id is None
+                else self._admin_inspect_active_lease_id(view.operation_id)
+            )
             return result_envelope(
                 command=command,
                 state=view.completion_state,
@@ -964,6 +1084,8 @@ class PostgresRuntimeService:
                         None if view.operation_id is None else str(view.operation_id)
                     ),
                     "operation_phase": view.operation_phase,
+                    "active_lease_id": active_lease_id,
+                    **next_actions,
                 },
             )
         if command == "archive" and arguments.get("confirmed") is not True:
@@ -1032,7 +1154,23 @@ class PostgresRuntimeService:
                 ),
             })
             return result
-        return self._execute_command(
+        resolution: dict[str, str] | None = None
+        if command in RESOLVED_OPERATION_TARGET_COMMANDS and str(
+            arguments.get("submission_id") or ""
+        ).strip():
+            target = str(arguments["submission_id"]).strip()
+            try:
+                operation_id, dish_id = self._resolve_admin_operation_target_source(target)
+            except DishRuleError as exc:
+                return error_envelope(command, exc)
+            arguments = {**arguments, "submission_id": operation_id}
+            if dish_id is not None:
+                resolution = {
+                    "target": target,
+                    "dish_id": dish_id,
+                    "operation_id": operation_id,
+                }
+        result = self._execute_command(
             command,
             arguments,
             principal=principal,
@@ -1041,3 +1179,116 @@ class PostgresRuntimeService:
             ),
             principal_class="admin",
         )
+        if resolution is not None:
+            # Show the operator exactly which operation a Dish target acted on.
+            data = result.get("data")
+            if not isinstance(data, dict):
+                data = {}
+                result["data"] = data
+            data.setdefault("operation_id", resolution["operation_id"])
+            data["resolved_operation_target"] = resolution
+        return result
+
+    def _admin_inspect_active_lease_id(self, operation_id: Any) -> str | None:
+        """Return the operation's active actor lease ID, the exact pin abandon-operation needs."""
+
+        with session_scope(self._session_maker) as session:
+            lease_id = session.scalar(
+                select(wf.ServiceLease.lease_id).where(
+                    wf.ServiceLease.operation_id == uuid.UUID(str(operation_id)),
+                    wf.ServiceLease.lease_kind == "actor",
+                    wf.ServiceLease.state == "active",
+                )
+            )
+        return None if lease_id is None else str(lease_id)
+
+    def _admin_inspect_queue_fields(self, task_id: uuid.UUID) -> dict[str, Any]:
+        """Derive inspect's next actions without letting a queue failure hide the hold.
+
+        The queue derivation runs in its own session so a failure there cannot
+        poison the already-read hold state; inspect then reports a warning.
+        """
+
+        try:
+            with session_scope(self._session_maker) as session:
+                queue = PostgresCommandPort(
+                    session, cursor_secret=self._cursor_secret
+                )._queue(task_id=task_id)
+            return _admin_inspect_next_actions(queue, profile=self._profile)
+        except Exception as exc:  # noqa: BLE001 - inspect must still show the hold
+            LOGGER.exception("admin inspect queue derivation failed for %s", task_id)
+            return {
+                "warnings": [
+                    "Next actions are unavailable because the queue derivation "
+                    f"failed ({type(exc).__name__}); the hold state shown is current."
+                ]
+            }
+
+    def _resolve_admin_operation_target(self, raw: str) -> str:
+        """Resolve an admin operation target to one exact open operation ID.
+
+        An exact operation ID passes through unchanged. A Dish UUID, Asana task
+        GID/URL, or frontend /dishes/<uuid>/... URL resolves to that Dish's
+        single open workflow operation; zero or several is a clear refusal.
+        """
+
+        return self._resolve_admin_operation_target_source(raw)[0]
+
+    def _resolve_admin_operation_target_source(self, raw: str) -> tuple[str, str | None]:
+        """Return ``(operation_id, dish_id)``; ``dish_id`` is set only when resolved from a Dish."""
+
+        clean = raw.strip()
+        try:
+            parsed = uuid.UUID(clean)
+        except ValueError:
+            parsed = None
+        with session_scope(self._session_maker) as session:
+            if parsed is not None and session.get(wf.WorkflowOperation, parsed) is not None:
+                return clean, None
+            reference = task_reference_from_dish(clean)
+            if reference is None:
+                return clean, None
+            reads = PostgresReadModel(session, cursor_secret=self._cursor_secret)
+            try:
+                task = reads.resolve_task(reference)
+            except ReadModelError as exc:
+                raise DishRuleError(
+                    "NOT_FOUND",
+                    "no workflow operation or Dish matches that target",
+                    rule="admin_operation_target_not_found",
+                    details={"target": clean},
+                ) from exc
+            generation = reads.active_generation()
+            operation_ids = list(
+                session.scalars(
+                    select(wf.WorkflowOperation.operation_id)
+                    .where(
+                        wf.WorkflowOperation.generation_id == generation.generation_id,
+                        wf.WorkflowOperation.task_id == task.task_id,
+                        wf.WorkflowOperation.lifecycle == "open",
+                    )
+                    .order_by(
+                        wf.WorkflowOperation.created_at,
+                        wf.WorkflowOperation.operation_id,
+                    )
+                )
+            )
+        if not operation_ids:
+            raise DishRuleError(
+                "NOT_FOUND",
+                "that Dish has no open workflow operation; run "
+                f"{' '.join([*_dish_admin_prefix(self._profile), 'inspect'])} for its state",
+                rule="admin_operation_target_not_found",
+                details={"dish_id": str(task.task_id)},
+            )
+        if len(operation_ids) > 1:
+            raise DishRuleError(
+                "CONFLICT",
+                "that Dish has several open workflow operations; pass the exact operation ID",
+                rule="admin_operation_target_ambiguous",
+                details={
+                    "dish_id": str(task.task_id),
+                    "operation_ids": [str(value) for value in operation_ids],
+                },
+            )
+        return str(operation_ids[0]), str(task.task_id)

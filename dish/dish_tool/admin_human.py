@@ -288,6 +288,15 @@ def render_admin_result(
         lines.append(f"Dish: {task_gid}")
     if operation_id:
         lines.append(f"Operation: {operation_id}")
+    resolution = data.get("resolved_operation_target")
+    if isinstance(resolution, Mapping) and _clean(resolution.get("operation_id")):
+        lines.append(
+            f"Resolved from Dish {_clean(resolution.get('dish_id')) or 'unknown'} "
+            f"to its single open operation {_clean(resolution.get('operation_id'))}"
+        )
+    lease_id = _clean(data.get("active_lease_id")) if result.get("command") == "inspect" else None
+    if lease_id:
+        lines.append(f"Active lease: {lease_id}")
     lines.append("")
 
     ok = bool(result.get("ok"))
@@ -709,6 +718,10 @@ def render_admin_result(
                     lines.append(f"   {_command_label(action)}: {shell}")
     elif command == "inspect" and ok:
         inspect_actions = _actions(data, (row for row in errors if isinstance(row, Mapping)))
+        warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+        for warning in warnings:
+            if _clean(warning):
+                lines.append(f"Warning: {_clean(warning)}")
         lines.append("Status")
         if _clean(data.get("status")) == "resting":
             if bool(data.get("ready_to_cook")):

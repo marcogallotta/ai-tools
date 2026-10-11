@@ -345,6 +345,15 @@ ready-to-relay instruction telling the agent to hand the human the exact `admin_
 confirmation it succeeded, and then resume the same submission (never start a new operation) with
 the action named in `after_resolution.legal_actions`.
 
+The hold-resolution admin commands' operation/task pins (`--expected-task-gid`,
+`--expected-cycle-id`) are optional, and `--resume-status` is derived from the exact hold when
+omitted. Their target, like `discard`, `reopen`, `recover`, `repair-destination`, and
+`abandon-operation`, may be an exact operation ID or a Dish UUID/URL; a Dish target resolves only
+when that Dish has exactly one open workflow operation (zero or several is refused), and the result
+then carries `data.operation_id` plus `data.resolved_operation_target` naming the Dish and the
+operation acted on. PostgreSQL admin `inspect` returns `data.active_lease_id`, the exact lease that
+`abandon-operation --lease-id` requires.
+
 A historical task whose Material-change lines already fail `material-changes.format` or
 `material-changes.field-count` is never rewritten automatically. Ordinary connected actions remain
 blocked and return `workflow_recovery_required` with an empty `allowed_actions`, plus
