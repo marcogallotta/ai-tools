@@ -560,6 +560,22 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
     if command == RECORD_HUMAN_DECISION_COMMAND:
         return _human_decision_argument_schema()
     base = action_openapi_argument_schema(command)
+    if command == APPROVE_COMMAND.name:
+        result = deepcopy(base)
+        for variant in result.get("oneOf", ()):
+            correction = variant.get("properties", {}).get("correction", {}).get("const")
+            if correction != "small":
+                continue
+            variant["properties"]["governed_change_fields"] = {
+                "type": "array",
+                "items": {"type": "string", "enum": ["Exemptions", "Decisions"]},
+                "uniqueItems": True,
+                "description": (
+                    "Use only when Marco accepts the already-reviewed high-fat dish unchanged: "
+                    "attest the appended Decision and matching nutrition-fat Exemptions update."
+                ),
+            }
+        return result
     if command == PREPARE_COMMAND.name:
         result = deepcopy(base)
         attestation = result["properties"]["governed_change_fields"]
