@@ -10,6 +10,7 @@ import copy
 import dataclasses
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
@@ -5688,7 +5689,12 @@ def _same_pass_fat_exemption(
         if new_value.startswith(old_value + "\n") else ""
     )
     added = remainder.splitlines()
-    if len(added) != 1 or not added[0].strip().startswith("[nutrition-fat]"):
+    if (
+        len(added) != 1
+        or not added[0].strip().startswith("[nutrition-fat]")
+        or re.findall(r"\\[[^\\]\
+]+\\]", added[0]) != ["[nutrition-fat]"]
+    ):
         return False
     if not agent_attested_decision_appends(before, after):
         return False
