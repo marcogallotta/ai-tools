@@ -4094,12 +4094,25 @@ class PostgresCommandPort(PostgresCommandReadMixin):
 
     def _reopen(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
+        cycle = self._latest_cycle(operation.operation_id)
+        if operation.phase == "verification_stopped" and cycle.outcome == "verification-hold":
+            self._assert_exact_verification_hold_target(
+                call=call, generation_id=generation.generation_id, task_id=task.task_id, cycle=cycle
+            )
+            return self._reopen_verification_hold(
+                call=call,
+                generation=generation,
+                binding=binding,
+                execution=execution,
+                task=task,
+                operation=operation,
+                cycle=cycle,
+            )
         if operation.phase != "held_human":
             raise CommandRuleError(
-                "HUMAN_REVIEW_HOLD_REQUIRED",
-                "reopen requires the exact Human Review hold",
+                "REOPEN_TARGET_REQUIRED",
+                "reopen requires the exact mechanical Verification stop or a legacy Human Review hold",
             )
-        cycle = self._latest_cycle(operation.operation_id)
         if cycle.outcome == "verification-hold":
             self._assert_exact_verification_hold_target(
                 call=call, generation_id=generation.generation_id, task_id=task.task_id, cycle=cycle
@@ -4312,7 +4325,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         parse_canonical_document(
             title=baseline.title,
             body=baseline.body,
-            expected_status="pending-human-review",
+            expected_status=(
+                "pending-verification"
+                if operation.phase == "verification_stopped"
+                else "pending-human-review"
+            ),
         )
         candidate = parse_canonical_document(
             file_text=str(file_text), expected_status="pending-verification"
