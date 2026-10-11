@@ -288,12 +288,18 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "governed_change_fields": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["Decisions"]},
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "Dish candidate", "Purpose", "Role", "Priors", "Locks",
+                        "Exemptions", "Research emphasis", "Destination section", "Decisions",
+                    ],
+                },
                 "uniqueItems": True,
                 "description": (
-                    "Use only to explicitly attest an append-only `Human — Marco:` Decision "
-                    "that Marco actually stated in conversation. This records agent-attributed "
-                    "provenance; it does not authorize any other governed-field mutation."
+                    "After Marco settles a material choice in chat, name Decisions plus every "
+                    "Planning field that exact choice intentionally changes. Existing Decisions "
+                    "and Researched by remain outside chat attestation."
                 ),
             },
         },
