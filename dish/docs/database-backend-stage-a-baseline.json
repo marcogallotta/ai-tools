@@ -90,12 +90,12 @@
     "dish_tool/database_schema_migrations.py": "c3ca81d3bebdd68564069b061220d7b8a9af42b274cd632aaaff5f0bf7449982",
     "dish_tool/database_schema_validation.py": "1e234fe7b2b0c3e70dae1da41de6d2c553ce128695bd7f5d6c166a1d009c96b2",
     "dish_tool/workflow_policy.py": "213219dfc857a65b9720043426f9ddb6c7ea68706086322648051da3f7775fe9",
-    "docs/runtime-contract.md": "a46aaf539c5e91894e80827db623738db36331520e5993de914ccf5fe019f0bd",
+    "docs/runtime-contract.md": "b6b9e497ec0e2285e009123cf7c693325c3ed2ac895349243bbb3a9130b25204",
     "openapi/dish-action.openapi.json": "b3ad24828137e1b378a4745f6a8d37afdd0f396f6ce7a658eaded5ad6d6b3708",
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Remove agent-facing Evidence rejection route; unknown facts are chat questions to Marco",
+  "last_rebaseline_reason": "PR #479: Remove agent-facing Evidence hold route; runtime-contract.md updated",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
