@@ -30,7 +30,7 @@ APPROVAL_CORRECTIONS = ("none", "small")
 # Agent-facing Verification rejection routes. There is no Evidence hold: an
 # unknown fact is a chat question to Marco, never a hold. Existing legacy
 # pending-evidence holds still resolve through admin supply-evidence.
-REJECTION_ROUTES = ("large",)
+REJECTION_ROUTES = ("large", "human-review")
 # Forensic SQLite/Asana backend (dish_tool.step8) route set, retained only so
 # legacy history and comparator replay keep their original semantics.
 LEGACY_REJECTION_ROUTES = ("large", "evidence", "human-review")
