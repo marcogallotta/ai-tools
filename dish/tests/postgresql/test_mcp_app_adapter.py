@@ -198,7 +198,7 @@ def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
     ).stdout.strip()
     assert result["files"] == [{"path": "CLAUDE.md", "text": "current instructions\n"}]
-    assert result["reading_guidance"]["recommended_paths"] == ["CLAUDE.md"]
+    assert result["reading_guidance"]["recommended_paths"] == []
     assert result["reading_guidance"]["missing_recommended_paths"] == []
     wrapped = asyncio.run(
         mcp_server.build_honest_tool(checkout).run({"paths": ["CLAUDE.md"]})
@@ -215,7 +215,7 @@ def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
 def test_honest_read_reports_missing_planning_start_paths(tmp_path):
     checkout = tmp_path / "checkout"
     subprocess.run(["git", "init", "-b", "main", str(checkout)], check=True, capture_output=True)
-    for path in mcp_server.HONEST_PLANNING_START_PATHS:
+    for path in (*mcp_server.HONEST_PLANNING_START_PATHS, "planning/index.md"):
         target = checkout / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(f"{path}\n")
@@ -228,13 +228,14 @@ def test_honest_read_reports_missing_planning_start_paths(tmp_path):
     subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", str(tmp_path / "origin.git")], check=True)
     subprocess.run(["git", "-C", str(checkout), "push", "-u", "origin", "main"], check=True, capture_output=True)
 
-    result = mcp_server.read_honest_files(checkout, ["dish-planning-protocol.md"])
+    result = mcp_server.read_honest_files(checkout, ["planning/index.md"])
 
     assert result["reading_guidance"]["recommended_paths"] == [
-        "CLAUDE.md",
         *mcp_server.HONEST_PLANNING_START_PATHS,
     ]
-    assert result["reading_guidance"]["missing_recommended_paths"] == ["CLAUDE.md"]
+    assert result["reading_guidance"]["missing_recommended_paths"] == [
+        "dish-planning-protocol.md"
+    ]
 
 
 def test_honest_read_fails_without_serving_when_pull_fails(tmp_path):
