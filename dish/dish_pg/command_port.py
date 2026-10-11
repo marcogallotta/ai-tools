@@ -5612,8 +5612,8 @@ def _require_small_correction_scope(before, after) -> None:
                     " Because governed fields changed, the reject must also carry "
                     "governed_change_fields naming every changed governed field ("
                     + ", ".join(governed_fields)
-                    + "); it then becomes a proposal awaiting Marco's approval rather than "
-                    "an applied correction."
+                    + "); if Marco has not already authorized those exact changes, ask him in "
+                    "chat, append his exact Human — Marco Decision, and retry including Decisions."
                     if governed_fields
                     else ""
                 )
