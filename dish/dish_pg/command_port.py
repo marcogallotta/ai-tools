@@ -2046,11 +2046,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         before: Any,
         after: Any,
     ) -> tuple[tuple[str, ...], list[tuple[uuid.UUID, uuid.UUID]], list[dict[str, Any]]]:
-        """Apply legacy-equivalent governed-change and Decision-attestation gates.
+        """Authorize governed changes from legacy grants or Marco's exact chat decision.
 
-        ``governed_change_fields`` is only an explicit provenance attestation for
-        an append-only attributed Marco Decision. Formal authority for every
-        other governed field comes from exact durable PostgreSQL Marco grants.
+        Existing durable grants remain valid. New agent work may instead append an exact
+        `Human — Marco:` Decision and explicitly attest every governed field that answer authorizes.
         """
         declared = tuple(
             dict.fromkeys(
@@ -2069,16 +2068,6 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "rule": "governed_change_field_invalid",
                     "unsupported": unknown,
                     "allowed": list(GOVERNED_FIELDS),
-                },
-            )
-        if set(declared) - {"Decisions"}:
-            raise CommandRuleError(
-                "INVALID_ARGUMENT",
-                "prepare accepts governed_change_fields only to attest an appended Marco Decision",
-                http_status=400,
-                data={
-                    "rule": "prepare_governed_change_field_not_applicable",
-                    "allowed": ["Decisions"],
                 },
             )
 
@@ -2113,8 +2102,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "required_governed_change_field": "Decisions",
                     "instruction": (
                         "Retry the same exact candidate with governed_change_fields including "
-                        "Decisions only if Marco actually stated these choices in the conversation. "
-                        "This records agent-attested provenance, not formal governed authorization."
+                        "Decisions only if Marco actually stated the choice in this conversation."
                     ),
                     "fresh_request_id": True,
                 },
@@ -2145,24 +2133,43 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             operation_id=operation.operation_id,
             required=required,
         )
-        if len(grants) != len(required):
-            raise CommandRuleError(
-                "GOVERNED_AUTHORIZATION_REQUIRED",
-                "change prepare is not authorized for every exact governed change",
-                data={"required_authorizations": required},
-            )
+        if len(grants) == len(required):
+            reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
+            for grant, _state in grants:
+                token = self.uuid_factory()
+                self.workflow.reserve_marco_authorization(
+                    grant_id=grant.grant_id,
+                    reservation_token=token,
+                    execution_id=execution.execution_id,
+                    reserved_at=call.now,
+                )
+                reservations.append((grant.grant_id, token))
+            return attested, reservations, required
 
-        reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
-        for grant, _state in grants:
-            token = self.uuid_factory()
-            self.workflow.reserve_marco_authorization(
-                grant_id=grant.grant_id,
-                reservation_token=token,
-                execution_id=execution.execution_id,
-                reserved_at=call.now,
+        required_fields = {item["field"] for item in required}
+        missing = sorted(required_fields - set(declared))
+        if missing:
+            raise CommandRuleError(
+                "GOVERNED_CHANGE_FIELDS_INCOMPLETE",
+                "governed_change_fields must name every governed field Marco authorized",
+                http_status=409,
+                data={"missing_fields": missing, "required_authorizations": required},
             )
-            reservations.append((grant.grant_id, token))
-        return attested, reservations, required
+        if required and not attested:
+            raise CommandRuleError(
+                "CONFIRMATION_REQUIRED",
+                "Marco's chat authorization must be recorded before governed fields change",
+                data={
+                    "required_authorizations": required,
+                    "instruction": (
+                        "Ask Marco in chat. Append his exact answer as a Human — Marco Decision, "
+                        "then retry with governed_change_fields including Decisions and every "
+                        "authorized governed field."
+                    ),
+                    "fresh_request_id": True,
+                },
+            )
+        return attested, [], required
 
     def _validate_planning_destination(
         self,
