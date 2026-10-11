@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 
 from dish_tool.constants import (
     DB_PATH,
+    DEFAULT_HONEST_ROOT,
+    HONEST_PATH_ENV,
     MAX_REQUEST_LIFETIME_SECONDS,
     RECOVERY_SAFETY_MARGIN_SECONDS,
 )
@@ -17,6 +19,16 @@ from dish_tool.errors import DishRuleError
 from dish_tool.releases import configured_honest_path
 
 from .path_safety import PathIdentityError, require_distinct_paths
+
+
+def runtime_honest_root(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the Honest Pantry checkout that serves stage context.
+
+    Uses ``DISH_HONEST_PATH`` when set, otherwise the permanent main checkout.
+    """
+    env = os.environ if environ is None else environ
+    raw = str(env.get(HONEST_PATH_ENV, "")).strip()
+    return Path(raw or DEFAULT_HONEST_ROOT).expanduser().resolve()
 
 
 @dataclass(frozen=True)

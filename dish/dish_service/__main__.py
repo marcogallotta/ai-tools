@@ -13,7 +13,7 @@ from pathlib import Path
 from types import FrameType
 from typing import TYPE_CHECKING, Any
 
-from .config import ServiceConfig
+from .config import ServiceConfig, runtime_honest_root
 from .database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from .http import DishHTTPServer, build_action_server, build_private_server
 from .frontend_private_runtime import FrontendAuthorityIdentity, FrontendPrivateRuntime
@@ -295,7 +295,7 @@ def _postgresql_runtime_config(args) -> ServiceConfig:
     state_dir.mkdir(parents=True, exist_ok=True)
     config = ServiceConfig(
         db_path=state_dir / "unused-legacy-authority.sqlite3",
-        honest_root=state_dir,
+        honest_root=runtime_honest_root(),
         bind_host=os.environ.get("DISH_SERVICE_BIND", "127.0.0.1"),
         port=int(os.environ.get("DISH_SERVICE_PORT", "0")),
         action_bind_host=os.environ.get("DISH_ACTION_BIND", "127.0.0.1"),

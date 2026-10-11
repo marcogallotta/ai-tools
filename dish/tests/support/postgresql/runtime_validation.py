@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import json
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from dish_pg.postgres_service import PostgresRuntimeService
@@ -32,3 +35,26 @@ def without_replay_metadata(payload: dict[str, object]) -> dict[str, object]:
     assert isinstance(data, dict)
     data.pop("request_replayed", None)
     return normalized
+
+
+def _post_json(
+    url: str,
+    *,
+    body: dict[str, object],
+    token: str = "postgres-agent-token",
+) -> tuple[int, dict[str, object]]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        response = urllib.request.urlopen(request, timeout=3.0)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+    with response:
+        return response.status, json.loads(response.read().decode("utf-8"))

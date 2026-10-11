@@ -207,8 +207,12 @@ The obsolete system-level `dish-service.service` conflicts with the test unit be
 
 Dish reads the current protocol and task-schema assets from `DISH_HONEST_PATH` when it handles
 workflow commands, so edits to those assets do not require a service restart. Restart the affected
-service after changing its environment or Python code. Verification cycles already in
-progress remain bound to their recorded Verification protocol release.
+service after changing its environment or Python code. Every stage, including an already-open
+Verification cycle, uses the current protocol on Honest Pantry `main`. The PostgreSQL service and
+MCP server fall back to `/home/marco/honest-pantry` when `DISH_HONEST_PATH` is unset.
+`data.stage_context` refreshes that checkout with an ff-only pull of `origin/main` and serves the
+current stage protocol plus `CLAUDE.md` from the same commit; it reports `available: false` if
+that refresh or read fails.
 
 Production code is staged, activated, and rolled back only through the immutable-pointer procedure
 in [`docs/production-release-runbook.md`](docs/production-release-runbook.md). In particular, an

@@ -39,6 +39,7 @@ from tests.support.postgresql.command import (
 )
 from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.runtime_validation import (
+    _post_json,
     runtime_service,
     without_replay_metadata,
 )
@@ -97,29 +98,6 @@ def _active_actor_lease(session, ids, context, task_id, operation_id, run_id):
     )
     session.flush()
     return lease_id
-
-
-def _post_json(
-    url: str,
-    *,
-    body: dict[str, object],
-    token: str = "postgres-agent-token",
-) -> tuple[int, dict[str, object]]:
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        response = urllib.request.urlopen(request, timeout=3.0)
-    except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode("utf-8"))
-    with response:
-        return response.status, json.loads(response.read().decode("utf-8"))
 
 
 def test_mcp_cooked_discovery_invalid_since_is_a_schema_valid_normal_result(
