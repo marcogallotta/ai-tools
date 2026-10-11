@@ -4413,11 +4413,18 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError(
                 "HOLD_BASELINE_MISSING", "Verification hold content is missing"
             )
-        parse_canonical_document(
+        baseline_parts = parse_canonical_document(
             title=baseline.title,
             body=baseline.body,
-            expected_status="pending-verification",
         )
+        if baseline_parts.document.state.values["Status"] not in {
+            "pending-verification",
+            "pending-human-review",
+        }:
+            raise CommandRuleError(
+                "VERIFICATION_HOLD_STATUS_INVALID",
+                "Verification stop baseline must be pending-verification or legacy pending-human-review",
+            )
         candidate = parse_canonical_document(
             file_text=str(file_text), expected_status="pending-verification"
         )
@@ -5089,11 +5096,18 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "EXACT_VERIFICATION_HOLD_REQUIRED",
                 "the current Verification hold content is missing",
             )
-        parse_canonical_document(
+        current_parts = parse_canonical_document(
             title=current_version.title,
             body=current_version.body,
-            expected_status="pending-verification",
         )
+        if current_parts.document.state.values["Status"] not in {
+            "pending-verification",
+            "pending-human-review",
+        }:
+            raise CommandRuleError(
+                "VERIFICATION_HOLD_STATUS_INVALID",
+                "Verification stop content must be pending-verification or legacy pending-human-review",
+            )
         if not cycle_id:
             return
         try:
