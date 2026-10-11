@@ -246,8 +246,7 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "A Small correction is not a rejection route; apply it through approve with correction=small. "
                 + NO_EVIDENCE_HOLD_MESSAGE
             )
-            instructions.append(SAFETY_FINDING_GUIDANCE)
-        if command == "reject":
+        if "reject" in actions or command == "reject":
             instructions.append(SAFETY_FINDING_GUIDANCE)
         if command == "approve" and "submit" in actions:
             instructions.append("Call submit in this same run.")

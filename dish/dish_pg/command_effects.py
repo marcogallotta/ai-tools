@@ -161,6 +161,8 @@ def effect_spec_for(
                 verify_mutation_effects=True,
             )
         if route == "evidence":
+            # Legacy: PostgreSQL reject no longer opens Evidence holds (request validation refuses
+            # the route); kept so effect specs for pre-existing records stay describable.
             return CommandEffectSpec(
                 (
                     "reject_verification_cycle",

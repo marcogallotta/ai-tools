@@ -136,7 +136,7 @@ dish verification -- stage walkthrough (not a governed operation; this command o
        --semantic-review-complete --provenance-complete \\
        --reviewed-identity CONTENT_IDENTITY --run-id RUN_ID
      -- or --
-     dish reject SUBMISSION_ID --agent AGENT --reason TEXT --route large|evidence|human-review \\
+     dish reject SUBMISSION_ID --agent AGENT --reason TEXT --route large|human-review \\
        [--model MODEL]
 
 `--reviewed-identity` is the `content_identity` returned by `read`/`start` for the exact task
@@ -476,12 +476,14 @@ def build_parser() -> JsonArgumentParser:
         choices=_canonical_enum_choices(REJECT_COMMAND, "route"),
         help=(
             "large=materially changes identity/quantities/route, needs a fresh independent verifier; "
-            "evidence=only Marco can supply a missing fact; "
             "human-review=only Marco can choose, authorize, classify, or accept a consequence"
         ),
     )
     reject.add_argument("--file", dest="file_path")
-    reject.add_argument("--resume-status", choices=("pending-verification", "pending-research"))
+    reject.add_argument(
+        "--resume-status", choices=("pending-verification", "pending-research"),
+        help="pending-research only for a pre-construction Human Review hold during initial Research",
+    )
     reject.add_argument(
         "--human-review-confirmed", action="store_true",
         help="confirm Human Review after considering whether the issue can be repaired within existing authority",
