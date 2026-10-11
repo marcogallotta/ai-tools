@@ -1254,7 +1254,7 @@ class PostgresCommandReadMixin:
                     # cryptic approval ceremony for the same human decision.
                     pass
             elif (
-                operation.phase == "verification_hold"
+                operation.phase in {"verification_hold", "held_human"}
                 and latest_cycle is not None
                 and latest_cycle.outcome == "verification-hold"
             ):
@@ -1421,7 +1421,7 @@ class PostgresCommandReadMixin:
                 .limit(1)
             )
             if (
-                operation.phase == "verification_hold"
+                operation.phase in {"verification_hold", "held_human"}
                 and cycle is not None
                 and cycle.outcome == "verification-hold"
             ):
