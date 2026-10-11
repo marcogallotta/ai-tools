@@ -54,22 +54,21 @@ def _open_verification_evidence_hold(session, ids, context, task_id):
         rejected = port.execute(
             _call(
                 "reject",
-            run_id=verifier_run,
-            request_id=_next(ids),
-            owner="verifier-owner",
-            principal="verification",
-            arguments={
-                "task_id": str(task_id),
-                "operation_id": operation_id,
-                "agent": "codex",
-                "route": "evidence",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": operation_id,
+                    "agent": "codex",
+                    "route": "evidence",
                     "reason": "Need an exact source for the hydration claim",
                 },
             )
         )
     assert rejected.ok, rejected
     return port, operation_id, rejected
-
 
 def _retire_asana_alias(session, task_id) -> None:
     """Make the fixture Dish one with no Asana task (no active external alias)."""
