@@ -100,41 +100,14 @@ def test_generated_postgresql_action_openapi_matches_command_contract() -> None:
     _assert_postgresql_action_contract(postgres_action_openapi())
 
 
-def test_human_decision_is_a_direct_connected_agent_continuation() -> None:
-    assert RECORD_HUMAN_DECISION_COMMAND in ACTION_COMMANDS
-    assert RECORD_HUMAN_DECISION_COMMAND in POSTGRESQL_ACTION_ADDED_COMMANDS
+def test_human_decision_is_legacy_admin_only() -> None:
+    assert RECORD_HUMAN_DECISION_COMMAND not in ACTION_COMMANDS
+    assert RECORD_HUMAN_DECISION_COMMAND not in POSTGRESQL_ACTION_ADDED_COMMANDS
+    assert POSTGRESQL_ACTION_RETIRED_COMMANDS == (RECORD_HUMAN_DECISION_COMMAND,)
     definition = COMMAND_DEFINITIONS[RECORD_HUMAN_DECISION_COMMAND]
-    assert definition.principal == "agent"
+    assert definition.principal == "admin"
+    assert definition.action_exposed is False
     assert definition.admin_exposed is True
-    schema = postgres_action_argument_schema(RECORD_HUMAN_DECISION_COMMAND)
-    assert "decision" in schema["required"]
-    assert schema["required"] == [
-        "submission_id",
-        "requirement_id",
-        "decision",
-        "agent",
-    ]
-    assert "resume_status" not in schema["properties"]
-    assert schema["properties"]["decision"]["maxLength"] == 8000
-
-    client, arguments = validate_postgres_action_request(
-        RECORD_HUMAN_DECISION_COMMAND,
-        {
-            "client": {
-                "run_id": "11111111-1111-4111-8111-111111111111",
-                "request_id": "33333333-3333-4333-8333-333333333333",
-            },
-            "arguments": {
-                "submission_id": "44444444-4444-4444-8444-444444444444",
-                "requirement_id": "55555555-5555-4555-8555-555555555555",
-                "decision": "[nutrition-kcal] [nutrition-protein]",
-                "agent": "codex",
-            },
-        },
-    )
-    assert client["request_id"] == "33333333-3333-4333-8333-333333333333"
-    assert arguments["decision"] == "[nutrition-kcal] [nutrition-protein]"
-
 
 def test_checked_in_postgresql_action_openapi_matches_command_contract() -> None:
     checked_in = json.loads(
@@ -309,7 +282,7 @@ def test_postgresql_search_action_rejects_bad_pagination_and_unknown_fields() ->
 
 
 def test_postgresql_connected_recovery_commands_are_retained() -> None:
-    assert POSTGRESQL_ACTION_RETIRED_COMMANDS == ()
+    assert POSTGRESQL_ACTION_RETIRED_COMMANDS == (RECORD_HUMAN_DECISION_COMMAND,)
     for command in ACTION_COMMANDS:
         assert CONNECTED_COMMAND_DISPOSITIONS[command] == "retained"
     for command in ("proposals", "apply-proposal", "safe-reclaim"):

@@ -103,7 +103,7 @@ _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit", "apply-propo
 _MUTATING_AGENT_COMMANDS = {"create", "start", "safe-reclaim", *_LEASED_AGENT_COMMANDS}
 _REPLAYED_AGENT_COMMANDS = REPLAY_SAFE_COMMANDS - {ACTION_LEASE_COMMAND}
 _RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject", "apply-proposal"}
-_HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
+_HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human", "verification_hold"}
 
 LOG = logging.getLogger("dish.service.application")
 
@@ -1587,7 +1587,7 @@ class DishService:
                         data["recovery_required"] = True
                     else:
                         access = {"state": "handoff"}
-                elif op["phase"] in {"held_evidence", "held_human"}:
+                elif op["phase"] in {"held_evidence", "held_human", "verification_hold"}:
                     access = {"state": "handoff"}
                 else:
                     access_guidance = _admin_inspect_guidance(

@@ -214,14 +214,14 @@ COMMAND_DEFINITIONS = {
         CommandDefinition(
             RECORD_HUMAN_DECISION_COMMAND,
             "R",
-            "agent",
+            "admin",
             True,
             True,
             True,
-            action_exposed=True,
+            action_exposed=False,
             description=(
-                "Record Marco's direct answer to the exact open Human Review question and "
-                "resume the held Dish workflow."
+                "Legacy/admin recovery for an already-open Human Review record. "
+                "New connected-agent work never creates this state."
             ),
             workflow_action=RECORD_HUMAN_DECISION_COMMAND,
             admin_exposed=True,
@@ -269,9 +269,8 @@ POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (
     RECORD_COOK_LOG_COMMAND,
     ARCHIVE_COMMAND,
     UNARCHIVE_COMMAND,
-    RECORD_HUMAN_DECISION_COMMAND,
 )
-POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = ()
+POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = (RECORD_HUMAN_DECISION_COMMAND,)
 # Connected on the legacy SQLite/Asana Action surface but not yet ported to the
 # PostgreSQL command-execution stack: no PG workflow/transaction handler exists
 # for these. Each entry here must also be a "source_only_commands" entry in
@@ -561,6 +560,51 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
     if command == RECORD_HUMAN_DECISION_COMMAND:
         return _human_decision_argument_schema()
     base = action_openapi_argument_schema(command)
+    if command == APPROVE_COMMAND.name:
+        result = deepcopy(base)
+        for variant in result.get("oneOf", ()):
+            correction = variant.get("properties", {}).get("correction", {}).get("const")
+            if correction != "small":
+                continue
+            variant["properties"]["governed_change_fields"] = {
+                "type": "array",
+                "items": {"type": "string", "enum": ["Exemptions", "Decisions"]},
+                "uniqueItems": True,
+                "description": (
+                    "Use only when Marco accepts the already-reviewed high-fat dish unchanged: "
+                    "attest the appended Decision and matching nutrition-fat Exemptions update."
+                ),
+            }
+        return result
+    if command == PREPARE_COMMAND.name:
+        result = deepcopy(base)
+        attestation = result["properties"]["governed_change_fields"]
+        attestation["items"]["enum"] = [
+            "Dish candidate", "Purpose", "Role", "Priors", "Locks",
+            "Exemptions", "Research emphasis", "Destination section", "Decisions",
+        ]
+        attestation["description"] = (
+            "After Marco settles a material choice in chat, name Decisions plus every "
+            "Planning field that exact choice intentionally changes. Existing Decisions "
+            "and Researched by remain outside chat attestation."
+        )
+        return result
+    if command == REJECT_COMMAND.name:
+        variants = [
+            deepcopy(variant)
+            for variant in base.get("oneOf", ())
+            if variant.get("properties", {}).get("route", {}).get("const") == "large"
+        ]
+        if len(variants) != 1:
+            raise ValueError("PostgreSQL reject schema must contain exactly one Large variant")
+        return {
+            "oneOf": variants,
+            **(
+                {"discriminator": deepcopy(base["discriminator"])}
+                if "discriminator" in base
+                else {}
+            ),
+        }
     if command == "section-tasks":
         return _add_canonical_identity_alias(
             base,

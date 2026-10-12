@@ -7,6 +7,7 @@ all workflow legality is delegated to the shared planner/current policy.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import uuid
@@ -32,11 +33,11 @@ from .document_authority import (
     CanonicalDocumentError,
     destination_gid,
     destination_section_id,
-    held_document,
     parse_canonical_document,
     prepared_change_document,
     prepared_document,
     ready_document,
+    render_parts,
     resumed_document,
 )
 from .planner import (
@@ -63,6 +64,7 @@ from dish_tool.governed_diff import (
     GOVERNED_FIELDS,
     agent_attested_decision_appends,
     canonical_diff,
+    governed_changes,
     governed_changes_requiring_authorization,
     require_small_scope,
     validate_semantic_proposal,
@@ -78,6 +80,7 @@ from dish_tool.task_document import (
     parse_canonical_planning_notes,
     parse_planning_brief,
     render_planning_brief_notes,
+    TaskState,
     validate_planning_brief,
 )
 from dish_tool.workflow_policy import RestingTaskSnapshot, required_resting_start_kind
@@ -99,7 +102,6 @@ from .command_port_common import (
     CommandResult,
     CommandRuleError,
     json_safe as _json_safe,
-    semantic_proposal_text as _semantic_proposal_text,
     task_reference_from_dish as _task_reference_from_dish,
 )
 from .command_port_reads import PostgresCommandReadMixin
@@ -2046,11 +2048,12 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         before: Any,
         after: Any,
     ) -> tuple[tuple[str, ...], list[tuple[uuid.UUID, uuid.UUID]], list[dict[str, Any]]]:
-        """Apply legacy-equivalent governed-change and Decision-attestation gates.
+        """Authorize exact governed changes from legacy grants or Marco's chat Decision.
 
-        ``governed_change_fields`` is only an explicit provenance attestation for
-        an append-only attributed Marco Decision. Formal authority for every
-        other governed field comes from exact durable PostgreSQL Marco grants.
+        Existing durable grants remain consumable for legacy/recovery work. New connected-agent
+        work instead appends Marco's exact choice to Decisions and attests every governed field that
+        choice intentionally changes. Existing Decision history and Researched by are never
+        rewriteable through chat attestation.
         """
         declared = tuple(
             dict.fromkeys(
@@ -2071,56 +2074,15 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "allowed": list(GOVERNED_FIELDS),
                 },
             )
-        if set(declared) - {"Decisions"}:
-            raise CommandRuleError(
-                "INVALID_ARGUMENT",
-                "prepare accepts governed_change_fields only to attest an appended Marco Decision",
-                http_status=400,
-                data={
-                    "rule": "prepare_governed_change_field_not_applicable",
-                    "allowed": ["Decisions"],
-                },
-            )
 
         try:
             validate_semantic_proposal(before, after)
             newly_attributed = agent_attested_decision_appends(before, after)
-        except DishRuleError as exc:
-            raise CommandRuleError(
-                str(exc.code),
-                str(exc),
-                http_status=409,
-                data=dict(getattr(exc, "details", {}) or {}),
-            ) from exc
-
-        attested: tuple[str, ...] = ()
-        if "Decisions" in declared:
-            if not newly_attributed:
-                raise CommandRuleError(
-                    "INVALID_ARGUMENT",
-                    "Decisions attestation applies only to newly recorded attributed Marco choices",
-                    http_status=400,
-                    data={"rule": "decision_attestation_not_applicable"},
-                )
-            attested = newly_attributed
-        elif newly_attributed:
-            raise CommandRuleError(
-                "CONFIRMATION_REQUIRED",
-                "an attributed Marco Decision append requires explicit agent attestation",
-                data={
-                    "rule": "decision_attestation_required",
-                    "appended_decisions": list(newly_attributed),
-                    "required_governed_change_field": "Decisions",
-                    "instruction": (
-                        "Retry the same exact candidate with governed_change_fields including "
-                        "Decisions only if Marco actually stated these choices in the conversation. "
-                        "This records agent-attested provenance, not formal governed authorization."
-                    ),
-                    "fresh_request_id": True,
-                },
+            attested = (
+                newly_attributed
+                if "Decisions" in declared
+                else ()
             )
-
-        try:
             required_changes = governed_changes_requiring_authorization(
                 before, after, agent_attested_decisions=attested
             )
@@ -2131,6 +2093,30 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 http_status=409,
                 data=dict(getattr(exc, "details", {}) or {}),
             ) from exc
+
+        if "Decisions" in declared and not newly_attributed:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                "Decisions attestation requires a newly appended Marco Decision",
+                http_status=400,
+                data={"rule": "decision_attestation_not_applicable"},
+            )
+        if newly_attributed and "Decisions" not in declared:
+            raise CommandRuleError(
+                "CONFIRMATION_REQUIRED",
+                "an appended Marco Decision requires explicit conversation attestation",
+                data={
+                    "rule": "decision_attestation_required",
+                    "appended_decisions": list(newly_attributed),
+                    "required_governed_change_field": "Decisions",
+                    "instruction": (
+                        "Retry the same exact candidate with governed_change_fields including "
+                        "Decisions only if Marco actually stated this choice in the conversation."
+                    ),
+                    "fresh_request_id": True,
+                },
+            )
+
         required = [
             {
                 "field": change.field,
@@ -2139,30 +2125,64 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             }
             for change in required_changes
         ]
+        if not required:
+            return attested, [], []
+
         grants = self._available_governed_change_grants(
             generation_id=generation_id,
             task_id=task.task_id,
             operation_id=operation.operation_id,
             required=required,
         )
-        if len(grants) != len(required):
+        if len(grants) == len(required):
+            reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
+            for grant, _state in grants:
+                token = self.uuid_factory()
+                self.workflow.reserve_marco_authorization(
+                    grant_id=grant.grant_id,
+                    reservation_token=token,
+                    execution_id=execution.execution_id,
+                    reserved_at=call.now,
+                )
+                reservations.append((grant.grant_id, token))
+            return attested, reservations, required
+
+        required_fields = {change.field for change in required_changes}
+        unsupported = sorted(required_fields - set(GOVERNED_FIELDS[:8]))
+        if unsupported:
             raise CommandRuleError(
                 "GOVERNED_AUTHORIZATION_REQUIRED",
-                "change prepare is not authorized for every exact governed change",
-                data={"required_authorizations": required},
+                "existing Decision history and provenance cannot be changed by chat attestation",
+                data={
+                    "required_authorizations": required,
+                    "unsupported_chat_fields": unsupported,
+                },
             )
-
-        reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
-        for grant, _state in grants:
-            token = self.uuid_factory()
-            self.workflow.reserve_marco_authorization(
-                grant_id=grant.grant_id,
-                reservation_token=token,
-                execution_id=execution.execution_id,
-                reserved_at=call.now,
+        if not newly_attributed:
+            raise CommandRuleError(
+                "CONFIRMATION_REQUIRED",
+                "Marco must settle these governed changes in chat before they are applied",
+                data={
+                    "rule": "marco_chat_decision_required",
+                    "required_governed_fields": sorted(required_fields),
+                    "required_authorizations": required,
+                    "instruction": (
+                        "Ask Marco the concrete choice in chat. Then append his answer as a "
+                        "Human — Marco: Decision and retry the exact candidate with Decisions plus "
+                        "every changed governed field in governed_change_fields."
+                    ),
+                    "fresh_request_id": True,
+                },
             )
-            reservations.append((grant.grant_id, token))
-        return attested, reservations, required
+        missing = sorted(required_fields - set(declared))
+        if missing:
+            raise CommandRuleError(
+                "GOVERNED_CHANGE_FIELDS_INCOMPLETE",
+                "governed_change_fields must name every governed field changed by Marco's choice",
+                http_status=409,
+                data={"missing_fields": missing},
+            )
+        return attested, [], required
 
     def _validate_planning_destination(
         self,
@@ -2868,7 +2888,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "small correction must create a distinct canonical candidate",
                 )
             _require_small_correction_scope(
-                reviewed_parts.document, source_parts.document
+                reviewed_parts.document,
+                source_parts.document,
+                governed_change_fields=tuple(
+                    str(value).strip()
+                    for value in (call.arguments.get("governed_change_fields") or ())
+                    if str(value).strip()
+                ),
             )
 
         signed_parts = ready_document(
@@ -3016,10 +3042,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 NO_EVIDENCE_HOLD_MESSAGE,
                 http_status=400,
             )
-        if route not in {"large", "human-review"}:
+        if route != "large":
             raise CommandRuleError(
                 "INVALID_REJECTION_ROUTE",
-                "route must be large or human-review",
+                "route must be large",
                 http_status=400,
             )
         reason = str(call.arguments.get("reason", "")).strip()
@@ -3071,152 +3097,176 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 expected_status="pending-verification",
                 expected_schema_version=binding.schema_release,
             )
+            corrected_state = dict(corrected.document.state.values)
+            corrected_state["Researched by"] = reviewed_parts.document.state.values[
+                "Researched by"
+            ]
+            corrected = render_parts(
+                dataclasses.replace(
+                    corrected.document,
+                    state=TaskState(corrected_state),
+                )
+            )
             identity = content_identity(corrected.title, corrected.body)
             if identity == reviewed.content_identity:
                 raise CommandRuleError(
                     "LARGE_CORRECTION_REQUIRED",
                     "large rejection must create a distinct canonical candidate",
                 )
-            proposal_payload = self._semantic_proposal_bundle(
-                proposal_id=uuid.UUID(int=0),
-                before=reviewed_parts.document,
-                after=corrected.document,
-                reason=reason,
-                source_cycle_id=cycle.cycle_id,
-                governed_change_fields=call.arguments.get("governed_change_fields"),
-            )
-            if proposal_payload is not None:
-                proposal_id = self.uuid_factory()
-                proposal_payload["proposal_id"] = str(proposal_id)
-                cycle.outcome = "rejected"
-                verification_hold = False
-                requirement = self.workflow.open_human_review(
-                    requirement_id=proposal_id,
-                    execution_id=execution.execution_id,
-                    operation_id=operation.operation_id,
-                    route="human_review",
-                    question=_semantic_proposal_text(proposal_payload),
-                    baseline_content_version_id=reviewed.content_version_id,
-                    opened_at=call.now,
-                    cycle_id=cycle.cycle_id,
+            declared = {
+                str(value).strip()
+                for value in (call.arguments.get("governed_change_fields") or ())
+                if str(value).strip()
+            }
+            unknown = sorted(declared - set(GOVERNED_FIELDS))
+            if unknown:
+                raise CommandRuleError(
+                    "INVALID_ARGUMENT",
+                    "governed_change_fields contains unsupported field names",
+                    http_status=400,
+                    data={
+                        "rule": "governed_change_field_invalid",
+                        "unsupported": unknown,
+                        "allowed": list(GOVERNED_FIELDS),
+                    },
                 )
-                operation.phase = "held_human"
-                operation.persisted_actions = []
-                result = {
-                    "route": "large",
-                    "semantic_proposal_queued": True,
-                    "proposal_id": str(requirement.requirement_id),
-                    "candidate_identity": proposal_payload["candidate"]["identity"],
-                    "required_authorizations": proposal_payload[
-                        "required_authorizations"
-                    ],
-                    "new_cycle_id": None,
-                    "verification_hold": False,
-                    "projection_event_id": None,
-                }
-            else:
-                target_parts = corrected
-                if verification_hold:
-                    target_parts = held_document(
-                        corrected.document,
-                        target="pending-human-review",
-                        detail=(
-                            "Three consecutive Verification rounds ended without a "
-                            f"signable task: {reason}"
-                        ),
+            try:
+                validate_semantic_proposal(
+                    reviewed_parts.document, corrected.document
+                )
+                newly_attributed = agent_attested_decision_appends(
+                    reviewed_parts.document, corrected.document
+                )
+                attested = (
+                    newly_attributed if "Decisions" in declared else ()
+                )
+                required_changes = governed_changes_requiring_authorization(
+                    reviewed_parts.document,
+                    corrected.document,
+                    agent_attested_decisions=attested,
+                )
+            except DishRuleError as exc:
+                raise CommandRuleError(
+                    str(exc.code),
+                    str(exc),
+                    http_status=409,
+                    data=dict(getattr(exc, "details", {}) or {}),
+                ) from exc
+
+            if "Decisions" in declared and not newly_attributed:
+                raise CommandRuleError(
+                    "INVALID_ARGUMENT",
+                    "Decisions attestation requires a newly appended Marco Decision",
+                    http_status=400,
+                    data={"rule": "decision_attestation_not_applicable"},
+                )
+            if newly_attributed and "Decisions" not in declared:
+                raise CommandRuleError(
+                    "CONFIRMATION_REQUIRED",
+                    "an appended Marco Decision requires explicit conversation attestation",
+                    data={
+                        "rule": "decision_attestation_required",
+                        "appended_decisions": list(newly_attributed),
+                        "required_governed_change_field": "Decisions",
+                        "fresh_request_id": True,
+                    },
+                )
+
+            required_fields = {change.field for change in required_changes}
+            if required_fields:
+                unsupported = sorted(required_fields - set(GOVERNED_FIELDS[:8]))
+                if unsupported:
+                    raise CommandRuleError(
+                        "GOVERNED_AUTHORIZATION_REQUIRED",
+                        "existing Decision history and provenance cannot be changed by chat attestation",
+                        data={
+                            "required_authorizations": [
+                                {
+                                    "field": change.field,
+                                    "before": _json_safe(change.before),
+                                    "after": _json_safe(change.after),
+                                }
+                                for change in required_changes
+                            ],
+                            "unsupported_chat_fields": unsupported,
+                        },
                     )
-                version_id = self._activate_document(
-                    generation_id=generation.generation_id,
-                    task_id=task.task_id,
-                    binding_id=binding.binding_id,
-                    execution_id=execution.execution_id,
-                    title=target_parts.title,
-                    body=target_parts.body,
-                    predecessor_content_version_id=reviewed.content_version_id,
-                    at=call.now,
-                )
-                self._finalize_scalar_mutations()
-                self.session.add(
-                    wf.VerificationCorrection(
-                        correction_id=self.uuid_factory(),
-                        cycle_id=cycle.cycle_id,
-                        source_content_version_id=cycle.reviewed_content_version_id,
-                        corrected_content_version_id=version_id,
-                        correction_class="large",
-                        reason=reason,
-                        command_execution_id=execution.execution_id,
-                        recorded_at=call.now,
+                if not newly_attributed:
+                    raise CommandRuleError(
+                        "CONFIRMATION_REQUIRED",
+                        "Marco must settle these governed changes in chat before the Large correction is applied",
+                        data={
+                            "rule": "marco_chat_decision_required",
+                            "required_governed_fields": sorted(required_fields),
+                            "instruction": (
+                                "Return the concrete choice to Marco (or to the parent when child-dispatched). "
+                                "Then append his answer as a Human — Marco: Decision and retry with Decisions "
+                                "plus every changed governed field in governed_change_fields."
+                            ),
+                            "fresh_request_id": True,
+                        },
                     )
-                )
-                self.session.flush()
-                next_cycle = None
-                if verification_hold:
-                    operation.phase = "held_human"
-                    operation.persisted_actions = ["resolved", "reopen"]
-                else:
-                    next_cycle = self.workflow.open_verification_cycle(
-                        cycle_id=self.uuid_factory(),
-                        execution_id=execution.execution_id,
-                        operation_id=operation.operation_id,
-                        reviewed_content_version_id=version_id,
-                        created_at=call.now,
+                missing = sorted(required_fields - declared)
+                if missing:
+                    raise CommandRuleError(
+                        "GOVERNED_CHANGE_FIELDS_INCOMPLETE",
+                        "governed_change_fields must name every governed field changed by Marco's choice",
+                        http_status=409,
+                        data={"missing_fields": missing},
                     )
-                    operation.phase = "await_verification"
-                    operation.persisted_actions = ["inspect"]
-                projection_id = self._project(
-                    generation.generation_id,
-                    execution.execution_id,
-                    task.task_id,
-                    "update_task_document",
-                    {"content_version_id": str(version_id)},
-                    call.now,
-                )
-                result = {
-                    "route": "large",
-                    "corrected_content_version_id": str(version_id),
-                    "new_cycle_id": str(next_cycle.cycle_id) if next_cycle else None,
-                    "verification_hold": verification_hold,
-                    "projection_event_id": projection_id,
-                }
-        else:
-            held_parts = held_document(
-                reviewed_parts.document, target="pending-human-review", detail=reason
-            )
-            held_version_id = self._activate_document(
+
+            target_parts = corrected
+            version_id = self._activate_document(
                 generation_id=generation.generation_id,
                 task_id=task.task_id,
                 binding_id=binding.binding_id,
                 execution_id=execution.execution_id,
-                title=held_parts.title,
-                body=held_parts.body,
+                title=target_parts.title,
+                body=target_parts.body,
                 predecessor_content_version_id=reviewed.content_version_id,
                 at=call.now,
             )
             self._finalize_scalar_mutations()
+            self.session.add(
+                wf.VerificationCorrection(
+                    correction_id=self.uuid_factory(),
+                    cycle_id=cycle.cycle_id,
+                    source_content_version_id=cycle.reviewed_content_version_id,
+                    corrected_content_version_id=version_id,
+                    correction_class="large",
+                    reason=reason,
+                    command_execution_id=execution.execution_id,
+                    recorded_at=call.now,
+                )
+            )
+            self.session.flush()
+            next_cycle = None
+            if verification_hold:
+                operation.phase = "verification_hold"
+                operation.persisted_actions = ["reopen"]
+            else:
+                next_cycle = self.workflow.open_verification_cycle(
+                    cycle_id=self.uuid_factory(),
+                    execution_id=execution.execution_id,
+                    operation_id=operation.operation_id,
+                    reviewed_content_version_id=version_id,
+                    created_at=call.now,
+                )
+                operation.phase = "await_verification"
+                operation.persisted_actions = ["inspect"]
             projection_id = self._project(
                 generation.generation_id,
                 execution.execution_id,
                 task.task_id,
                 "update_task_document",
-                {"content_version_id": str(held_version_id)},
+                {"content_version_id": str(version_id)},
                 call.now,
             )
-            requirement = self.workflow.open_human_review(
-                requirement_id=self.uuid_factory(),
-                execution_id=execution.execution_id,
-                operation_id=operation.operation_id,
-                route="human_review",
-                question=reason,
-                baseline_content_version_id=held_version_id,
-                opened_at=call.now,
-                cycle_id=cycle.cycle_id,
-            )
-            operation.phase = "held_human"
-            operation.persisted_actions = ["record-human-decision"]
             result = {
-                "route": "human-review",
-                "requirement_id": str(requirement.requirement_id),
-                "held_content_version_id": str(held_version_id),
+                "route": "large",
+                "corrected_content_version_id": str(version_id),
+                "new_cycle_id": str(next_cycle.cycle_id) if next_cycle else None,
+                "verification_hold": verification_hold,
                 "projection_event_id": projection_id,
             }
         result["cycle_id"] = str(cycle.cycle_id)
@@ -4154,10 +4204,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
 
     def _reopen(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
-        if operation.phase != "held_human":
+        if operation.phase not in {"verification_hold", "held_human"}:
             raise CommandRuleError(
-                "HUMAN_REVIEW_HOLD_REQUIRED",
-                "reopen requires the exact Human Review hold",
+                "VERIFICATION_HOLD_REQUIRED",
+                "reopen requires the exact Verification stop or a legacy Human Review hold",
             )
         cycle = self._latest_cycle(operation.operation_id)
         if cycle.outcome == "verification-hold":
@@ -4369,11 +4419,18 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError(
                 "HOLD_BASELINE_MISSING", "Verification hold content is missing"
             )
-        parse_canonical_document(
+        baseline_parts = parse_canonical_document(
             title=baseline.title,
             body=baseline.body,
-            expected_status="pending-human-review",
         )
+        if baseline_parts.document.state.values["Status"] not in {
+            "pending-verification",
+            "pending-human-review",
+        }:
+            raise CommandRuleError(
+                "VERIFICATION_HOLD_STATUS_INVALID",
+                "Verification stop baseline must be pending-verification or legacy pending-human-review",
+            )
         candidate = parse_canonical_document(
             file_text=str(file_text), expected_status="pending-verification"
         )
@@ -5045,11 +5102,18 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "EXACT_VERIFICATION_HOLD_REQUIRED",
                 "the current Verification hold content is missing",
             )
-        parse_canonical_document(
+        current_parts = parse_canonical_document(
             title=current_version.title,
             body=current_version.body,
-            expected_status="pending-human-review",
         )
+        if current_parts.document.state.values["Status"] not in {
+            "pending-verification",
+            "pending-human-review",
+        }:
+            raise CommandRuleError(
+                "VERIFICATION_HOLD_STATUS_INVALID",
+                "Verification stop content must be pending-verification or legacy pending-human-review",
+            )
         if not cycle_id:
             return
         try:
@@ -5585,15 +5649,79 @@ class PostgresCommandPort(PostgresCommandReadMixin):
 _SMALL_FROZEN_STATE_FIELDS = ("Researched by", "Verification protocol release")
 
 
-def _require_small_correction_scope(before, after) -> None:
+def _same_pass_fat_exemption(
+    before, after, governed_change_fields: tuple[str, ...]
+) -> bool:
+    """Permit only a single fat-exemption addition and append-only Marco Decision."""
+
+    if set(governed_change_fields) != {"Exemptions", "Decisions"}:
+        return False
+    changes = governed_changes(before, after)
+    if {change.field for change in changes} != {"Exemptions", "Decisions"}:
+        return False
+    if (
+        before.title != after.title
+        or before.recognition != after.recognition
+        or before.introduction != after.introduction
+        or dict(before.sections) != dict(after.sections)
+        or before.research_basis != after.research_basis
+        or before.state.values != after.state.values
+        or tuple(before.material_changes) != tuple(after.material_changes)
+    ):
+        return False
+    # Compare all planning fields, including Priors (omitted by canonical_diff).
+    if any(
+        before.planning_brief.values.get(field) != after.planning_brief.values.get(field)
+        for field in set(before.planning_brief.values) | set(after.planning_brief.values)
+        if field != "Exemptions"
+    ):
+        return False
+    old_value = str(before.planning_brief.values.get("Exemptions", ""))
+    new_value = str(after.planning_brief.values.get("Exemptions", ""))
+    if "[nutrition-fat]" in old_value:
+        return False
+    # 'None' is the empty baseline; otherwise additions must be a single line.
+    remainder = new_value if old_value.strip() == "None" else (
+        new_value[len(old_value):].lstrip("\n")
+        if new_value.startswith(old_value + "\n") else ""
+    )
+    added = remainder.splitlines()
+    if (
+        len(added) != 1
+        or not added[0].strip().startswith("[nutrition-fat]")
+        or added[0].count("[") != 1
+        or added[0].count("]") != 1
+    ):
+        return False
+    if not agent_attested_decision_appends(before, after):
+        return False
+    if len(after.decisions) != len(before.decisions) + 1:
+        return False
+    # Run the ordinary scope checker on a candidate with only the permitted
+    # metadata additions removed, so construction changes cannot bypass it.
+    normalized = dataclasses.replace(
+        after,
+        planning_brief=dataclasses.replace(after.planning_brief, values=before.planning_brief.values),
+        decisions=before.decisions,
+    )
+    try:
+        require_small_scope(before, normalized)
+    except DishRuleError:
+        return False
+    return True
+
+
+def _require_small_correction_scope(
+    before, after, *, governed_change_fields: tuple[str, ...] = ()
+) -> None:
     """Reject a Verification Small correction that is really a Large one.
 
     Uses the same ``require_small_scope`` classifier as legacy
     ``step8.approve_small`` but is deliberately stricter in two ways:
 
-    * every governed planning/Decision change is refused, even one Marco has
-      authorized (legacy accepted those via ``require_governed_authorization``);
-      a verifier never signs its own governed edit, so it must go the Large route;
+    * governed planning/Decision changes are Large except the narrow case where Marco accepts
+      an already-reviewed high-fat dish unchanged and only `Exemptions` plus an append-only
+      Decision change;
     * an edited ``Researched by`` (or frozen protocol release) is refused as
       Large, where legacy silently restored the original value.
 
@@ -5615,6 +5743,32 @@ def _require_small_correction_scope(before, after) -> None:
                 ),
             },
         )
+
+    declared = tuple(dict.fromkeys(governed_change_fields))
+    frozen_changed = [
+        field
+        for field in _SMALL_FROZEN_STATE_FIELDS
+        if before.state.values.get(field) != after.state.values.get(field)
+    ]
+    if not frozen_changed and _same_pass_fat_exemption(before, after, declared):
+        try:
+            validate_semantic_proposal(before, after)
+        except DishRuleError as exc:
+            raise CommandRuleError(
+                str(exc.code),
+                str(exc),
+                http_status=409,
+                data=dict(getattr(exc, "details", {}) or {}),
+            ) from exc
+        return
+    if declared:
+        raise CommandRuleError(
+            "INVALID_ARGUMENT",
+            "governed_change_fields on approve apply only to an exemption-only Marco Decision",
+            http_status=400,
+            data={"rule": "approve_governed_change_attestation_not_applicable"},
+        )
+
     fields: list[str] = []
     material_reasons: list[str] = []
     try:

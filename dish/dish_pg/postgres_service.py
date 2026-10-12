@@ -156,6 +156,25 @@ def _admin_action_from_queue(
         command = "resolved"
         summary = "Release the Verification hold."
         effect = "release the Verification hold into a fresh Verification round"
+    elif kind == "reopen_verification_stop":
+        command = "reopen"
+        summary = "Reopen Verification only after a substantive reset."
+        for flag, value, key in (
+            ("--category", "<evidence|premise|method|scope>", "category"),
+            ("--before", "<exact old text>", "before"),
+            ("--after", "<exact new text>", "after"),
+            ("--editor", "<claude|gpt|codex>", "editor"),
+            ("--model", "<model>", "model"),
+            ("--run-id", "<run-id>", "run_id"),
+            ("--file", "<corrected-task-file>", "file_path"),
+            ("--date", "<YYYY-MM-DD>", "date"),
+        ):
+            options.append({"flag": flag, "value": value})
+            requires_input.append(key)
+        effect = (
+            "install the corrected candidate and open a fresh Verification round only after "
+            "evidence, premise, method, or scope changed concretely"
+        )
     elif kind == "semantic_proposal":
         # Proposal approval is a per-change ceremony owned by the queue.
         return {

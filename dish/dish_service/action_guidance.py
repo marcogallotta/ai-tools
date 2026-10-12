@@ -57,7 +57,7 @@ def _human_action_instruction(action: Mapping[str, Any]) -> str:
             "fields, hold IDs, or evidence-recording mechanics into Marco's task." + suffix
         )
     return (
-        "Keep the Marco-facing Human Review result compact: decision first, then any quantified blocker, "
+        "Keep the Marco-facing result compact: decision first, then any quantified blocker, "
         "then the simplest available options and what each does. Do not dump raw details, IDs, protocol "
         "mechanics, evidence notes, or resume state unless Marco asks for them." + suffix
     )
@@ -93,16 +93,13 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "No workflow or external effect was committed. Restore any incidental governed-text edit, or "
                 "explicitly declare the intended governed field, then retry the corrected request with a fresh request ID."
             )
-        if error_rule == "human_review_preflight_required":
+        if error_rule == "marco_chat_decision_required":
             instructions.append(
-                "Do the Human Review preflight yourself rather than dumping protocol questions on Marco. Explain the real issue "
-                "in ordinary language. Supply one to six concrete plausible choices ordered best-first: choice A is always your "
-                "recommended route, and the later admin UI also gives Marco a free-text Other choice. When a choice is an exact "
-                "Exemptions authorization, send the complete before/after field values and use the canonical nutrition tag "
-                "([nutrition-kcal], [nutrition-protein], or [nutrition-fat]) rather than prose such as 'protein exemption'. "
-                "Use a reasonable defensible estimate, with assumptions stated, where exact values are unknowable; uncertainty alone is not a blocker. If you can "
-                "already construct the exact governed fix, use a Large correction so Dish queues that exact proposal for review. "
-                "Use Human Review only when a material Marco-only choice remains before an exact candidate can exist."
+                "Ask Marco the concrete choice in chat (or return it to the parent when child-dispatched), in ordinary "
+                "language with the consequence and plausible options, recommended first. Then append his answer as a "
+                "Human — Marco: Decision and retry the exact candidate with Decisions plus every changed governed field "
+                "in governed_change_fields, using a fresh request ID. For a nutrition exemption use the canonical tag "
+                "([nutrition-kcal], [nutrition-protein], or [nutrition-fat]). There is no Human Review hold."
             )
         if error_rule in {
             "planning_handoff_requires_initial",
@@ -257,7 +254,8 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
             )
         if "reject" in actions:
             instructions.append(
-                "For Verification rejection, route is closed to large or human-review. "
+                "For Verification rejection, route is closed to large. Ask Marco in chat about any Marco-only "
+                "choice instead of rejecting for it. "
                 "A Small correction is not a rejection route; apply it through approve with correction=small. "
                 + NO_EVIDENCE_HOLD_MESSAGE
             )

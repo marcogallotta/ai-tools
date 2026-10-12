@@ -6,6 +6,7 @@ _ADVISORIES = {
     "await_verification": ("workflow.await_verification", "The current operation is waiting for Verification."),
     "held_evidence": ("workflow.held_evidence", "The current operation is waiting for required evidence."),
     "held_human": ("workflow.held_human", "The current operation is waiting for human review."),
+    "verification_hold": ("workflow.verification_hold", "Verification stopped after three rounds; it needs a concrete reset."),
     "await_submission": ("workflow.await_submission", "The current operation is waiting for governed submission."),
     "ready_move_failed": ("workflow.destination_repair", "The destination movement requires repair before completion."),
     "recovery_rehearsal": ("workflow.recovery_rehearsal", "The current operation is in recovery rehearsal."),

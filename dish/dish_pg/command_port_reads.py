@@ -971,8 +971,13 @@ class PostgresCommandReadMixin:
                     category, reason = "multi_step_safe", "an abandonment successor is waiting for continuation"
                 else:
                     category, reason = "multi_step_safe", "abandonment has a deterministic continuation"
+            elif operation.phase == "verification_hold":
+                category, reason = (
+                    "needs_marco",
+                    "three Verification rounds failed; a substantive reset is required",
+                )
             elif operation.phase in {"held_evidence", "held_human"}:
-                category, reason = "needs_marco", "the workflow is waiting for Marco"
+                category, reason = "needs_marco", "a legacy held workflow is waiting for recovery"
             elif lease is not None and lease.expires_at <= now:
                 category, reason = "multi_step_safe", "the actor lease has expired"
             elif lease is not None:
@@ -1033,11 +1038,12 @@ class PostgresCommandReadMixin:
         items: list[dict[str, Any]] = []
         category_counts = {"system": 0, "needs_marco": 0, "unsafe": 0}
         group_order = {
-            "human_review": 0,
-            "evidence": 1,
-            "change_review": 2,
-            "recovery": 3,
-            "system": 4,
+            "verification_stop": 0,
+            "human_review": 1,
+            "evidence": 2,
+            "change_review": 3,
+            "recovery": 4,
+            "system": 5,
         }
 
         for operation in operations:
@@ -1249,16 +1255,19 @@ class PostgresCommandReadMixin:
                     # cryptic approval ceremony for the same human decision.
                     pass
             elif (
-                operation.phase == "held_human"
+                operation.phase in {"verification_hold", "held_human"}
                 and latest_cycle is not None
                 and latest_cycle.outcome == "verification-hold"
             ):
                 signal(
-                    kind="verification_hold",
+                    kind="verification_stop",
                     category="needs_marco",
-                    summary="Repeated Verification stopped for Marco's decision.",
+                    summary=(
+                        "Three Verification rounds failed; restart only after evidence, premise, "
+                        "method, or scope changes concretely."
+                    ),
                     action={
-                        "kind": "resolve_verification_hold",
+                        "kind": "reopen_verification_stop",
                         "dish_id": str(operation.task_id),
                         "operation_id": str(operation.operation_id),
                         "cycle_id": str(latest_cycle.cycle_id),
@@ -1309,7 +1318,9 @@ class PostgresCommandReadMixin:
             kinds = {str(row["kind"]) for row in signals}
             if category == "unsafe":
                 group = "recovery"
-            elif "human_decision" in kinds or "verification_hold" in kinds:
+            elif "verification_stop" in kinds:
+                group = "verification_stop"
+            elif "human_decision" in kinds:
                 group = "human_review"
             elif "evidence_hold" in kinds:
                 group = "evidence"
@@ -1373,7 +1384,7 @@ class PostgresCommandReadMixin:
             .where(
                 wf.WorkflowOperation.generation_id == generation.generation_id,
                 wf.WorkflowOperation.lifecycle == "open",
-                wf.WorkflowOperation.phase.in_(("held_evidence", "held_human")),
+                wf.WorkflowOperation.phase.in_(("held_evidence", "held_human", "verification_hold")),
             )
             .order_by(wf.WorkflowOperation.created_at, wf.WorkflowOperation.operation_id)
         ).all()
@@ -1410,9 +1421,13 @@ class PostgresCommandReadMixin:
                 .order_by(wf.HumanReviewRequirement.opened_at.desc())
                 .limit(1)
             )
-            if cycle is not None and cycle.outcome == "verification-hold":
-                hold_class = "verification_two_pass"
-                required_action = "resolved"
+            if (
+                operation.phase in {"verification_hold", "held_human"}
+                and cycle is not None
+                and cycle.outcome == "verification-hold"
+            ):
+                hold_class = "verification_stop"
+                required_action = "reopen"
             elif operation.phase == "held_evidence":
                 hold_class = (
                     "research_preconstruction_evidence"

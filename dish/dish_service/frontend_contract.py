@@ -73,6 +73,7 @@ _PHASE_LABELS = {
     "await_verification": "Await verification",
     "held_evidence": "Evidence hold",
     "held_human": "Human review",
+    "verification_hold": "Verification stopped",
     "await_submission": "Await submission",
     "ready_move_failed": "Destination repair required",
     "recovery_rehearsal": "Recovery rehearsal",

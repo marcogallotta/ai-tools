@@ -12,6 +12,8 @@ from dish_pg.command_contract import ADMIN_COMMANDS, COMMAND_DEFINITIONS
 from dish_pg.database import session_scope
 from dish_pg.document_authority import parse_canonical_document
 from dish_pg.workflow import WorkflowAuthorityError
+from dish_service.frontend_advisory import workflow_advisory
+from dish_service.frontend_contract import operation_status
 from tests.support.canonical import TASK
 from tests.support.postgresql.command import (
     _add_destination_section,
@@ -91,7 +93,7 @@ def _active_content(session, context, task_id):
     return session.get(models.ContentVersion, state.current_content_version_id)
 
 
-def _resolve_verification_hold(session, port, ids, context, *, task_id, operation_id):
+def _reopen_verification_stop(session, port, ids, context, *, task_id, operation_id):
     admin_run = _next(ids)
     _register_run(
         session,
@@ -104,20 +106,33 @@ def _resolve_verification_hold(session, port, ids, context, *, task_id, operatio
         _call("holds", run_id=admin_run, owner="Marco", principal="admin")
     )
     row = next(item for item in holds.data["holds"] if item["task_id"] == str(task_id))
-    resolved = port.execute(
+    held = _active_content(session, context, task_id)
+    before = "correction round 3."
+    after = "correction round 3, substantive reset."
+    candidate = f"{held.title}\n{held.body}".replace(before, after)
+    reopened = port.execute(
         _call(
-            "resolved",
+            "reopen",
             run_id=admin_run,
             request_id=_next(ids),
             owner="Marco",
             principal="admin",
-            arguments={"submission_id": operation_id},
+            arguments={
+                "submission_id": operation_id,
+                "cycle_id": row["cycle_id"],
+                "hold_identity": row["hold_identity"],
+                "category": "method",
+                "before": before,
+                "after": after,
+                "editor": "claude",
+                "model": "claude-test",
+                "file_text": candidate,
+            },
         )
     )
-    return row, resolved
+    return row, reopened
 
-
-def test_third_large_rejection_enters_verification_hold_and_resolved_reopens_cycle(
+def test_third_large_rejection_enters_mechanical_verification_stop_and_reopens_after_reset(
     workflow_db,
 ) -> None:
     factory, ids, context, task_id = workflow_db
@@ -151,26 +166,47 @@ def test_third_large_rejection_enters_verification_hold_and_resolved_reopens_cyc
         assert third.ok and third.data["verification_hold"] is True
         assert third.data["new_cycle_id"] is None
         operation = session.get(wf.WorkflowOperation, uuid.UUID(operation_id))
-        assert operation.phase == "held_human"
+        assert operation.phase == "verification_hold"
+        # Every reader of the stopped state must render it rather than crash.
+        queue_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=queue_run,
+            owner="Marco",
+            agent="claude",
+        )
+        queued = port.execute(
+            _call("queue", run_id=queue_run, owner="Marco", principal="admin")
+        )
+        assert queued.ok, queued.errors
+        stopped = [
+            item for item in queued.data["attention_items"] if item["task_id"] == str(task_id)
+        ]
+        assert [item["queue_group"] for item in stopped] == ["verification_stop"]
+        assert operation_status("verification", "verification_hold")["phase"] == (
+            "Verification stopped"
+        )
+        assert workflow_advisory("verification_hold")["code"] == "workflow.verification_hold"
         held = _active_content(session, context, task_id)
         parse_canonical_document(
-            title=held.title, body=held.body, expected_status="pending-human-review"
+            title=held.title, body=held.body, expected_status="pending-verification"
         )
-        row, resolved = _resolve_verification_hold(
+        row, reopened = _reopen_verification_stop(
             session, port, ids, context, task_id=task_id, operation_id=operation_id
         )
-        assert row["hold_class"] == "verification_two_pass"
-        assert row["required_admin_action"] == "resolved"
+        assert row["hold_class"] == "verification_stop"
+        assert row["required_admin_action"] == "reopen"
         assert row["cycle_id"] == third.data["cycle_id"]
-        assert resolved.ok
-        assert resolved.data["source_cycle_id"] == third.data["cycle_id"]
+        assert reopened.ok
+        assert reopened.data["source_cycle_id"] == third.data["cycle_id"]
         session.refresh(operation)
         assert operation.phase == "await_verification"
         resumed = _active_content(session, context, task_id)
         parsed = parse_canonical_document(
             title=resumed.title, body=resumed.body, expected_status="pending-verification"
         )
-        assert any(
+        assert not any(
             line.startswith("Human — Marco: Verification hold ")
             for line in parsed.document.decisions
         )

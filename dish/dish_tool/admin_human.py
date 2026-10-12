@@ -631,6 +631,7 @@ def render_admin_result(
             if isinstance(item, Mapping) and bool(item.get("needs_you"))
         ]
         group_labels = {
+            "verification_stop": "Verification stopped",
             "human_review": "Human review",
             "evidence": "Evidence needed",
             "change_review": "Change approval",

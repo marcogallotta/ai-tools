@@ -13,7 +13,13 @@ from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as projection
 from dish_pg.command_contract import ACTION_COMMANDS
-from dish_pg.command_port import CommandCall, PostgresCommandPort, _task_reference_from_dish
+from dish_pg.command_port import (
+    CommandCall,
+    CommandRuleError,
+    PostgresCommandPort,
+    _require_small_correction_scope,
+    _task_reference_from_dish,
+)
 from dish_pg.document_authority import (
     destination_section_id,
     parse_canonical_document,
@@ -1165,6 +1171,86 @@ def test_prepare_non_material_change_preserves_prior_signed_state_and_checks_in(
 
 
 
+def test_exemption_only_marco_acceptance_is_same_pass_small_scope() -> None:
+    before_text = TASK.replace("[non-main] ", "").replace(
+        "Role: non-main — small side for comparison",
+        "Role: main",
+    )
+    after_text = before_text.replace(
+        "Exemptions: None",
+        "Exemptions: [nutrition-fat] — exceptional high-fat dish accepted by Marco",
+    ).replace(
+        "### Research basis",
+        "Human — Marco: Accept this exceptional high-fat dish unchanged, 2026-10-11\n"
+        "### Research basis",
+    )
+    before = parse_canonical_document(file_text=before_text).document
+    after = parse_canonical_document(file_text=after_text).document
+
+    _require_small_correction_scope(
+        before,
+        after,
+        governed_change_fields=("Exemptions", "Decisions"),
+    )
+    with pytest.raises(CommandRuleError) as error:
+        _require_small_correction_scope(before, after)
+    assert error.value.code == "SMALL_CORRECTION_SCOPE_EXCEEDED"
+
+
+@pytest.mark.parametrize(
+    ("edit", "allowed"),
+    [
+        ("clean", True),
+        ("priors", False),
+        ("extra_exemption", False),
+        ("extra_exemption_same_line", False),
+        ("recipe", False),
+        ("decision_only", False),
+        ("two_decisions", False),
+    ],
+)
+def test_same_pass_fat_exemption_rejects_every_other_change(edit, allowed):
+    before_text = TASK.replace("[non-main] ", "").replace(
+        "Role: non-main — small side for comparison", "Role: main"
+    )
+    decision = "Human — Marco: Accept the high-fat dish unchanged, 2026-10-11"
+    after_text = before_text.replace(
+        "Exemptions: None",
+        "Exemptions: [nutrition-fat] — exceptional high-fat dish accepted by Marco",
+    ).replace("### Research basis", f"{decision}\n### Research basis")
+    if edit == "priors":
+        after_text = after_text.replace("Priors: None", "Priors: Tested elsewhere")
+    elif edit == "extra_exemption":
+        after_text = after_text.replace(
+            "[nutrition-fat] — exceptional high-fat dish accepted by Marco",
+            "[nutrition-fat] — exceptional high-fat dish accepted by Marco\n"
+            "[equipment] skip wok hei",
+        )
+    elif edit == "extra_exemption_same_line":
+        after_text = after_text.replace(
+            "accepted by Marco", "accepted by Marco [equipment] skip wok hei"
+        )
+    elif edit == "recipe":
+        after_text = after_text.replace("1. Cook it.", "1. Cook it.\n2. Change the construction.")
+    elif edit == "decision_only":
+        after_text = before_text.replace("### Research basis", f"{decision}\n### Research basis")
+    elif edit == "two_decisions":
+        after_text = after_text.replace(
+            "### Research basis", f"{decision.replace('unchanged', 'as built')}\n### Research basis"
+        )
+    before = parse_canonical_document(file_text=before_text).document
+    after = parse_canonical_document(file_text=after_text).document
+    if allowed:
+        _require_small_correction_scope(
+            before, after, governed_change_fields=("Exemptions", "Decisions")
+        )
+    else:
+        with pytest.raises(CommandRuleError):
+            _require_small_correction_scope(
+                before, after, governed_change_fields=("Exemptions", "Decisions")
+            )
+
+
 def _start_change(port, ids, context, task_id, *, reason="governed parity"):
     run_id = _next(ids)
     _register_run(
@@ -1237,7 +1323,7 @@ def test_prepare_change_blocks_unauthorized_governed_field_before_activation_or_
             candidate,
         )
         assert not blocked.ok
-        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED"
+        assert blocked.code == "CONFIRMATION_REQUIRED"
         assert {item["field"] for item in blocked.data["required_authorizations"]} == {"Purpose"}
         assert port._current_content_version_id(context["generation_id"], task_id) == current_before
         assert session.scalar(select(func.count()).select_from(models.ContentVersion)) == version_count_before
@@ -1317,14 +1403,14 @@ def test_prepare_change_rejects_decision_attestation_without_new_decision(workfl
         assert blocked.data["rule"] == "decision_attestation_not_applicable"
 
 
-def test_prepare_decision_attestation_does_not_authorize_unrelated_governed_change(
+def test_prepare_decision_attestation_requires_every_changed_governed_field(
     workflow_db,
 ) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         port, signed = _signed_ready_baseline(session, ids, context, task_id)
         run_id, started = _start_change(port, ids, context, task_id, reason="mixed governed diff")
-        decision = "Human — Marco: Keep the finish crisp at serving time"
+        decision = "Human — Marco: Change the purpose to compare texture and aroma"
         candidate = (signed.title + "\n" + signed.body).replace(
             "Purpose: Compare texture",
             "Purpose: Compare texture and aroma",
@@ -1344,9 +1430,21 @@ def test_prepare_decision_attestation_does_not_authorize_unrelated_governed_chan
             governed_change_fields=["Decisions"],
         )
         assert not blocked.ok
-        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED"
-        assert {item["field"] for item in blocked.data["required_authorizations"]} == {"Purpose"}
+        assert blocked.code == "GOVERNED_CHANGE_FIELDS_INCOMPLETE"
+        assert blocked.data["missing_fields"] == ["Purpose"]
         assert port._current_content_version_id(context["generation_id"], task_id) == current_before
+
+        accepted = _prepare_change(
+            port,
+            ids,
+            task_id,
+            run_id,
+            started.data["operation_id"],
+            candidate,
+            governed_change_fields=["Purpose", "Decisions"],
+        )
+        assert accepted.ok, (accepted.code, accepted.http_status, accepted.data)
+        assert accepted.data["agent_attested_decisions"] == [decision]
 
 
 def test_prepare_change_consumes_exact_durable_grant_before_governed_activation(
@@ -1364,7 +1462,7 @@ def test_prepare_change_consumes_exact_durable_grant_before_governed_activation(
             port, ids, task_id, run_id, started.data["operation_id"], candidate
         )
         required = blocked.data["required_authorizations"]
-        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED" and len(required) == 1
+        assert blocked.code == "CONFIRMATION_REQUIRED" and len(required) == 1
 
         admin_run = _next(ids)
         _register_run(
@@ -1844,333 +1942,19 @@ def test_safe_reclaim_is_postgresql_native_different_run_recovery(workflow_db, m
         assert claimed.data["claimed_prepared_successor"] is True
 
 
-def test_postgresql_proposals_and_apply_proposal_install_exact_authorized_candidate(
+def test_postgresql_governed_large_change_without_marco_decision_returns_to_chat(
     workflow_db, monkeypatch
 ) -> None:
     factory, ids, context, task_id = workflow_db
-    author_run = _next(ids)
-    verifier_run = _next(ids)
-    admin_run = _next(ids)
-    applying_run = _next(ids)
     from dish_tool import backend as asana_backend
 
     monkeypatch.setattr(
         asana_backend.AsanaBackend,
         "__init__",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("PostgreSQL proposal commands must not construct Asana")
+            AssertionError("PostgreSQL connected correction must not construct Asana")
         ),
     )
-    with session_scope(factory) as session:
-        _add_verification_queue(session, ids, context)
-        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=verifier_run,
-            owner="verifier-owner",
-            agent="codex",
-        )
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=admin_run,
-            owner="marco",
-            agent="marco",
-        )
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=applying_run,
-            owner="applying-owner",
-            agent="gpt",
-        )
-        port = _port(session, ids)
-        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
-        prepared = _prepare_for_verification(
-            port,
-            ids,
-            task_id=task_id,
-            operation_id=started.data["operation_id"],
-            run_id=author_run,
-        )
-        _start_verification(
-            port,
-            ids,
-            task_id=task_id,
-            operation_id=started.data["operation_id"],
-            run_id=verifier_run,
-        )
-        _inspect(
-            port,
-            ids,
-            task_id=task_id,
-            operation_id=started.data["operation_id"],
-            run_id=verifier_run,
-        )
-        reviewed = session.get(
-            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
-        )
-        candidate_text = (reviewed.title + "\n" + reviewed.body).replace(
-            "Purpose: Compare texture",
-            "Purpose: Compare texture and aroma",
-        )
-        rejected = port.execute(
-            _call(
-                "reject",
-                run_id=verifier_run,
-                request_id=_next(ids),
-                owner="verifier-owner",
-                principal="verification",
-                arguments={
-                    "task_id": str(task_id),
-                    "submission_id": started.data["operation_id"],
-                    "agent": "codex",
-                    "reason": "Marco-governed purpose change needs durable approval",
-                    "route": "large",
-                    "model": "test-verifier",
-                    "file_text": candidate_text,
-                    "governed_change_fields": ["Purpose"],
-                },
-            )
-        )
-        assert rejected.ok, (rejected.code, rejected.http_status, rejected.data)
-        assert rejected.data["semantic_proposal_queued"] is True
-        proposal_id = rejected.data["proposal_id"]
-        assert port._current_content_version_id(context["generation_id"], task_id) == reviewed.content_version_id
-        assert port.execute(
-            _call("proposals", run_id=applying_run, owner="applying-owner")
-        ).data["count"] == 0
-
-        queued = port.execute(
-            _call("queue", run_id=admin_run, owner="marco", principal="admin")
-        )
-        assert queued.ok, (queued.code, queued.http_status, queued.data)
-        assert queued.data["source"] == "postgresql_authority"
-        queued_item = queued.data["issue_items"][0]
-        assert queued_item["queue_group"] == "change_review"
-        assert queued_item["needs_you"] is True
-        queued_action = queued_item["signals"][0]["queue_action"]
-        assert queued_action["proposal_id"] == proposal_id
-        assert queued_action["operation_id"] == started.data["operation_id"]
-        assert queued_action["required_authorizations"] == rejected.data["required_authorizations"]
-
-        for change in rejected.data["required_authorizations"]:
-            grant = port.execute(
-                _call(
-                    "authorize-governed-change",
-                    run_id=admin_run,
-                    request_id=_next(ids),
-                    owner="marco",
-                    principal="admin",
-                    arguments={
-                        "task_id": str(task_id),
-                        "operation_id": started.data["operation_id"],
-                        "field_name": change["field"],
-                        "before": change["before"],
-                        "after": change["after"],
-                        "reason": "approved exact semantic proposal",
-                    },
-                )
-            )
-            assert grant.ok, (grant.code, grant.http_status, grant.data)
-
-        authorized_queue = port.execute(
-            _call("queue", run_id=admin_run, owner="marco", principal="admin")
-        )
-        assert authorized_queue.ok
-        assert authorized_queue.data["needs_you_count"] == 0
-        assert authorized_queue.data["issue_items"][0]["queue_group"] == "system"
-        assert authorized_queue.data["issue_items"][0]["signals"] == [
-            {
-                "kind": "authorized_semantic_proposal",
-                "category": "system",
-                "summary": "The approved proposal is ready for mechanical application.",
-            }
-        ]
-
-        listed = port.execute(
-            _call("proposals", run_id=applying_run, owner="applying-owner")
-        )
-        assert listed.ok
-        assert listed.data["count"] == 1
-        assert listed.data["proposals"][0]["proposal_id"] == proposal_id
-
-        applied = port.execute(
-            _call(
-                "apply-proposal",
-                run_id=applying_run,
-                request_id=_next(ids),
-                owner="applying-owner",
-                arguments={
-                    "proposal_id": proposal_id,
-                    "agent": "gpt",
-                    "model": "test-model",
-                },
-            )
-        )
-        assert applied.ok, (applied.code, applied.http_status, applied.data)
-        assert applied.data["proposal_id"] == proposal_id
-        current_id = port._current_content_version_id(context["generation_id"], task_id)
-        current = session.get(models.ContentVersion, current_id)
-        assert current.content_identity == rejected.data["candidate_identity"]
-        assert "Purpose: Compare texture and aroma" in current.body
-        requirement = session.get(wf.HumanReviewRequirement, uuid.UUID(proposal_id))
-        assert requirement.state == "decided"
-        assert port.execute(
-            _call("proposals", run_id=applying_run, owner="applying-owner")
-        ).data["count"] == 0
-
-
-def test_apply_proposal_succeeds_when_two_governed_fields_change_together(
-    workflow_db,
-) -> None:
-    factory, ids, context, task_id = workflow_db
-    author_run = _next(ids)
-    verifier_run = _next(ids)
-    admin_run = _next(ids)
-    applying_run = _next(ids)
-    with session_scope(factory) as session:
-        _add_verification_queue(session, ids, context)
-        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=verifier_run,
-            owner="verifier-owner",
-            agent="codex",
-        )
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=admin_run,
-            owner="marco",
-            agent="marco",
-        )
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=applying_run,
-            owner="applying-owner",
-            agent="gpt",
-        )
-        port = _port(session, ids)
-        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
-        prepared = _prepare_for_verification(
-            port,
-            ids,
-            task_id=task_id,
-            operation_id=started.data["operation_id"],
-            run_id=author_run,
-        )
-        _start_verification(
-            port,
-            ids,
-            task_id=task_id,
-            operation_id=started.data["operation_id"],
-            run_id=verifier_run,
-        )
-        _inspect(
-            port,
-            ids,
-            task_id=task_id,
-            operation_id=started.data["operation_id"],
-            run_id=verifier_run,
-        )
-        reviewed = session.get(
-            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
-        )
-        candidate_text = (
-            (reviewed.title + "\n" + reviewed.body)
-            .replace("Purpose: Compare texture", "Purpose: Compare texture and aroma")
-            .replace("Locks: Keep crisp", "Locks: Keep crisp and warm")
-        )
-        rejected = port.execute(
-            _call(
-                "reject",
-                run_id=verifier_run,
-                request_id=_next(ids),
-                owner="verifier-owner",
-                principal="verification",
-                arguments={
-                    "task_id": str(task_id),
-                    "submission_id": started.data["operation_id"],
-                    "agent": "codex",
-                    "reason": "Two governed fields change together in one candidate",
-                    "route": "large",
-                    "model": "test-verifier",
-                    "file_text": candidate_text,
-                    "governed_change_fields": ["Purpose", "Locks"],
-                },
-            )
-        )
-        assert rejected.ok, (rejected.code, rejected.http_status, rejected.data)
-        proposal_id = rejected.data["proposal_id"]
-        assert len(rejected.data["required_authorizations"]) == 2
-
-        for change in rejected.data["required_authorizations"]:
-            grant = port.execute(
-                _call(
-                    "authorize-governed-change",
-                    run_id=admin_run,
-                    request_id=_next(ids),
-                    owner="marco",
-                    principal="admin",
-                    arguments={
-                        "task_id": str(task_id),
-                        "operation_id": started.data["operation_id"],
-                        "field_name": change["field"],
-                        "before": change["before"],
-                        "after": change["after"],
-                        "reason": "approved exact semantic proposal",
-                    },
-                )
-            )
-            assert grant.ok, (grant.code, grant.http_status, grant.data)
-
-        # Regression: applying a proposal that consumed more than one governed
-        # authorization grant at once used to violate a global uniqueness
-        # constraint on consumed_result_id, permanently blocking any proposal
-        # that changed two or more governed fields together.
-        applied = port.execute(
-            _call(
-                "apply-proposal",
-                run_id=applying_run,
-                request_id=_next(ids),
-                owner="applying-owner",
-                arguments={
-                    "proposal_id": proposal_id,
-                    "agent": "gpt",
-                    "model": "test-model",
-                },
-            )
-        )
-        assert applied.ok, (applied.code, applied.http_status, applied.data)
-        current_id = port._current_content_version_id(context["generation_id"], task_id)
-        current = session.get(models.ContentVersion, current_id)
-        assert current.content_identity == rejected.data["candidate_identity"]
-        assert "Purpose: Compare texture and aroma" in current.body
-        assert "Locks: Keep crisp and warm" in current.body
-
-        states = session.scalars(
-            select(wf.MarcoAuthorizationState).where(
-                wf.MarcoAuthorizationState.grant_id.in_(
-                    select(wf.MarcoAuthorizationGrant.grant_id).where(
-                        wf.MarcoAuthorizationGrant.operation_id
-                        == uuid.UUID(started.data["operation_id"])
-                    )
-                )
-            )
-        ).all()
-        assert len(states) == 2
-        assert all(state.state == "consumed" for state in states)
-        assert all(state.consumed_result_id == current_id for state in states)
-
-
-def test_postgresql_queue_rejects_only_the_exact_unapproved_semantic_proposal(
-    workflow_db,
-) -> None:
-    factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         port, _author_run, verifier_run, started, prepared, _inspection = _verification_ready(
             session, ids, context, task_id
@@ -2182,7 +1966,7 @@ def test_postgresql_queue_rejects_only_the_exact_unapproved_semantic_proposal(
             "Purpose: Compare texture",
             "Purpose: Compare texture and aroma",
         )
-        proposed = port.execute(
+        blocked = port.execute(
             _call(
                 "reject",
                 run_id=verifier_run,
@@ -2193,7 +1977,7 @@ def test_postgresql_queue_rejects_only_the_exact_unapproved_semantic_proposal(
                     "task_id": str(task_id),
                     "submission_id": started.data["operation_id"],
                     "agent": "codex",
-                    "reason": "Marco-governed purpose change needs durable approval",
+                    "reason": "Purpose change needs Marco's choice",
                     "route": "large",
                     "model": "test-verifier",
                     "file_text": candidate_text,
@@ -2201,91 +1985,119 @@ def test_postgresql_queue_rejects_only_the_exact_unapproved_semantic_proposal(
                 },
             )
         )
-        assert proposed.ok
-        admin_run = _next(ids)
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=admin_run,
-            owner="marco",
-            agent="marco",
-        )
-        request_id = _next(ids)
-        rejected = port.execute(
-            _call(
-                "review-reject",
-                run_id=admin_run,
-                request_id=request_id,
-                owner="marco",
-                principal="admin",
-                arguments={
-                    "proposal_id": proposed.data["proposal_id"],
-                    "reason": "Keep the original purpose",
-                },
-            )
-        )
-        assert rejected.ok, (rejected.code, rejected.http_status, rejected.data)
-        assert rejected.data["proposal_id"] == proposed.data["proposal_id"]
-        assert rejected.data["proposal_state"] == "cancelled"
-        requirement = session.get(
-            wf.HumanReviewRequirement, uuid.UUID(proposed.data["proposal_id"])
-        )
+        assert not blocked.ok
+        assert blocked.code == "CONFIRMATION_REQUIRED"
+        assert blocked.data["rule"] == "marco_chat_decision_required"
+        assert blocked.data["required_governed_fields"] == ["Purpose"]
         operation = session.get(
             wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
         )
-        assert requirement.state == "cancelled"
+        assert operation.phase == "await_verification"
+        cycle = port._latest_cycle(operation.operation_id)
+        assert cycle.lifecycle == "open"
+        assert session.scalar(
+            select(func.count()).select_from(wf.HumanReviewRequirement)
+        ) == 0
+
+def test_governed_large_change_with_exact_marco_decision_opens_fresh_verification(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, _author_run, verifier_run, started, prepared, _inspection = _verification_ready(
+            session, ids, context, task_id
+        )
+        reviewed = session.get(
+            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+        )
+        decision = (
+            "Human — Marco: Change Purpose to texture and aroma and keep the finish crisp and warm, "
+            "2026-10-11"
+        )
+        candidate_text = (
+            (reviewed.title + "\n" + reviewed.body)
+            .replace("Purpose: Compare texture", "Purpose: Compare texture and aroma")
+            .replace("Locks: Keep crisp", "Locks: Keep crisp and warm")
+            .replace("### Research basis", f"{decision}\n### Research basis")
+        )
+        accepted = port.execute(
+            _call(
+                "reject",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "task_id": str(task_id),
+                    "submission_id": started.data["operation_id"],
+                    "agent": "codex",
+                    "reason": "Apply Marco's exact governed choice",
+                    "route": "large",
+                    "model": "test-verifier",
+                    "file_text": candidate_text,
+                    "governed_change_fields": ["Purpose", "Locks", "Decisions"],
+                },
+            )
+        )
+        assert accepted.ok, (accepted.code, accepted.http_status, accepted.data)
+        assert accepted.data["route"] == "large"
+        assert accepted.data["new_cycle_id"]
+        assert accepted.data["verification_hold"] is False
+        operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
+        )
         assert operation.phase == "await_verification"
         current = session.get(
             models.ContentVersion,
             port._current_content_version_id(context["generation_id"], task_id),
         )
-        parse_canonical_document(
-            title=current.title,
-            body=current.body,
-            expected_status="pending-verification",
-        )
-        assert current.content_version_id == reviewed.content_version_id
-        assert "Purpose: Compare texture and aroma" not in current.body
-        audit = session.scalar(
-            select(wf.GovernedAuditEvent).where(
-                wf.GovernedAuditEvent.event_type == "semantic_proposal_rejected",
-                wf.GovernedAuditEvent.operation_id == operation.operation_id,
-            )
-        )
-        assert audit.payload["proposal_id"] == proposed.data["proposal_id"]
-        assert audit.payload["reason"] == "Keep the original purpose"
+        assert "Purpose: Compare texture and aroma" in current.body
+        assert "Locks: Keep crisp and warm" in current.body
+        assert decision in current.body
+        assert session.scalar(
+            select(func.count()).select_from(wf.HumanReviewRequirement)
+        ) == 0
 
-        replay = port.execute(
-            _call(
-                "review-reject",
-                run_id=admin_run,
-                request_id=request_id,
-                owner="marco",
-                principal="admin",
-                arguments={
-                    "proposal_id": proposed.data["proposal_id"],
-                    "reason": "Keep the original purpose",
-                },
-            )
+def test_governed_large_change_requires_every_changed_field_attested(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, _author_run, verifier_run, started, prepared, _inspection = _verification_ready(
+            session, ids, context, task_id
         )
-        assert replay.ok
-        assert replay.data == rejected.data
-        stale = port.execute(
+        reviewed = session.get(
+            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+        )
+        decision = "Human — Marco: Change both Purpose and Locks, 2026-10-11"
+        candidate_text = (
+            (reviewed.title + "\n" + reviewed.body)
+            .replace("Purpose: Compare texture", "Purpose: Compare texture and aroma")
+            .replace("Locks: Keep crisp", "Locks: Keep crisp and warm")
+            .replace("### Research basis", f"{decision}\n### Research basis")
+        )
+        blocked = port.execute(
             _call(
-                "review-reject",
-                run_id=admin_run,
+                "reject",
+                run_id=verifier_run,
                 request_id=_next(ids),
-                owner="marco",
-                principal="admin",
+                owner="verifier-owner",
+                principal="verification",
                 arguments={
-                    "proposal_id": proposed.data["proposal_id"],
-                    "reason": "Try to reject the stale proposal",
+                    "task_id": str(task_id),
+                    "submission_id": started.data["operation_id"],
+                    "agent": "codex",
+                    "reason": "Incomplete governed-field attestation",
+                    "route": "large",
+                    "model": "test-verifier",
+                    "file_text": candidate_text,
+                    "governed_change_fields": ["Purpose", "Decisions"],
                 },
             )
         )
-        assert not stale.ok
-        assert stale.code == "SEMANTIC_PROPOSAL_NOT_FOUND"
-
+        assert not blocked.ok
+        assert blocked.code == "GOVERNED_CHANGE_FIELDS_INCOMPLETE"
+        assert blocked.data["missing_fields"] == ["Locks"]
 
 def test_postgresql_queue_hides_expired_lease_as_system_noise(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
