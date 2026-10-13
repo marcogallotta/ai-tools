@@ -261,8 +261,12 @@ def _format_receipt(
         f"{title(dish_id)} ({count})"
         for dish_id, count in sorted(counts.items(), key=lambda x: (title(x[0]).casefold(), x[0]))
     ) or "none"
+    def checked_label(dish_id: str) -> str:
+        count = counts.get(dish_id, 0)
+        return f"{title(dish_id)} ({count} {'log' if count == 1 else 'logs'})"
+
     finalists = ", ".join(
-        f"{title(dish_id)} ({counts.get(dish_id, 0)} logs)"
+        checked_label(dish_id)
         for dish_id in sorted(set(focus), key=lambda x: (title(x).casefold(), x))
     ) if focus else "none yet"
     return "\n".join((
