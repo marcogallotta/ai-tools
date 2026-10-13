@@ -170,6 +170,10 @@ def _dish_identity(
         exact = [row for row in matches if _key(str(row.get("title") or "")) == _key(target)]
         if len(exact) > 1:
             raise PlanningContextError("Named dish matched several canonical records; supply its UUID")
+        if matches and not exact:
+            raise PlanningContextError(
+                "Dish search returned possible matches; supply an exact title or Dish UUID"
+            )
         dish_id = str(exact[0]["dish_id"]) if exact else ""
     if not dish_id:
         return None, None  # genuinely new named dish
@@ -194,6 +198,12 @@ def assemble_planning_context(
     if not isinstance(owner, str) or not owner:
         raise PlanningContextError("authenticated MCP caller identity required")
 
+    # Resolve a named dish through Dish before any repository documents.
+    selected_id = None
+    canonical = None
+    if scope == "dish":
+        selected_id, canonical = _dish_identity(adapter, caller, run_id, agent, target)
+
     paths = list(BROAD_DOCS if scope == "broad" else
                  BLOCK_BASE_DOCS if scope == "block" else DISH_DOCS)
     sha, files = _read(read_files, checkout, paths)
@@ -212,11 +222,6 @@ def assemble_planning_context(
             detail.extend(parent_file)
         files = [f for f in files if f["path"] != "planning/blocks/index.md"] + detail
         target = chosen.removeprefix("planning/blocks/").removesuffix(".md")
-
-    selected_id = None
-    canonical = None
-    if scope == "dish":
-        selected_id, canonical = _dish_identity(adapter, caller, run_id, agent, target)
 
     recent = []
     if scope != "dish":
