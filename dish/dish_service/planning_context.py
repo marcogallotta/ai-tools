@@ -33,7 +33,7 @@ BLOCK_BASE_DOCS = (
 DISH_DOCS = ("dish-planning-protocol.md",)
 EPOCH = "1970-01-01T00:00:00Z"
 MAX_PAGES = 100
-MAX_CONTEXT_CHARS = 150_000
+MAX_CONTEXT_CHARS = 200_000
 BLOCK_ROW = re.compile(r"^\|\s*\[\x60([^\x60]+\.md)\x60\]\(([^)]+\.md)\)\s*\|", re.M)
 DISH_UUID = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
@@ -368,7 +368,10 @@ def assemble_planning_context(
         block_matches.update({dish_id: "explicit Dish ID" for dish_id in by_id})
         relevant_ids = set(block_matches) | set(focus)
     else:
-        relevant_ids = {str(row["dish_id"]) for row in recent} | set(focus)
+        # Broad discovery returns recent cook *metadata*, not every full log.
+        # The caller reloads full immutable logs for selected finalists/aliases.
+        # This avoids exhausting the bundle budget as recent cooking grows.
+        relevant_ids = set(focus)
         if scope == "dish":
             relevant_ids.update(
                 str(row["dish_id"]) for row in cooked
@@ -415,8 +418,8 @@ def assemble_planning_context(
             "block_title_matches": block_matches,
             "focus_dish_ids": sorted(set(focus)),
             "coverage": (
-                "Full cooked inventory; log detail covers recent updates for broad requests, "
-                "explicit/matched child-block references for blocks, selected dishes and focus IDs. "
+                "Full cooked inventory; broad-mode recent updates are discovery metadata only. "
+                "Immutable log detail covers named child-block matches, named dishes and focus IDs. "
                 "To compare finalists and plausible "
                 "aliases not in logged_dish_ids, reload with their Dish UUIDs in focus_dish_ids."
             ),
