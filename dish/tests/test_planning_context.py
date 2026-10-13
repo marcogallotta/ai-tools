@@ -46,14 +46,15 @@ def read_docs(checkout: Path, paths: list[str]) -> dict:
 
 
 class Adapter:
-    def __init__(self):
+    def __init__(self, expected_agent="gpt"):
         self.calls = []
+        self.expected_agent = expected_agent
 
     def call(self, tool: str, request: dict, *, caller: dict) -> dict:
         assert caller == CALLER
         assert request["client"] == {"run_id": RUN}
         args = request["arguments"]
-        assert args["agent"] == "gpt"
+        assert args["agent"] == self.expected_agent
         self.calls.append((tool, args))
         if tool == "dish_cooked_updates":
             records = [
@@ -282,3 +283,12 @@ def test_focus_dish_ids_fetches_all_selected_logs_without_full_inventory_fanout(
 def test_invalid_focus_ids_do_not_fetch_history():
     with pytest.raises(PlanningContextError, match="focus_dish_ids"):
         context(scope="broad", target="", focus_dish_ids=["not-a-uuid"])
+
+
+@pytest.mark.parametrize("agent", ["gpt", "claude", "codex"])
+def test_same_mcp_context_route_supports_each_agent(agent):
+    adapter = Adapter(expected_agent=agent)
+    loaded = context(adapter, agent=agent, scope="block", target="wok-depth-rice")
+    assert loaded["ok"] is True
+    assert loaded["receipt"].startswith("Context: block wok-depth-rice")
+    assert any(tool == "dish_cook_logs" for tool, _ in adapter.calls)
