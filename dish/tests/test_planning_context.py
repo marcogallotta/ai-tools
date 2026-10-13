@@ -31,7 +31,8 @@ DOCS = {
     "dish-classes.md": "# Dish Classes\n",
     "planning/blocks/index.md": BLOCK_INDEX,
     "planning/blocks/wok-depth-rice.md":
-        "# Fried Rice\nA Round 2 child of [Wok Heat](wok-heat.md).\n",
+        "# Fried Rice\nA Round 2 child of [Wok Heat](wok-heat.md).\n"
+        "Chengdu egg fried rice is a known earlier cook.\n",
     "planning/blocks/wok-heat.md": "# Wok Heat parent\n",
 }
 
@@ -105,7 +106,7 @@ def test_named_block_loads_its_registered_row_parent_protocol_classes_and_histor
         "Docs: dish-planning-protocol, cuisine-map, dish-classes, blocks/wok-depth-rice, "
         "blocks/wok-heat (parent)",
         "Cook history: 2 dishes cooked in total",
-        "Logs read: Chengdu egg fried rice (1), Other food (1)",
+        "Logs read: Chengdu egg fried rice (1)",
         "Finalists checked: none yet",
     ]
     assert bundle["history"]["all_cooked"][0] == {
@@ -115,7 +116,10 @@ def test_named_block_loads_its_registered_row_parent_protocol_classes_and_histor
     assert "latest_qualifying_update_at" not in bundle["history"]["all_cooked"][0]
     assert len(bundle["history"]["recent_updates"]) == 2
     assert [tool for tool, _ in adapter.calls].count("dish_cooked_updates") == 2
-    assert [tool for tool, _ in adapter.calls].count("dish_cook_logs") == 2
+    assert [tool for tool, _ in adapter.calls].count("dish_cook_logs") == 1
+    assert bundle["history"]["logged_dish_ids"] == [DISH]
+    assert bundle["history"]["block_title_matches"][DISH].startswith("named: ")
+    assert OTHER not in bundle["history"]["block_title_matches"]
 
 
 def test_broad_loads_full_discovery_set_without_guessing_a_block():
@@ -282,7 +286,7 @@ def test_focus_dish_ids_fetches_all_selected_logs_without_full_inventory_fanout(
     assert value["history"]["logged_dish_ids"] == [DISH]
     assert [x for x, _ in adapter.calls].count("dish_cook_logs") == 1
     assert "finalists" in value["history"]["coverage"]
-    assert "Finalists checked: Chengdu egg fried rice" in value["receipt"]
+    assert "Finalists checked: Chengdu egg fried rice (1 logs)" in value["receipt"]
 
 
 def test_invalid_focus_ids_do_not_fetch_history():
@@ -354,7 +358,7 @@ def test_receipt_names_each_checked_dish_and_true_log_counts():
     result = context(VariedLogs(), focus_dish_ids=[OTHER, DISH])
     receipt = result["receipt"]
     assert "Logs read: Chengdu egg fried rice (3), Other food (2)" in receipt
-    assert "Finalists checked: Chengdu egg fried rice, Other food" in receipt
+    assert "Finalists checked: Chengdu egg fried rice (3 logs), Other food (2 logs)" in receipt
 
 
 def test_uncooked_finalist_uses_canonical_title_and_zero_logs():
@@ -374,7 +378,109 @@ def test_uncooked_finalist_uses_canonical_title_and_zero_logs():
 
     adapter = Uncompleted()
     result = context(adapter, scope="broad", target="", focus_dish_ids=[uncooked])
-    assert "Finalists checked: Chinese steamed egg" in result["receipt"]
+    assert "Finalists checked: Chinese steamed egg (0 logs)" in result["receipt"]
     assert "Chinese steamed egg (1)" not in result["receipt"]
     assert uncooked in result["history"]["logged_dish_ids"]
     assert any(tool == "dish_read" for tool, _ in adapter.calls)
+
+
+def test_block_finds_named_prior_cooks_without_dish_ids_and_ignores_parent_unrelated():
+    """Realistic wok-depth-rice mentions; parent-only cooks are not child evidence."""
+    nasi = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    khao = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    thai = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    unrelated = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+
+    def block_docs(checkout, paths):
+        result = read_docs(checkout, paths)
+        for entry in result["files"]:
+            if entry["path"] == "planning/blocks/wok-depth-rice.md":
+                entry["text"] = (
+                    "# Fried Rice\n"
+                    "A Round 2 child of [Wok Heat](wok-heat.md).\n"
+                    "**Nasi goreng kampung — correction**\n"
+                    "Khao pad kra pao — controlled return.\n"
+                    "Thai-basil fried rice already has two strong-burner cooks.\n"
+                )
+            if entry["path"] == "planning/blocks/wok-heat.md":
+                entry["text"] = (
+                    "# Wok Heat\n"
+                    "Gongbao chicken with peanuts was excellent but not part of rice depth.\n"
+                )
+        return result
+
+    cooked = [
+        {"dish_id": nasi, "title": "Nasi goreng kampung — new burner", "current_cooked_at": ""},
+        {"dish_id": khao, "title": "Khao pad kra pao fried rice — Thai basil", "current_cooked_at": ""},
+        {"dish_id": thai, "title": "Thai basil fried rice — strong burner", "current_cooked_at": ""},
+        {"dish_id": unrelated, "title": "Gongbao chicken with peanuts — repeat", "current_cooked_at": ""},
+    ]
+
+    class NamedHistory(Adapter):
+        def call(self, tool, request, *, caller):
+            args = request["arguments"]
+            if tool == "dish_cooked_updates":
+                self.calls.append((tool, args))
+                # An unrelated recent Dish must not be mistaken for child-block history.
+                updates = cooked if args["since"] == "1970-01-01T00:00:00Z" else [cooked[-1]]
+                return {"ok": True, "data": {
+                    "generation_id": "33333333-3333-4333-8333-333333333333",
+                    "updates": updates, "next_cursor": None,
+                }}
+            if tool == "dish_cook_logs":
+                self.calls.append((tool, args))
+                counts = {nasi: 3, khao: 2, thai: 1}
+                assert args["dish_id"] in counts
+                return {"ok": True, "data": {
+                    "logs": [
+                        {"log_id": str(uuid.uuid4()), "text": "cooked result"}
+                        for _ in range(counts[args["dish_id"]])
+                    ],
+                    "next_cursor": None,
+                }}
+            return super().call(tool, request, caller=caller)
+
+    adapter = NamedHistory()
+    result = assemble_planning_context(
+        adapter, CALLER, Path("/fake/honest"), block_docs,
+        run_id=RUN, agent="gpt", scope="block", target="wok-depth-rice",
+    )
+    matches = result["history"]["block_title_matches"]
+    assert set(matches) == {nasi, khao, thai}
+    assert all(value.startswith("named: ") for value in matches.values())
+    assert unrelated not in matches
+    assert set(result["history"]["logged_dish_ids"]) == {nasi, khao, thai}
+    assert result["counts"]["logs"] == 6
+    assert "Nasi goreng kampung — new burner (3)" in result["receipt"]
+    assert "Khao pad kra pao fried rice — Thai basil (2)" in result["receipt"]
+    assert "Thai basil fried rice — strong burner (1)" in result["receipt"]
+    assert "Gongbao chicken" not in result["receipt"]
+
+
+def test_block_generic_fried_rice_words_do_not_match_unrelated_cooked_titles():
+    class Unrelated(Adapter):
+        def call(self, tool, request, *, caller):
+            if tool == "dish_cooked_updates":
+                self.calls.append((tool, request["arguments"]))
+                return {"ok": True, "data": {
+                    "generation_id": "33333333-3333-4333-8333-333333333333",
+                    "updates": [
+                        {"dish_id": DISH, "title": "Chicken fried rice — test"}
+                    ], "next_cursor": None,
+                }}
+            return super().call(tool, request, caller=caller)
+
+    def generic_docs(checkout, paths):
+        data = read_docs(checkout, paths)
+        for file in data["files"]:
+            if file["path"] == "planning/blocks/wok-depth-rice.md":
+                file["text"] = "# Fried Rice\nA Round 2 child of [Wok Heat](wok-heat.md)\n"
+        return data
+
+    adapter = Unrelated()
+    result = assemble_planning_context(
+        adapter, CALLER, Path("/fake/honest"), generic_docs,
+        run_id=RUN, agent="gpt", scope="block", target="wok-depth-rice",
+    )
+    assert result["history"]["logged_dish_ids"] == []
+    assert not any(name == "dish_cook_logs" for name, _ in adapter.calls)
