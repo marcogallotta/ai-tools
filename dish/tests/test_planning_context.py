@@ -355,3 +355,25 @@ def test_receipt_names_each_checked_dish_and_true_log_counts():
     receipt = result["receipt"]
     assert "Logs read: Chengdu egg fried rice (3), Other food (2)" in receipt
     assert "Finalists checked: Chengdu egg fried rice, Other food" in receipt
+
+
+def test_uncooked_finalist_uses_canonical_title_and_zero_logs():
+    uncooked = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+    class Uncompleted(Adapter):
+        def call(self, tool, request, *, caller):
+            if request["arguments"].get("dish_id") == uncooked:
+                if tool == "dish_cook_logs":
+                    return {"ok": True, "data": {"logs": [], "next_cursor": None}}
+                if tool == "dish_read":
+                    return {"ok": True, "data": {
+                        "dish_id": uncooked, "title": "Chinese steamed egg",
+                    }}
+            return super().call(tool, request, caller=caller)
+
+    adapter = Uncompleted()
+    result = context(adapter, scope="broad", target="", focus_dish_ids=[uncooked])
+    assert "Finalists checked: Chinese steamed egg" in result["receipt"]
+    assert "Chinese steamed egg (1)" not in result["receipt"]
+    assert uncooked in result["history"]["logged_dish_ids"]
+    assert any(tool == "dish_read" for tool, _ in adapter.calls)
