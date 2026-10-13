@@ -221,3 +221,36 @@ def test_changed_honest_main_between_parent_and_block_fails_closed():
             Adapter(), CALLER, Path("/fake/honest"), drifting,
             run_id=RUN, agent="gpt", scope="block", target="wok-depth-rice",
         )
+
+
+def test_named_dish_reads_dish_before_any_repo_document():
+    events = []
+
+    class RecordingAdapter(Adapter):
+        def call(self, tool, request, *, caller):
+            events.append(tool)
+            return super().call(tool, request, caller=caller)
+
+    def recording_read(checkout, paths):
+        events.append("read_honest")
+        return read_docs(checkout, paths)
+
+    assemble_planning_context(
+        RecordingAdapter(), CALLER, Path("/fake/honest"), recording_read,
+        run_id=RUN, agent="gpt", scope="dish", target="Chengdu egg fried rice",
+    )
+    assert events[:3] == ["dish_search", "dish_read", "read_honest"]
+
+
+def test_named_dish_rejects_nonexact_search_hits_before_document_read():
+    class Inexact(Adapter):
+        def call(self, tool, request, *, caller):
+            if tool == "dish_search":
+                return {"ok": True, "data": {
+                    "results": [{"dish_id": DISH, "title": "Chengdu egg rice"}],
+                    "next_cursor": None,
+                }}
+            return super().call(tool, request, caller=caller)
+
+    with pytest.raises(PlanningContextError, match="possible matches"):
+        context(Inexact(), scope="dish", target="Chengdu egg fried rice")
