@@ -545,9 +545,10 @@ class PlanningContextTool(FastMCPTool):
             title="Load Planning context",
             description=(
                 "Load a pinned Planning protocol, scoped Honest Pantry documents and complete "
-                "Dish cooked history with immutable cook logs. Use before the first Planning "
-                "answer; show the returned Context receipt. Broad for open cross-programme "
-                "planning, block for an exact registered block name, dish for a named dish."
+                "Dish cooked inventory with selected immutable logs. Use before the first "
+                "Planning answer; show the Context receipt. Broad for open cross-programme "
+                "planning, block for an exact registered block, dish for a named dish. "
+                "Supply focus_dish_ids to check full logs for finalists and plausible aliases."
             ),
             parameters={
                 "type": "object",
@@ -559,6 +560,11 @@ class PlanningContextTool(FastMCPTool):
                     },
                     "scope": {"type": "string", "enum": ["broad", "block", "dish"]},
                     "target": {"type": "string", "default": ""},
+                    "focus_dish_ids": {
+                        "type": "array",
+                        "items": {"type": "string", "format": "uuid"},
+                        "maxItems": 16,
+                    },
                     "agent": {"type": "string", "enum": ["gpt", "claude", "codex"]},
                 },
                 "required": ["client", "scope", "agent"],
@@ -585,6 +591,7 @@ class PlanningContextTool(FastMCPTool):
                 self._adapter, caller, self._checkout, read_honest_files,
                 run_id=run_id, agent=arguments.get("agent"),
                 scope=arguments.get("scope"), target=arguments.get("target", ""),
+                focus_dish_ids=arguments.get("focus_dish_ids"),
             )
             target = result["canonical_dish_id"] if result["scope"] == "dish" else result["target"]
             self._store.record(
