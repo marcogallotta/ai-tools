@@ -58,4 +58,20 @@ The visible receipt makes this omission observable, not impossible.
    consistently works.
 6. Release through Dish's existing production deployment process and verify the live tool registry.
 
+## Follow-up list (not part of the pilot)
+
+- **Repository-write context guard:** Evaluate requiring a fresh, authenticated context receipt
+  before an agent can modify the Honest Pantry checkout or push a proposed repository change.
+  Apply this at actual file-write/GitHub credential boundaries across ChatGPT, Claude and Codex,
+  not by routing ordinary PR creation through Dish. Identify every bypass (shell, GitHub connector,
+  local worktrees), authorization exceptions and what the guard can prove before implementation.
+- **Production-wide Dish mutation protection:** Move any required Planning-write precondition into
+  the shared authoritative Dish command path before calling it universal; an MCP-only toggle is
+  insufficient while CLI/HTTP transports remain accessible.
+- **Cross-client acceptance:** In a real ChatGPT Project, Claude Code and Codex session, check the
+  same block and named Dish; confirm the same routed documents, cook-log coverage and visible
+  receipt. Do not require a slash command.
+- **Behavioral limits:** A receipt proves delivered documents and history, not that the agent
+  followed them; ordinary answers without tool calls remain unenforceable by Dish.
+
 No GitHub PR checks or Claude-specific slash command are introduced here.
