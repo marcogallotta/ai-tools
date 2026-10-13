@@ -594,7 +594,14 @@ class PlanningContextTool(FastMCPTool):
             )
             result["receipt_recorded"] = True
             return ToolResult(
-                content=[TextContent(type="text", text=result["receipt"])],
+                content=[
+                    TextContent(
+                        type="text",
+                        text=result["receipt"] + "\n" + json.dumps(
+                            result, ensure_ascii=False, sort_keys=True,
+                        ),
+                    )
+                ],
                 structured_content=result, is_error=False,
             )
         except (PlanningContextError, ValueError, RuntimeError, OSError) as exc:
