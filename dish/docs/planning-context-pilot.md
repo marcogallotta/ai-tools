@@ -8,8 +8,8 @@ there is no client-specific cuisine-routing table.
 
 Use a fresh real `client.run_id` and one of:
 
-- `scope=broad`: Planning protocol, five discovery documents, the complete cooked inventory,
-  recent cooked updates, and immutable logs for those recent records.
+- `scope=broad`: Planning protocol, five discovery documents, the complete cooked inventory
+  as compact title/ID/recorded-last-cooked rows, recent updates and logs for recent records.
 - `scope=block, target=wok-depth-rice`: protocol, cuisine map, dish classes, exact registry row,
   named block detail and declared parent, full cooked inventory, and logs for recent records and
   Dish UUIDs referenced by the selected block files. Unknown/ambiguous blocks fail instead of guessing.
@@ -19,27 +19,42 @@ Use a fresh real `client.run_id` and one of:
   plausible aliases (up to 16 per request); this fetches their complete logs. The first call does
   **not** certify all candidate/alias histories merely because the inventory is complete.
 
-The `agent` argument is `gpt`, `claude`, or `codex`. The result includes all selected document
-texts and the history material, a pinned Honest Pantry commit, and a one-line `receipt`.
-**Show that line in the Planning answer**, e.g. "Context: block wok-depth-rice, 5 docs, 12 cook logs
-(Honest <sha>)". No receipt means the run did not finish a validated bundle.
+The `agent` argument is `gpt`, `claude`, or `codex`. Results include the selected document
+texts, a pinned Honest Pantry commit, a compact cooked inventory and only the relevant full cook logs.
+The receipt is **multiline**, shown at the top of the first Planning answer and after finalist reload:
 
-All cooked-update and cook-log pages are exhausted. A changed generation, stale repository, missing
-file, ambiguous identity, or response over the configured budget fails closed: no receipt is recorded.
+```text
+Context loaded (block: wok-depth-rice)
+Docs: dish-planning-protocol, cuisine-map, dish-classes, blocks/wok-depth-rice, blocks/wok-heat (parent)
+Cook history: 41 dishes cooked in total
+Logs read: Nasi goreng (3), Khao pad (2)
+Finalists checked: none yet
+```
+
+Names and counts reflect what was *actually retrieved*, not predetermined examples. On
+`focus_dish_ids` reload, `Finalists checked` names the checked Dishes. No receipt means the run
+did not finish a validated bundle.
+
+All cooked-update and selected cook-log pages are exhausted. A changed generation during an active
+read, missing file, ambiguous identity, or response exceeding **150,000 characters** fails closed:
+no receipt is recorded. A pinned source revision is kept as provenance, not a post-read expiry gate.
+The `last_cooked` inventory field reflects Dish's current-cooked timestamp; imported timestamps
+are not proof of an actual recent cook without an immutable cook log.
 
 ## Optional mutation precondition
 
 `DISH_MCP_REQUIRE_PLANNING_CONTEXT=1` makes the **MCP shell** refuse `dish_create` and
-`dish_start(kind=planning)` unless that authenticated owner and exact client run have a fresh context
-receipt against the current Honest checkout. Defaults to **off** during pilot qualification. The
-receipt store is local SQLite, default `~/.local/state/dish/planning-context.sqlite3`, overridable
-by `DISH_MCP_PLANNING_CONTEXT_DB`. This records context delivery, **not** model understanding.
-Receipts expire after 90 minutes and are invalidated when Honest Pantry HEAD changes.
+`dish_start(kind=planning)` unless the same authenticated owner and exact agent run have already
+loaded a successful Planning context. It defaults **off** during qualification; switch on after
+the tool is qualified across clients. The receipt store is local SQLite, default
+`~/.local/state/dish/planning-context.sqlite3`, overridable by `DISH_MCP_PLANNING_CONTEXT_DB`.
+Receipts **do not expire with time or repository HEAD changes**: they record delivery of context,
+not model understanding. The original commit SHA and read time remain provenance only.
 
 This guard is at the MCP boundary, not the PostgreSQL command port. **The direct shell CLI and
 other non-MCP transports are not fenced by it.** It is not yet a global Dish write-precondition
-guarantee. Do not enable the guard in production until CLI/API bypass, run ownership, multi-worker
-state, receipt expiry, and create semantics have been validated or moved into the shared authority.
+guarantee. The CLI/API bypass remains a separately documented follow-up. Qualify run ownership,
+multi-worker state and create semantics before switching the MCP guard on.
 
 The shell also cannot stop a plain ChatGPT/Claude/Codex opinion given without invoking a tool.
 The visible receipt makes this omission observable, not impossible.
@@ -50,9 +65,10 @@ The visible receipt makes this omission observable, not impossible.
    dish/tests/postgresql/test_mcp_app_adapter.py` from the Dish test environment.
 2. Test real MCP tool discovery and complete retrieval against **test** Dish and a tracked Honest
    Pantry checkout. Check branch SHA and history cursor exhaustion.
-3. Test stale/missing receipts, mismatched users/runs, named-dish reuse, and transport retry.
-4. Enable the write fence in **test only**; confirm that existing Research/Verification/CLI flows
-   are not unintentionally blocked.
+3. Test missing receipts, mismatched users/runs, named-dish reuse and transport retry. Verify a
+   prior receipt is still accepted after elapsed time or an unrelated repository commit.
+4. Enable the write fence in **test only**; confirm that existing Research/Verification flows
+   are not unintentionally blocked. Enable it in production only after qualification.
 5. Connect ChatGPT, Claude Code, and Codex to the same tool version. Update their direct first-call
    instructions, then trial the one-line receipts. Do not delete the old routing prose before it
    consistently works.
@@ -68,10 +84,15 @@ The visible receipt makes this omission observable, not impossible.
 - **Production-wide Dish mutation protection:** Move any required Planning-write precondition into
   the shared authoritative Dish command path before calling it universal; an MCP-only toggle is
   insufficient while CLI/HTTP transports remain accessible.
+- **Meaningful-change refresh trigger:** Re-evaluate a run's context after a materially relevant
+  change such as a new cook log on a matching Dish or a changed chosen-Dish decision. This is a
+  future semantic invalidation rule, **never** an arbitrary time limit or repository-HEAD check.
 - **Cross-client acceptance:** In a real ChatGPT Project, Claude Code and Codex session, check the
   same block and named Dish; confirm the same routed documents, cook-log coverage and visible
   receipt. Do not require a slash command.
 - **Behavioral limits:** A receipt proves delivered documents and history, not that the agent
   followed them; ordinary answers without tool calls remain unenforceable by Dish.
 
-No GitHub PR checks or Claude-specific slash command are introduced here.
+The pilot-only test workflow is removed from this PR after passing its targeted checks, so it does
+not become a permanent main-branch workflow. No GitHub PR checks or Claude-specific slash command
+are introduced here.
