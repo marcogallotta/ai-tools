@@ -372,14 +372,23 @@ def test_uncooked_finalist_uses_canonical_title_and_zero_logs():
                 if tool == "dish_read":
                     self.calls.append((tool, request["arguments"]))
                     return {"ok": True, "data": {
-                        "dish_id": uncooked, "title": "Chinese steamed egg",
+                        "dish_id": uncooked,
+                        "title": (
+                            "# [Thai basil] Khao pad kra pao — "
+                            "[Thai basil] Khao pad kra pao — basil fried rice"
+                        ),
                     }}
             return super().call(tool, request, caller=caller)
 
     adapter = Uncompleted()
     result = context(adapter, scope="broad", target="", focus_dish_ids=[uncooked])
-    assert "Finalists checked: Chinese steamed egg (0 logs)" in result["receipt"]
-    assert "Chinese steamed egg (1)" not in result["receipt"]
+    assert (
+        "Finalists checked: [Thai basil] Khao pad kra pao — basil fried rice (0 logs)"
+        in result["receipt"]
+    )
+    assert "Logs read: " in result["receipt"]
+    assert "[Thai basil] Khao pad kra pao — [Thai basil]" not in result["receipt"]
+    assert "Finalists checked: #" not in result["receipt"]
     assert uncooked in result["history"]["logged_dish_ids"]
     assert any(tool == "dish_read" for tool, _ in adapter.calls)
 
@@ -489,3 +498,37 @@ def test_block_generic_fried_rice_words_do_not_match_unrelated_cooked_titles():
     )
     assert result["history"]["logged_dish_ids"] == []
     assert not any(name == "dish_cook_logs" for name, _ in adapter.calls)
+
+
+def test_matched_block_dish_with_no_cook_logs_is_visible_in_receipt():
+    """A block match with zero logs must never disappear behind 'Logs read: none'."""
+
+    class NoLogs(Adapter):
+        def call(self, tool, request, *, caller):
+            if tool == "dish_cook_logs":
+                self.calls.append((tool, request["arguments"]))
+                return {"ok": True, "data": {"logs": [], "next_cursor": None}}
+            return super().call(tool, request, caller=caller)
+
+    adapter = NoLogs()
+    result = context(adapter)
+    assert result["history"]["block_title_matches"][DISH].startswith("named: ")
+    assert result["history"]["logged_dish_ids"] == [DISH]
+    assert result["history"]["cook_logs"] == []
+    assert result["counts"]["logs"] == 0
+    assert "Logs read: Chengdu egg fried rice (0 logs)" in result["receipt"]
+    assert "Finalists checked: none yet" in result["receipt"]
+    assert [tool for tool, _ in adapter.calls].count("dish_cook_logs") == 1
+
+
+def test_receipt_display_cleanup_does_not_change_dish_identity():
+    from dish_service.planning_context import _receipt_title
+
+    raw = (
+        "# [Thai basil] Khao pad kra pao — "
+        "[Thai basil] Khao pad kra pao — basil fried rice"
+    )
+    assert _receipt_title(raw) == "[Thai basil] Khao pad kra pao — basil fried rice"
+    assert _receipt_title("Khao pad kra pao — Thai basil fried rice") == (
+        "Khao pad kra pao — Thai basil fried rice"
+    )
