@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import unicodedata
 import uuid
 from typing import Any, Callable, Mapping
 
@@ -182,6 +183,51 @@ def _dish_identity(
     return dish_id, _call(adapter, caller, run_id, agent, "dish_read", dish_id=dish_id)
 
 
+def _block_title_mentions(
+    block_text: str, cooked: list[dict[str, Any]],
+) -> dict[str, str]:
+    """Find explicit multiword cooked-title phrases in this block's own text.
+
+    Match normalized whole words, never loose keywords or the parent's text.
+    Prefixes and interior spans handle descriptive Dish titles without treating
+    a generic two-word class such as "fried rice" as a Dish identity.
+    The matched phrase is returned for audit; this is discovery, not a new
+    canonical Dish identity or proof of a successful cook.
+    """
+    def words(text: str) -> list[str]:
+        folded = unicodedata.normalize("NFKD", text.casefold())
+        plain = "".join(char for char in folded if not unicodedata.combining(char))
+        return re.findall(r"[a-z0-9]+", plain)
+
+    lines = {" " + " ".join(words(line)) + " " for line in block_text.splitlines()}
+    found: dict[str, str] = {}
+    for row in cooked:
+        dish_id = str(row.get("dish_id") or "")
+        title = str(row.get("title") or "")
+        if not dish_id or not title:
+            continue
+        clean_title = re.sub(r"^\[[^\]]+\]\s*", "", title)
+        head = re.split(r"\s+[—–-]\s+|:\s+", clean_title, maxsplit=1)[0]
+        tokens = words(head)
+        if len(tokens) < 3:
+            continue
+        for span in range(min(len(tokens), 9), 2, -1):
+            matches = [
+                " ".join(tokens[start:start + span])
+                for start in range(len(tokens) - span + 1)
+                if sum(len(token) for token in tokens[start:start + span]) >= 13
+            ]
+            matched = next(
+                (phrase for phrase in matches
+                 if any(" " + phrase + " " in line for line in lines)),
+                None,
+            )
+            if matched:
+                found[dish_id] = matched
+                break
+    return found
+
+
 def _format_receipt(
     *, scope: str, target: str, files: list[dict[str, str]],
     parent_path: str | None, cooked: list[dict[str, Any]],
@@ -216,7 +262,8 @@ def _format_receipt(
         for dish_id, count in sorted(counts.items(), key=lambda x: (title(x[0]).casefold(), x[0]))
     ) or "none"
     finalists = ", ".join(
-        title(dish_id) for dish_id in sorted(set(focus), key=lambda x: (title(x).casefold(), x))
+        f"{title(dish_id)} ({counts.get(dish_id, 0)} logs)"
+        for dish_id in sorted(set(focus), key=lambda x: (title(x).casefold(), x))
     ) if focus else "none yet"
     return "\n".join((
         f"Context loaded ({scope}: {target or 'all'})",
@@ -262,13 +309,15 @@ def assemble_planning_context(
     sha, files = _read(read_files, checkout, paths)
     index_row = None
     parent_path = None
+    block_detail_text = ""
     if scope == "block":
         index = next(f["text"] for f in files if f["path"] == "planning/blocks/index.md")
         chosen, index_row = _block(index, target)
         sha2, detail = _read(read_files, checkout, [chosen])
         if sha2 != sha:
             raise PlanningContextError("Honest Pantry main changed while resolving the block")
-        parent = _parent(detail[0]["text"])
+        block_detail_text = detail[0]["text"]
+        parent = _parent(block_detail_text)
         if parent and parent != chosen:
             parent_path = parent
             sha3, parent_file = _read(read_files, checkout, [parent])
@@ -287,27 +336,30 @@ def assemble_planning_context(
     cooked = _pages(
         adapter, caller, run_id, agent, "dish_cooked_updates", "updates", since=EPOCH,
     )
-    # Cooked inventory is complete; log detail is bounded to the relevant subset.
-    # Full finalist/alias history is fetched when focus_dish_ids names that subset.
-    relevant_ids = {row["dish_id"] for row in recent} | set(focus)
+    # Cooked inventory is complete; detailed logs remain selected and bounded.
+    # For a named block, match canonical cooked titles actually mentioned in
+    # the child document, as well as explicit child Dish UUIDs. The parent is
+    # context, not permission to fetch all unrelated parent-programme logs.
+    block_matches: dict[str, str] = {}
     if scope == "block":
-        relevant_ids.update(
+        cooked_ids = {str(row["dish_id"]) for row in cooked}
+        by_name = _block_title_mentions(block_detail_text, cooked)
+        by_id = {
             match.group(0).lower()
-            for file in files if file["path"].startswith("planning/blocks/")
-            for match in DISH_UUID.finditer(file["text"])
-        )
-    if scope == "dish":
-        relevant_ids.update(
-            row["dish_id"] for row in cooked
-            if row["dish_id"] == selected_id or _key(str(row.get("title") or "")) == _key(target)
-        )
-        if selected_id:
-            relevant_ids.add(selected_id)
-    # A programme file may refer to a planned or archival Dish that has no
-    # cooked record. Such references are not evidence of completed cooking.
-    if scope == "block":
-        cooked_ids = {row["dish_id"] for row in cooked}
-        relevant_ids = (relevant_ids & cooked_ids) | set(focus)
+            for match in DISH_UUID.finditer(block_detail_text)
+        } & cooked_ids
+        block_matches = {dish_id: "named: " + phrase for dish_id, phrase in by_name.items()}
+        block_matches.update({dish_id: "explicit Dish ID" for dish_id in by_id})
+        relevant_ids = set(block_matches) | set(focus)
+    else:
+        relevant_ids = {str(row["dish_id"]) for row in recent} | set(focus)
+        if scope == "dish":
+            relevant_ids.update(
+                str(row["dish_id"]) for row in cooked
+                if row["dish_id"] == selected_id or _key(str(row.get("title") or "")) == _key(target)
+            )
+            if selected_id:
+                relevant_ids.add(selected_id)
     logs: list[dict[str, Any]] = []
     for dish_id in sorted(relevant_ids):
         for log in _pages(
@@ -344,10 +396,12 @@ def assemble_planning_context(
             "recent_updates": recent, "recent_logged_cooks": recent_logged,
             "all_cooked": compact_cooked, "cook_logs": logs,
             "logged_dish_ids": sorted(relevant_ids),
+            "block_title_matches": block_matches,
             "focus_dish_ids": sorted(set(focus)),
             "coverage": (
-                "Full cooked inventory; log detail covers recent updates, block references, "
-                "the selected dish, and requested focus IDs. To compare finalists and plausible "
+                "Full cooked inventory; log detail covers recent updates for broad requests, "
+                "explicit/matched child-block references for blocks, selected dishes and focus IDs. "
+                "To compare finalists and plausible "
                 "aliases not in logged_dish_ids, reload with their Dish UUIDs in focus_dish_ids."
             ),
         },
