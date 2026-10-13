@@ -28,6 +28,9 @@ jobs:
         run: |
           python -m compileall -q dish/dish_service/planning_context.py dish/dish_service/mcp_server.py
           python -m compileall -q dish/tests/test_planning_context.py dish/tests/test_planning_context_mcp.py
+      - name: Lint Planning MCP additions
+        run: |
+          python -m ruff check --select E4,E7,E9,F dish/dish_service/planning_context.py dish/dish_service/mcp_server.py dish/tests/test_planning_context.py dish/tests/test_planning_context_mcp.py
       - name: Run targeted Planning MCP tests
         run: |
           cd dish
