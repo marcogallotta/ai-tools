@@ -11,8 +11,11 @@ Use a fresh real `client.run_id` and one of:
 - `scope=broad`: Planning protocol, five discovery documents, the complete cooked inventory
   as compact title/ID/recorded-last-cooked rows, recent updates and logs for recent records.
 - `scope=block, target=wok-depth-rice`: protocol, cuisine map, dish classes, exact registry row,
-  named block detail and declared parent, full cooked inventory, and logs for recent records and
-  Dish UUIDs referenced by the selected block files. Unknown/ambiguous blocks fail instead of guessing.
+  named block detail and declared parent, full cooked inventory, and cook logs for dishes identified
+  by UUID **or distinct multiword canonical-title mentions in the child block**. Name matching is
+  exact after word/punctuation normalization, not general cuisine/ingredient guesswork. The parent
+  is read for context but its unrelated dishes do not enter child history. Unknown/ambiguous block
+  identities fail instead of guessing.
 - `scope=dish, target=<Dish UUID or exact title>`: protocol, canonical Dish when one exists, the full
   inventory and relevant logs. Multiple exact matches fail; a new title returns no canonical Dish.
 - Before recommending finalists, call again with `focus_dish_ids=[...]` covering those dishes and
@@ -32,10 +35,13 @@ Finalists checked: none yet
 ```
 
 Names and counts reflect what was *actually retrieved*, not predetermined examples. On
-`focus_dish_ids` reload, `Finalists checked` names the checked Dishes. No receipt means the run
+`focus_dish_ids` reload, `Finalists checked` names each checked Dish **and its actual log
+count** (including `0 logs`, which is not evidence of an earlier cook). No receipt means the run
 did not finish a validated bundle.
 
-All cooked-update and selected cook-log pages are exhausted. A changed generation during an active
+All cooked-update and selected cook-log pages are exhausted. Block title matches and their
+Dish IDs are exposed in `history.block_title_matches` for audit, but matching a name does not
+itself establish that it was cooked. A changed generation during an active
 read, missing file, ambiguous identity, or response exceeding **150,000 characters** fails closed:
 no receipt is recorded. A pinned source revision is kept as provenance, not a post-read expiry gate.
 The `last_cooked` inventory field reflects Dish's current-cooked timestamp; imported timestamps
