@@ -286,7 +286,7 @@ def test_focus_dish_ids_fetches_all_selected_logs_without_full_inventory_fanout(
     assert value["history"]["logged_dish_ids"] == [DISH]
     assert [x for x, _ in adapter.calls].count("dish_cook_logs") == 1
     assert "finalists" in value["history"]["coverage"]
-    assert "Finalists checked: Chengdu egg fried rice (1 logs)" in value["receipt"]
+    assert "Finalists checked: Chengdu egg fried rice (1 log)" in value["receipt"]
 
 
 def test_invalid_focus_ids_do_not_fetch_history():
