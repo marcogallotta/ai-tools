@@ -55,7 +55,8 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
         "ok": True, "code": "OK",
         "repository_sha": "b" * 40,
         "scope": "block", "target": "wok-depth-rice",
-        "canonical_dish_id": None, "receipt": "Context: block wok-depth-rice, 5 docs, 2 cook logs",
+        "canonical_dish_id": None,
+        "receipt": "Context loaded (block: wok-depth-rice)\nDocs: dish-planning-protocol",
     }
     monkeypatch.setattr(mcp_server, "assemble_planning_context", lambda *args, **kwargs: payload)
     res = asyncio.run(tool.run({
@@ -63,7 +64,7 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
         "scope": "block", "target": "wok-depth-rice",
     }))
     assert res.structured_content["receipt_recorded"] is True
-    assert res.content[0].text.startswith("Context: block wok-depth-rice, 5 docs")
+    assert res.content[0].text.startswith("Context loaded (block: wok-depth-rice)")
     assert '"repository_sha"' in res.content[0].text
     assert fake.recorded == [{
         "owner": "192548", "run_id": RUN, "sha": "b" * 40,
