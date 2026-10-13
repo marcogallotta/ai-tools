@@ -366,6 +366,7 @@ def test_uncooked_finalist_uses_canonical_title_and_zero_logs():
                 if tool == "dish_cook_logs":
                     return {"ok": True, "data": {"logs": [], "next_cursor": None}}
                 if tool == "dish_read":
+                    self.calls.append((tool, request["arguments"]))
                     return {"ok": True, "data": {
                         "dish_id": uncooked, "title": "Chinese steamed egg",
                     }}
