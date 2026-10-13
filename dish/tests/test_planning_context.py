@@ -173,4 +173,4 @@ def test_receipt_requires_matching_owner_run_fresh_main_and_dish(monkeypatch, tm
 def test_receipt_rejects_noncanonical_run_id(tmp_path):
     store = PlanningReceiptStore(tmp_path / "receipt.sqlite3")
     with pytest.raises(PlanningContextError, match="canonical"):
-        store.record(owner=OWNER, run_id=RUN.upper(), sha=SHA, scope="broad", target="all")
+        store.record(owner=OWNER, run_id=DISH.upper(), sha=SHA, scope="broad", target="all")
