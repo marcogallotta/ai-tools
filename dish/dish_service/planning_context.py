@@ -119,6 +119,10 @@ def _read(read_files: Callable[[Path, list[str]], Mapping[str, Any]],
 
 
 def _block(index: str, target: str) -> tuple[str, str]:
+    if ".." in target or "\" in target or (
+        "/" in target and not target.startswith("planning/blocks/")
+    ):
+        raise PlanningContextError("Block target must be a registered name or path")
     found = [(label, path) for label, path in BLOCK_ROW.findall(index)]
     if not found:
         raise PlanningContextError("No registered programme blocks were found")
