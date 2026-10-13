@@ -187,10 +187,12 @@ def _format_receipt(
     parent_path: str | None, cooked: list[dict[str, Any]],
     logs: list[dict[str, Any]], focus: list[str],
     canonical: Mapping[str, Any] | None,
+    extra_titles: Mapping[str, str],
 ) -> str:
     """Show exact delivered docs and the actual log coverage, not just totals."""
     titles = {str(row["dish_id"]): str(row.get("title") or row["dish_id"])
               for row in cooked}
+    titles.update(extra_titles)
     if canonical and canonical.get("dish_id") and canonical.get("title"):
         titles[str(canonical["dish_id"])] = str(canonical["title"])
 
@@ -354,11 +356,28 @@ def assemble_planning_context(
             "logged_dishes": len(relevant_ids),
         },
     }
+    # New or uncompleted finalist Dishes need their current canonical titles:
+    # the cooked inventory alone cannot name them.
+    known_titles = {str(row["dish_id"]) for row in cooked}
+    if canonical and canonical.get("dish_id"):
+        known_titles.add(str(canonical["dish_id"]))
+    extra_titles: dict[str, str] = {}
+    for dish_id in sorted(set(focus)):
+        if dish_id not in known_titles:
+            record = _call(adapter, caller, run_id, agent, "dish_read", dish_id=dish_id)
+            label = record.get("title")
+            if not isinstance(label, str) or not label.strip():
+                raise PlanningContextError(
+                    f"Could not resolve canonical title for finalist Dish {dish_id}"
+                )
+            extra_titles[dish_id] = label
+
     if len(json.dumps(payload, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
         raise PlanningContextError("Context exceeds the configured budget; no receipt was issued")
     payload["receipt"] = _format_receipt(
         scope=scope, target=target, files=files, parent_path=parent_path,
         cooked=compact_cooked, logs=logs, focus=focus, canonical=canonical,
+        extra_titles=extra_titles,
     )
     return payload
 
