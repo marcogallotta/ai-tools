@@ -223,11 +223,24 @@ def _block_title_mentions(
     return found
 
 
+def _receipt_title(raw: str) -> str:
+    """Clean the display label without changing the canonical Dish record."""
+    label = next((line.strip() for line in raw.splitlines() if line.strip()), "")
+    label = re.sub(r"^#{1,6}\s+", "", label)
+    label = re.sub(r"\s+", " ", label).strip()
+    # Imported Dish titles sometimes contain a heading followed by a
+    # repeated display title: "X — X — descriptor".
+    parts = re.split(r"\s+[—–]\s+", label)
+    while len(parts) > 1 and parts[0].casefold() == parts[1].casefold():
+        parts.pop(0)
+    return " — ".join(parts).strip() or raw.strip()
+
+
 def _format_receipt(
     *, scope: str, target: str, files: list[dict[str, str]],
     parent_path: str | None, cooked: list[dict[str, Any]],
-    logs: list[dict[str, Any]], focus: list[str],
-    canonical: Mapping[str, Any] | None,
+    logs: list[dict[str, Any]], checked_dish_ids: list[str],
+    focus: list[str], canonical: Mapping[str, Any] | None,
     extra_titles: Mapping[str, str],
 ) -> str:
     """Show exact delivered docs and the actual log coverage, not just totals."""
@@ -238,7 +251,7 @@ def _format_receipt(
         titles[str(canonical["dish_id"])] = str(canonical["title"])
 
     def title(dish_id: str) -> str:
-        return titles.get(dish_id, dish_id)
+        return _receipt_title(titles.get(dish_id, dish_id))
 
     def name(path: str) -> str:
         label = path.removesuffix(".md")
@@ -252,9 +265,13 @@ def _format_receipt(
     for log in logs:
         dish_id = str(log["dish_id"])
         counts[dish_id] = counts.get(dish_id, 0) + 1
+    # A successful zero-result log read is still a read. Naming those
+    # attempted Dishes prevents the receipt from hiding gaps in test data.
     log_details = ", ".join(
-        f"{title(dish_id)} ({count})"
-        for dish_id, count in sorted(counts.items(), key=lambda x: (title(x[0]).casefold(), x[0]))
+        f"{title(dish_id)} ({counts[dish_id]})" if counts.get(dish_id, 0)
+        else f"{title(dish_id)} (0 logs)"
+        for dish_id in sorted(set(checked_dish_ids),
+                              key=lambda x: (title(x).casefold(), x))
     ) or "none"
     def checked_label(dish_id: str) -> str:
         count = counts.get(dish_id, 0)
@@ -429,8 +446,8 @@ def assemble_planning_context(
         raise PlanningContextError("Context exceeds the configured budget; no receipt was issued")
     payload["receipt"] = _format_receipt(
         scope=scope, target=target, files=files, parent_path=parent_path,
-        cooked=compact_cooked, logs=logs, focus=focus, canonical=canonical,
-        extra_titles=extra_titles,
+        cooked=compact_cooked, logs=logs, checked_dish_ids=sorted(relevant_ids),
+        focus=focus, canonical=canonical, extra_titles=extra_titles,
     )
     return payload
 
