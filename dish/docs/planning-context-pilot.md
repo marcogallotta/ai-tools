@@ -8,14 +8,16 @@ there is no client-specific cuisine-routing table.
 
 Use a fresh real `client.run_id` and one of:
 
-- `scope=broad`: the Planning protocol, five discovery documents, a recent cooked pass, the full
-  cooked inventory, and its available immutable cook logs.
-- `scope=block, target=wok-depth-rice`: protocol, cuisine map, dish classes, the exact registry row,
-  the named block detail and declared parent, both history passes, and logs. Unknown/ambiguous block
-  names fail rather than guessing.
+- `scope=broad`: Planning protocol, five discovery documents, the complete cooked inventory,
+  recent cooked updates, and immutable logs for those recent records.
+- `scope=block, target=wok-depth-rice`: protocol, cuisine map, dish classes, exact registry row,
+  named block detail and declared parent, full cooked inventory, and logs for recent records and
+  Dish UUIDs referenced by the selected block files. Unknown/ambiguous blocks fail instead of guessing.
 - `scope=dish, target=<Dish UUID or exact title>`: protocol, canonical Dish when one exists, the full
-  cooked inventory for matching, and relevant logged outcomes. A title with multiple exact matches
-  fails. A new title returns no canonical Dish rather than inventing one.
+  inventory and relevant logs. Multiple exact matches fail; a new title returns no canonical Dish.
+- Before recommending finalists, call again with `focus_dish_ids=[...]` covering those dishes and
+  plausible aliases (up to 16 per request); this fetches their complete logs. The first call does
+  **not** certify all candidate/alias histories merely because the inventory is complete.
 
 The `agent` argument is `gpt`, `claude`, or `codex`. The result includes all selected document
 texts and the history material, a pinned Honest Pantry commit, and a one-line `receipt`.
