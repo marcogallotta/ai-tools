@@ -115,3 +115,34 @@ def test_unguarded_creation_preserves_existing_behavior(monkeypatch):
     result = asyncio.run(tool.run(args))
     assert result.structured_content["ok"] is True
     assert len(adapter.calls) == 1
+
+
+def test_write_fence_blocks_planning_starts_but_not_other_starts(monkeypatch):
+    _caller(monkeypatch)
+    definition = next(x for x in mcp_server.TOOLS if x["name"] == "dish_start")
+    adapter = FakeAdapter()
+    store = FakeStore(allow=False)
+    tool = mcp_server.DishTool(
+        definition, adapter, planning_store=store, planning_required=True,
+    )
+    request = {
+        "client": {
+            "run_id": RUN,
+            "request_id": "22222222-2222-4222-8222-222222222222",
+        },
+        "arguments": {
+            "agent": "gpt",
+            "dish_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "kind": "planning",
+        },
+    }
+    blocked = asyncio.run(tool.run(request))
+    assert blocked.structured_content["code"] == "PLANNING_CONTEXT_REQUIRED"
+    assert adapter.calls == []
+    assert len(store.checked) == 1
+
+    request["arguments"]["kind"] = "initial"
+    allowed = asyncio.run(tool.run(request))
+    assert allowed.structured_content["ok"] is True
+    assert len(adapter.calls) == 1
+
