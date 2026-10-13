@@ -174,3 +174,50 @@ def test_receipt_rejects_noncanonical_run_id(tmp_path):
     store = PlanningReceiptStore(tmp_path / "receipt.sqlite3")
     with pytest.raises(PlanningContextError, match="canonical"):
         store.record(owner=OWNER, run_id=DISH.upper(), sha=SHA, scope="broad", target="all")
+
+
+def test_full_cooked_history_exhausts_all_pages():
+    class Paged(Adapter):
+        def call(self, tool, request, *, caller):
+            if tool == "dish_cooked_updates":
+                args = request["arguments"]
+                if args["since"] != "1970-01-01T00:00:00Z":
+                    return {"ok": True, "data": {
+                        "generation_id": "33333333-3333-4333-8333-333333333333",
+                        "updates": [], "next_cursor": None,
+                    }}
+                assert request["client"] == {"run_id": RUN}
+                if "cursor" not in args:
+                    return {"ok": True, "data": {
+                        "generation_id": "33333333-3333-4333-8333-333333333333",
+                        "updates": [{"dish_id": DISH, "title": "Chengdu egg fried rice"}],
+                        "next_cursor": "nextpage",
+                    }}
+                assert args["generation_id"] == "33333333-3333-4333-8333-333333333333"
+                assert args["cursor"] == "nextpage"
+                return {"ok": True, "data": {
+                    "generation_id": args["generation_id"],
+                    "updates": [{"dish_id": OTHER, "title": "Other food"}],
+                    "next_cursor": None,
+                }}
+            return super().call(tool, request, caller=caller)
+    value = context(Paged(), scope="broad", target="")
+    assert len(value["history"]["all_cooked"]) == 2
+    assert len(value["history"]["cook_logs"]) == 2
+
+
+def test_changed_honest_main_between_parent_and_block_fails_closed():
+    counter = {"number": 0}
+
+    def drifting(checkout, paths):
+        counter["number"] += 1
+        payload = read_docs(checkout, paths)
+        if counter["number"] > 1:
+            payload["sha"] = "d" * 40
+        return payload
+
+    with pytest.raises(PlanningContextError, match="main changed"):
+        assemble_planning_context(
+            Adapter(), CALLER, Path("/fake/honest"), drifting,
+            run_id=RUN, agent="gpt", scope="block", target="wok-depth-rice",
+        )
