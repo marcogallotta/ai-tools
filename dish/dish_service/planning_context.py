@@ -239,12 +239,26 @@ def assemble_planning_context(
             adapter, caller, run_id, agent, "dish_cook_logs", "logs", dish_id=dish_id,
         ):
             logs.append({"dish_id": dish_id, **log})
+    recent_logged: list[dict[str, Any]] = []
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(days=21)
+    for row in recent:
+        if any(
+            log["dish_id"] == row.get("dish_id")
+            and datetime.fromisoformat(
+                str(log.get("recorded_at") or "1970-01-01T00:00:00Z").replace("Z", "+00:00")
+            ) >= recent_cutoff
+            for log in logs
+        ):
+            recent_logged.append(row)
     payload: dict[str, Any] = {
         "ok": True, "code": "OK", "repository_sha": sha,
         "scope": scope, "target": target or "all", "files": files,
         "block_index_row": index_row,
         "canonical_dish_id": selected_id, "canonical_dish": canonical,
-        "history": {"recent_updates": recent, "all_cooked": cooked, "cook_logs": logs},
+        "history": {
+            "recent_updates": recent, "recent_logged_cooks": recent_logged,
+            "all_cooked": cooked, "cook_logs": logs,
+        },
         "counts": {"docs": len(files), "cooked": len(cooked), "logs": len(logs)},
     }
     if len(json.dumps(payload, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
