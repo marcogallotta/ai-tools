@@ -189,8 +189,9 @@ def _block_title_mentions(
     """Find explicit multiword cooked-title phrases in this block's own text.
 
     Match normalized whole words, never loose keywords or the parent's text.
-    Prefixes and interior spans handle descriptive Dish titles without treating
-    a generic two-word class such as "fried rice" as a Dish identity.
+    A leading canonical-title phrase handles descriptive titles without
+    treating a generic class such as "fried rice" as a Dish identity. Do not
+    match interior title fragments: they may describe another dish entirely.
     The matched phrase is returned for audit; this is discovery, not a new
     canonical Dish identity or proof of a successful cook.
     """
@@ -212,18 +213,12 @@ def _block_title_mentions(
         if len(tokens) < 3:
             continue
         for span in range(min(len(tokens), 9), 2, -1):
-            matches = [
-                " ".join(tokens[start:start + span])
-                for start in range(len(tokens) - span + 1)
-                if sum(len(token) for token in tokens[start:start + span]) >= 13
-            ]
-            matched = next(
-                (phrase for phrase in matches
-                 if any(" " + phrase + " " in line for line in lines)),
-                None,
-            )
-            if matched:
-                found[dish_id] = matched
+            leading = tokens[:span]
+            if sum(len(token) for token in leading) < 13:
+                continue
+            phrase = " ".join(leading)
+            if any(" " + phrase + " " in line for line in lines):
+                found[dish_id] = phrase
                 break
     return found
 
