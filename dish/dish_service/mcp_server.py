@@ -34,6 +34,9 @@ from starlette.responses import JSONResponse, RedirectResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dish_service.client import DishActionClient
+from dish_service.planning_context import (
+    PlanningContextError, PlanningReceiptStore, assemble_planning_context,
+)
 
 SERVER_NAME = "dish-postgresql-mcp"
 SERVER_VERSION = "4"
@@ -81,7 +84,8 @@ SERVER_INSTRUCTIONS = (
     "for any further work on that Dish. "
     "Use dish_honest_read to read current Honest Pantry files; it updates main first and serves "
     f"nothing if that update fails. {HONEST_STAGE_READING} {HONEST_PLANNING_READING} "
-    "Use Dish cooked discovery and immutable cook logs as that protocol directs."
+    "Use Dish cooked discovery and immutable cook logs as that protocol directs. "
+    "At the start of Planning, call dish_planning_context and display its Context receipt."
 )
 
 
@@ -434,8 +438,13 @@ def _redacted_adapter_error(exc: Exception, adapter: Any) -> str:
 
 class DishTool(FastMCPTool):
     _adapter: Any = PrivateAttr()
+    _planning_store: PlanningReceiptStore | None = PrivateAttr(default=None)
+    _planning_required: bool = PrivateAttr(default=False)
 
-    def __init__(self, definition: Mapping[str, Any], adapter: Any) -> None:
+    def __init__(
+        self, definition: Mapping[str, Any], adapter: Any,
+        planning_store: PlanningReceiptStore | None = None, planning_required: bool = False,
+    ) -> None:
         super().__init__(
             name=str(definition["name"]),
             title=str(definition["title"]),
@@ -445,11 +454,36 @@ class DishTool(FastMCPTool):
             annotations=ToolAnnotations.model_validate(definition["annotations"]),
         )
         self._adapter = adapter
+        self._planning_store = planning_store
+        self._planning_required = planning_required
 
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
         caller = _caller_audit_context(get_access_token())
         client = arguments.get("client")
         run_id = client.get("run_id") if isinstance(client, Mapping) else None
+        if self._planning_required and self.name in {"dish_create", "dish_start"}:
+            payload_args = arguments.get("arguments")
+            if not isinstance(payload_args, Mapping):
+                payload_args = {}
+            if self.name == "dish_create" or payload_args.get("kind") == "planning":
+                try:
+                    if not caller.get("subject") or not isinstance(run_id, str):
+                        raise PlanningContextError("Authenticated Planning run is required")
+                    assert self._planning_store is not None
+                    self._planning_store.require(
+                        owner=caller["subject"], run_id=run_id, checkout=HONEST_CHECKOUT,
+                        dish_id=str(payload_args.get("dish_id") or ""),
+                    )
+                except (PlanningContextError, OSError, ValueError) as exc:
+                    error = {
+                        "ok": False, "code": "PLANNING_CONTEXT_REQUIRED",
+                        "message": str(exc), "retryable": True,
+                    }
+                    return ToolResult(
+                        content=[TextContent(type="text", text=f"Planning: {exc}")],
+                        structured_content=error,
+                        is_error=False,
+                    )
         LOG.info(
             "mcp_connected_agent_call caller=%s tool=%s run_id=%s",
             json.dumps(caller, sort_keys=True, separators=(",", ":")),
@@ -490,6 +524,83 @@ class DishTool(FastMCPTool):
             structured_content=structured,
             is_error=False,
         )
+
+
+class PlanningContextTool(FastMCPTool):
+    """One authenticated read which assembles the stage docs and complete Dish history."""
+
+    _adapter: Any = PrivateAttr()
+    _checkout: Path = PrivateAttr()
+    _store: PlanningReceiptStore = PrivateAttr()
+
+    def __init__(self, adapter: Any, checkout: Path, store: PlanningReceiptStore) -> None:
+        super().__init__(
+            name="dish_planning_context",
+            title="Load Planning context",
+            description=(
+                "Load a pinned Planning protocol, scoped Honest Pantry documents and complete "
+                "Dish cooked history with immutable cook logs. Use before the first Planning "
+                "answer; show the returned Context receipt. Broad for open cross-programme "
+                "planning, block for an exact registered block name, dish for a named dish."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "client": {
+                        "type": "object",
+                        "properties": {"run_id": {"type": "string", "format": "uuid"}},
+                        "required": ["run_id"], "additionalProperties": False,
+                    },
+                    "scope": {"type": "string", "enum": ["broad", "block", "dish"]},
+                    "target": {"type": "string", "default": ""},
+                    "agent": {"type": "string", "enum": ["gpt", "claude", "codex"]},
+                },
+                "required": ["client", "scope", "agent"],
+                "additionalProperties": False,
+            },
+            annotations=ToolAnnotations(
+                readOnlyHint=True, idempotentHint=False,
+                destructiveHint=False, openWorldHint=False,
+            ),
+        )
+        self._adapter = adapter
+        self._checkout = checkout
+        self._store = store
+
+    async def run(self, arguments: dict[str, Any]) -> ToolResult:
+        caller = _caller_audit_context(get_access_token())
+        client = arguments.get("client")
+        run_id = client.get("run_id") if isinstance(client, Mapping) else None
+        try:
+            if not isinstance(run_id, str):
+                raise PlanningContextError("client.run_id is required")
+            result = await asyncio.to_thread(
+                assemble_planning_context,
+                self._adapter, caller, self._checkout, read_honest_files,
+                run_id=run_id, agent=arguments.get("agent"),
+                scope=arguments.get("scope"), target=arguments.get("target", ""),
+            )
+            target = result["canonical_dish_id"] if result["scope"] == "dish" else result["target"]
+            self._store.record(
+                owner=caller["subject"], run_id=run_id,
+                sha=result["repository_sha"], scope=result["scope"],
+                target=target or "",
+            )
+            result["receipt_recorded"] = True
+            return ToolResult(
+                content=[TextContent(type="text", text=result["receipt"])],
+                structured_content=result, is_error=False,
+            )
+        except (PlanningContextError, ValueError, RuntimeError, OSError) as exc:
+            LOG.warning("mcp_planning_context_failure error_type=%s", type(exc).__name__)
+            error = {
+                "ok": False, "code": "PLANNING_CONTEXT_FAILED",
+                "message": str(exc), "receipt_recorded": False,
+            }
+            return ToolResult(
+                content=[TextContent(type="text", text=f"Planning context unavailable: {exc}")],
+                structured_content=error, is_error=False,
+            )
 
 
 class JSONRegistrationContentType:
@@ -554,12 +665,29 @@ def create_app(adapter: Any, config: MCPAuthConfig):
         required_scopes=[],
         require_authorization_consent=True,
     )
+    planning_store = PlanningReceiptStore(
+        Path(os.environ.get(
+            "DISH_MCP_PLANNING_CONTEXT_DB",
+            str(Path.home() / ".local/state/dish/planning-context.sqlite3"),
+        ))
+    )
+    planning_required = os.environ.get("DISH_MCP_REQUIRE_PLANNING_CONTEXT", "0") == "1"
     server = FastMCP(
         SERVER_NAME,
         version=SERVER_VERSION,
         instructions=SERVER_INSTRUCTIONS,
         auth=auth,
-        tools=[*[DishTool(tool, adapter) for tool in TOOLS], build_honest_tool()],
+        tools=[
+            *[
+                DishTool(
+                    tool, adapter, planning_store=planning_store,
+                    planning_required=planning_required,
+                )
+                for tool in TOOLS
+            ],
+            build_honest_tool(),
+            PlanningContextTool(adapter, HONEST_CHECKOUT, planning_store),
+        ],
     )
     return JSONRegistrationContentType(
         CanonicalMCPRedirect(
