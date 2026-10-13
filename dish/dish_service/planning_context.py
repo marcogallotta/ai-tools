@@ -119,7 +119,7 @@ def _read(read_files: Callable[[Path, list[str]], Mapping[str, Any]],
 
 
 def _block(index: str, target: str) -> tuple[str, str]:
-    if ".." in target or "\" in target or (
+    if ".." in target or "\\" in target or (
         "/" in target and not target.startswith("planning/blocks/")
     ):
         raise PlanningContextError("Block target must be a registered name or path")
