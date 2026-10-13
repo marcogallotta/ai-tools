@@ -203,7 +203,8 @@ def test_full_cooked_history_exhausts_all_pages():
             return super().call(tool, request, caller=caller)
     value = context(Paged(), scope="broad", target="")
     assert len(value["history"]["all_cooked"]) == 2
-    assert len(value["history"]["cook_logs"]) == 2
+    assert value["history"]["cook_logs"] == []
+    assert value["history"]["logged_dish_ids"] == []
 
 
 def test_changed_honest_main_between_parent_and_block_fails_closed():
@@ -254,3 +255,30 @@ def test_named_dish_rejects_nonexact_search_hits_before_document_read():
 
     with pytest.raises(PlanningContextError, match="possible matches"):
         context(Inexact(), scope="dish", target="Chengdu egg fried rice")
+
+
+
+def test_focus_dish_ids_fetches_all_selected_logs_without_full_inventory_fanout():
+    class OldInventory(Adapter):
+        def call(self, tool, request, *, caller):
+            if tool == "dish_cooked_updates":
+                args = request["arguments"]
+                if args["since"] != "1970-01-01T00:00:00Z":
+                    return {"ok": True, "data": {
+                        "generation_id": "33333333-3333-4333-8333-333333333333",
+                        "updates": [], "next_cursor": None,
+                    }}
+            return super().call(tool, request, caller=caller)
+
+    adapter = OldInventory()
+    value = context(adapter, scope="broad", target="", focus_dish_ids=[DISH])
+    assert len(value["history"]["all_cooked"]) == 2
+    assert len(value["history"]["cook_logs"]) == 1
+    assert value["history"]["logged_dish_ids"] == [DISH]
+    assert [x for x, _ in adapter.calls].count("dish_cook_logs") == 1
+    assert "finalists" in value["history"]["coverage"]
+
+
+def test_invalid_focus_ids_do_not_fetch_history():
+    with pytest.raises(PlanningContextError, match="focus_dish_ids"):
+        context(scope="broad", target="", focus_dish_ids=["not-a-uuid"])
