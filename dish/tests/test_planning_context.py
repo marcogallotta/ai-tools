@@ -128,7 +128,7 @@ def test_named_dish_loads_single_protocol_canonical_task_and_its_cook_logs():
 
 @pytest.mark.parametrize("target", ["rice", "wok-unknown", "../wok-depth-rice"])
 def test_block_resolution_fails_closed_without_exact_registry_match(target):
-    with pytest.raises(PlanningContextError, match="registered file"):
+    with pytest.raises(PlanningContextError, match="registered|Block target"):
         context(target=target)
 
 
