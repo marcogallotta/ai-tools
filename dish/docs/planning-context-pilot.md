@@ -9,7 +9,9 @@ there is no client-specific cuisine-routing table.
 Use a fresh real `client.run_id` and one of:
 
 - `scope=broad`: Planning protocol, five discovery documents, the complete cooked inventory
-  as compact title/ID/recorded-last-cooked rows, recent updates and logs for recent records.
+  as compact title/ID/recorded-last-cooked rows, and recent cooked-update metadata. **No cook logs
+  are read automatically in broad mode.** Retrieve the full immutable logs for each finalist and
+  plausible alias on a focused `focus_dish_ids` reload before recommending.
 - `scope=block, target=wok-depth-rice`: protocol, cuisine map, dish classes, exact registry row,
   named block detail and declared parent, full cooked inventory, and cook logs for dishes identified
   by UUID **or distinctive leading canonical-title phrases in the child block**. Matching uses
@@ -46,7 +48,7 @@ did not finish a validated bundle.
 All cooked-update and selected cook-log pages are exhausted. Block title matches and their
 Dish IDs are exposed in `history.block_title_matches` for audit, but matching a name does not
 itself establish that it was cooked. A changed generation during an active
-read, missing file, ambiguous identity, or response exceeding **150,000 characters** fails closed:
+read, missing file, ambiguous identity, or response exceeding **200,000 characters** fails closed:
 no receipt is recorded. A pinned source revision is kept as provenance, not a post-read expiry gate.
 The `last_cooked` inventory field reflects Dish's current-cooked timestamp; imported timestamps
 are not proof of an actual recent cook without an immutable cook log.
@@ -80,7 +82,7 @@ The visible receipt makes this omission observable, not impossible.
 4. Enable the write fence in **test only**; confirm that existing Research/Verification flows
    are not unintentionally blocked. Enable it in production only after qualification.
 5. Connect ChatGPT, Claude Code, and Codex to the same tool version. Update their direct first-call
-   instructions, then trial the one-line receipts. Do not delete the old routing prose before it
+   instructions, then trial the multiline receipts. Do not delete the old routing prose before it
    consistently works.
 6. Release through Dish's existing production deployment process and verify the live tool registry.
 
@@ -97,10 +99,12 @@ The visible receipt makes this omission observable, not impossible.
 - **Meaningful-change refresh trigger:** Re-evaluate a run's context after a materially relevant
   change such as a new cook log on a matching Dish or a changed chosen-Dish decision. This is a
   future semantic invalidation rule, **never** an arbitrary time limit or repository-HEAD check.
-- **Broad-context size growth:** The current broad payload was measured at about 126k characters
-  against the 150k cap in a test-service run (Claude review, 2026-10-13). Consider a genuinely
-  compact/paged discovery representation before history growth exhausts the limit; do not silently
-  truncate history or call an incomplete bundle successful.
+- **Broad-context size and client acceptance:** A read-only production-data test measured broad
+  mode at about 202k characters with 15 recent full cook logs. Removing those automatic full logs
+  should reduce the initial bundle to about 144k characters; the hard cap is raised to 200k to
+  leave modest growth room. These are estimates until retested on current production data.
+  Keep the full cooked inventory and recent-update leads; never silently truncate. ChatGPT's
+  acceptance of a 120–200k MCP response still needs a live, cross-client activation test.
 - **Cross-client acceptance:** In a real ChatGPT Project, Claude Code and Codex session, check the
   same block and named Dish; confirm the same routed documents, cook-log coverage and visible
   receipt. Do not require a slash command.
