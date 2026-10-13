@@ -36,6 +36,10 @@ MAX_PAGES = 100
 MAX_CONTEXT_CHARS = 900_000
 RECEIPT_TTL_SECONDS = 90 * 60
 BLOCK_ROW = re.compile(r"^\|\s*\[\x60([^\x60]+\.md)\x60\]\(([^)]+\.md)\)\s*\|", re.M)
+DISH_UUID = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
 
 
 class PlanningContextError(ValueError):
@@ -184,6 +188,7 @@ def assemble_planning_context(
     adapter: Any, caller: Mapping[str, str | None], checkout: Path,
     read_files: Callable[[Path, list[str]], Mapping[str, Any]], *,
     run_id: str, agent: str, scope: str, target: str = "",
+    focus_dish_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     canonical_run_id(run_id)
     if agent not in {"gpt", "claude", "codex"}:
@@ -194,6 +199,11 @@ def assemble_planning_context(
         raise PlanningContextError("a named block or dish requires a target")
     if scope == "broad" and target.strip():
         raise PlanningContextError("broad scope cannot silently consume a named target")
+    focus = focus_dish_ids or []
+    if len(focus) > 16 or any(
+        not isinstance(x, str) or not DISH_UUID.fullmatch(x) for x in focus
+    ):
+        raise PlanningContextError("focus_dish_ids must be at most 16 canonical Dish UUIDs")
     owner = caller.get("subject")
     if not isinstance(owner, str) or not owner:
         raise PlanningContextError("authenticated MCP caller identity required")
@@ -232,13 +242,23 @@ def assemble_planning_context(
     cooked = _pages(
         adapter, caller, run_id, agent, "dish_cooked_updates", "updates", since=EPOCH,
     )
-    logs: list[dict[str, Any]] = []
-    relevant_ids = {row["dish_id"] for row in cooked}
+    # Cooked inventory is complete; log detail is bounded to the relevant subset.
+    # Full finalist/alias history is fetched when focus_dish_ids names that subset.
+    relevant_ids = {row["dish_id"] for row in recent} | set(focus)
+    if scope == "block":
+        relevant_ids.update(
+            match.group(0).lower()
+            for file in files if file["path"].startswith("planning/blocks/")
+            for match in DISH_UUID.finditer(file["text"])
+        )
     if scope == "dish":
-        relevant_ids = {
+        relevant_ids.update(
             row["dish_id"] for row in cooked
             if row["dish_id"] == selected_id or _key(str(row.get("title") or "")) == _key(target)
-        }
+        )
+        if selected_id:
+            relevant_ids.add(selected_id)
+    logs: list[dict[str, Any]] = []
     for dish_id in sorted(relevant_ids):
         for log in _pages(
             adapter, caller, run_id, agent, "dish_cook_logs", "logs", dish_id=dish_id,
@@ -263,8 +283,18 @@ def assemble_planning_context(
         "history": {
             "recent_updates": recent, "recent_logged_cooks": recent_logged,
             "all_cooked": cooked, "cook_logs": logs,
+            "logged_dish_ids": sorted(relevant_ids),
+            "focus_dish_ids": sorted(set(focus)),
+            "coverage": (
+                "Full cooked inventory; log detail covers recent updates, block references, "
+                "the selected dish, and requested focus IDs. To compare finalists and plausible "
+                "aliases not in logged_dish_ids, reload with their Dish UUIDs in focus_dish_ids."
+            ),
         },
-        "counts": {"docs": len(files), "cooked": len(cooked), "logs": len(logs)},
+        "counts": {
+            "docs": len(files), "cooked": len(cooked), "logs": len(logs),
+            "logged_dishes": len(relevant_ids),
+        },
     }
     if len(json.dumps(payload, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
         raise PlanningContextError("Context exceeds the configured budget; no receipt was issued")
