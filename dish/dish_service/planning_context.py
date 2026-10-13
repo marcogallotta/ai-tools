@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import re
 import sqlite3
-import subprocess
 import uuid
 from typing import Any, Callable, Mapping
 
@@ -33,8 +32,7 @@ BLOCK_BASE_DOCS = (
 DISH_DOCS = ("dish-planning-protocol.md",)
 EPOCH = "1970-01-01T00:00:00Z"
 MAX_PAGES = 100
-MAX_CONTEXT_CHARS = 900_000
-RECEIPT_TTL_SECONDS = 90 * 60
+MAX_CONTEXT_CHARS = 150_000
 BLOCK_ROW = re.compile(r"^\|\s*\[\x60([^\x60]+\.md)\x60\]\(([^)]+\.md)\)\s*\|", re.M)
 DISH_UUID = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
@@ -184,6 +182,49 @@ def _dish_identity(
     return dish_id, _call(adapter, caller, run_id, agent, "dish_read", dish_id=dish_id)
 
 
+def _format_receipt(
+    *, scope: str, target: str, files: list[dict[str, str]],
+    parent_path: str | None, cooked: list[dict[str, Any]],
+    logs: list[dict[str, Any]], focus: list[str],
+    canonical: Mapping[str, Any] | None,
+) -> str:
+    """Show exact delivered docs and the actual log coverage, not just totals."""
+    titles = {str(row["dish_id"]): str(row.get("title") or row["dish_id"])
+              for row in cooked}
+    if canonical and canonical.get("dish_id") and canonical.get("title"):
+        titles[str(canonical["dish_id"])] = str(canonical["title"])
+
+    def title(dish_id: str) -> str:
+        return titles.get(dish_id, dish_id)
+
+    def name(path: str) -> str:
+        label = path.removesuffix(".md")
+        if label.startswith("planning/blocks/"):
+            label = "blocks/" + label.removeprefix("planning/blocks/")
+        if path == parent_path:
+            label += " (parent)"
+        return label
+
+    counts: dict[str, int] = {}
+    for log in logs:
+        dish_id = str(log["dish_id"])
+        counts[dish_id] = counts.get(dish_id, 0) + 1
+    log_details = ", ".join(
+        f"{title(dish_id)} ({count})"
+        for dish_id, count in sorted(counts.items(), key=lambda x: (title(x[0]).casefold(), x[0]))
+    ) or "none"
+    finalists = ", ".join(
+        title(dish_id) for dish_id in sorted(set(focus), key=lambda x: (title(x).casefold(), x))
+    ) if focus else "none yet"
+    return "\n".join((
+        f"Context loaded ({scope}: {target or 'all'})",
+        "Docs: " + ", ".join(name(doc["path"]) for doc in files),
+        f"Cook history: {len(cooked)} dishes cooked in total",
+        "Logs read: " + log_details,
+        "Finalists checked: " + finalists,
+    ))
+
+
 def assemble_planning_context(
     adapter: Any, caller: Mapping[str, str | None], checkout: Path,
     read_files: Callable[[Path, list[str]], Mapping[str, Any]], *,
@@ -218,6 +259,7 @@ def assemble_planning_context(
                  BLOCK_BASE_DOCS if scope == "block" else DISH_DOCS)
     sha, files = _read(read_files, checkout, paths)
     index_row = None
+    parent_path = None
     if scope == "block":
         index = next(f["text"] for f in files if f["path"] == "planning/blocks/index.md")
         chosen, index_row = _block(index, target)
@@ -226,6 +268,7 @@ def assemble_planning_context(
             raise PlanningContextError("Honest Pantry main changed while resolving the block")
         parent = _parent(detail[0]["text"])
         if parent and parent != chosen:
+            parent_path = parent
             sha3, parent_file = _read(read_files, checkout, [parent])
             if sha3 != sha:
                 raise PlanningContextError("Honest Pantry main changed while resolving the block parent")
@@ -280,6 +323,16 @@ def assemble_planning_context(
             for log in logs
         ):
             recent_logged.append(row)
+    # The complete inventory is a compact projection; only cook logs establish
+    # actual cooking dates when imported state contains migration timestamps.
+    compact_cooked = [
+        {
+            "title": row.get("title"),
+            "dish_id": row["dish_id"],
+            "last_cooked": row.get("current_cooked_at"),
+        }
+        for row in cooked
+    ]
     payload: dict[str, Any] = {
         "ok": True, "code": "OK", "repository_sha": sha,
         "scope": scope, "target": target or "all", "files": files,
@@ -287,7 +340,7 @@ def assemble_planning_context(
         "canonical_dish_id": selected_id, "canonical_dish": canonical,
         "history": {
             "recent_updates": recent, "recent_logged_cooks": recent_logged,
-            "all_cooked": cooked, "cook_logs": logs,
+            "all_cooked": compact_cooked, "cook_logs": logs,
             "logged_dish_ids": sorted(relevant_ids),
             "focus_dish_ids": sorted(set(focus)),
             "coverage": (
@@ -303,9 +356,9 @@ def assemble_planning_context(
     }
     if len(json.dumps(payload, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
         raise PlanningContextError("Context exceeds the configured budget; no receipt was issued")
-    payload["receipt"] = (
-        f"Context: {scope} {target or 'all'}, {len(files)} docs, {len(logs)} cook logs "
-        f"(Honest {sha[:12]})"
+    payload["receipt"] = _format_receipt(
+        scope=scope, target=target, files=files, parent_path=parent_path,
+        cooked=compact_cooked, logs=logs, focus=focus, canonical=canonical,
     )
     return payload
 
@@ -339,26 +392,14 @@ class PlanningReceiptStore:
                  datetime.now(timezone.utc).timestamp()),
             )
 
-    def require(self, *, owner: str, run_id: str, checkout: Path,
-                dish_id: str = "") -> None:
+    def require(self, *, owner: str, run_id: str) -> None:
+        """A successful context read admits this authenticated agent run, without expiry."""
         if not self.path.exists():
             raise PlanningContextError("No planning-context receipt exists for this MCP service")
         with closing(self._connect()) as connection:
             row = connection.execute(
-                "SELECT sha, scope, target, created_at FROM context_receipts "
-                "WHERE owner = ? AND run_id = ?",
+                "SELECT 1 FROM context_receipts WHERE owner = ? AND run_id = ?",
                 (owner, canonical_run_id(run_id)),
             ).fetchone()
         if row is None:
             raise PlanningContextError("Call dish_planning_context with this client.run_id first")
-        sha, scope, target, created = row
-        if datetime.now(timezone.utc).timestamp() - created > RECEIPT_TTL_SECONDS:
-            raise PlanningContextError("Planning context expired; reload it")
-        current = subprocess.run(
-            ["/usr/bin/git", "rev-parse", "HEAD"], cwd=checkout,
-            capture_output=True, timeout=10, check=False,
-        )
-        if current.returncode or current.stdout.decode().strip() != sha:
-            raise PlanningContextError("Honest Pantry main changed; reload Planning context")
-        if dish_id and scope == "dish" and target != dish_id:
-            raise PlanningContextError("Planning context belongs to another dish")
