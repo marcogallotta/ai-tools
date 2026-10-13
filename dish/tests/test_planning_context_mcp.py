@@ -63,6 +63,8 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
         "scope": "block", "target": "wok-depth-rice",
     }))
     assert res.structured_content["receipt_recorded"] is True
+    assert res.content[0].text.startswith("Context: block wok-depth-rice, 5 docs")
+    assert '"repository_sha"' in res.content[0].text
     assert fake.recorded == [{
         "owner": "192548", "run_id": RUN, "sha": "b" * 40,
         "scope": "block", "target": "wok-depth-rice",
