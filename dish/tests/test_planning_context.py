@@ -123,12 +123,21 @@ def test_named_block_loads_its_registered_row_parent_protocol_classes_and_histor
 
 
 def test_broad_loads_full_discovery_set_without_guessing_a_block():
-    bundle = context(scope="broad", target="")
+    adapter = Adapter()
+    bundle = context(adapter, scope="broad", target="")
     assert [f["path"] for f in bundle["files"]] == [
         "dish-planning-protocol.md", "planning/index.md",
         "planning/roadmap.md", "cuisine-map.md", "dish-classes.md",
         "planning/blocks/index.md",
     ]
+    assert len(bundle["history"]["recent_updates"]) == 2
+    assert len(bundle["history"]["all_cooked"]) == 2
+    assert bundle["history"]["cook_logs"] == []
+    assert bundle["history"]["recent_logged_cooks"] == []
+    assert bundle["counts"]["logged_dishes"] == 0
+    assert "Logs read: none" in bundle["receipt"]
+    assert "Finalists checked: none yet" in bundle["receipt"]
+    assert all(tool != "dish_cook_logs" for tool, _ in adapter.calls)
 
 
 def test_named_dish_loads_single_protocol_canonical_task_and_its_cook_logs():
@@ -327,9 +336,9 @@ def test_same_mcp_context_route_supports_each_agent(agent):
     assert any(tool == "dish_cook_logs" for tool, _ in adapter.calls)
 
 
-def test_bundle_size_cap_is_150k_characters(monkeypatch):
+def test_bundle_size_cap_is_200k_characters(monkeypatch):
     import dish_service.planning_context as mod
-    assert mod.MAX_CONTEXT_CHARS == 150_000
+    assert mod.MAX_CONTEXT_CHARS == 200_000
 
     def oversized(checkout, paths):
         payload = read_docs(checkout, paths)
@@ -532,3 +541,78 @@ def test_receipt_display_cleanup_does_not_change_dish_identity():
     assert _receipt_title("Khao pad kra pao — Thai basil fried rice") == (
         "Khao pad kra pao — Thai basil fried rice"
     )
+
+
+def test_broad_ignores_bulk_recent_logs_but_finalist_reload_fetches_them():
+    """Do not fetch all recent cooked logs just because the initial broad scope is open."""
+    recent_ids = [
+        f"00000000-0000-4000-8000-{i:012x}"
+        for i in range(30, 70)
+    ]
+
+    class ExpensiveRecentHistory(Adapter):
+        def call(self, tool, request, *, caller):
+            args = request["arguments"]
+            if tool == "dish_cooked_updates":
+                self.calls.append((tool, args))
+                return {"ok": True, "data": {
+                    "generation_id": "33333333-3333-4333-8333-333333333333",
+                    "updates": [
+                        {
+                            "dish_id": dish_id,
+                            "title": f"Cooked Dish {n}",
+                            "current_cooked_at": "2026-10-13T00:00:00Z",
+                        }
+                        for n, dish_id in enumerate(recent_ids)
+                    ],
+                    "next_cursor": None,
+                }}
+            if tool == "dish_cook_logs":
+                self.calls.append((tool, args))
+                assert args["dish_id"] == recent_ids[0], (
+                    "broad context unexpectedly fanned out to every recent Dish"
+                )
+                return {"ok": True, "data": {
+                    "logs": [{"log_id": str(uuid.uuid4()), "text": "evidence"}],
+                    "next_cursor": None,
+                }}
+            return super().call(tool, request, caller=caller)
+
+    adapter = ExpensiveRecentHistory()
+    initial = context(adapter, scope="broad", target="")
+    assert len(initial["history"]["recent_updates"]) == 40
+    assert len(initial["history"]["all_cooked"]) == 40
+    assert initial["history"]["cook_logs"] == []
+    assert initial["history"]["logged_dish_ids"] == []
+    assert initial["counts"]["logs"] == 0
+    assert "Logs read: none" in initial["receipt"]
+    assert [name for name, _ in adapter.calls].count("dish_cook_logs") == 0
+
+    reloaded = context(
+        adapter, scope="broad", target="", focus_dish_ids=[recent_ids[0]],
+    )
+    assert len(reloaded["history"]["cook_logs"]) == 1
+    assert reloaded["history"]["logged_dish_ids"] == [recent_ids[0]]
+    assert "Logs read: Cooked Dish 0 (1)" in reloaded["receipt"]
+    assert "Finalists checked: Cooked Dish 0 (1 log)" in reloaded["receipt"]
+    assert [name for name, _ in adapter.calls].count("dish_cook_logs") == 1
+
+
+def test_broad_size_limit_has_growth_room_without_truncation():
+    import dish_service.planning_context as mod
+
+    def near_limit(checkout, paths):
+        payload = read_docs(checkout, paths)
+        # Before history and metadata, this document occupies >150k characters.
+        payload["files"][0]["text"] = "X" * 167_000
+        return payload
+
+    result = assemble_planning_context(
+        Adapter(), CALLER, Path("/fake/honest"), near_limit,
+        run_id=RUN, agent="gpt", scope="broad",
+    )
+    assert len(result["files"][0]["text"]) == 167_000
+    assert len(result["history"]["all_cooked"]) == 2
+    assert result["history"]["cook_logs"] == []
+    assert result["receipt"].startswith("Context loaded (broad: all)")
+    assert mod.MAX_CONTEXT_CHARS == 200_000
