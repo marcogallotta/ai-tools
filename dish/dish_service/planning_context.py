@@ -258,6 +258,11 @@ def assemble_planning_context(
         )
         if selected_id:
             relevant_ids.add(selected_id)
+    # A programme file may refer to a planned or archival Dish that has no
+    # cooked record. Such references are not evidence of completed cooking.
+    if scope == "block":
+        cooked_ids = {row["dish_id"] for row in cooked}
+        relevant_ids = (relevant_ids & cooked_ids) | set(focus)
     logs: list[dict[str, Any]] = []
     for dish_id in sorted(relevant_ids):
         for log in _pages(
