@@ -285,6 +285,30 @@ def test_invalid_focus_ids_do_not_fetch_history():
         context(scope="broad", target="", focus_dish_ids=["not-a-uuid"])
 
 
+def test_named_block_ignores_registered_but_uncooked_dish_references():
+    uncooked = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+    def with_uncooked_reference(checkout, paths):
+        payload = read_docs(checkout, paths)
+        for entry in payload["files"]:
+            if entry["path"] == "planning/blocks/wok-depth-rice.md":
+                entry["text"] += f"\nCandidate not cooked: {uncooked}\n"
+        return payload
+
+    adapter = Adapter()
+    bundle = assemble_planning_context(
+        adapter, CALLER, Path("/fake/honest"), with_uncooked_reference,
+        run_id=RUN, agent="gpt", scope="block", target="wok-depth-rice",
+    )
+    assert bundle["ok"] is True
+    assert uncooked not in bundle["history"]["logged_dish_ids"]
+    queried = [
+        args["dish_id"] for tool, args in adapter.calls
+        if tool == "dish_cook_logs"
+    ]
+    assert uncooked not in queried
+
+
 @pytest.mark.parametrize("agent", ["gpt", "claude", "codex"])
 def test_same_mcp_context_route_supports_each_agent(agent):
     adapter = Adapter(expected_agent=agent)
