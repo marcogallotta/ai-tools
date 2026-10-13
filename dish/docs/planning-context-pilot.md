@@ -12,9 +12,10 @@ Use a fresh real `client.run_id` and one of:
   as compact title/ID/recorded-last-cooked rows, recent updates and logs for recent records.
 - `scope=block, target=wok-depth-rice`: protocol, cuisine map, dish classes, exact registry row,
   named block detail and declared parent, full cooked inventory, and cook logs for dishes identified
-  by UUID **or distinct multiword canonical-title mentions in the child block**. Name matching is
-  exact after word/punctuation normalization, not general cuisine/ingredient guesswork. The parent
-  is read for context but its unrelated dishes do not enter child history. Unknown/ambiguous block
+  by UUID **or distinctive leading canonical-title phrases in the child block**. Matching uses
+  normalized whole words, not interior title fragments that might describe an unrelated dish.
+  The parent is read for context but its unrelated dishes do not enter child history.
+  Unknown/ambiguous block
   identities fail instead of guessing.
 - `scope=dish, target=<Dish UUID or exact title>`: protocol, canonical Dish when one exists, the full
   inventory and relevant logs. Multiple exact matches fail; a new title returns no canonical Dish.
@@ -93,6 +94,10 @@ The visible receipt makes this omission observable, not impossible.
 - **Meaningful-change refresh trigger:** Re-evaluate a run's context after a materially relevant
   change such as a new cook log on a matching Dish or a changed chosen-Dish decision. This is a
   future semantic invalidation rule, **never** an arbitrary time limit or repository-HEAD check.
+- **Broad-context size growth:** The current broad payload was measured at about 126k characters
+  against the 150k cap in a test-service run (Claude review, 2026-10-13). Consider a genuinely
+  compact/paged discovery representation before history growth exhausts the limit; do not silently
+  truncate history or call an incomplete bundle successful.
 - **Cross-client acceptance:** In a real ChatGPT Project, Claude Code and Codex session, check the
   same block and named Dish; confirm the same routed documents, cook-log coverage and visible
   receipt. Do not require a slash command.
