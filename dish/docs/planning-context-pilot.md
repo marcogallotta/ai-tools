@@ -35,9 +35,12 @@ Logs read: Nasi goreng (3), Khao pad (2)
 Finalists checked: none yet
 ```
 
-Names and counts reflect what was *actually retrieved*, not predetermined examples. On
-`focus_dish_ids` reload, `Finalists checked` names each checked Dish **and its actual log
-count** (including `0 logs`, which is not evidence of an earlier cook). No receipt means the run
+Names and counts reflect what was *actually retrieved*, not predetermined examples.
+`Logs read` lists every Dish whose logs were queried, **including matched block Dishes with
+`0 logs`**. On `focus_dish_ids` reload, `Finalists checked` names each checked Dish and its
+actual log count (including `0 logs`, which does not establish a previous cook). Imported
+Markdown headings and repeated title prefixes are cleaned **for receipt display only**; the
+underlying canonical Dish identity and title are not edited. No receipt means the run
 did not finish a validated bundle.
 
 All cooked-update and selected cook-log pages are exhausted. Block title matches and their
