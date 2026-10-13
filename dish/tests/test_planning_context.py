@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import subprocess
 import uuid
 
 import pytest
@@ -101,8 +100,19 @@ def test_named_block_loads_its_registered_row_parent_protocol_classes_and_histor
         "planning/blocks/wok-depth-rice.md", "planning/blocks/wok-heat.md",
     ]
     assert "wok-depth-rice.md" in bundle["block_index_row"]
-    assert bundle["receipt"].startswith("Context: block wok-depth-rice, 5 docs, 2 cook logs")
-    assert bundle["history"]["all_cooked"][0]["dish_id"] == DISH
+    assert bundle["receipt"].splitlines() == [
+        "Context loaded (block: wok-depth-rice)",
+        "Docs: dish-planning-protocol, cuisine-map, dish-classes, blocks/wok-depth-rice, "
+        "blocks/wok-heat (parent)",
+        "Cook history: 2 dishes cooked in total",
+        "Logs read: Chengdu egg fried rice (1), Other food (1)",
+        "Finalists checked: none yet",
+    ]
+    assert bundle["history"]["all_cooked"][0] == {
+        "title": "Chengdu egg fried rice", "dish_id": DISH,
+        "last_cooked": "2026-10-10T10:00:00Z",
+    }
+    assert "latest_qualifying_update_at" not in bundle["history"]["all_cooked"][0]
     assert len(bundle["history"]["recent_updates"]) == 2
     assert [tool for tool, _ in adapter.calls].count("dish_cooked_updates") == 2
     assert [tool for tool, _ in adapter.calls].count("dish_cook_logs") == 2
@@ -148,27 +158,21 @@ def test_history_failure_issues_no_complete_bundle():
         context(Broken())
 
 
-def test_receipt_requires_matching_owner_run_fresh_main_and_dish(monkeypatch, tmp_path):
+def test_receipt_is_bound_to_owner_and_run_without_expiry_or_main_check(tmp_path):
     store = PlanningReceiptStore(tmp_path / "state" / "context.sqlite3")
-    checkout = tmp_path / "honest"
-    checkout.mkdir()
-    def git_head(*args, **kwargs):
-        return subprocess.CompletedProcess(args, 0, stdout=f"{SHA}\n".encode())
-    monkeypatch.setattr("dish_service.planning_context.subprocess.run", git_head)
     with pytest.raises(PlanningContextError, match="No planning-context receipt"):
-        store.require(owner=OWNER, run_id=RUN, checkout=checkout)
+        store.require(owner=OWNER, run_id=RUN)
     store.record(owner=OWNER, run_id=RUN, sha=SHA, scope="dish", target=DISH)
-    store.require(owner=OWNER, run_id=RUN, checkout=checkout, dish_id=DISH)
-    with pytest.raises(PlanningContextError, match="another dish"):
-        store.require(owner=OWNER, run_id=RUN, checkout=checkout, dish_id=OTHER)
+    store.require(owner=OWNER, run_id=RUN)
+    # A receipt remains valid after repo changes and irrespective of its timestamp.
+    import sqlite3
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE context_receipts SET sha=?, created_at=0", ("0" * 40,))
+    store.require(owner=OWNER, run_id=RUN)
     with pytest.raises(PlanningContextError, match="dish_planning_context"):
-        store.require(owner="other-owner", run_id=RUN, checkout=checkout)
-    monkeypatch.setattr(
-        "dish_service.planning_context.subprocess.run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=b"0" * 40),
-    )
-    with pytest.raises(PlanningContextError, match="main changed"):
-        store.require(owner=OWNER, run_id=RUN, checkout=checkout)
+        store.require(owner="other-owner", run_id=RUN)
+    with pytest.raises(PlanningContextError, match="dish_planning_context"):
+        store.require(owner=OWNER, run_id=OTHER)
 
 
 def test_receipt_rejects_noncanonical_run_id(tmp_path):
@@ -278,6 +282,7 @@ def test_focus_dish_ids_fetches_all_selected_logs_without_full_inventory_fanout(
     assert value["history"]["logged_dish_ids"] == [DISH]
     assert [x for x, _ in adapter.calls].count("dish_cook_logs") == 1
     assert "finalists" in value["history"]["coverage"]
+    assert "Finalists checked: Chengdu egg fried rice" in value["receipt"]
 
 
 def test_invalid_focus_ids_do_not_fetch_history():
@@ -314,5 +319,39 @@ def test_same_mcp_context_route_supports_each_agent(agent):
     adapter = Adapter(expected_agent=agent)
     loaded = context(adapter, agent=agent, scope="block", target="wok-depth-rice")
     assert loaded["ok"] is True
-    assert loaded["receipt"].startswith("Context: block wok-depth-rice")
+    assert loaded["receipt"].startswith("Context loaded (block: wok-depth-rice)")
     assert any(tool == "dish_cook_logs" for tool, _ in adapter.calls)
+
+
+def test_bundle_size_cap_is_150k_characters(monkeypatch):
+    import dish_service.planning_context as mod
+    assert mod.MAX_CONTEXT_CHARS == 150_000
+
+    def oversized(checkout, paths):
+        payload = read_docs(checkout, paths)
+        payload["files"][0]["text"] = "X" * mod.MAX_CONTEXT_CHARS
+        return payload
+
+    with pytest.raises(PlanningContextError, match="Context exceeds"):
+        assemble_planning_context(
+            Adapter(), CALLER, Path("/fake/honest"), oversized,
+            run_id=RUN, agent="gpt", scope="broad",
+        )
+
+
+def test_receipt_names_each_checked_dish_and_true_log_counts():
+    class VariedLogs(Adapter):
+        def call(self, tool, request, *, caller):
+            if tool == "dish_cook_logs":
+                dish_id = request["arguments"]["dish_id"]
+                n = 3 if dish_id == DISH else 2
+                return {"ok": True, "data": {
+                    "logs": [{"log_id": str(uuid.uuid4()), "text": "tasting"} for _ in range(n)],
+                    "next_cursor": None,
+                }}
+            return super().call(tool, request, caller=caller)
+
+    result = context(VariedLogs(), focus_dish_ids=[OTHER, DISH])
+    receipt = result["receipt"]
+    assert "Logs read: Chengdu egg fried rice (3), Other food (2)" in receipt
+    assert "Finalists checked: Chengdu egg fried rice, Other food" in receipt
