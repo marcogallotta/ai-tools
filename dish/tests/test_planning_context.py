@@ -389,6 +389,7 @@ def test_block_finds_named_prior_cooks_without_dish_ids_and_ignores_parent_unrel
     nasi = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
     khao = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
     thai = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    goong = "11111111-1111-4111-8111-111111111111"
     unrelated = "ffffffff-ffff-4fff-8fff-ffffffffffff"
 
     def block_docs(checkout, paths):
@@ -401,6 +402,7 @@ def test_block_finds_named_prior_cooks_without_dish_ids_and_ignores_parent_unrel
                     "**Nasi goreng kampung — correction**\n"
                     "Khao pad kra pao — controlled return.\n"
                     "Thai-basil fried rice already has two strong-burner cooks.\n"
+                    "Thai khao pad nam prik pao is a possible future paste test.\n"
                 )
             if entry["path"] == "planning/blocks/wok-heat.md":
                 entry["text"] = (
@@ -413,6 +415,7 @@ def test_block_finds_named_prior_cooks_without_dish_ids_and_ignores_parent_unrel
         {"dish_id": nasi, "title": "Nasi goreng kampung — new burner", "current_cooked_at": ""},
         {"dish_id": khao, "title": "Khao pad kra pao fried rice — Thai basil", "current_cooked_at": ""},
         {"dish_id": thai, "title": "Thai basil fried rice — strong burner", "current_cooked_at": ""},
+        {"dish_id": goong, "title": "Goong pad nam prik pao — shrimp paste dish", "current_cooked_at": ""},
         {"dish_id": unrelated, "title": "Gongbao chicken with peanuts — repeat", "current_cooked_at": ""},
     ]
 
@@ -449,12 +452,14 @@ def test_block_finds_named_prior_cooks_without_dish_ids_and_ignores_parent_unrel
     assert set(matches) == {nasi, khao, thai}
     assert all(value.startswith("named: ") for value in matches.values())
     assert unrelated not in matches
+    assert goong not in matches
     assert set(result["history"]["logged_dish_ids"]) == {nasi, khao, thai}
     assert result["counts"]["logs"] == 6
     assert "Nasi goreng kampung — new burner (3)" in result["receipt"]
     assert "Khao pad kra pao fried rice — Thai basil (2)" in result["receipt"]
     assert "Thai basil fried rice — strong burner (1)" in result["receipt"]
     assert "Gongbao chicken" not in result["receipt"]
+    assert "Goong pad nam prik pao" not in result["receipt"]
 
 
 def test_block_generic_fried_rice_words_do_not_match_unrelated_cooked_titles():
