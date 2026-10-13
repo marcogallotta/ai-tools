@@ -471,8 +471,7 @@ class DishTool(FastMCPTool):
                         raise PlanningContextError("Authenticated Planning run is required")
                     assert self._planning_store is not None
                     self._planning_store.require(
-                        owner=caller["subject"], run_id=run_id, checkout=HONEST_CHECKOUT,
-                        dish_id=str(payload_args.get("dish_id") or ""),
+                        owner=caller["subject"], run_id=run_id,
                     )
                 except (PlanningContextError, OSError, ValueError) as exc:
                     error = {
