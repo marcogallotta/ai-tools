@@ -476,8 +476,14 @@ class DishTool(FastMCPTool):
                     )
                 except (PlanningContextError, OSError, ValueError) as exc:
                     error = {
-                        "ok": False, "code": "PLANNING_CONTEXT_REQUIRED",
-                        "message": str(exc), "retryable": True,
+                        "ok": False,
+                        "command": self.name.removeprefix("dish_").replace("_", "-"),
+                        "code": "PLANNING_CONTEXT_REQUIRED",
+                        "http_status": 409,
+                        "retryable": True,
+                        "allowed_actions": [],
+                        "data": {"message": str(exc)},
+                        "errors": [{"rule": "planning_context_required", "message": str(exc)}],
                     }
                     return ToolResult(
                         content=[TextContent(type="text", text=f"Planning: {exc}")],
