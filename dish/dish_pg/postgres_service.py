@@ -976,15 +976,21 @@ class PostgresRuntimeService:
                         )
                         if generation_id is None:
                             raise WorkflowAuthorityError("no active authority generation")
-                        WorkflowAuthorityService(session).ensure_initial_cutover_run(
-                            generation_id=generation_id,
-                            run_id=run_id,
-                            owner_id=principal.owner_id,
-                            agent=self._bootstrap_agent(
-                                principal_class=principal_class, arguments=arguments
-                            ),
-                            registered_at=datetime.now(timezone.utc),
+                        existing_request = (
+                            session.get(wf.ServiceRequest, parsed_request_id)
+                            if parsed_request_id is not None
+                            else None
                         )
+                        if existing_request is None:
+                            WorkflowAuthorityService(session).ensure_initial_cutover_run(
+                                generation_id=generation_id,
+                                run_id=run_id,
+                                owner_id=principal.owner_id,
+                                agent=self._bootstrap_agent(
+                                    principal_class=principal_class, arguments=arguments
+                                ),
+                                registered_at=datetime.now(timezone.utc),
+                            )
                     result = PostgresCommandPort(
                         session,
                         cursor_secret=self._cursor_secret,
