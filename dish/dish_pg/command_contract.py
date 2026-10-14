@@ -571,7 +571,7 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
                 "items": {"type": "string", "enum": ["Exemptions", "Decisions"]},
                 "uniqueItems": True,
                 "description": (
-                    "Use only when Marco accepts the already-reviewed high-fat dish unchanged: "
+                    "Use only when Marco accepts an already-reviewed fat-limit exception unchanged: "
                     "attest the appended Decision and matching nutrition-fat Exemptions update."
                 ),
             }

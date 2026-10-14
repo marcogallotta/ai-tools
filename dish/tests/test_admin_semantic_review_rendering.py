@@ -17,7 +17,8 @@ def test_governed_exemptions_action_explains_approval_and_roundtrips_parser():
 
     after = (
         "[nutrition-kcal] Scope: this tasting may remain below 700 kcal. | "
-        "[nutrition-protein] Scope: this tasting may remain below 35g protein."
+        "[nutrition-protein] Scope: this tasting may remain below 35g protein. | "
+        "[nutrition-fat] Scope: this meal may exceed its saturated-fat limit."
     )
     spec = governed_change_action(
         operation_id=str(uuid.uuid4()),
@@ -33,12 +34,15 @@ def test_governed_exemptions_action_explains_approval_and_roundtrips_parser():
     assert parsed.before == "None"
     assert parsed.after == after
     assert action["context"]["governed_change"]["added_tokens"] == [
+        "nutrition-fat",
         "nutrition-kcal",
         "nutrition-protein",
     ]
     details = "\n".join(action["details"])
     assert "700–1,000 kcal" in details
     assert "minimum 35 g protein" in details
+    assert "applicable total-fat or saturated-fat limit" in details
+    assert "maximum 40 g fat limit" not in details
     assert "this task, this operation" in details
     assert "does not edit the task or approve Verification" in details
     assert "retry the same unchanged candidate" in details
@@ -47,6 +51,7 @@ def test_governed_exemptions_action_explains_approval_and_roundtrips_parser():
     assert relay.index("Before the command") < relay.index("dish-admin authorize-governed-change")
     assert "[nutrition-kcal]" in relay
     assert "[nutrition-protein]" in relay
+    assert "[nutrition-fat]" in relay
 
 def test_semantic_review_queue_commands_are_first_class_admin_commands():
     proposal_id = str(uuid.uuid4())

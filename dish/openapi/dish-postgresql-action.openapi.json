@@ -395,7 +395,7 @@
                               ]
                             },
                             "uniqueItems": true,
-                            "description": "Use only when Marco accepts the already-reviewed high-fat dish unchanged: attest the appended Decision and matching nutrition-fat Exemptions update."
+                            "description": "Use only when Marco accepts an already-reviewed fat-limit exception unchanged: attest the appended Decision and matching nutrition-fat Exemptions update."
                           }
                         },
                         "required": [
