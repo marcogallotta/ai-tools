@@ -667,6 +667,46 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 action for action in projected_actions if action in ACTION_COMMANDS
             )
         )
+        if call.command_name == "read" and task is not None:
+            task_view = self.reads.task_view(task.task_id)
+            cooked_eligible = (
+                task_view.completion_state == "active"
+                and task_view.operation_id is None
+            )
+            cooked_command: dict[str, Any] = {
+                "command": "cooked",
+                "eligible": cooked_eligible,
+                "arguments": {"dish_id": str(task.task_id)},
+            }
+            if not cooked_eligible:
+                if task_view.operation_id is not None:
+                    cooked_command["blocked_by"] = {
+                        "rule": "open_workflow_operation",
+                        "operation_id": str(task_view.operation_id),
+                    }
+                else:
+                    cooked_command["blocked_by"] = {
+                        "rule": "dish_not_active",
+                        "completion_state": task_view.completion_state,
+                    }
+            result_data["workflow_continuations"] = allowed_actions
+            result_data["task_commands"] = [
+                {
+                    "command": "record-cook-log",
+                    "eligible": True,
+                    "arguments": {"dish_id": str(task.task_id)},
+                },
+                cooked_command,
+            ]
+        if "prepare" in allowed_actions:
+            result_data.setdefault(
+                "prepare_input",
+                {
+                    "requires_complete_document": True,
+                    "assembly": "title + newline + body",
+                    "body_only_valid": False,
+                },
+            )
         required_start_kind = result_data.get("required_start_kind")
         if "start" in allowed_actions and required_start_kind is None:
             if "verify" in raw_actions:
@@ -3549,13 +3589,60 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             state.dish_version == creation_fence.expected_dish_version
             and membership.membership_revision == creation_fence.expected_membership_revision
         )
-        prior_executions = int(self.session.scalar(select(func.count()).select_from(wf.CommandExecution).where(wf.CommandExecution.operation_id == operation.operation_id, wf.CommandExecution.execution_id.notin_([operation.creation_execution_id, execution.execution_id]))) or 0)
+        prior_execution_rows = list(
+            self.session.execute(
+                select(wf.CommandExecution, wf.ServiceRequestOutcome)
+                .join(
+                    wf.ServiceRequestOutcome,
+                    wf.ServiceRequestOutcome.request_id
+                    == wf.CommandExecution.request_id,
+                )
+                .where(
+                    wf.CommandExecution.operation_id == operation.operation_id,
+                    wf.CommandExecution.execution_id.notin_(
+                        [operation.creation_execution_id, execution.execution_id]
+                    ),
+                )
+            )
+        )
+        prior_executions = int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(wf.CommandExecution)
+                .where(
+                    wf.CommandExecution.operation_id == operation.operation_id,
+                    wf.CommandExecution.execution_id.notin_(
+                        [operation.creation_execution_id, execution.execution_id]
+                    ),
+                )
+            )
+            or 0
+        )
+        failed_validation_prepares = all(
+            prior.command_name == "prepare"
+            and prior.status == "failed"
+            and outcome.outcome_class == "rule_error"
+            and outcome.result_code == "VALIDATION_FAILED"
+            and outcome.immutable_success is False
+            for prior, outcome in prior_execution_rows
+        ) and len(prior_execution_rows) == prior_executions
+        harmless_prior_executions = prior_executions == 0 or (
+            operation.phase == "prepare_required" and failed_validation_prepares
+        )
         projection_events = int(self.session.scalar(select(func.count()).select_from(projection.ProjectionOutboxEvent).join(wf.CommandExecution, wf.CommandExecution.execution_id == projection.ProjectionOutboxEvent.command_execution_id).where(wf.CommandExecution.operation_id == operation.operation_id)) or 0)
-        if steps or prior_executions or projection_events or not baseline_matches or operation.operation_revision != 1:
+        if steps or not harmless_prior_executions or projection_events or not baseline_matches or operation.operation_revision != 1:
             raise CommandRuleError(
                 "OPERATION_NOT_PROVABLY_UNAPPLIED",
                 "operation has workflow progress, external-effect intent, or baseline drift",
-                data={"steps": steps, "prior_executions": prior_executions, "projection_events": projection_events, "baseline_matches": baseline_matches},
+                data={
+                    "steps": steps,
+                    "prior_executions": prior_executions,
+                    "failed_validation_prepares": len(prior_execution_rows)
+                    if failed_validation_prepares
+                    else 0,
+                    "projection_events": projection_events,
+                    "baseline_matches": baseline_matches,
+                },
             )
         lease = self.session.scalar(select(wf.ServiceLease).where(wf.ServiceLease.operation_id == operation.operation_id, wf.ServiceLease.state == "active"))
         if lease is not None:
@@ -3566,7 +3653,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         operation.terminal_outcome = "discarded"
         operation.terminal_at = call.now
         operation.operation_revision += 1
-        return {"operation_id": str(operation.operation_id), "originating_request_id": str(operation.creation_request_id), "originating_execution_id": str(operation.creation_execution_id), "lifecycle": operation.lifecycle}
+        return {
+            "operation_id": str(operation.operation_id),
+            "originating_request_id": str(operation.creation_request_id),
+            "originating_execution_id": str(operation.creation_execution_id),
+            "lifecycle": operation.lifecycle,
+            "preserved_failed_prepare_attempts": len(prior_execution_rows),
+        }
 
     def _assert_reclaim_successor_claimable(
         self, *, operation: wf.WorkflowOperation, call: CommandCall
