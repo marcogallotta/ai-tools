@@ -350,23 +350,71 @@ class WorkflowAuthorityRepository:
         ).digest()
 
     @staticmethod
+    def _bootstrap_run_identity_matches(
+        run: wf.ServiceRun,
+        *,
+        generation_id: uuid.UUID,
+        owner_id: str,
+        agent: str | None,
+    ) -> bool:
+        return bool(
+            run.generation_id == generation_id
+            and run.owner_id == owner_id
+            and run.status == "active"
+            and (agent is None or run.agent == agent)
+        )
+
+    @classmethod
     def _require_bootstrap_run_identity(
+        cls,
         run: wf.ServiceRun,
         *,
         generation_id: uuid.UUID,
         owner_id: str,
         agent: str | None,
     ) -> wf.ServiceRun:
-        if (
-            run.generation_id != generation_id
-            or run.owner_id != owner_id
-            or run.status != "active"
-            or (agent is not None and run.agent != agent)
+        if not cls._bootstrap_run_identity_matches(
+            run,
+            generation_id=generation_id,
+            owner_id=owner_id,
+            agent=agent,
         ):
             raise StaleAuthorityError(
                 "run is stale, retired, or conflicts with the authenticated run identity"
             )
         return run
+
+    def initial_cutover_run_admissible(
+        self,
+        *,
+        generation: models.AuthorityGeneration,
+        run_id: uuid.UUID,
+        owner_id: str,
+        agent: str | None,
+    ) -> bool:
+        """Read-only mirror of mutation run admission for command affordances."""
+
+        normalized_owner = owner_id.strip()
+        normalized_agent = None if agent is None else agent.strip()
+        if not normalized_owner or normalized_agent not in {
+            "claude",
+            "gpt",
+            "codex",
+            "marco",
+        }:
+            return False
+        run = self.session.get(wf.ServiceRun, run_id)
+        if run is not None:
+            return self._bootstrap_run_identity_matches(
+                run,
+                generation_id=generation.generation_id,
+                owner_id=normalized_owner,
+                agent=normalized_agent,
+            )
+        return bool(
+            generation.status == "active"
+            and generation.creation_reason == "initial_cutover"
+        )
 
     def ensure_initial_cutover_run(
         self,
@@ -667,9 +715,6 @@ class WorkflowAuthorityRepository:
         generation = self.require_active_generation(
             spec.generation_id, hold_transition_fence=True
         )
-        self.require_active_run(
-            generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
-        )
         payload = dict(spec.canonical_payload)
         payload_sha = sha256_json(payload)
         existing = self.session.get(wf.ServiceRequest, spec.request_id)
@@ -684,6 +729,10 @@ class WorkflowAuthorityRepository:
                 )
             )
             return RequestAdmission(existing, True, outcome)
+
+        self.require_active_run(
+            generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
+        )
 
         candidate_exists = self.session.scalar(
             select(rel.ReleaseCandidate.candidate_id).where(
