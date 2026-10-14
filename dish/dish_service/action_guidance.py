@@ -77,9 +77,12 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
     error_rule = _text(first_error.get("rule"))
 
     instructions: list[str] = [
-        "Treat this Dish result as workflow authority. Use only allowed_actions and exact "
-        "continuation identifiers returned here; do not infer a transition or invent an "
-        "operation, cycle, lease, hold, recovery target, or admin command."
+        (
+            "Treat allowed_actions as authority for workflow continuations, not as the complete "
+            "command inventory. For independent task commands, use data.task_commands and obey "
+            "each command's eligible/blocker fields. Use exact returned identifiers; do not infer "
+            "a transition or invent an operation, cycle, lease, hold, recovery target, or admin command."
+        )
     ]
 
     if code == "BACKEND_UNCERTAIN":
@@ -109,6 +112,18 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "Planning is complete. Continue Research with start(kind=initial) on this same task under a fresh "
                 "client.run_id and fresh client.request_id. Omit prepared_operation_id: the completed Planning "
                 "submission/operation is not a prepared successor, and the Planning run ID must not be reused."
+            )
+        if error_rule == "postgresql_run_identity_stale":
+            instructions.append(
+                "This client run is retired or no longer valid. Start a fresh client.run_id and "
+                "use a fresh client.request_id for the intended command. Do not change run or "
+                "request identity to bypass a pending or uncertain result; this instruction applies "
+                "only to this explicit stale-run rejection."
+            )
+        if error_rule == "postgresql_run_registration_required":
+            instructions.append(
+                "This recovery authority does not auto-register fresh run IDs. Continue only with a client run "
+                "that was registered through the recovery/bootstrap authority; do not keep generating fresh IDs."
             )
         legal_next = _text(data.get("legal_next_step"))
         if legal_next:
@@ -165,6 +180,22 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 instructions.append(retry_instruction)
 
         if command == "read":
+            task_commands = data.get("task_commands")
+            if isinstance(task_commands, list):
+                eligible_commands = {
+                    _text(item.get("command"))
+                    for item in task_commands
+                    if isinstance(item, Mapping) and item.get("eligible") is True
+                }
+                if "record-cook-log" in eligible_commands:
+                    instructions.append(
+                        "A cook log can be recorded directly with record-cook-log; do not start "
+                        "Planning, Research, Verification, or a change operation to reach it."
+                    )
+                if "cooked" in eligible_commands:
+                    instructions.append(
+                        "This Dish can be marked cooked directly with cooked; no workflow operation is required."
+                    )
             binding = data.get("identity_binding")
             dish_id = _text(binding.get("dish_id")) if isinstance(binding, Mapping) else None
             task_gid = _text(binding.get("task_gid")) if isinstance(binding, Mapping) else None
@@ -179,6 +210,15 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                     f"{continuation_identity} do not rediscover "
                     "the Dish through sections or title matching, and never use dish_id as submission_id."
                 )
+
+        prepare_input = data.get("prepare_input")
+        if isinstance(prepare_input, Mapping) and prepare_input.get(
+            "requires_complete_document"
+        ) is True:
+            instructions.append(
+                "For prepare file_text, send the complete canonical document assembled as "
+                "title + newline + body. The body returned by read is not valid by itself."
+            )
 
         if command == "inspect" and error_rule == "operation_not_found":
             instructions.append(

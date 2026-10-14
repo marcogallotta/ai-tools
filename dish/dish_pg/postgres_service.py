@@ -110,6 +110,39 @@ def database_failure_error(
     )
 
 
+def workflow_authority_error(exc: WorkflowAuthorityError) -> DishRuleError:
+    """Preserve actionable run-identity failures without weakening other conflicts."""
+
+    message = str(exc)
+    if message.startswith(
+        (
+            "automatic run creation is limited",
+            "run registration or bootstrap authority is required",
+        )
+    ):
+        return DishRuleError(
+            "CONFLICT",
+            message,
+            rule="postgresql_run_registration_required",
+            details={"required_next_action": "obtain_registered_client_run"},
+        )
+    if message.startswith("run is stale, retired"):
+        return DishRuleError(
+            "CONFLICT",
+            message,
+            rule="postgresql_run_identity_stale",
+            details={
+                "required_next_action": "use_fresh_client_run",
+                "fresh_request_id_required": True,
+            },
+        )
+    return DishRuleError(
+        "CONFLICT",
+        message,
+        rule="postgresql_command_rejected",
+    )
+
+
 def _dish_admin_prefix(profile: str) -> list[str]:
     """Return ``dish-admin`` plus ``--profile`` whenever the profile is not prod.
 
@@ -576,12 +609,14 @@ class PostgresRuntimeService:
                 rule="service_request_identity_conflict",
                 details={"request_id": request_id},
             ) from exc
-        except (CommandPortError, WorkflowAuthorityError) as exc:
+        except CommandPortError as exc:
             raise DishRuleError(
                 "CONFLICT",
                 str(exc),
                 rule="postgresql_command_rejected",
             ) from exc
+        except WorkflowAuthorityError as exc:
+            raise workflow_authority_error(exc) from exc
         except SQLAlchemyError as exc:
             raise database_failure_error(
                 exc, outcome="validation failure was not recorded", request_id=request_id
@@ -953,15 +988,21 @@ class PostgresRuntimeService:
                         )
                         if generation_id is None:
                             raise WorkflowAuthorityError("no active authority generation")
-                        WorkflowAuthorityService(session).ensure_initial_cutover_run(
-                            generation_id=generation_id,
-                            run_id=run_id,
-                            owner_id=principal.owner_id,
-                            agent=self._bootstrap_agent(
-                                principal_class=principal_class, arguments=arguments
-                            ),
-                            registered_at=datetime.now(timezone.utc),
+                        existing_request = (
+                            session.get(wf.ServiceRequest, parsed_request_id)
+                            if parsed_request_id is not None
+                            else None
                         )
+                        if existing_request is None:
+                            WorkflowAuthorityService(session).ensure_initial_cutover_run(
+                                generation_id=generation_id,
+                                run_id=run_id,
+                                owner_id=principal.owner_id,
+                                agent=self._bootstrap_agent(
+                                    principal_class=principal_class, arguments=arguments
+                                ),
+                                registered_at=datetime.now(timezone.utc),
+                            )
                     result = PostgresCommandPort(
                         session,
                         cursor_secret=self._cursor_secret,
@@ -1023,12 +1064,14 @@ class PostgresRuntimeService:
                 ):
                     payload.pop(field, None)
             return payload
-        except (CommandPortError, WorkflowAuthorityError) as exc:
+        except CommandPortError as exc:
             raise DishRuleError(
                 "CONFLICT",
                 str(exc),
                 rule="postgresql_command_rejected",
             ) from exc
+        except WorkflowAuthorityError as exc:
+            raise workflow_authority_error(exc) from exc
         except SQLAlchemyError as exc:
             raise database_failure_error(
                 exc, outcome="governed mutation was not admitted", request_id=request_id

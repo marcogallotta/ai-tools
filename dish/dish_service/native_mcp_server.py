@@ -14,7 +14,11 @@ from dish_pg.command_contract import COMMAND_DEFINITIONS
 from dish_pg.command_port import CommandCall, CommandPortError, PostgresCommandPort
 from dish_pg.connected_command_spec import TOOL_COMMANDS, definition_for
 from dish_pg.database import session_scope
-from dish_pg.postgres_service import PostgresRuntimeService, database_failure_error
+from dish_pg.postgres_service import (
+    PostgresRuntimeService,
+    database_failure_error,
+    workflow_authority_error,
+)
 from dish_pg.schema_identity import ALEMBIC_HEAD
 from dish_pg.workflow import RequestIdentityConflict, WorkflowAuthorityError
 from dish_service.action_guidance import attach_connected_agent_guidance
@@ -119,12 +123,14 @@ class NativeValidationRecorder:
                 rule="service_request_identity_conflict",
                 details={"request_id": request_id},
             ) from exc
-        except (CommandPortError, WorkflowAuthorityError) as exc:
+        except CommandPortError as exc:
             raise DishRuleError(
                 "CONFLICT",
                 str(exc),
                 rule="postgresql_command_rejected",
             ) from exc
+        except WorkflowAuthorityError as exc:
+            raise workflow_authority_error(exc) from exc
         except SQLAlchemyError as exc:
             raise database_failure_error(
                 exc, outcome="validation failure was not recorded", request_id=request_id

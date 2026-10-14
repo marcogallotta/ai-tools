@@ -214,3 +214,97 @@ def test_prepared_operation_rejects_later_discard_and_retains_atomic_intent(
             "await_verification",
         )
         assert _artifact_counts(session, operation_id) == (1, 1, 2)
+
+
+def test_failed_validation_prepare_can_be_discarded_without_erasing_audit(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    author_run, admin_run, operation_id = _seed_open_operation(
+        factory, ids, context, task_id
+    )
+    failed_request_id = _next(ids)
+    with session_scope(factory) as session:
+        invalid = _call(
+            "prepare",
+            run_id=author_run,
+            request_id=failed_request_id,
+            task_id=task_id,
+            operation_id=operation_id,
+            owner_id="owner-1",
+            principal_class="agent",
+            at=NOW + timedelta(seconds=1),
+        )
+        invalid.arguments["file_text"] = TASK.split("\n", 1)[1]
+        failed = _port(session, ids).execute(invalid)
+        assert failed.ok is False
+        assert failed.code == "VALIDATION_FAILED"
+
+    with session_scope(factory) as session:
+        discarded = _port(session, ids).execute(
+            _call(
+                "discard",
+                run_id=admin_run,
+                request_id=_next(ids),
+                task_id=task_id,
+                operation_id=operation_id,
+                owner_id="Marco",
+                principal_class="admin",
+                at=NOW + timedelta(seconds=2),
+            )
+        )
+        assert discarded.ok, (discarded.code, discarded.data)
+        assert discarded.data["preserved_failed_prepare_attempts"] == 1
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        assert (operation.lifecycle, operation.phase) == (
+            "cancelled_by_marco",
+            "cancelled",
+        )
+        outcome = session.scalar(
+            select(wf.ServiceRequestOutcome).where(
+                wf.ServiceRequestOutcome.request_id == failed_request_id
+            )
+        )
+        assert outcome is not None
+        assert (outcome.outcome_class, outcome.result_code) == (
+            "rule_error",
+            "VALIDATION_FAILED",
+        )
+        assert _artifact_counts(session, operation_id) == (0, 0, 0)
+
+
+def test_discard_refuses_other_failed_operation_commands(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    author_run, admin_run, operation_id = _seed_open_operation(
+        factory, ids, context, task_id
+    )
+    with session_scope(factory) as session:
+        rejected = _port(session, ids).execute(
+            _call(
+                "inspect",
+                run_id=author_run,
+                request_id=_next(ids),
+                task_id=task_id,
+                operation_id=operation_id,
+                owner_id="owner-1",
+                principal_class="agent",
+                at=NOW + timedelta(seconds=1),
+            )
+        )
+        assert rejected.ok is False
+
+    with session_scope(factory) as session:
+        discarded = _port(session, ids).execute(
+            _call(
+                "discard",
+                run_id=admin_run,
+                request_id=_next(ids),
+                task_id=task_id,
+                operation_id=operation_id,
+                owner_id="Marco",
+                principal_class="admin",
+                at=NOW + timedelta(seconds=2),
+            )
+        )
+        assert discarded.ok is False
+        assert discarded.code == "OPERATION_NOT_PROVABLY_UNAPPLIED"

@@ -40,7 +40,7 @@ def test_action_adds_contextual_guidance_without_changing_canonical_sections_res
     guidance = action_result["data"].pop("agent_guidance")
     assert guidance["source"] == "dish"
     assert guidance["state_specific"] is True
-    assert "Use only allowed_actions" in guidance["instructions"][0]
+    assert "allowed_actions as authority for workflow continuations" in guidance["instructions"][0]
     assert cli_result == action_result
 @pytest.mark.smoke
 def test_action_credential_is_rejected_from_cli_and_admin_surfaces(tmp_path, running_server):
@@ -373,6 +373,71 @@ def test_action_guidance_uses_postgresql_read_legal_actions():
     assert any(
         instruction.startswith("Inspect this Verification candidate")
         for instruction in guidance["instructions"]
+    )
+
+
+def test_action_guidance_distinguishes_task_commands_and_complete_prepare_input():
+    guidance = action_agent_guidance(
+        {
+            "ok": True,
+            "command": "read",
+            "code": "OK",
+            "allowed_actions": ["prepare"],
+            "data": {
+                "task_commands": [
+                    {"command": "record-cook-log", "eligible": True},
+                    {"command": "cooked", "eligible": True},
+                ],
+                "prepare_input": {"requires_complete_document": True},
+            },
+        }
+    )
+
+    assert any("recorded directly" in item for item in guidance["instructions"])
+    assert any("marked cooked directly" in item for item in guidance["instructions"])
+    assert any("complete canonical document" in item for item in guidance["instructions"])
+
+
+def test_action_guidance_requires_fresh_identity_only_for_explicit_stale_run():
+    guidance = action_agent_guidance(
+        {
+            "ok": False,
+            "command": "read",
+            "code": "CONFLICT",
+            "errors": [{"rule": "postgresql_run_identity_stale"}],
+            "data": {},
+        }
+    )
+
+    assert any("fresh client.run_id" in item for item in guidance["instructions"])
+
+    uncertain = action_agent_guidance(
+        {
+            "ok": False,
+            "command": "read",
+            "code": "BACKEND_UNCERTAIN",
+            "errors": [{"rule": "service_response_ambiguous"}],
+            "data": {},
+        }
+    )
+    assert not any("fresh client.run_id" in item for item in uncertain["instructions"])
+
+    registration = action_agent_guidance(
+        {
+            "ok": False,
+            "command": "read",
+            "code": "CONFLICT",
+            "errors": [{"rule": "postgresql_run_registration_required"}],
+            "data": {},
+        }
+    )
+    assert any(
+        "registered through the recovery/bootstrap authority" in item
+        for item in registration["instructions"]
+    )
+    assert not any(
+        "use a fresh client.request_id" in item
+        for item in registration["instructions"]
     )
 
 

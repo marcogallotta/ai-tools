@@ -152,19 +152,28 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "validation failure requires request_id",
                 http_status=400,
             )
-        generation = self.session.scalar(
-            select(models.AuthorityGeneration).where(
-                models.AuthorityGeneration.status == "active"
+        existing_request = self.session.get(wf.ServiceRequest, call.request_id)
+        if existing_request is None:
+            generation = self.session.scalar(
+                select(models.AuthorityGeneration).where(
+                    models.AuthorityGeneration.status == "active"
+                )
             )
-        )
-        if generation is None:
-            raise WorkflowAuthorityError("no active authority generation")
-        try:
-            binding = RegistryRepository(self.session).active_release_contract(
-                generation.generation_id
-            ).honest_binding
-        except CoreAuthorityError as exc:
-            raise WorkflowAuthorityError(str(exc)) from exc
+            if generation is None:
+                raise WorkflowAuthorityError("no active authority generation")
+            try:
+                binding = RegistryRepository(self.session).active_release_contract(
+                    generation.generation_id
+                ).honest_binding
+            except CoreAuthorityError as exc:
+                raise WorkflowAuthorityError(str(exc)) from exc
+            generation_id = generation.generation_id
+            protocol_release = binding.protocol_release
+            dish_release = generation.dish_release
+        else:
+            generation_id = existing_request.generation_id
+            protocol_release = existing_request.protocol_release
+            dish_release = existing_request.dish_release
         validation_error = {
             "code": result_payload["code"],
             "retryable": result_payload["retryable"],
@@ -174,7 +183,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         admission = self.workflow.record_validation_failure(
             spec=RequestSpec(
                 request_id=call.request_id,
-                generation_id=generation.generation_id,
+                generation_id=generation_id,
                 run_id=call.run_id,
                 owner_id=call.owner_id,
                 principal_class=call.principal_class,
@@ -187,8 +196,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "run_id": str(call.run_id),
                     "validation_error": validation_error,
                 },
-                protocol_release=binding.protocol_release,
-                dish_release=generation.dish_release,
+                protocol_release=protocol_release,
+                dish_release=dish_release,
                 admitted_at=call.now,
             ),
             outcome=StoredOutcome(
@@ -211,7 +220,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             obligation_id=self.uuid_factory(),
             invocation_metadata={
                 "surface": invocation_surface,
-                "protocol_release": binding.protocol_release,
+                "protocol_release": protocol_release,
             },
         )
         if admission.outcome is None:
@@ -246,25 +255,36 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "REQUEST_ID_REQUIRED", "mutation requires request_id", http_status=400
             )
 
-        generation = self.reads.active_generation()
-        binding = self._binding_for(generation)
         payload = {
             "command": call.command_name,
             "arguments": dict(call.arguments),
             "owner_id": call.owner_id,
             "run_id": str(call.run_id),
         }
+        existing_request = self.session.get(wf.ServiceRequest, call.request_id)
+        if existing_request is None:
+            generation = self.reads.active_generation()
+            binding = self._binding_for(generation)
+            generation_id = generation.generation_id
+            dish_release = generation.dish_release
+            protocol_release = call.protocol_release
+        else:
+            generation = None
+            binding = None
+            generation_id = existing_request.generation_id
+            dish_release = existing_request.dish_release
+            protocol_release = existing_request.protocol_release
         admission = self.workflow.admit_request(
             RequestSpec(
                 request_id=call.request_id,
-                generation_id=generation.generation_id,
+                generation_id=generation_id,
                 run_id=call.run_id,
                 owner_id=call.owner_id,
                 principal_class=call.principal_class,
                 command_name=call.command_name,
                 canonical_payload=payload,
-                protocol_release=call.protocol_release,
-                dish_release=generation.dish_release,
+                protocol_release=protocol_release,
+                dish_release=dish_release,
                 admitted_at=call.now,
             )
         )
@@ -288,6 +308,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 {"request_id": str(call.request_id)},
                 retryable=False,
                 request_replayed=True,
+            )
+
+        if generation is None or binding is None:
+            raise WorkflowAuthorityError(
+                "new request admission did not retain active generation authority"
             )
 
         task: models.DishTask | None = None
@@ -667,6 +692,59 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 action for action in projected_actions if action in ACTION_COMMANDS
             )
         )
+        if call.command_name == "read" and task is not None:
+            generation = self.reads.active_generation()
+            snapshot = self._planner_snapshot(
+                generation.generation_id, task, result_operation
+            )
+            agent = str(call.arguments.get("agent", "")).strip()
+            run_blocker = self.workflow.repo.mutation_run_admission_blocker(
+                generation=generation,
+                run_id=call.run_id,
+                owner_id=call.owner_id,
+                agent=agent,
+            )
+
+            def task_command(command_name: str) -> dict[str, Any]:
+                plan = plan_command(
+                    snapshot=snapshot,
+                    intent=CanonicalCommandIntent(
+                        command_name=command_name,
+                        arguments={"dish_id": str(task.task_id)},
+                        principal_class="agent",
+                        owner_id=call.owner_id,
+                        run_id=str(call.run_id),
+                    ),
+                    pinned_now=call.now,
+                )
+                command: dict[str, Any] = {
+                    "command": command_name,
+                    "eligible": plan.legal and run_blocker is None,
+                    "arguments": {"dish_id": str(task.task_id)},
+                }
+                if run_blocker is not None:
+                    command["blocked_by"] = dict(run_blocker)
+                elif not plan.legal:
+                    command["blocked_by"] = {
+                        "rule": plan.result_code,
+                        **dict(plan.recovery_guidance),
+                    }
+                return command
+
+            result_data["workflow_continuations"] = allowed_actions
+            result_data["task_commands"] = [
+                task_command("record-cook-log"),
+                task_command("cooked"),
+            ]
+        if "prepare" in allowed_actions:
+            result_data.setdefault(
+                "prepare_input",
+                {
+                    "requires_complete_document": True,
+                    "assembly": "title + newline + body",
+                    "body_only_valid": False,
+                },
+            )
         required_start_kind = result_data.get("required_start_kind")
         if "start" in allowed_actions and required_start_kind is None:
             if "verify" in raw_actions:
@@ -3549,13 +3627,60 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             state.dish_version == creation_fence.expected_dish_version
             and membership.membership_revision == creation_fence.expected_membership_revision
         )
-        prior_executions = int(self.session.scalar(select(func.count()).select_from(wf.CommandExecution).where(wf.CommandExecution.operation_id == operation.operation_id, wf.CommandExecution.execution_id.notin_([operation.creation_execution_id, execution.execution_id]))) or 0)
+        prior_execution_rows = list(
+            self.session.execute(
+                select(wf.CommandExecution, wf.ServiceRequestOutcome)
+                .join(
+                    wf.ServiceRequestOutcome,
+                    wf.ServiceRequestOutcome.request_id
+                    == wf.CommandExecution.request_id,
+                )
+                .where(
+                    wf.CommandExecution.operation_id == operation.operation_id,
+                    wf.CommandExecution.execution_id.notin_(
+                        [operation.creation_execution_id, execution.execution_id]
+                    ),
+                )
+            )
+        )
+        prior_executions = int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(wf.CommandExecution)
+                .where(
+                    wf.CommandExecution.operation_id == operation.operation_id,
+                    wf.CommandExecution.execution_id.notin_(
+                        [operation.creation_execution_id, execution.execution_id]
+                    ),
+                )
+            )
+            or 0
+        )
+        failed_validation_prepares = all(
+            prior.command_name == "prepare"
+            and prior.status == "failed"
+            and outcome.outcome_class == "rule_error"
+            and outcome.result_code == "VALIDATION_FAILED"
+            and outcome.immutable_success is False
+            for prior, outcome in prior_execution_rows
+        ) and len(prior_execution_rows) == prior_executions
+        harmless_prior_executions = prior_executions == 0 or (
+            operation.phase == "prepare_required" and failed_validation_prepares
+        )
         projection_events = int(self.session.scalar(select(func.count()).select_from(projection.ProjectionOutboxEvent).join(wf.CommandExecution, wf.CommandExecution.execution_id == projection.ProjectionOutboxEvent.command_execution_id).where(wf.CommandExecution.operation_id == operation.operation_id)) or 0)
-        if steps or prior_executions or projection_events or not baseline_matches or operation.operation_revision != 1:
+        if steps or not harmless_prior_executions or projection_events or not baseline_matches or operation.operation_revision != 1:
             raise CommandRuleError(
                 "OPERATION_NOT_PROVABLY_UNAPPLIED",
                 "operation has workflow progress, external-effect intent, or baseline drift",
-                data={"steps": steps, "prior_executions": prior_executions, "projection_events": projection_events, "baseline_matches": baseline_matches},
+                data={
+                    "steps": steps,
+                    "prior_executions": prior_executions,
+                    "failed_validation_prepares": len(prior_execution_rows)
+                    if failed_validation_prepares
+                    else 0,
+                    "projection_events": projection_events,
+                    "baseline_matches": baseline_matches,
+                },
             )
         lease = self.session.scalar(select(wf.ServiceLease).where(wf.ServiceLease.operation_id == operation.operation_id, wf.ServiceLease.state == "active"))
         if lease is not None:
@@ -3566,7 +3691,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         operation.terminal_outcome = "discarded"
         operation.terminal_at = call.now
         operation.operation_revision += 1
-        return {"operation_id": str(operation.operation_id), "originating_request_id": str(operation.creation_request_id), "originating_execution_id": str(operation.creation_execution_id), "lifecycle": operation.lifecycle}
+        return {
+            "operation_id": str(operation.operation_id),
+            "originating_request_id": str(operation.creation_request_id),
+            "originating_execution_id": str(operation.creation_execution_id),
+            "lifecycle": operation.lifecycle,
+            "preserved_failed_prepare_attempts": len(prior_execution_rows),
+        }
 
     def _assert_reclaim_successor_claimable(
         self, *, operation: wf.WorkflowOperation, call: CommandCall

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import replace
 from datetime import timedelta
-import uuid
+from types import SimpleNamespace
 
 import pytest
 from dish_pg import models
@@ -404,3 +405,238 @@ def test_record_cook_log_is_lifecycle_neutral(workflow_db, lifecycle: str) -> No
             assert [[text for _, text in item.cook_logs] for item in cooked] == [["cooked"]]
         else:
             assert not cooked
+
+
+@pytest.mark.parametrize("lifecycle", ("resting", "open", "cooked", "archived"))
+def test_read_separates_workflow_continuations_from_task_commands(
+    workflow_db, lifecycle: str
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        run_id = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            agent="codex",
+        )
+        port = _port(session, ids)
+        if lifecycle == "open":
+            _start_initial(port, ids, task_id=task_id, run_id=run_id)
+        elif lifecycle == "cooked":
+            assert port.execute(
+                _call(
+                    "cooked",
+                    run_id=run_id,
+                    request_id=_next(ids),
+                    arguments={"dish_id": str(task_id), "agent": "codex"},
+                )
+            ).ok
+        elif lifecycle == "archived":
+            assert port.execute(
+                _call(
+                    "archive",
+                    run_id=run_id,
+                    request_id=_next(ids),
+                    arguments={"dish_id": str(task_id), "agent": "codex"},
+                )
+            ).ok
+
+        result = port.execute(
+            _call(
+                "read",
+                run_id=run_id,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert result.ok, (result.code, result.data)
+        assert result.data["workflow_continuations"] == list(result.allowed_actions)
+        commands = {
+            item["command"]: item for item in result.data["task_commands"]
+        }
+        assert commands["record-cook-log"] == {
+            "command": "record-cook-log",
+            "eligible": True,
+            "arguments": {"dish_id": str(task_id)},
+        }
+        assert "record-cook-log" not in result.allowed_actions
+        assert "cooked" not in result.allowed_actions
+        assert commands["cooked"]["eligible"] is (lifecycle == "resting")
+        if lifecycle == "open":
+            assert commands["cooked"]["blocked_by"]["rule"] == "TASK_NOT_RESTING"
+            assert commands["cooked"]["blocked_by"]["open_operation_id"]
+            assert commands["cooked"]["blocked_by"]["active_lease_id"]
+        elif lifecycle == "cooked":
+            assert commands["cooked"]["blocked_by"] == {
+                "rule": "TASK_NOT_ACTIVE",
+            }
+        elif lifecycle == "archived":
+            assert commands["cooked"]["blocked_by"] == {
+                "rule": "TASK_ARCHIVED",
+            }
+
+
+@pytest.mark.parametrize(
+    ("command_name", "blocker_field", "rule"),
+    (
+        ("cooked", "open_operation_id", "TASK_NOT_RESTING"),
+        ("cooked", "active_lease_id", "TASK_NOT_RESTING"),
+        ("cooked", "unresolved_projection_attempt_id", "TASK_NOT_RESTING"),
+        ("cooked", "open_hold_id", "TASK_NOT_RESTING"),
+        ("cooked", "open_human_requirement_id", "TASK_NOT_RESTING"),
+        ("record-cook-log", "open_abandonment_id", "ABANDONMENT_FENCE_ACTIVE"),
+    ),
+)
+def test_read_task_command_affordances_use_exact_planner_blockers(
+    workflow_db,
+    monkeypatch,
+    command_name: str,
+    blocker_field: str,
+    rule: str,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    blocker_id = str(uuid.uuid4())
+    with session_scope(factory) as session:
+        run_id = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            agent="codex",
+        )
+        port = _port(session, ids)
+        task = session.get(models.DishTask, task_id)
+        assert task is not None
+        snapshot = port._planner_snapshot(context["generation_id"], task, None)
+        blocked_snapshot = replace(snapshot, **{blocker_field: blocker_id})
+        monkeypatch.setattr(
+            port,
+            "_planner_snapshot",
+            lambda generation_id, task, operation: blocked_snapshot,
+        )
+
+        result = port.execute(
+            _call(
+                "read",
+                run_id=run_id,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+
+        assert result.ok, (result.code, result.data)
+        commands = {
+            item["command"]: item for item in result.data["task_commands"]
+        }
+        assert commands[command_name]["eligible"] is False
+        expected_blocker = {
+            "rule": rule,
+        }
+        expected_blocker[
+            "abandonment_id" if blocker_field == "open_abandonment_id" else blocker_field
+        ] = blocker_id
+        assert commands[command_name]["blocked_by"] == expected_blocker
+
+
+def test_read_task_command_affordances_include_exact_run_admission(
+    workflow_db,
+    monkeypatch,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        unknown_run = _next(ids)
+        port = _port(session, ids)
+        bootstrap_read = port.execute(
+            _call(
+                "read",
+                run_id=unknown_run,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert bootstrap_read.ok
+        assert all(
+            command["eligible"]
+            for command in bootstrap_read.data["task_commands"]
+        )
+
+        retired_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=retired_run,
+            agent="codex",
+        )
+        run = session.get(wf.ServiceRun, retired_run)
+        assert run is not None
+        run.status = "retired"
+        run.retired_at = NOW
+        session.flush()
+
+        retired_read = port.execute(
+            _call(
+                "read",
+                run_id=retired_run,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert retired_read.ok
+        for command in retired_read.data["task_commands"]:
+            assert command["eligible"] is False
+            assert command["blocked_by"] == {
+                "rule": "postgresql_run_identity_stale",
+                "required_next_action": "use_fresh_client_run",
+            }
+
+        recovery_generation = SimpleNamespace(
+            generation_id=context["generation_id"],
+            status="active",
+            creation_reason="test_fixture_recovery",
+        )
+        monkeypatch.setattr(
+            port.reads, "active_generation", lambda: recovery_generation
+        )
+        recovery_read = port.execute(
+            _call(
+                "read",
+                run_id=_next(ids),
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert recovery_read.ok
+        for command in recovery_read.data["task_commands"]:
+            assert command["eligible"] is False
+            assert command["blocked_by"] == {
+                "rule": "postgresql_run_registration_required",
+                "required_next_action": "obtain_registered_client_run",
+                "generation_id": str(context["generation_id"]),
+            }
+
+
+def test_read_exposes_complete_document_prepare_input(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        _start_initial(port, ids, task_id=task_id, run_id=run_id)
+
+        result = port.execute(
+            _call(
+                "read",
+                run_id=run_id,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+
+        assert result.ok, (result.code, result.data)
+        assert "prepare" in result.allowed_actions
+        assert result.data["prepare_input"] == {
+            "requires_complete_document": True,
+            "assembly": "title + newline + body",
+            "body_only_valid": False,
+        }

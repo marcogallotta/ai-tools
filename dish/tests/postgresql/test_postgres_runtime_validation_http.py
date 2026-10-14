@@ -22,6 +22,7 @@ from dish_pg.connected_command_spec import result_envelope_schema
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.transition import ProjectionService
+from dish_pg.workflow import RequestSpec, WorkflowAuthorityService, sha256_json
 from dish_service import admin_cli, cli, mcp_server
 from dish_service.client import DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
@@ -1876,7 +1877,11 @@ def test_bootstrap_rejects_existing_owner_agent_and_terminal_conflicts(
             raise AssertionError("expected exact run identity conflict")
         except DishRuleError as exc:
             assert exc.code == "CONFLICT"
-            assert exc.rule == "postgresql_command_rejected"
+            assert exc.rule == "postgresql_run_identity_stale"
+            assert exc.details == {
+                "required_next_action": "use_fresh_client_run",
+                "fresh_request_id_required": True,
+            }
 
     with session_scope(factory) as session:
         assert session.get(wf.ServiceRun, owner_run).owner_id == "cli"
@@ -1927,12 +1932,119 @@ def test_reads_and_pre_execution_validation_do_not_bootstrap_runs(
         assert session.get(wf.ServiceRun, malformed_run) is None
 
 
+@pytest.mark.parametrize("existing_outcome", (None, "uncertain", "rule_error"))
+def test_retired_run_replays_existing_request_before_fresh_identity_guidance(
+    workflow_db, tmp_path: Path, existing_outcome: str | None
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    request_id = _next(ids)
+    arguments = {"agent": "gpt", "title": "Existing request"}
+    payload = {
+        "command": "create",
+        "arguments": arguments,
+        "owner_id": "cli",
+        "run_id": str(run_id),
+    }
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="cli",
+            agent="gpt",
+        )
+        admission = WorkflowAuthorityService(session).admit_request(
+            RequestSpec(
+                request_id=request_id,
+                generation_id=context["generation_id"],
+                run_id=run_id,
+                owner_id="cli",
+                principal_class="agent",
+                command_name="create",
+                canonical_payload=payload,
+                protocol_release="protocol-1",
+                dish_release="dish-42619b9",
+                admitted_at=NOW,
+            )
+        )
+        assert admission.replayed is False
+        if existing_outcome is not None:
+            result_payload = {
+                "request_id": str(request_id),
+                "outcome": existing_outcome,
+            }
+            session.add(
+                wf.ServiceRequestOutcome(
+                    outcome_id=_next(ids),
+                    request_id=request_id,
+                    outcome_class=existing_outcome,
+                    result_code=(
+                        "BACKEND_UNCERTAIN"
+                        if existing_outcome == "uncertain"
+                        else "STORED_RULE_ERROR"
+                    ),
+                    http_status=503 if existing_outcome == "uncertain" else 409,
+                    result_payload=result_payload,
+                    result_sha256=sha256_json(result_payload),
+                    immutable_success=False,
+                    recorded_at=NOW,
+                )
+            )
+        run = session.get(wf.ServiceRun, run_id)
+        assert run is not None
+        run.status = "retired"
+        run.retired_at = NOW + timedelta(minutes=1)
+        previous = session.get(models.AuthorityGeneration, context["generation_id"])
+        assert previous is not None
+        previous.status = "retired"
+        previous.retired_at = NOW + timedelta(minutes=2)
+        session.add(
+            models.AuthorityGeneration(
+                generation_id=_next(ids),
+                predecessor_generation_id=previous.generation_id,
+                creation_reason="test_fixture_recovery",
+                external_restore_control_id=None,
+                schema_head=previous.schema_head,
+                dish_release=previous.dish_release,
+                status="active",
+                created_at=NOW + timedelta(minutes=2),
+                retired_at=None,
+            )
+        )
+
+    service = runtime_service(factory, tmp_path)
+    result = service.execute_agent(
+        "create",
+        arguments,
+        principal=ServicePrincipal.from_values("cli", str(run_id)),
+        request_id=str(request_id),
+    )
+
+    expected_code = {
+        None: "REQUEST_PENDING",
+        "uncertain": "BACKEND_UNCERTAIN",
+        "rule_error": "STORED_RULE_ERROR",
+    }[existing_outcome]
+    assert result["code"] == expected_code
+    assert result["data"]["request_replayed"] is True
+
+
 def test_recovery_generations_never_auto_bootstrap_unknown_runs(
     workflow_db, tmp_path: Path
 ) -> None:
     factory, ids, context, _task_id = workflow_db
     service = runtime_service(factory, tmp_path)
     previous_id = context["generation_id"]
+    predecessor_run = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=previous_id,
+            run_id=predecessor_run,
+            owner="cli",
+            agent="gpt",
+        )
     reasons = (
         ("test_fixture_recovery", None),
         ("destructive_restore", "restore-control-1"),
@@ -1969,9 +2081,25 @@ def test_recovery_generations_never_auto_bootstrap_unknown_runs(
             raise AssertionError("expected recovery bootstrap rejection")
         except DishRuleError as exc:
             assert exc.code == "CONFLICT"
-            assert exc.rule == "postgresql_command_rejected"
+            assert exc.rule == "postgresql_run_registration_required"
+            assert exc.details == {
+                "required_next_action": "obtain_registered_client_run"
+            }
         with session_scope(factory) as session:
             assert session.get(wf.ServiceRun, run_id) is None
+        if index == 1:
+            with pytest.raises(DishRuleError) as stale_predecessor:
+                service.execute_agent(
+                    "create",
+                    {"agent": "gpt", "title": "stale predecessor run"},
+                    principal=ServicePrincipal.from_values(
+                        "cli", str(predecessor_run)
+                    ),
+                    request_id=str(_next(ids)),
+                )
+            assert stale_predecessor.value.rule == (
+                "postgresql_run_registration_required"
+            )
 
 
 def test_agent_route_refuses_hold_reject_and_opens_no_evidence_hold(

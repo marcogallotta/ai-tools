@@ -32,7 +32,7 @@ Connected-agent command identity/exposure membership is shared lower-level metad
 ## Invariants
 
 - A surface must not accidentally expose privileged/internal operations merely because a route or command exists elsewhere.
-- Surface-specific guidance may add navigation, explanation, recovery instructions, or non-workflow affordances; it must not manufacture a workflow transition the backend considers legal when it is not.
+- Surface-specific guidance may add navigation, explanation, recovery instructions, or non-workflow affordances; it must not manufacture a workflow transition the backend considers legal when it is not. `allowed_actions` describes workflow continuations only; an authoritative read may separately expose task-level commands with explicit eligibility and blockers.
 - The public GPT Action transport may add `data.agent_guidance` derived from the canonical result. Guidance is contextual caller help, not workflow authority: it must not add or authorize legal actions, invent authoritative identifiers or state, or contradict `allowed_actions`.
 - Connected `query` and `cooked-updates` results may guide callers to exhaust exact pagination and,
   for Planning, inspect immutable logs plus current Honest Pantry class/block guidance. This does not
@@ -188,7 +188,8 @@ holds/review requirements/challenges/abandonment attempts are closed, pending/cl
 are retired, safe undispatched projection intents are superseded, and every run committed on the
 pre-archive side receives a task-scoped revocation. Exact history remains readable. Dispatched,
 uncertain, or blocked external-effect work fails archive closed rather than reporting partial success.
-Every later mutating command except `unarchive` is rejected while archived. Private admin inspection
+Every later mutating command except `unarchive` and the immutable-history append
+`record-cook-log` is rejected while archived. Private admin inspection
 remains read-only and available. `cooked` remains resting-only.
 In PostgreSQL authority the private admin command is a narrow additional principal for the same
 `archive` semantic agents use, and the PostgreSQL path creates no Asana projection. The private admin

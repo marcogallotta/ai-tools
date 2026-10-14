@@ -364,7 +364,13 @@ def test_postgresql_action_foreign_or_retired_run_is_structured_conflict(
     assert result["ok"] is False
     assert result["code"] == "CONFLICT"
     assert result["retryable"] is False
-    assert result["errors"] == [{"rule": "postgresql_command_rejected"}]
+    assert result["errors"] == [
+        {
+            "rule": "postgresql_run_identity_stale",
+            "required_next_action": "use_fresh_client_run",
+            "fresh_request_id_required": True,
+        }
+    ]
     assert result["data"]["message"] == "run is stale, retired, or conflicts with the authenticated run identity"
 
 def test_material_mismatch_is_durable_and_blocks_qualification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
