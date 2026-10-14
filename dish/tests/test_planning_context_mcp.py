@@ -123,7 +123,6 @@ def test_full_payload_is_in_structured_content_once_and_not_repeated_in_text(mon
     assert len(text) < 2_000
 
 
-
 def test_mcp_write_fence_requires_receipt_before_create(monkeypatch):
     _caller(monkeypatch)
     definition = next(x for x in mcp_server.TOOLS if x["name"] == "dish_create")
