@@ -149,7 +149,7 @@ def template_action(
 _EXEMPTION_LABELS = {
     "nutrition-kcal": "the normal 700–1,000 kcal main-meal range",
     "nutrition-protein": "the normal minimum 35 g protein target",
-    "nutrition-fat": "the normal maximum 40 g fat limit",
+    "nutrition-fat": "the applicable total-fat or saturated-fat limit",
 }
 
 

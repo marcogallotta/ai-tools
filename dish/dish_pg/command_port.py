@@ -5851,7 +5851,7 @@ def _require_small_correction_scope(
     ``step8.approve_small`` but is deliberately stricter in two ways:
 
     * governed planning/Decision changes are Large except the narrow case where Marco accepts
-      an already-reviewed high-fat dish unchanged and only `Exemptions` plus an append-only
+      an already-reviewed fat-limit exception unchanged and only `Exemptions` plus an append-only
       Decision change;
     * an edited ``Researched by`` (or frozen protocol release) is refused as
       Large, where legacy silently restored the original value.
