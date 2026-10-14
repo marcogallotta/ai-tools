@@ -413,7 +413,12 @@ def test_read_separates_workflow_continuations_from_task_commands(
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         run_id = _next(ids)
-        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            agent="codex",
+        )
         port = _port(session, ids)
         if lifecycle == "open":
             _start_initial(port, ids, task_id=task_id, run_id=run_id)
@@ -493,7 +498,12 @@ def test_read_task_command_affordances_use_exact_planner_blockers(
     blocker_id = str(uuid.uuid4())
     with session_scope(factory) as session:
         run_id = _next(ids)
-        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            agent="codex",
+        )
         port = _port(session, ids)
         task = session.get(models.DishTask, task_id)
         assert task is not None
@@ -526,6 +536,57 @@ def test_read_task_command_affordances_use_exact_planner_blockers(
             "abandonment_id" if blocker_field == "open_abandonment_id" else blocker_field
         ] = blocker_id
         assert commands[command_name]["blocked_by"] == expected_blocker
+
+
+def test_read_task_command_affordances_include_exact_run_admission(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        unknown_run = _next(ids)
+        port = _port(session, ids)
+        bootstrap_read = port.execute(
+            _call(
+                "read",
+                run_id=unknown_run,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert bootstrap_read.ok
+        assert all(
+            command["eligible"]
+            for command in bootstrap_read.data["task_commands"]
+        )
+
+        retired_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=retired_run,
+            agent="codex",
+        )
+        run = session.get(wf.ServiceRun, retired_run)
+        assert run is not None
+        run.status = "retired"
+        run.retired_at = NOW
+        session.flush()
+
+        retired_read = port.execute(
+            _call(
+                "read",
+                run_id=retired_run,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert retired_read.ok
+        for command in retired_read.data["task_commands"]:
+            assert command["eligible"] is False
+            assert command["blocked_by"] == {
+                "rule": "postgresql_run_identity_stale",
+                "required_next_action": "use_fresh_client_run",
+            }
 
 
 def test_read_exposes_complete_document_prepare_input(workflow_db) -> None:
