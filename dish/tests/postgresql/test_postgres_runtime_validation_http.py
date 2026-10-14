@@ -22,6 +22,7 @@ from dish_pg.connected_command_spec import result_envelope_schema
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.transition import ProjectionService
+from dish_pg.workflow import RequestSpec, WorkflowAuthorityService, sha256_json
 from dish_service import admin_cli, cli, mcp_server
 from dish_service.client import DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
@@ -1929,6 +1930,77 @@ def test_reads_and_pre_execution_validation_do_not_bootstrap_runs(
     with session_scope(factory) as session:
         assert session.get(wf.ServiceRun, read_run) is None
         assert session.get(wf.ServiceRun, malformed_run) is None
+
+
+@pytest.mark.parametrize("existing_outcome", (None, "uncertain"))
+def test_retired_run_replays_existing_request_before_fresh_identity_guidance(
+    workflow_db, tmp_path: Path, existing_outcome: str | None
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    request_id = _next(ids)
+    arguments = {"agent": "gpt", "title": "Existing request"}
+    payload = {
+        "command": "create",
+        "arguments": arguments,
+        "owner_id": "cli",
+        "run_id": str(run_id),
+    }
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="cli",
+            agent="gpt",
+        )
+        admission = WorkflowAuthorityService(session).admit_request(
+            RequestSpec(
+                request_id=request_id,
+                generation_id=context["generation_id"],
+                run_id=run_id,
+                owner_id="cli",
+                principal_class="agent",
+                command_name="create",
+                canonical_payload=payload,
+                protocol_release="protocol-1",
+                dish_release="dish-42619b9",
+                admitted_at=NOW,
+            )
+        )
+        assert admission.replayed is False
+        if existing_outcome == "uncertain":
+            result_payload = {"request_id": str(request_id), "uncertain": True}
+            session.add(
+                wf.ServiceRequestOutcome(
+                    outcome_id=_next(ids),
+                    request_id=request_id,
+                    outcome_class="uncertain",
+                    result_code="BACKEND_UNCERTAIN",
+                    http_status=503,
+                    result_payload=result_payload,
+                    result_sha256=sha256_json(result_payload),
+                    immutable_success=False,
+                    recorded_at=NOW,
+                )
+            )
+        run = session.get(wf.ServiceRun, run_id)
+        assert run is not None
+        run.status = "retired"
+        run.retired_at = NOW + timedelta(minutes=1)
+
+    service = runtime_service(factory, tmp_path)
+    result = service.execute_agent(
+        "create",
+        arguments,
+        principal=ServicePrincipal.from_values("cli", str(run_id)),
+        request_id=str(request_id),
+    )
+
+    assert result["code"] == (
+        "REQUEST_PENDING" if existing_outcome is None else "BACKEND_UNCERTAIN"
+    )
+    assert result["data"]["request_replayed"] is True
 
 
 def test_recovery_generations_never_auto_bootstrap_unknown_runs(
