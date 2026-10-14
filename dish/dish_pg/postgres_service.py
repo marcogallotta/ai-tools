@@ -114,6 +114,18 @@ def workflow_authority_error(exc: WorkflowAuthorityError) -> DishRuleError:
     """Preserve actionable run-identity failures without weakening other conflicts."""
 
     message = str(exc)
+    if message.startswith(
+        (
+            "automatic run creation is limited",
+            "run registration or bootstrap authority is required",
+        )
+    ):
+        return DishRuleError(
+            "CONFLICT",
+            message,
+            rule="postgresql_run_registration_required",
+            details={"required_next_action": "obtain_registered_client_run"},
+        )
     if message.startswith("run is stale, retired"):
         return DishRuleError(
             "CONFLICT",
