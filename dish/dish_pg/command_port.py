@@ -152,19 +152,28 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "validation failure requires request_id",
                 http_status=400,
             )
-        generation = self.session.scalar(
-            select(models.AuthorityGeneration).where(
-                models.AuthorityGeneration.status == "active"
+        existing_request = self.session.get(wf.ServiceRequest, call.request_id)
+        if existing_request is None:
+            generation = self.session.scalar(
+                select(models.AuthorityGeneration).where(
+                    models.AuthorityGeneration.status == "active"
+                )
             )
-        )
-        if generation is None:
-            raise WorkflowAuthorityError("no active authority generation")
-        try:
-            binding = RegistryRepository(self.session).active_release_contract(
-                generation.generation_id
-            ).honest_binding
-        except CoreAuthorityError as exc:
-            raise WorkflowAuthorityError(str(exc)) from exc
+            if generation is None:
+                raise WorkflowAuthorityError("no active authority generation")
+            try:
+                binding = RegistryRepository(self.session).active_release_contract(
+                    generation.generation_id
+                ).honest_binding
+            except CoreAuthorityError as exc:
+                raise WorkflowAuthorityError(str(exc)) from exc
+            generation_id = generation.generation_id
+            protocol_release = binding.protocol_release
+            dish_release = generation.dish_release
+        else:
+            generation_id = existing_request.generation_id
+            protocol_release = existing_request.protocol_release
+            dish_release = existing_request.dish_release
         validation_error = {
             "code": result_payload["code"],
             "retryable": result_payload["retryable"],
@@ -174,7 +183,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         admission = self.workflow.record_validation_failure(
             spec=RequestSpec(
                 request_id=call.request_id,
-                generation_id=generation.generation_id,
+                generation_id=generation_id,
                 run_id=call.run_id,
                 owner_id=call.owner_id,
                 principal_class=call.principal_class,
@@ -187,8 +196,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "run_id": str(call.run_id),
                     "validation_error": validation_error,
                 },
-                protocol_release=binding.protocol_release,
-                dish_release=generation.dish_release,
+                protocol_release=protocol_release,
+                dish_release=dish_release,
                 admitted_at=call.now,
             ),
             outcome=StoredOutcome(
@@ -211,7 +220,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             obligation_id=self.uuid_factory(),
             invocation_metadata={
                 "surface": invocation_surface,
-                "protocol_release": binding.protocol_release,
+                "protocol_release": protocol_release,
             },
         )
         if admission.outcome is None:
@@ -246,25 +255,36 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 "REQUEST_ID_REQUIRED", "mutation requires request_id", http_status=400
             )
 
-        generation = self.reads.active_generation()
-        binding = self._binding_for(generation)
         payload = {
             "command": call.command_name,
             "arguments": dict(call.arguments),
             "owner_id": call.owner_id,
             "run_id": str(call.run_id),
         }
+        existing_request = self.session.get(wf.ServiceRequest, call.request_id)
+        if existing_request is None:
+            generation = self.reads.active_generation()
+            binding = self._binding_for(generation)
+            generation_id = generation.generation_id
+            dish_release = generation.dish_release
+            protocol_release = call.protocol_release
+        else:
+            generation = None
+            binding = None
+            generation_id = existing_request.generation_id
+            dish_release = existing_request.dish_release
+            protocol_release = existing_request.protocol_release
         admission = self.workflow.admit_request(
             RequestSpec(
                 request_id=call.request_id,
-                generation_id=generation.generation_id,
+                generation_id=generation_id,
                 run_id=call.run_id,
                 owner_id=call.owner_id,
                 principal_class=call.principal_class,
                 command_name=call.command_name,
                 canonical_payload=payload,
-                protocol_release=call.protocol_release,
-                dish_release=generation.dish_release,
+                protocol_release=protocol_release,
+                dish_release=dish_release,
                 admitted_at=call.now,
             )
         )
@@ -288,6 +308,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 {"request_id": str(call.request_id)},
                 retryable=False,
                 request_replayed=True,
+            )
+
+        if generation is None or binding is None:
+            raise WorkflowAuthorityError(
+                "new request admission did not retain active generation authority"
             )
 
         task: models.DishTask | None = None
