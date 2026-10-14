@@ -249,7 +249,7 @@ Admin recovery remains specific rather than generic:
   local evidence, so the returned handoff action is immediately executable. It never transfers the
   lease or releases a replacement lease;
 - `repair-destination` changes only the canonical Planning destination after an unrecoverable final movement failure, preserving the original approval and creating linked repair evidence for a later movement-only `submit`;
-- `discard` cancels only a provably unapplied operation;
+- `discard` cancels only a provably unapplied operation. A `prepare_required` operation remains provably unapplied after terminal `VALIDATION_FAILED` prepare attempts when its operation revision and task baseline are unchanged and it has no workflow step or projection intent; failed outcomes remain immutable audit evidence;
 - `supply-evidence`, `record-human-decision`, and `reopen` retain their existing protocol meanings; an unanswered Verification Human Review escalation may also be dismissed with `review-reject`, which records the dismissal reason without creating a Marco decision or governed authorization and always returns the unchanged candidate to fresh Verification, irrespective of the escalation's requested downstream resume status.
 
 There is intentionally no general-purpose `unblock` mutation for workflow state.
@@ -304,7 +304,7 @@ their own JSON documents rather than this envelope:
 - `task_gid` identifies the Asana task when known.
 - `submission_id` is the current operation identifier; the field name is retained for client compatibility.
 - `state` is tool operation state, not protocol readiness.
-- `allowed_actions` is the bounded next tool action list derived from the same authoritative snapshot that mutation commands enforce.
+- `allowed_actions` is the bounded next workflow-continuation list derived from the same authoritative snapshot that mutation commands enforce. It is not the complete command inventory. On `read`, `data.workflow_continuations` mirrors that list while `data.task_commands` reports independent commands with explicit eligibility and blockers. `record-cook-log` does not require a workflow operation; `cooked` requires an active resting Dish. When `prepare` is legal, `data.prepare_input` states that `file_text` is the complete canonical document assembled as title, newline, then body; the body alone is invalid.
 - `data` contains command-specific exact identities, diagnostics, protocol text, or completion facts.
   For `inspect`, `data.content.operation_baseline_identity` is the immutable identity captured when the operation started, while `confirmed_identity` is the latest Dish-confirmed task head. The current comparison is explicit: `live_identity` is compared with `required_identity`, and `identity_matches` reports only that comparison.
 - `errors` contains structured findings with a `rule` and any supporting fields. Deterministic
