@@ -668,35 +668,39 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             )
         )
         if call.command_name == "read" and task is not None:
-            task_view = self.reads.task_view(task.task_id)
-            cooked_eligible = (
-                task_view.completion_state == "active"
-                and task_view.operation_id is None
+            generation = self.reads.active_generation()
+            snapshot = self._planner_snapshot(
+                generation.generation_id, task, result_operation
             )
-            cooked_command: dict[str, Any] = {
-                "command": "cooked",
-                "eligible": cooked_eligible,
-                "arguments": {"dish_id": str(task.task_id)},
-            }
-            if not cooked_eligible:
-                if task_view.operation_id is not None:
-                    cooked_command["blocked_by"] = {
-                        "rule": "open_workflow_operation",
-                        "operation_id": str(task_view.operation_id),
+
+            def task_command(command_name: str) -> dict[str, Any]:
+                plan = plan_command(
+                    snapshot=snapshot,
+                    intent=CanonicalCommandIntent(
+                        command_name=command_name,
+                        arguments={"dish_id": str(task.task_id)},
+                        principal_class="agent",
+                        owner_id=call.owner_id,
+                        run_id=str(call.run_id),
+                    ),
+                    pinned_now=call.now,
+                )
+                command: dict[str, Any] = {
+                    "command": command_name,
+                    "eligible": plan.legal,
+                    "arguments": {"dish_id": str(task.task_id)},
+                }
+                if not plan.legal:
+                    command["blocked_by"] = {
+                        "rule": plan.result_code,
+                        **dict(plan.recovery_guidance),
                     }
-                else:
-                    cooked_command["blocked_by"] = {
-                        "rule": "dish_not_active",
-                        "completion_state": task_view.completion_state,
-                    }
+                return command
+
             result_data["workflow_continuations"] = allowed_actions
             result_data["task_commands"] = [
-                {
-                    "command": "record-cook-log",
-                    "eligible": True,
-                    "arguments": {"dish_id": str(task.task_id)},
-                },
-                cooked_command,
+                task_command("record-cook-log"),
+                task_command("cooked"),
             ]
         if "prepare" in allowed_actions:
             result_data.setdefault(
