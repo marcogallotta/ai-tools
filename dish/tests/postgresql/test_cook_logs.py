@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import replace
 from datetime import timedelta
-import uuid
+from types import SimpleNamespace
 
 import pytest
 from dish_pg import models
@@ -540,6 +541,7 @@ def test_read_task_command_affordances_use_exact_planner_blockers(
 
 def test_read_task_command_affordances_include_exact_run_admission(
     workflow_db,
+    monkeypatch,
 ) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
@@ -586,6 +588,31 @@ def test_read_task_command_affordances_include_exact_run_admission(
             assert command["blocked_by"] == {
                 "rule": "postgresql_run_identity_stale",
                 "required_next_action": "use_fresh_client_run",
+            }
+
+        recovery_generation = SimpleNamespace(
+            generation_id=context["generation_id"],
+            status="active",
+            creation_reason="test_fixture_recovery",
+        )
+        monkeypatch.setattr(
+            port.reads, "active_generation", lambda: recovery_generation
+        )
+        recovery_read = port.execute(
+            _call(
+                "read",
+                run_id=_next(ids),
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert recovery_read.ok
+        for command in recovery_read.data["task_commands"]:
+            assert command["eligible"] is False
+            assert command["blocked_by"] == {
+                "rule": "postgresql_run_registration_required",
+                "required_next_action": "obtain_registered_client_run",
+                "generation_id": str(context["generation_id"]),
             }
 
 
