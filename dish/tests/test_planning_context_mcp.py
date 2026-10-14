@@ -5,6 +5,8 @@ import asyncio
 import json
 from pathlib import Path
 
+from mcp.server.auth.provider import AccessToken
+
 from dish_service import mcp_server
 from dish_service.planning_context import PlanningContextError, PlanningReceiptStore
 
@@ -35,9 +37,11 @@ class FakeStore:
             raise PlanningContextError("Call dish_planning_context first")
 
 
-def _caller(monkeypatch):
-    monkeypatch.setattr(mcp_server, "get_access_token", lambda: None)
-    monkeypatch.setattr(mcp_server, "_caller_audit_context", lambda _: {"subject": "192548"})
+def _caller(monkeypatch, subject="192548"):
+    token = None if subject is None else AccessToken(
+        token="t", client_id="c", scopes=[], subject=subject,
+    )
+    monkeypatch.setattr(mcp_server, "get_access_token", lambda: token)
 
 
 def test_planning_context_tool_schema_has_necessary_identity():
@@ -144,6 +148,23 @@ def test_mcp_write_fence_requires_receipt_before_create(monkeypatch):
     approved = asyncio.run(tool.run(args))
     assert approved.structured_content["ok"] is True
     assert len(adapter.calls) == 1
+
+
+def test_mcp_write_fence_refuses_unauthenticated_caller(monkeypatch):
+    _caller(monkeypatch, subject=None)
+    definition = next(x for x in mcp_server.TOOLS if x["name"] == "dish_create")
+    adapter = FakeAdapter()
+    store = FakeStore(allow=True)
+    tool = mcp_server.DishTool(
+        definition, adapter, planning_store=store, planning_required=True,
+    )
+    denied = asyncio.run(tool.run({
+        "client": {"run_id": RUN, "request_id": "22222222-2222-4222-8222-222222222222"},
+        "arguments": {"agent": "gpt", "title": "A dish"},
+    }))
+    assert denied.structured_content["code"] == "PLANNING_CONTEXT_REQUIRED"
+    assert adapter.calls == []
+    assert store.checked == []
 
 
 def test_unguarded_creation_preserves_existing_behavior(monkeypatch):
