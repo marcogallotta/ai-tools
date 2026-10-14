@@ -599,10 +599,11 @@ class PlanningContextTool(FastMCPTool):
                 target=target or "",
             )
             result["receipt_recorded"] = True
-            # Only text carries the full bundle. Keep structured content small
-            # so clients receiving both MCP fields do not pay for it twice.
+            # Only structured content carries the full bundle: Codex and Claude
+            # Code give the model structuredContent alone when it is present.
+            # Text stays small so clients forwarding both do not pay twice.
             summary_keys = (
-                "ok", "code", "receipt", "receipt_recorded", "scope", "target",
+                "ok", "code", "receipt_recorded", "scope", "target",
                 "canonical_dish_id", "repository_sha", "counts",
             )
             summary = {key: result.get(key) for key in summary_keys}
@@ -611,11 +612,11 @@ class PlanningContextTool(FastMCPTool):
                     TextContent(
                         type="text",
                         text=result["receipt"] + "\n" + json.dumps(
-                            result, ensure_ascii=False, sort_keys=True,
+                            summary, ensure_ascii=False, sort_keys=True,
                         ),
                     )
                 ],
-                structured_content=summary, is_error=False,
+                structured_content=result, is_error=False,
             )
         except (PlanningContextError, ValueError, RuntimeError, OSError) as exc:
             LOG.warning("mcp_planning_context_failure error_type=%s", type(exc).__name__)

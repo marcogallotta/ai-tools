@@ -87,8 +87,7 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
     assert len(fake.recorded) == 1
 
 
-
-def test_full_payload_is_in_text_once_and_not_repeated_in_structured_content(monkeypatch):
+def test_full_payload_is_in_structured_content_once_and_not_repeated_in_text(monkeypatch):
     _caller(monkeypatch)
     tool = mcp_server.PlanningContextTool(FakeAdapter(), Path("/fake"), FakeStore(allow=True))
     payload = {
@@ -102,24 +101,26 @@ def test_full_payload_is_in_text_once_and_not_repeated_in_structured_content(mon
     }
     monkeypatch.setattr(mcp_server, "assemble_planning_context", lambda *a, **kw: payload)
     result = asyncio.run(tool.run({"client": {"run_id": RUN}, "agent": "gpt", "scope": "broad"}))
-    assert result.structured_content["ok"] is True
-    assert result.structured_content["code"] == "OK"
-    assert result.structured_content["receipt_recorded"] is True
-    assert set(result.structured_content) == {
-        "ok", "code", "receipt", "receipt_recorded", "scope", "target",
-        "canonical_dish_id", "repository_sha", "counts",
-    }
-    assert "files" not in result.structured_content
-    assert "history" not in result.structured_content
-    assert len(json.dumps(result.structured_content, ensure_ascii=False)) < 2_000
-
-    # Clients consuming only the text still receive the complete payload.
-    assert result.content[0].text.startswith(payload["receipt"] + "\n")
-    full = json.loads(result.content[0].text.removeprefix(payload["receipt"] + "\n"))
+    # Codex and Claude Code give the model structuredContent alone, so it
+    # carries the complete payload.
+    full = result.structured_content
     assert full == payload
     assert full["receipt_recorded"] is True
     assert full["files"][0]["text"].startswith("doc-marker-")
     assert full["history"]["all_cooked"][0]["title"] == "history-marker"
+
+    # Text is the receipt plus a small summary, not a second copy.
+    text = result.content[0].text
+    assert text.startswith(payload["receipt"] + "\n")
+    summary = json.loads(text.removeprefix(payload["receipt"] + "\n"))
+    assert set(summary) == {
+        "ok", "code", "receipt_recorded", "scope", "target",
+        "canonical_dish_id", "repository_sha", "counts",
+    }
+    assert summary["receipt_recorded"] is True
+    assert "doc-marker-" not in text
+    assert "history-marker" not in text
+    assert len(text) < 2_000
 
 
 
