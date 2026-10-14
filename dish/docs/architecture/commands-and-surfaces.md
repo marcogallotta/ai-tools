@@ -32,7 +32,7 @@ Connected-agent command identity/exposure membership is shared lower-level metad
 ## Invariants
 
 - A surface must not accidentally expose privileged/internal operations merely because a route or command exists elsewhere.
-- Surface-specific guidance may add navigation, explanation, recovery instructions, or non-workflow affordances; it must not manufacture a workflow transition the backend considers legal when it is not.
+- Surface-specific guidance may add navigation, explanation, recovery instructions, or non-workflow affordances; it must not manufacture a workflow transition the backend considers legal when it is not. `allowed_actions` describes workflow continuations only; an authoritative read may separately expose task-level commands with explicit eligibility and blockers.
 - The public GPT Action transport may add `data.agent_guidance` derived from the canonical result. Guidance is contextual caller help, not workflow authority: it must not add or authorize legal actions, invent authoritative identifiers or state, or contradict `allowed_actions`.
 - Connected `query` and `cooked-updates` results may guide callers to exhaust exact pagination and,
   for Planning, inspect immutable logs plus current Honest Pantry class/block guidance. This does not
