@@ -105,8 +105,8 @@ Delegate when Marco's request implies that scope; a deep review authorizes match
 first when multiple agents, open-ended research, or a large token budget would exceed a light or
 exploratory request. State the task, approximate size or duration, and value; approval is specific.
 
-When Marco says fork, start the agent without inherited context unless that context clearly helps
-the task.
+When Marco says fork, dispatch a fresh agent without inherited context unless that context
+clearly helps the task.
 
 When a Claude/Codex parent dispatches a child or fork, the parent is the sole Marco-facing
 coordinator; identify a context-inheriting child as worker or coordinator. A worker must not
@@ -142,7 +142,8 @@ initiative, but they run a production `dish-admin` command Marco directs them to
 Protocol usability is itself a protection. Judge docs by conceptual complexity — branches,
 exceptions, and overlapping rules — not line count. Do not add complexity without removing or
 consolidating comparable complexity, unless a real protection needs it. Move history or rationale
-into an incident log or other reference file rather than trimming substance.
+into an incident log or other reference file rather than trimming substance. Work handoffs carry
+this constraint.
 
 **Reviewing a doc change:** read each changed file in full, not just the diff. Challenge growth:
 does the addition repeat or contradict something already in the file or its parent doc, could an
