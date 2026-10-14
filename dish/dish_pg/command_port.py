@@ -672,6 +672,13 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             snapshot = self._planner_snapshot(
                 generation.generation_id, task, result_operation
             )
+            agent = str(call.arguments.get("agent", "")).strip()
+            run_admissible = self.workflow.repo.initial_cutover_run_admissible(
+                generation=generation,
+                run_id=call.run_id,
+                owner_id=call.owner_id,
+                agent=agent,
+            )
 
             def task_command(command_name: str) -> dict[str, Any]:
                 plan = plan_command(
@@ -687,10 +694,15 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 )
                 command: dict[str, Any] = {
                     "command": command_name,
-                    "eligible": plan.legal,
+                    "eligible": plan.legal and run_admissible,
                     "arguments": {"dish_id": str(task.task_id)},
                 }
-                if not plan.legal:
+                if not run_admissible:
+                    command["blocked_by"] = {
+                        "rule": "postgresql_run_identity_stale",
+                        "required_next_action": "use_fresh_client_run",
+                    }
+                elif not plan.legal:
                     command["blocked_by"] = {
                         "rule": plan.result_code,
                         **dict(plan.recovery_guidance),
