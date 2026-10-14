@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from dish_service import mcp_server
@@ -56,6 +57,7 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
         "repository_sha": "b" * 40,
         "scope": "block", "target": "wok-depth-rice",
         "canonical_dish_id": None,
+        "counts": {"docs": 5, "cooked": 288, "logs": 2, "logged_dishes": 2},
         "receipt": "Context loaded (block: wok-depth-rice)\nDocs: dish-planning-protocol",
     }
     monkeypatch.setattr(mcp_server, "assemble_planning_context", lambda *args, **kwargs: payload)
@@ -63,7 +65,11 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
         "client": {"run_id": RUN}, "agent": "gpt",
         "scope": "block", "target": "wok-depth-rice",
     }))
+    assert res.structured_content["ok"] is True
+    assert res.structured_content["code"] == "OK"
     assert res.structured_content["receipt_recorded"] is True
+    assert res.structured_content["receipt"] == payload["receipt"]
+    assert res.structured_content["counts"] == payload["counts"]
     assert res.content[0].text.startswith("Context loaded (block: wok-depth-rice)")
     assert '"repository_sha"' in res.content[0].text
     assert fake.recorded == [{
@@ -79,6 +85,42 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
     }))
     assert res.structured_content["ok"] is False
     assert len(fake.recorded) == 1
+
+
+
+def test_full_payload_is_in_text_once_and_not_repeated_in_structured_content(monkeypatch):
+    _caller(monkeypatch)
+    tool = mcp_server.PlanningContextTool(FakeAdapter(), Path("/fake"), FakeStore(allow=True))
+    payload = {
+        "ok": True, "code": "OK", "receipt": "Context loaded (broad: all)",
+        "receipt_recorded": False,  # the tool records it after assembly
+        "scope": "broad", "target": "all", "canonical_dish_id": None,
+        "repository_sha": "c" * 40,
+        "counts": {"docs": 6, "cooked": 288, "logs": 0, "logged_dishes": 0},
+        "files": [{"path": "planning/roadmap.md", "text": "doc-marker-" + "x" * 8000}],
+        "history": {"all_cooked": [{"title": "history-marker"}], "cook_logs": []},
+    }
+    monkeypatch.setattr(mcp_server, "assemble_planning_context", lambda *a, **kw: payload)
+    result = asyncio.run(tool.run({"client": {"run_id": RUN}, "agent": "gpt", "scope": "broad"}))
+    assert result.structured_content["ok"] is True
+    assert result.structured_content["code"] == "OK"
+    assert result.structured_content["receipt_recorded"] is True
+    assert set(result.structured_content) == {
+        "ok", "code", "receipt", "receipt_recorded", "scope", "target",
+        "canonical_dish_id", "repository_sha", "counts",
+    }
+    assert "files" not in result.structured_content
+    assert "history" not in result.structured_content
+    assert len(json.dumps(result.structured_content, ensure_ascii=False)) < 2_000
+
+    # Clients consuming only the text still receive the complete payload.
+    assert result.content[0].text.startswith(payload["receipt"] + "\n")
+    full = json.loads(result.content[0].text.removeprefix(payload["receipt"] + "\n"))
+    assert full == payload
+    assert full["receipt_recorded"] is True
+    assert full["files"][0]["text"].startswith("doc-marker-")
+    assert full["history"]["all_cooked"][0]["title"] == "history-marker"
+
 
 
 def test_mcp_write_fence_requires_receipt_before_create(monkeypatch):
