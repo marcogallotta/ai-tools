@@ -404,3 +404,89 @@ def test_record_cook_log_is_lifecycle_neutral(workflow_db, lifecycle: str) -> No
             assert [[text for _, text in item.cook_logs] for item in cooked] == [["cooked"]]
         else:
             assert not cooked
+
+
+@pytest.mark.parametrize("lifecycle", ("resting", "open", "cooked", "archived"))
+def test_read_separates_workflow_continuations_from_task_commands(
+    workflow_db, lifecycle: str
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        if lifecycle == "open":
+            _start_initial(port, ids, task_id=task_id, run_id=run_id)
+        elif lifecycle == "cooked":
+            assert port.execute(
+                _call(
+                    "cooked",
+                    run_id=run_id,
+                    request_id=_next(ids),
+                    arguments={"dish_id": str(task_id), "agent": "codex"},
+                )
+            ).ok
+        elif lifecycle == "archived":
+            assert port.execute(
+                _call(
+                    "archive",
+                    run_id=run_id,
+                    request_id=_next(ids),
+                    arguments={"dish_id": str(task_id), "agent": "codex"},
+                )
+            ).ok
+
+        result = port.execute(
+            _call(
+                "read",
+                run_id=run_id,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+        assert result.ok, (result.code, result.data)
+        assert result.data["workflow_continuations"] == list(result.allowed_actions)
+        commands = {
+            item["command"]: item for item in result.data["task_commands"]
+        }
+        assert commands["record-cook-log"] == {
+            "command": "record-cook-log",
+            "eligible": True,
+            "arguments": {"dish_id": str(task_id)},
+        }
+        assert "record-cook-log" not in result.allowed_actions
+        assert "cooked" not in result.allowed_actions
+        assert commands["cooked"]["eligible"] is (lifecycle == "resting")
+        if lifecycle == "open":
+            assert commands["cooked"]["blocked_by"]["rule"] == "open_workflow_operation"
+        elif lifecycle in {"cooked", "archived"}:
+            assert commands["cooked"]["blocked_by"] == {
+                "rule": "dish_not_active",
+                "completion_state": lifecycle,
+            }
+
+
+def test_read_exposes_complete_document_prepare_input(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        _start_initial(port, ids, task_id=task_id, run_id=run_id)
+
+        result = port.execute(
+            _call(
+                "read",
+                run_id=run_id,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+
+        assert result.ok, (result.code, result.data)
+        assert "prepare" in result.allowed_actions
+        assert result.data["prepare_input"] == {
+            "requires_complete_document": True,
+            "assembly": "title + newline + body",
+            "body_only_valid": False,
+        }
