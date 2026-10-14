@@ -458,12 +458,19 @@ class WorkflowAuthorityRepository:
 
         existing = fresh_run()
         if existing is not None:
-            return self._require_bootstrap_run_identity(
-                existing,
-                generation_id=generation_id,
-                owner_id=normalized_owner,
-                agent=normalized_agent,
-            )
+            try:
+                return self._require_bootstrap_run_identity(
+                    existing,
+                    generation_id=generation_id,
+                    owner_id=normalized_owner,
+                    agent=normalized_agent,
+                )
+            except StaleAuthorityError:
+                if generation.creation_reason != "initial_cutover":
+                    raise StaleAuthorityError(
+                        "run registration or bootstrap authority is required for the active recovery generation"
+                    ) from None
+                raise
         if normalized_agent is None:
             raise StaleAuthorityError(
                 "unknown run cannot be created without validated agent identity"
@@ -728,9 +735,6 @@ class WorkflowAuthorityRepository:
         return RequestAdmission(request, False, recorded)
 
     def admit_request(self, spec: RequestSpec) -> RequestAdmission:
-        generation = self.require_active_generation(
-            spec.generation_id, hold_transition_fence=True
-        )
         payload = dict(spec.canonical_payload)
         payload_sha = sha256_json(payload)
         existing = self.session.get(wf.ServiceRequest, spec.request_id)
@@ -746,6 +750,9 @@ class WorkflowAuthorityRepository:
             )
             return RequestAdmission(existing, True, outcome)
 
+        generation = self.require_active_generation(
+            spec.generation_id, hold_transition_fence=True
+        )
         self.require_active_run(
             generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
         )
