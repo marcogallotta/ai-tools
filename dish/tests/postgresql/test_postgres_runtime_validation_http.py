@@ -1876,7 +1876,11 @@ def test_bootstrap_rejects_existing_owner_agent_and_terminal_conflicts(
             raise AssertionError("expected exact run identity conflict")
         except DishRuleError as exc:
             assert exc.code == "CONFLICT"
-            assert exc.rule == "postgresql_command_rejected"
+            assert exc.rule == "postgresql_run_identity_stale"
+            assert exc.details == {
+                "required_next_action": "use_fresh_client_run",
+                "fresh_request_id_required": True,
+            }
 
     with session_scope(factory) as session:
         assert session.get(wf.ServiceRun, owner_run).owner_id == "cli"
