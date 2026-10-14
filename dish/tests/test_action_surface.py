@@ -422,6 +422,24 @@ def test_action_guidance_requires_fresh_identity_only_for_explicit_stale_run():
     )
     assert not any("fresh client.run_id" in item for item in uncertain["instructions"])
 
+    registration = action_agent_guidance(
+        {
+            "ok": False,
+            "command": "read",
+            "code": "CONFLICT",
+            "errors": [{"rule": "postgresql_run_registration_required"}],
+            "data": {},
+        }
+    )
+    assert any(
+        "registered through the recovery/bootstrap authority" in item
+        for item in registration["instructions"]
+    )
+    assert not any(
+        "use a fresh client.request_id" in item
+        for item in registration["instructions"]
+    )
+
 
 def test_action_guidance_requires_exact_cooked_updates_pagination():
     guidance = action_agent_guidance({
