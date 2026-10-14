@@ -217,7 +217,7 @@ def _reservation_state(session, reservation_id: uuid.UUID) -> dict[str, object]:
 
 
 def test_validation_failure_persists_and_exactly_replays(workflow_db, tmp_path: Path) -> None:
-    factory, _ids, _context, _task_id, service, principal, run_id, request_id, arguments = (
+    factory, ids, context, _task_id, service, principal, run_id, request_id, arguments = (
         _validation_runtime(workflow_db, tmp_path)
     )
     first = service.record_replay_validation_failure(
@@ -271,6 +271,23 @@ def test_validation_failure_persists_and_exactly_replays(workflow_db, tmp_path: 
         assert run is not None
         run.status = "retired"
         run.retired_at = NOW
+        previous = session.get(models.AuthorityGeneration, context["generation_id"])
+        assert previous is not None
+        previous.status = "retired"
+        previous.retired_at = NOW
+        session.add(
+            models.AuthorityGeneration(
+                generation_id=_next(ids),
+                predecessor_generation_id=previous.generation_id,
+                creation_reason="test_fixture_recovery",
+                external_restore_control_id=None,
+                schema_head=previous.schema_head,
+                dish_release=previous.dish_release,
+                status="active",
+                created_at=NOW,
+                retired_at=None,
+            )
+        )
 
     replay = service.record_replay_validation_failure(
         "create",
