@@ -458,12 +458,74 @@ def test_read_separates_workflow_continuations_from_task_commands(
         assert "cooked" not in result.allowed_actions
         assert commands["cooked"]["eligible"] is (lifecycle == "resting")
         if lifecycle == "open":
-            assert commands["cooked"]["blocked_by"]["rule"] == "open_workflow_operation"
-        elif lifecycle in {"cooked", "archived"}:
+            assert commands["cooked"]["blocked_by"]["rule"] == "TASK_NOT_RESTING"
+            assert commands["cooked"]["blocked_by"]["open_operation_id"]
+            assert commands["cooked"]["blocked_by"]["active_lease_id"]
+        elif lifecycle == "cooked":
             assert commands["cooked"]["blocked_by"] == {
-                "rule": "dish_not_active",
-                "completion_state": lifecycle,
+                "rule": "TASK_NOT_ACTIVE",
             }
+        elif lifecycle == "archived":
+            assert commands["cooked"]["blocked_by"] == {
+                "rule": "TASK_ARCHIVED",
+            }
+
+
+@pytest.mark.parametrize(
+    ("command_name", "blocker_field", "rule"),
+    (
+        ("cooked", "open_operation_id", "TASK_NOT_RESTING"),
+        ("cooked", "active_lease_id", "TASK_NOT_RESTING"),
+        ("cooked", "unresolved_projection_attempt_id", "TASK_NOT_RESTING"),
+        ("cooked", "open_hold_id", "TASK_NOT_RESTING"),
+        ("cooked", "open_human_requirement_id", "TASK_NOT_RESTING"),
+        ("record-cook-log", "open_abandonment_id", "ABANDONMENT_FENCE_ACTIVE"),
+    ),
+)
+def test_read_task_command_affordances_use_exact_planner_blockers(
+    workflow_db,
+    monkeypatch,
+    command_name: str,
+    blocker_field: str,
+    rule: str,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    blocker_id = str(uuid.uuid4())
+    with session_scope(factory) as session:
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        task = session.get(models.DishTask, task_id)
+        assert task is not None
+        snapshot = port._planner_snapshot(context["generation_id"], task, None)
+        blocked_snapshot = replace(snapshot, **{blocker_field: blocker_id})
+        monkeypatch.setattr(
+            port,
+            "_planner_snapshot",
+            lambda generation_id, task, operation: blocked_snapshot,
+        )
+
+        result = port.execute(
+            _call(
+                "read",
+                run_id=run_id,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )
+        )
+
+        assert result.ok, (result.code, result.data)
+        commands = {
+            item["command"]: item for item in result.data["task_commands"]
+        }
+        assert commands[command_name]["eligible"] is False
+        expected_blocker = {
+            "rule": rule,
+        }
+        expected_blocker[
+            "abandonment_id" if blocker_field == "open_abandonment_id" else blocker_field
+        ] = blocker_id
+        assert commands[command_name]["blocked_by"] == expected_blocker
 
 
 def test_read_exposes_complete_document_prepare_input(workflow_db) -> None:
