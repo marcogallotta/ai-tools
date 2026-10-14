@@ -267,6 +267,10 @@ def test_validation_failure_persists_and_exactly_replays(workflow_db, tmp_path: 
         assert outcome is not None
         assert dict(outcome.result_payload) == first
         assert _row_counts(session, request_id) == _expected_counts()
+        run = session.get(wf.ServiceRun, run_id)
+        assert run is not None
+        run.status = "retired"
+        run.retired_at = NOW
 
     replay = service.record_replay_validation_failure(
         "create",
