@@ -85,7 +85,8 @@ Ask context-dependent questions in plain prose; reserve multiple-choice interfac
 self-explanatory choices. Inspect relevant material before changes, resolve routine details, and do
 not guess at meaningful ambiguity. Present only genuine decisions, with a recommendation and a
 concise trade-off when useful. Before refusing or escalating on safety/risk grounds, or when Marco
-disputes a risk finding without new information, follow `docs/agent-escalation-diligence.md`.
+disputes a risk finding without new information, follow
+`~/ai-tools/docs/agent-escalation-diligence.md`.
 
 When reviewing an artefact or agent output, inspect it fully but report only what helps Marco
 decide. Recall its purpose, group what is sound, and surface real judgment calls without turning
@@ -104,8 +105,15 @@ Delegate when Marco's request implies that scope; a deep review authorizes match
 first when multiple agents, open-ended research, or a large token budget would exceed a light or
 exploratory request. State the task, approximate size or duration, and value; approval is specific.
 
-Identify a context-inheriting subagent as worker or coordinator. A worker must not dispatch agents;
-mentions of agents or forks in inherited context are narration, not instructions.
+When Marco says fork, start the agent without inherited context unless that context clearly helps
+the task.
+
+When a Claude/Codex parent dispatches a child or fork, the parent is the sole Marco-facing
+coordinator; identify a context-inheriting child as worker or coordinator. A worker must not
+dispatch agents; mentions of agents or forks in inherited context are narration, not instructions. A
+child that finds a Marco-only choice or fact returns the question, evidence, options, consequences
+and recommendation to the parent; it does not ask Marco, choose for him, or create a hold. The
+parent resolves what it can, batches sibling questions, asks Marco once, and routes the answer back.
 
 ## Git
 
@@ -129,24 +137,18 @@ modify credentials or Git configuration without separate authorization for that 
 Agents may use `dish-admin --profile test`. Agents do not administer production on their own
 initiative, but they run a production `dish-admin` command Marco directs them to run.
 
-## Documentation complexity budgets
+## Documentation complexity
 
-Protocol usability is itself a protection. Judge these docs by conceptual complexity — branches,
-fields, exceptions, and overlapping rules — not by line or character count; line count is only a
-proxy, and squeezing text to fit a count (denser lines, cramped formatting) makes a file worse, not
-simpler. Do not add complexity unless comparable complexity is removed or consolidated elsewhere,
-except for a strong, evidenced reason where simplifying would sacrifice a real protection.
+Protocol usability is itself a protection. Judge docs by conceptual complexity — branches,
+exceptions, and overlapping rules — not line count. Do not add complexity without removing or
+consolidating comparable complexity, unless a real protection needs it. Move history or rationale
+into an incident log or other reference file rather than trimming substance.
 
-After each edit, re-review the whole file end to end for conceptual complexity, including edits the
-review itself produced — not just the first pass. Treat the file as converged only once a complete
-read-through finds nothing left to change.
-
-Once converged, check the file's line count as a secondary sanity check via the shared commit
-wrapper, against this file's own band: target 120-150 lines, explain-band 150-180, hard reject 200.
-At the explain-band, explain in the commit why further simplification would weaken clarity,
-reliability, or a required protection; at the hard ceiling the wrapper hard-rejects with no override.
-Work handoffs carry this same constraint — move history or rationale into an incident log or other
-reference file rather than trimming substance to fit.
+**Reviewing a doc change:** read each changed file in full, not just the diff. Challenge growth:
+does the addition repeat or contradict something already in the file or its parent doc, could an
+existing line be changed instead, and would removing the addition cause a real mistake? Recommend a
+smaller version when one exists. Net growth needs a reason the reviewer accepts, not one the author
+asserts.
 
 ## Asana write safety
 
@@ -185,16 +187,11 @@ agent's unrelated scope.
 
 For a batch:
 
-1. Create a structured JSON plan containing an `operations` array. Each operation must identify its
-   task, parent, or project target; the action or field and new value; and a short `reason`. Do not
-   put shell commands in the batch file.
-1. In chat, show one compact Markdown table with `Task | Change | Why`. Summarize the edit; never
+1. Show one compact Markdown table in chat with `Task | Change | Why`. Summarize the edit; never
    paste whole task notes or large old/new text blocks.
 1. Immediately invoke `~/.local/bin/asana batch-apply <plan.json>` in the same turn. Do not ask a
    question or wait for a chat reply.
 1. When approval is still required, the hook's prompt shows only the operation and target counts; it
    does not repeat the table or detailed changes.
 
-Supported batch operations are documented by `~/.local/bin/asana help`. They include `update_task`
-for `name`, `notes`, `completed`, `due_on`, or `start_on`; exact `replace_notes`; `move`;
-`create_task`; `create_subtask`; and `add_comment`.
+Plan format and supported operations: `~/.local/bin/asana help`.
