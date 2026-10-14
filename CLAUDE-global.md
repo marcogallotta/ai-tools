@@ -194,4 +194,5 @@ For a batch:
 1. When approval is still required, the hook's prompt shows only the operation and target counts; it
    does not repeat the table or detailed changes.
 
-Plan format and supported operations: `~/.local/bin/asana help`.
+Plan format and supported operations: `~/.local/bin/asana help`. Never put shell commands in a
+batch plan.
