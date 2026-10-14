@@ -43,7 +43,7 @@ def honest_repo(tmp_path: Path) -> tuple[Path, str, str]:
     origin = tmp_path / "origin.git"
     seed = tmp_path / "seed"
     root = tmp_path / "honest"
-    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "init", "--bare", "-b", "main", str(origin))
     _git(tmp_path, "init", "-b", "main", str(seed))
     _git(seed, "config", "user.email", "t@example.invalid")
     _git(seed, "config", "user.name", "test")
