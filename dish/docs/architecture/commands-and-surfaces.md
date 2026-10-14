@@ -188,7 +188,8 @@ holds/review requirements/challenges/abandonment attempts are closed, pending/cl
 are retired, safe undispatched projection intents are superseded, and every run committed on the
 pre-archive side receives a task-scoped revocation. Exact history remains readable. Dispatched,
 uncertain, or blocked external-effect work fails archive closed rather than reporting partial success.
-Every later mutating command except `unarchive` is rejected while archived. Private admin inspection
+Every later mutating command except `unarchive` and the immutable-history append
+`record-cook-log` is rejected while archived. Private admin inspection
 remains read-only and available. `cooked` remains resting-only.
 In PostgreSQL authority the private admin command is a narrow additional principal for the same
 `archive` semantic agents use, and the PostgreSQL path creates no Asana projection. The private admin
