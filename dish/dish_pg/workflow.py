@@ -384,14 +384,14 @@ class WorkflowAuthorityRepository:
             )
         return run
 
-    def initial_cutover_run_admissible(
+    def mutation_run_admission_blocker(
         self,
         *,
         generation: models.AuthorityGeneration,
         run_id: uuid.UUID,
         owner_id: str,
         agent: str | None,
-    ) -> bool:
+    ) -> Mapping[str, str] | None:
         """Read-only mirror of mutation run admission for command affordances."""
 
         normalized_owner = owner_id.strip()
@@ -402,19 +402,27 @@ class WorkflowAuthorityRepository:
             "codex",
             "marco",
         }:
-            return False
+            return {"rule": "postgresql_run_identity_stale"}
         run = self.session.get(wf.ServiceRun, run_id)
-        if run is not None:
-            return self._bootstrap_run_identity_matches(
-                run,
-                generation_id=generation.generation_id,
-                owner_id=normalized_owner,
-                agent=normalized_agent,
-            )
-        return bool(
-            generation.status == "active"
-            and generation.creation_reason == "initial_cutover"
-        )
+        if run is not None and self._bootstrap_run_identity_matches(
+            run,
+            generation_id=generation.generation_id,
+            owner_id=normalized_owner,
+            agent=normalized_agent,
+        ):
+            return None
+        if generation.creation_reason != "initial_cutover":
+            return {
+                "rule": "postgresql_run_registration_required",
+                "required_next_action": "obtain_registered_client_run",
+                "generation_id": str(generation.generation_id),
+            }
+        if run is None:
+            return None
+        return {
+            "rule": "postgresql_run_identity_stale",
+            "required_next_action": "use_fresh_client_run",
+        }
 
     def ensure_initial_cutover_run(
         self,
@@ -664,9 +672,6 @@ class WorkflowAuthorityRepository:
     ) -> RequestAdmission:
         """Bind and complete a pre-execution failure without mutation admission."""
 
-        self.require_active_run(
-            generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
-        )
         payload = dict(spec.canonical_payload)
         if not self._validation_payload_matches_spec(payload, spec=spec):
             raise WorkflowAuthorityError(
@@ -677,6 +682,17 @@ class WorkflowAuthorityRepository:
                 "validation outcome does not match its stable error identity"
             )
         payload_sha = sha256_json(payload)
+        recovered = self._recover_request_admission(
+            spec=spec, payload_sha=payload_sha
+        )
+        if recovered is not None:
+            if recovered.outcome is None:
+                raise ContentionLost("request outcome is not yet authoritative")
+            return recovered
+
+        self.require_active_run(
+            generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
+        )
         inserted = self._insert_validation_request(
             spec=spec, payload=payload, payload_sha=payload_sha
         )
