@@ -120,6 +120,11 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "request identity to bypass a pending or uncertain result; this instruction applies "
                 "only to this explicit stale-run rejection."
             )
+        if error_rule == "postgresql_run_registration_required":
+            instructions.append(
+                "This recovery authority does not auto-register fresh run IDs. Continue only with a client run "
+                "that was registered through the recovery/bootstrap authority; do not keep generating fresh IDs."
+            )
         legal_next = _text(data.get("legal_next_step"))
         if legal_next:
             instructions.append(legal_next)
