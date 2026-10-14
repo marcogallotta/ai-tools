@@ -673,7 +673,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 generation.generation_id, task, result_operation
             )
             agent = str(call.arguments.get("agent", "")).strip()
-            run_admissible = self.workflow.repo.initial_cutover_run_admissible(
+            run_blocker = self.workflow.repo.mutation_run_admission_blocker(
                 generation=generation,
                 run_id=call.run_id,
                 owner_id=call.owner_id,
@@ -694,14 +694,11 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 )
                 command: dict[str, Any] = {
                     "command": command_name,
-                    "eligible": plan.legal and run_admissible,
+                    "eligible": plan.legal and run_blocker is None,
                     "arguments": {"dish_id": str(task.task_id)},
                 }
-                if not run_admissible:
-                    command["blocked_by"] = {
-                        "rule": "postgresql_run_identity_stale",
-                        "required_next_action": "use_fresh_client_run",
-                    }
+                if run_blocker is not None:
+                    command["blocked_by"] = dict(run_blocker)
                 elif not plan.legal:
                     command["blocked_by"] = {
                         "rule": plan.result_code,
