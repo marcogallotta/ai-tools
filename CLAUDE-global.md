@@ -145,6 +145,10 @@ consolidating comparable complexity, unless a real protection needs it. Move his
 into an incident log or other reference file rather than trimming substance. Work handoffs carry
 this constraint.
 
+Before editing a doc, read the whole file, not just the part you are changing. After each edit,
+re-read it end to end, including edits a review produced; it is done only when a full read-through
+finds nothing left to change.
+
 **Reviewing a doc change:** read each changed file in full, not just the diff. Challenge growth:
 does the addition repeat or contradict something already in the file or its parent doc, could an
 existing line be changed instead, and would removing the addition cause a real mistake? Recommend a
