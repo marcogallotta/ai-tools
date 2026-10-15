@@ -14,12 +14,13 @@ Current anchors include `dish_service/cli.py`, `dish_service/admin_cli.py`, `dis
 
 Stable connected-agent command names are owned below transport composition by `dish_tool/command_identity.py`. `ACTION_COMMAND_DEFINITIONS` in `dish_service/command_spec.py` must cover that identity set exactly and remains authoritative for Action-specific principal, request-ID/replay, route, workflow-link, validation, and schema metadata. The generated Action schema derives from those service definitions. A command existing elsewhere in CLI/application code does not by itself mean that the connected GPT can call it.
 
-The MCP app additionally exposes `dish_honest_read` as a transport-local, read-only repository
-context tool. It updates the single host Honest Pantry checkout before returning bounded text files;
-it is not a Dish workflow command and does not join the connected command identity set. Its response
-may identify missing recommended routing files, including the Planning protocol, whose "Route by
-intent" decides which further docs a request reads. That is discovery feedback, not proof that the
-caller read or followed those files.
+The MCP app additionally exposes two transport-local, read-only Honest Pantry context tools; neither
+is a Dish workflow command or joins the connected command identity set. `dish_honest_read` updates
+the single host checkout before returning bounded text files. Its response may identify missing
+recommended routing files, including the Planning protocol, whose "Route by intent" decides which
+further docs a request reads. `dish_honest_archive` applies the same fail-closed exact-main refresh
+and returns the tracked tree as one bounded embedded ZIP with a commit/tree manifest for local
+extraction and search. Discovery or delivery is not proof that the caller read or followed a file.
 
 ## Actors, processes, and stores
 
