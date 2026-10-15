@@ -192,7 +192,18 @@ def test_start_research_on_planning_stage_brief_reports_no_diagnostics(tmp_path)
 
 @pytest.mark.smoke
 def test_start_claims_once_and_returns_only_stage_protocol(tmp_path):
-    lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n") ; a=app(tmp_path,b)
+    research_ready = (
+        "### Planning brief\n"
+        "Dish candidate: Test dish\n"
+        "Purpose: Compare texture\n"
+        "Role: non-main — small side for comparison\n"
+        "Priors: None\n"
+        "Locks: Keep crisp\n"
+        "Exemptions: None\n"
+        "Research emphasis: Compare two hydration levels\n"
+        "Destination section: Sichuan — 12345\n"
+    )
+    b=Backend("Test dish", research_ready) ; a=app(tmp_path,b)
     first=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
     assert first["ok"] and first["data"]["protocol"] == {"role":"research","version":"1.0.10","text":"research protocol"}
     second=a.execute("start",agent="claude",task_gid="t",kind="initial",change_level=None,change_reason=None)
@@ -203,7 +214,18 @@ def test_start_claims_once_and_returns_only_stage_protocol(tmp_path):
 
 @pytest.mark.smoke
 def test_start_fails_closed_on_drift(tmp_path):
-    lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
+    research_ready = (
+        "### Planning brief\n"
+        "Dish candidate: Test dish\n"
+        "Purpose: Compare texture\n"
+        "Role: non-main — small side for comparison\n"
+        "Priors: None\n"
+        "Locks: Keep crisp\n"
+        "Exemptions: None\n"
+        "Research emphasis: Compare two hydration levels\n"
+        "Destination section: Sichuan — 12345\n"
+    )
+    b=Backend("Test dish", research_ready); a=app(tmp_path,b)
     confirm_task_content(a.conn,task_gid="t",title="different",notes=b.notes,schema_version="2")
     result=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
     assert result["code"] == "CONFLICT"

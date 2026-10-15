@@ -246,13 +246,14 @@ def test_other_records_free_text_without_inventing_authorization(tmp_path):
 
 def test_preconstruction_human_review_uses_review_queue_and_rejects_unbound_authorization(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    # make_app starts with a constructed candidate; use a fresh initial operation on a bare task instead.
+    # make_app advances its backend to pending Verification. Use a fresh
+    # Research-ready backend for this preconstruction hold instead.
     from tests.support.service_leases import _service
     from dish_service.leases import ServicePrincipal
 
     pre_dir = tmp_path / "preconstruction"
     pre_dir.mkdir()
-    service = _service(pre_dir, backend)
+    service = _service(pre_dir, type(backend)())
     researcher = ServicePrincipal(owner_id="researcher", run_id="researcher-run")
     started = service.execute_agent(
         "start", {"agent": "gpt", "task_gid": "t", "kind": "initial"}, principal=researcher
@@ -290,7 +291,7 @@ def test_preconstruction_human_review_uses_review_queue_and_rejects_unbound_auth
     # because no reviewed candidate exists yet to bind that authorization to.
     pre_auth_dir = tmp_path / "preconstruction-auth"
     pre_auth_dir.mkdir()
-    service2 = _service(pre_auth_dir, backend)
+    service2 = _service(pre_auth_dir, type(backend)())
     researcher2 = ServicePrincipal(owner_id="researcher", run_id="researcher-run-2")
     started2 = service2.execute_agent(
         "start", {"agent": "gpt", "task_gid": "t", "kind": "initial"}, principal=researcher2
