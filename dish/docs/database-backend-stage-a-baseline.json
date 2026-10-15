@@ -157,7 +157,7 @@
   ],
   "target_treatments": {
     "abandon-operation": "retain:R",
-    "adopt-legacy-verification": "retain:R",
+    "adopt-legacy-verification": "add:L",
     "approve": "retain:L",
     "archive": "retain:L",
     "attention": "retain:Q",

@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from dish_pg.command_contract import COMMAND_DEFINITIONS
 from dish_service.command_spec import ACTION_COMMANDS
 from dish_tool.admin_command_spec import ADMIN_COMMANDS
 from dish_tool.database_migrations import migrate_database
@@ -60,6 +61,10 @@ def test_frozen_command_inventory_matches_current_surfaces() -> None:
         re.fullmatch(r"(?:retain|retire|add):[A-Z]", treatment)
         for treatment in treatments.values()
     )
+    for command, treatment in treatments.items():
+        definition = COMMAND_DEFINITIONS.get(command)
+        if definition is not None:
+            assert treatment.rsplit(":", 1)[1] == definition.profile
 
 
 def test_frozen_sqlite_authority_inventory_matches_schema() -> None:
