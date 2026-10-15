@@ -398,6 +398,28 @@ def test_action_guidance_distinguishes_task_commands_and_complete_prepare_input(
     assert any("complete canonical document" in item for item in guidance["instructions"])
 
 
+def test_action_guidance_describes_planning_brief_prepare_input():
+    guidance = action_agent_guidance(
+        {
+            "ok": True,
+            "command": "read",
+            "code": "OK",
+            "allowed_actions": ["prepare"],
+            "data": {
+                "prepare_input": {
+                    "requires_complete_document": False,
+                    "body_only_valid": True,
+                },
+            },
+        }
+    )
+
+    assert any(
+        "Planning brief body without prepending the Dish title" in item
+        for item in guidance["instructions"]
+    )
+
+
 def test_action_guidance_requires_fresh_identity_only_for_explicit_stale_run():
     guidance = action_agent_guidance(
         {

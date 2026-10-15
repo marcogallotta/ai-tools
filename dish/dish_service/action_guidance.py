@@ -219,6 +219,12 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "For prepare file_text, send the complete canonical document assembled as "
                 "title + newline + body. The body returned by read is not valid by itself."
             )
+        elif isinstance(prepare_input, Mapping) and prepare_input.get(
+            "body_only_valid"
+        ) is True:
+            instructions.append(
+                "For prepare file_text, send the Planning brief body without prepending the Dish title."
+            )
 
         if command == "inspect" and error_rule == "operation_not_found":
             instructions.append(

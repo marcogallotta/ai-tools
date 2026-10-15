@@ -737,14 +737,19 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 task_command("cooked"),
             ]
         if "prepare" in allowed_actions:
-            result_data.setdefault(
-                "prepare_input",
-                {
+            if result_operation is not None and result_operation.kind == "planning":
+                prepare_input = {
+                    "requires_complete_document": False,
+                    "assembly": "Planning brief body",
+                    "body_only_valid": True,
+                }
+            else:
+                prepare_input = {
                     "requires_complete_document": True,
                     "assembly": "title + newline + body",
                     "body_only_valid": False,
-                },
-            )
+                }
+            result_data.setdefault("prepare_input", prepare_input)
         required_start_kind = result_data.get("required_start_kind")
         if "start" in allowed_actions and required_start_kind is None:
             if "verify" in raw_actions:

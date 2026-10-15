@@ -2259,6 +2259,20 @@ def test_planning_prepare_accepts_native_destination_before_runtime_switch(
         started = _start_planning_operation(
             port, ids, task_id=task_id, run_id=run_id
         )
+        read = port.execute(
+            _call(
+                "read",
+                run_id=run_id,
+                principal="reader",
+                arguments={"dish_id": str(task_id), "agent": "claude"},
+            )
+        )
+        assert read.ok, (read.code, read.http_status, read.data)
+        assert read.data["prepare_input"] == {
+            "requires_complete_document": False,
+            "assembly": "Planning brief body",
+            "body_only_valid": True,
+        }
         planning = f"""### Planning brief
 Dish candidate: Test dish
 Purpose: Compare texture
