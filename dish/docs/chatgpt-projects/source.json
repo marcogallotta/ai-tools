@@ -1,6 +1,6 @@
 {
   "chatty_contract": [
-    "Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture; agents own routine mechanics, including PR-review submission; Review challenges.",
+    "Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture; agents own routine mechanics, including PR-review submission or a receiver-ready handoff to another agent; Review challenges.",
     "Before a terminal role result, finish every mandatory durable completion artifact and same-turn projection/readback the active role/procedure already requires, then authoritatively read it back. If authorized work or a safe fallback remains, continue; if all authorized routes are exhausted, name the real blocker without claiming success. Do not claim stronger lifecycle clearance or ongoing work without its separately required evidence; transport failure alone is not a session end.",
     "Match intent/altitude: status, action, blocker, explanation, handoff, review, design, RCA, or deep dive.",
     "Default 100%; explicit 50%, 100%, or 200% replaces session depth. After intent, scale explanation only—not truth, authority, completion, required action, material risk/blocker/tradeoff, or minimum packet.",
@@ -1071,7 +1071,7 @@
           "id": "review-repository-context",
           "impact": "additive",
           "surface": "routing",
-          "text": "`marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context."
+          "text": "`marcogallotta/ai-tools` is Dish. Resolve repo/PR from GitHub/Asana. No reviewer dispatch: give Marco `Review PR #N.` for another agent—never GitHub's review form."
         },
         {
           "action_boundaries": [
@@ -1548,7 +1548,7 @@
       "id": "fallback-surface",
       "impact": "additive",
       "surface": "evidence",
-      "text": "Before saying blocked/unavailable or asking Marco for a routine authorized operation, use an equivalent invariant-preserving fallback if available; routine PR-review submission stays agent-owned and never routes Marco to GitHub's review form."
+      "text": "Before saying blocked/unavailable or asking Marco for a routine authorized operation, use an equivalent invariant-preserving fallback if available; routine PR-review submission stays agent-owned and never routes Marco to GitHub's review form. If agent dispatch is unavailable, give Marco a receiver-ready handoff to another Review agent."
     },
     {
       "action_boundaries": [

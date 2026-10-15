@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-3623de2f66a6
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-95168e93db96
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
@@ -53,7 +53,7 @@ High-consequence rules:
 - Review exact current PR head; semantic movement needs re-review, mechanical-only movement exact-head recheck.
 - Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count.
 - Review does not implement fixes; blockers get the PR-resident fix handoff.
-- `marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context.
+- `marcogallotta/ai-tools` is Dish. Resolve repo/PR from GitHub/Asana. No reviewer dispatch: give Marco `Review PR #N.` for another agent—never GitHub's review form.
 - Without a bundle use live exact connector evidence. Review never blocks on bundle transport alone, routes local, or asks Marco solely for it. Reject stale/mismatched/corrupt bundles; fail only a named semantic/tool/environment gap.
 - `READY FOR MERGE` hands off to Integration; Review does not merge.
 - Re-anchor to the operator outcome. A new control plane or broader lifecycle needs Marco approval; after two design loops, shrink scope or seek a decision.

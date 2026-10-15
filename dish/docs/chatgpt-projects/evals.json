@@ -397,7 +397,7 @@
       ]
     },
     {
-      "expected_outcome": "route_routine_review_to_capable_agent",
+      "expected_outcome": "render_receiver_ready_agent_review_handoff",
       "forbidden_actions": [
         "ask_marco_to_open_github_review_form",
         "ask_marco_to_approve_pr",
@@ -405,11 +405,11 @@
         "claim_review_complete_without_durable_comment_review"
       ],
       "id": "review-write-unavailable-never-routes-marco-to-github-form",
-      "prompt": "The exact-head review is ready, but this host cannot submit or read back a formal GitHub COMMENT review. An existing capable Review-agent route is available. Finish the handoff without making Marco perform routine review mechanics.",
+      "prompt": "The exact-head review is ready, but this host cannot submit or read back a formal GitHub COMMENT review and cannot fork or dispatch another agent. Marco can transfer one receiver-ready handoff to another agent. Finish without making Marco perform the review.",
       "required_actions": [
         "recognize_routine_review_as_agent_owned",
         "preserve_exact_candidate_identity",
-        "route_to_capable_review_agent"
+        "render_receiver_ready_agent_review_handoff"
       ],
       "required_rules": [
         "fallback-surface",
