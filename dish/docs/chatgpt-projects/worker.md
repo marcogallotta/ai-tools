@@ -1,7 +1,7 @@
 # Dish — Worker
 
 PROFILE: manual-worker-r5-g2
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-582b66eaeea8
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-95168e93db96
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -17,6 +17,7 @@ Always-on boundaries:
 - Exact candidate identity is mandatory. Code candidate = repository + owning task + PR + branch + exact head. Design candidate = exact task/revision/snapshot identity. Any material movement invalidates prior Review identity.
 - Integration/merge/deploy/cutover are outside Worker. Worker never lands its own result and never chooses the next task.
 - Source mutation never occurs while Code Review is active. Review publishes its formal exact-head verdict first.
+- Routine PR Review is agent-owned. Never send Marco to GitHub's **Review changes** form or ask him to approve or submit it. Submit and verify the formal `COMMENT` review, or route the exact candidate to a capable Review agent when this host genuinely cannot.
 - If Code Review returns `VERDICT: MERGE`, publish/verify that exact-head Review and stop.
 - If Code Review returns `VERDICT: BLOCK`, the Review phase ends. Without another Marco prompt, the **same Worker MUST explicitly switch to Implementation**, freshly load `implementation.md`, re-read the live owning task/PR/branch/current head and the exact formal BLOCK review, and require the fix round to still match that blocked head + review ID. Stale/moved identity means zero semantic mutation and current-state reclassification.
 - Under that Implementation mode, fix only the accepted blockers/task scope on the **same PR lineage**, run the required Implementation evidence, publish and authoritatively read back the corrected head, then stop. Do not broaden into unrelated cleanup.

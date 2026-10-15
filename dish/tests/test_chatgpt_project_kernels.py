@@ -605,6 +605,14 @@ def test_formal_review_needs_comment_write_and_matching_readback():
  p=_passing(); r=_result(p,'review-exact-head-completion::review'); r['runner_observations'][1]['write_id']='other'
  with pytest.raises(kernels.KernelError,match='do not share write_id'): kernels.evaluate_behavior_results(p)
 
+def test_unavailable_review_write_routes_to_agent_not_marco_github_form():
+ scenario=_scenario('review-write-unavailable-never-routes-marco-to-github-form')
+ assert scenario['expected_outcome']=='render_receiver_ready_agent_review_handoff'
+ assert 'render_receiver_ready_agent_review_handoff' in scenario['required_actions']
+ assert {'ask_marco_to_open_github_review_form','ask_marco_to_approve_pr','treat_marco_as_routine_review_fallback'} <= set(scenario['forbidden_actions'])
+ rule=next(x for x in kernels.load_canonical()[1]['shared_rules'] if x['id']=='fallback-surface')
+ assert "never routes Marco to GitHub's review form" in rule['text'] and 'receiver-ready handoff to another Review agent' in rule['text']
+
 def test_fresh_chat_ids_cannot_be_reused():
  p=_passing(); p['results'][1]['fresh_chat_id']=p['results'][0]['fresh_chat_id']
  with pytest.raises(kernels.KernelError,match='reused fresh_chat_id'): kernels.evaluate_behavior_results(p)
