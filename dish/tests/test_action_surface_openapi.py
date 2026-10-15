@@ -6,8 +6,10 @@ import pytest
 
 from dish_service import command_spec
 from dish_service import openapi
+from dish_service.command_spec import validate_action_request
 from dish_service.openapi import action_openapi, implementation_action_openapi
 from dish_tool.constants import APPROVAL_CORRECTIONS, REJECTION_ROUTES
+from dish_tool.errors import DishRuleError
 from tests.support.action_contract import (
     EXPECTED_ACTION_COMMANDS,
     EXPECTED_CONSEQUENTIAL,
@@ -183,6 +185,30 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
 
     prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     assert "no_blockers" not in prepare.get("properties", {})
+
+
+@pytest.mark.smoke
+def test_legacy_prepare_runtime_keeps_non_decision_planning_fields_closed():
+    with pytest.raises(DishRuleError) as error:
+        validate_action_request(
+            "prepare",
+            {
+                "client": {
+                    "run_id": "11111111-1111-4111-8111-111111111111",
+                    "request_id": "22222222-2222-4222-8222-222222222222",
+                },
+                "arguments": {
+                    "submission_id": "33333333-3333-4333-8333-333333333333",
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                    "file_text": "candidate",
+                    "governed_change_fields": ["Role", "Decisions"],
+                },
+            },
+        )
+
+    assert getattr(error.value, "rule", None) == "argument_value_invalid"
+    assert getattr(error.value, "details", {}).get("field") == "governed_change_fields[0]"
 
 
 @pytest.mark.smoke
