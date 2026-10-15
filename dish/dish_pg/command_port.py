@@ -697,6 +697,14 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             snapshot = self._planner_snapshot(
                 generation.generation_id, task, result_operation
             )
+            if result_operation is None and not allowed_actions:
+                recovery = self.legacy_verification_recovery(
+                    generation_id=generation.generation_id,
+                    task=task,
+                )
+                if recovery is not None:
+                    result_data["workflow_recovery"] = recovery
+                    result_data["required_admin_action"] = recovery["command"]
             agent = str(call.arguments.get("agent", "")).strip()
             run_blocker = self.workflow.repo.mutation_run_admission_blocker(
                 generation=generation,
@@ -833,6 +841,74 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "submission_id": submission_id,
             "state": result_operation.phase if result_operation is not None else None,
             "allowed_actions": allowed_actions,
+        }
+
+    def legacy_verification_recovery(
+        self, *, generation_id: uuid.UUID, task: models.DishTask
+    ) -> dict[str, Any] | None:
+        """Describe, but never perform, recovery for a resting pending-Verification import."""
+        view = self.reads.task_view(task.task_id)
+        if view.operation_id is not None or document_shape(view.body) != "canonical":
+            return None
+        try:
+            canonical = parse_canonical_document(title=view.title, body=view.body)
+        except CanonicalDocumentError:
+            return None
+        if canonical.document.state.values.get("Status") != "pending-verification":
+            return None
+        state = self.session.get(models.DishState, (generation_id, task.task_id))
+        version = self.session.get(models.ContentVersion, view.content_version_id)
+        entry = (
+            self.session.get(
+                models.SectionCatalogEntry,
+                (state.catalog_version_id, state.section_id),
+            )
+            if state is not None and state.catalog_version_id is not None
+            else None
+        )
+        eligible_shape = bool(
+            task.existence_state == "ordinary"
+            and task.creation_route == "import"
+            and state is not None
+            and not state.completed
+            and state.archived_at is None
+            and version is not None
+            and version.creator_route == "import"
+            and version.generation_id == generation_id
+            and version.content_version_id == state.current_content_version_id
+            and entry is not None
+            and entry.workflow_role == "verification_queue"
+            and self.session.scalar(
+                select(models.CurrentTaskProjectMembership.project_id).where(
+                    models.CurrentTaskProjectMembership.generation_id == generation_id,
+                    models.CurrentTaskProjectMembership.task_id == task.task_id,
+                    models.CurrentTaskProjectMembership.is_member.is_(True),
+                )
+            )
+            is not None
+        )
+        if eligible_shape:
+            return {
+                "kind": "legacy_verification_adoption",
+                "command": "adopt-legacy-verification",
+                "private_admin_only": True,
+                "dish_id": str(task.task_id),
+                "content_version_id": str(view.content_version_id),
+                "instruction": (
+                    "This imported pending-Verification Dish has no live operation. "
+                    "A private administrator may adopt this exact content into current "
+                    "Verification authority after reviewing its provenance."
+                ),
+            }
+        return {
+            "kind": "admin_diagnosis",
+            "command": "inspect",
+            "private_admin_only": True,
+            "dish_id": str(task.task_id),
+            "instruction": (
+                "This pending-Verification Dish has no live operation, but it does not "
+                "match the narrow legacy-adoption shape. Diagnose it administratively."
+            ),
         }
 
     @staticmethod
@@ -1164,6 +1240,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             "archive": self._archive,
             "unarchive": self._unarchive,
             "reopen-planning": self._reopen_planning,
+            "adopt-legacy-verification": self._adopt_legacy_verification,
             "reopen": self._reopen,
             "supply-evidence": self._supply_evidence,
             "record-human-decision": self._record_human_decision,
@@ -4337,6 +4414,213 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         self._set_completion(generation.generation_id, task.task_id, False, "reopen_planning", execution.execution_id, call.now)
         projection_id = self._project(generation.generation_id, execution.execution_id, task.task_id, "set_completion", {"completed": False}, call.now)
         return {"task_id": str(task.task_id), "completed": False, "projection_event_id": projection_id}
+
+    def _adopt_legacy_verification(
+        self, call, generation, binding, execution, task, _operation
+    ) -> dict[str, Any]:
+        """Create present-day Verification authority for one stranded import.
+
+        This is deliberately not a Research replay.  It binds a new operation
+        and cycle to the byte-identical current imported content and records
+        the administrative adoption as current audit evidence.
+        """
+        assert task is not None
+        state = self.workflow.repo.assert_task_fence(execution.execution_id)
+        reason = str(call.arguments.get("reason") or "").strip()
+        if not reason or len(reason) > 4000:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                "adoption reason must contain 1 to 4000 characters",
+                http_status=400,
+            )
+
+        blockers: dict[str, Any] = {}
+        if task.existence_state != "ordinary" or task.creation_route != "import":
+            blockers["task_provenance"] = {
+                "existence_state": task.existence_state,
+                "creation_route": task.creation_route,
+            }
+        if state.completed or state.archived_at is not None:
+            blockers["task_state"] = "archived" if state.archived_at else "completed"
+
+        version = self.session.get(models.ContentVersion, state.current_content_version_id)
+        if (
+            version is None
+            or version.task_id != task.task_id
+            or version.generation_id != generation.generation_id
+            or version.creator_route != "import"
+            or version.import_run_id is None
+        ):
+            blockers["content_provenance"] = "current_content_is_not_imported"
+        elif version.contract_binding_id != binding.binding_id:
+            blockers["contract_binding"] = "current_content_uses_another_contract"
+        else:
+            try:
+                parsed = parse_canonical_document(title=version.title, body=version.body)
+            except CanonicalDocumentError:
+                blockers["document"] = "current_content_is_not_structurally_valid"
+            else:
+                if parsed.document.state.values.get("Status") != "pending-verification":
+                    blockers["document_status"] = parsed.document.state.values.get("Status")
+
+        catalog_entry = None
+        if state.catalog_version_id is not None:
+            catalog_entry = self.session.get(
+                models.SectionCatalogEntry,
+                (state.catalog_version_id, state.section_id),
+            )
+        if catalog_entry is None or catalog_entry.workflow_role != "verification_queue":
+            blockers["placement"] = "not_in_verification_queue"
+        active_membership = self.session.scalar(
+            select(models.CurrentTaskProjectMembership.project_id).where(
+                models.CurrentTaskProjectMembership.generation_id
+                == generation.generation_id,
+                models.CurrentTaskProjectMembership.task_id == task.task_id,
+                models.CurrentTaskProjectMembership.is_member.is_(True),
+            )
+        )
+        if active_membership is None:
+            blockers["membership"] = "no_active_project_membership"
+
+        open_operation_id = self.session.scalar(
+            select(wf.WorkflowOperation.operation_id).where(
+                wf.WorkflowOperation.generation_id == generation.generation_id,
+                wf.WorkflowOperation.task_id == task.task_id,
+                wf.WorkflowOperation.lifecycle == "open",
+            )
+        )
+        if open_operation_id is not None:
+            blockers["open_operation_id"] = str(open_operation_id)
+        open_cycle_id = self.session.scalar(
+            select(wf.VerificationCycle.cycle_id).where(
+                wf.VerificationCycle.generation_id == generation.generation_id,
+                wf.VerificationCycle.task_id == task.task_id,
+                wf.VerificationCycle.lifecycle == "open",
+            )
+        )
+        if open_cycle_id is not None:
+            blockers["open_cycle_id"] = str(open_cycle_id)
+
+        snapshot = self._planner_snapshot(generation.generation_id, task, None)
+        for key, value in (
+            ("active_lease_id", snapshot.active_lease_id),
+            ("unresolved_projection_attempt_id", snapshot.unresolved_projection_attempt_id),
+            ("open_hold_id", snapshot.open_hold_id),
+            ("open_human_requirement_id", snapshot.open_human_requirement_id),
+            ("open_abandonment_id", snapshot.open_abandonment_id),
+        ):
+            if value is not None:
+                blockers[key] = value
+        conflicting_execution_id = self.session.scalar(
+            select(wf.CommandExecution.execution_id).where(
+                wf.CommandExecution.generation_id == generation.generation_id,
+                wf.CommandExecution.task_id == task.task_id,
+                wf.CommandExecution.execution_id != execution.execution_id,
+                wf.CommandExecution.status.in_(("pending", "claimed", "uncertain")),
+            )
+        )
+        if conflicting_execution_id is not None:
+            blockers["conflicting_execution_id"] = str(conflicting_execution_id)
+
+        if blockers:
+            raise CommandRuleError(
+                "LEGACY_VERIFICATION_ADOPTION_INELIGIBLE",
+                "Dish is not eligible for legacy Verification adoption",
+                data={"blockers": blockers},
+            )
+        assert version is not None
+
+        operation_id = self.uuid_factory()
+        cycle_id = self.uuid_factory()
+        operation = wf.WorkflowOperation(
+            operation_id=operation_id,
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            kind="verification",
+            lifecycle="open",
+            phase="await_verification",
+            persisted_actions=["inspect"],
+            import_run_id=None,
+            creation_request_id=call.request_id,
+            creation_execution_id=execution.execution_id,
+            contract_binding_id=binding.binding_id,
+            catalog_version_id=state.catalog_version_id,
+            predecessor_operation_id=None,
+            terminal_outcome=None,
+            operation_revision=1,
+            created_at=call.now,
+            terminal_at=None,
+        )
+        cycle = wf.VerificationCycle(
+            cycle_id=cycle_id,
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            operation_id=operation_id,
+            reviewed_content_version_id=version.content_version_id,
+            contract_binding_id=binding.binding_id,
+            cycle_sequence=1,
+            lifecycle="open",
+            outcome=None,
+            import_run_id=None,
+            created_by_execution_id=execution.execution_id,
+            created_at=call.now,
+            terminal_at=None,
+        )
+        evidence = {
+            "adoption_kind": "legacy_import_pending_verification",
+            "task_creation_route": task.creation_route,
+            "task_import_run_id": str(task.import_run_id),
+            "content_version_id": str(version.content_version_id),
+            "content_identity": version.content_identity,
+            "content_creator_route": version.creator_route,
+            "content_import_run_id": str(version.import_run_id),
+            "catalog_version_id": str(state.catalog_version_id),
+            "section_id": str(state.section_id),
+            "reason": reason,
+            "admin_actor": call.owner_id,
+            "admin_run_id": str(call.run_id),
+            "operation_id": str(operation_id),
+            "cycle_id": str(cycle_id),
+        }
+        self.session.add(operation)
+        self.session.flush()
+        execution.operation_id = operation_id
+        self.session.add(cycle)
+        self.session.add(
+            wf.OperationStep(
+                step_id=self.uuid_factory(),
+                operation_id=operation_id,
+                step_name="legacy_verification_adoption",
+                step_sequence=1,
+                outcome="complete",
+                command_execution_id=execution.execution_id,
+                evidence=evidence,
+                occurred_at=call.now,
+            )
+        )
+        self.session.add(
+            wf.GovernedAuditEvent(
+                audit_event_id=self.uuid_factory(),
+                generation_id=generation.generation_id,
+                request_id=call.request_id,
+                command_execution_id=execution.execution_id,
+                task_id=task.task_id,
+                operation_id=operation_id,
+                event_type="legacy_verification_adopted",
+                actor=f"{call.owner_id}:{call.run_id}",
+                payload=evidence,
+                occurred_at=call.now,
+            )
+        )
+        return {
+            "dish_id": str(task.task_id),
+            "operation_id": str(operation_id),
+            "cycle_id": str(cycle_id),
+            "content_version_id": str(version.content_version_id),
+            "content_identity": version.content_identity,
+            "phase": "await_verification",
+            "adopted": True,
+        }
 
     def _reopen(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None

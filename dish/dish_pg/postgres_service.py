@@ -1125,9 +1125,21 @@ class PostgresRuntimeService:
                 )
             try:
                 with session_scope(self._session_maker) as session:
-                    view = PostgresReadModel(
+                    reads = PostgresReadModel(
                         session, cursor_secret=self._cursor_secret
-                    ).task_view(reference)
+                    )
+                    view = reads.task_view(reference)
+                    task = session.get(models.DishTask, view.task_id)
+                    recovery = (
+                        None
+                        if task is None
+                        else PostgresCommandPort(
+                            session, cursor_secret=self._cursor_secret
+                        ).legacy_verification_recovery(
+                            generation_id=reads.active_generation().generation_id,
+                            task=task,
+                        )
+                    )
             except ReadModelError as exc:
                 return error_envelope(
                     command,
@@ -1155,6 +1167,15 @@ class PostgresRuntimeService:
                     ),
                     "operation_phase": view.operation_phase,
                     "active_lease_id": active_lease_id,
+                    **(
+                        {
+                            "workflow_recovery": recovery,
+                            "required_admin_action": recovery["command"],
+                        }
+                        if recovery is not None
+                        and recovery["command"] == "adopt-legacy-verification"
+                        else {}
+                    ),
                     **next_actions,
                 },
             )

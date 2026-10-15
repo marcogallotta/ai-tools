@@ -377,6 +377,21 @@ def build_parser() -> JsonArgumentParser:
         help="replay the exact interrupted service request UUID",
     )
 
+    adopt_legacy_verification = subparsers.add_parser(
+        _admin_name("adopt-legacy-verification"),
+        help=argparse.SUPPRESS,
+        description=(
+            "adopt one eligible imported pending-Verification Dish into a fresh "
+            "current Verification operation without rewriting its content"
+        ),
+    )
+    adopt_legacy_verification.add_argument("task_gid", help=_dish_target_help)
+    adopt_legacy_verification.add_argument("--reason", required=True)
+    adopt_legacy_verification.add_argument(
+        "--request-id",
+        help="replay the exact interrupted adoption request UUID",
+    )
+
     recover_lease = subparsers.add_parser(
         _admin_name("recover-lease"),
         help=argparse.SUPPRESS,
@@ -658,7 +673,9 @@ def _route_service_canonical_task_reference(
 ) -> None:
     """Route a canonical Dish UUID while preserving legacy GID handling."""
 
-    if command not in {"migrate", "reopen-planning"} or not isinstance(
+    if command not in {
+        "migrate", "reopen-planning", "adopt-legacy-verification"
+    } or not isinstance(
         application, DishAdminServiceClient
     ):
         return
@@ -751,7 +768,9 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
         and not command_argv[1].startswith("-")
     ):
         submission_id = command_argv[1]
-    if command in {"migrate", "reopen-planning"} and len(command_argv) > 1 and not command_argv[1].startswith("-"):
+    if command in {
+        "migrate", "reopen-planning", "adopt-legacy-verification"
+    } and len(command_argv) > 1 and not command_argv[1].startswith("-"):
         task_gid = command_argv[1]
     return {"command": command, "submission_id": submission_id, "task_gid": task_gid}
 

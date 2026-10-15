@@ -209,6 +209,18 @@ COMMAND_DEFINITIONS = {
             admin_exposed=True,
         ),
         CommandDefinition("reopen-planning", "L", "admin", True, True, False),
+        CommandDefinition(
+            "adopt-legacy-verification",
+            "L",
+            "admin",
+            True,
+            True,
+            False,
+            description=(
+                "Adopt one explicitly selected eligible imported pending-Verification "
+                "record into current live Verification authority without rewriting content."
+            ),
+        ),
         CommandDefinition("reopen", "R", "admin", True, True, True, workflow_action="reopen"),
         CommandDefinition("supply-evidence", "R", "admin", True, True, True, workflow_action="supply-evidence"),
         CommandDefinition(

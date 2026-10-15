@@ -82,6 +82,33 @@ def test_admin_cli_reopen_planning_routes_canonical_and_legacy_identity(
     assert capsys.readouterr().err == ""
 
 
+def test_admin_cli_legacy_verification_adoption_routes_canonical_identity(capsys):
+    client = _RecordingAdminServiceClient()
+    dish_id = "12345678-1234-5678-9234-567812345678"
+
+    status = admin_cli.main(
+        [
+            "adopt-legacy-verification",
+            dish_id,
+            "--reason",
+            "adopt exact imported content",
+        ],
+        application=client,
+    )
+
+    assert status == 0
+    assert client.calls == [
+        (
+            "adopt-legacy-verification",
+            {
+                "dish_id": dish_id,
+                "reason": "adopt exact imported content",
+            },
+        )
+    ]
+    assert capsys.readouterr().err == ""
+
+
 @pytest.mark.parametrize(
     ("reference", "expected_arguments"),
     [

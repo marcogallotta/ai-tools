@@ -76,6 +76,7 @@ ADMIN_COMMAND_SPECS = {
         ),
         _spec("migrate"),
         _spec("reopen-planning"),
+        _spec("adopt-legacy-verification", presentation="detail", lease_free=True),
         _spec("reopen", resolve_operation=True, operation_scoped=True),
         _spec("supply-evidence", resolve_operation=True, operation_scoped=True),
         _spec(

@@ -113,11 +113,17 @@ Their retained disposition is executable in
 `dish_pg.command_contract.CONNECTED_COMMAND_DISPOSITIONS`.
 
 Retained PostgreSQL admin-principal commands (queue, recovery, discard/abandon,
-legacy Evidence/Human Review recovery, migrate, and lease recovery/expiry) are reachable only
-through the private admin bearer on `/v1/admin/<command>` and the admin lease routes when the
-runtime is bound to the PROD profile; the agent/action surfaces expose only retained non-admin
-commands. `record-human-decision` is admin-only compatibility for an already-held historical
-record; new connected-agent work records Marco choices in the candidate Decisions field instead.
+legacy Evidence/Human Review recovery, migrate, legacy Verification adoption, and lease
+recovery/expiry) are reachable only through the private admin bearer on `/v1/admin/<command>` and
+the admin lease routes when the runtime is bound to the PROD profile; the agent/action surfaces
+expose only retained non-admin commands. `record-human-decision` is admin-only compatibility for an
+already-held historical record; new connected-agent work records Marco choices in the candidate
+Decisions field instead.
+`adopt-legacy-verification` is likewise a private, hidden recovery command: it accepts one exact Dish
+and a reason, preserves the imported content and placement, and installs only the missing current
+Verification operation/cycle authority. An ordinary `read` of that eligible stranded shape returns
+the private-admin recovery handoff instead of inventing Initial Research; private admin `inspect`
+surfaces the same recovery. The command neither performs nor asserts Research or Verification.
 Retired/non-retained historical
 commands (backup-create, backup-restore) stay unroutable everywhere. A TEST-profile runtime exposes
 only `queue`, `archive`, and `unarchive` through that private bearer so their operator paths can be

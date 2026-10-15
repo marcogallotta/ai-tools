@@ -61,7 +61,14 @@ Human approval is the authorization for the exact governed changes in an approve
 - Resting-task start authority is shared by discovery and admission: a task with no active operation
   exposes only the start kind that the same authority will accept. Post-signoff Change requires the
   exact current `ready` identity to resolve to durable approved signoff lineage; status text alone is
-  never enough to authorize Change.
+  never enough to authorize Change. A stranded imported `pending-verification` document does not
+  imply Initial Research and exposes no ordinary start. Its only direct recovery is the private-admin,
+  replay-bound `adopt-legacy-verification` command.
+- Legacy Verification adoption is limited to one explicitly named, ordinary imported Dish whose exact
+  current imported canonical content is valid, incomplete, unarchived, actively project-bound, and
+  already in Verification Queue, with no conflicting live or unresolved authority. Adoption preserves
+  content and placement, creates only a current Verification operation/cycle plus audit evidence, and
+  does not claim that Research ran. Independent Verification then proceeds through the normal path.
 
 ## Process and transaction boundaries
 
@@ -108,7 +115,8 @@ Relevant evidence includes semantic proposal/Human Review workflow tests, workfl
 Legacy Human Review/Evidence recovery and migration-era compatibility paths still coexist with the
 current PostgreSQL workflow. They are recovery surfaces, not current connected-agent design.
 Current recovery mechanics should remain documented until those historical records no longer need
-support.
+support. Imported canonical records stranded at `pending-verification` are recovered through the
+narrow adoption command above rather than by fabricating a Research pass.
 
 ## Related documents
 

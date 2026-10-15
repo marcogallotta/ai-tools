@@ -225,6 +225,16 @@ def effect_spec_for(
         return CommandEffectSpec(("unarchive_task",), verify_mutation_effects=True)
     if command_name == "reopen-planning":
         return CommandEffectSpec(("clear_completion_for_planning",), ("set_completion",))
+    if command_name == "adopt-legacy-verification":
+        return CommandEffectSpec(
+            (
+                "open_verification_operation",
+                "open_verification_cycle",
+                "append_operation_step",
+                "record_governed_audit",
+            ),
+            verify_mutation_effects=True,
+        )
     if command_name == "reopen":
         return CommandEffectSpec(
             ("reset_verification_cycle", "activate_resumed_content_version"),

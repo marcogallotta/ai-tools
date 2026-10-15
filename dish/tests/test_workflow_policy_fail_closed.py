@@ -4,7 +4,24 @@ from dataclasses import replace
 
 import pytest
 
-from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
+from dish_tool.workflow_policy import (
+    RestingTaskSnapshot,
+    WorkflowSnapshot,
+    legal_actions,
+    required_resting_start_kind,
+)
+
+
+def test_resting_pending_verification_never_routes_to_initial_research() -> None:
+    snapshot = RestingTaskSnapshot(
+        document_shape="canonical",
+        structurally_valid=True,
+        migration_required=False,
+        completed=False,
+        canonical_status="pending-verification",
+    )
+
+    assert required_resting_start_kind(snapshot) is None
 
 
 def _verification_snapshot() -> WorkflowSnapshot:

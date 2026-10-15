@@ -289,6 +289,12 @@ def assert_committed_command_effects(
 
     observed: set[str] = set()
     execution_id = execution.execution_id
+    if session.scalar(
+        select(wf.WorkflowOperation.operation_id).where(
+            wf.WorkflowOperation.creation_execution_id == execution_id
+        )
+    ) is not None:
+        observed.add("open_verification_operation")
     scalar_receipt = session.scalar(
         select(models.DishMutationReceipt).where(
             models.DishMutationReceipt.command_execution_id == execution_id
@@ -324,6 +330,13 @@ def assert_committed_command_effects(
         )
     ) is not None:
         observed.add("append_operation_step")
+    if session.scalar(
+        select(wf.GovernedAuditEvent.audit_event_id).where(
+            wf.GovernedAuditEvent.command_execution_id == execution_id,
+            wf.GovernedAuditEvent.event_type == "legacy_verification_adopted",
+        )
+    ) is not None:
+        observed.add("record_governed_audit")
     if session.scalar(
         select(wf.VerificationCycle.cycle_id).where(
             wf.VerificationCycle.created_by_execution_id == execution_id

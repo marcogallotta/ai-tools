@@ -60,8 +60,13 @@ def required_resting_start_kind(snapshot: RestingTaskSnapshot) -> str | None:
     if snapshot.document_shape == "planning_brief":
         return "initial"
     if snapshot.document_shape == "canonical":
-        if snapshot.canonical_status in {"pending-research", "pending-verification"}:
+        if snapshot.canonical_status == "pending-research":
             return "initial"
+        # A canonical pending-Verification document without live workflow
+        # authority is a legacy recovery case.  Ordinary Initial Research must
+        # never be inferred from status text alone.
+        if snapshot.canonical_status == "pending-verification":
+            return None
         if snapshot.canonical_status == "ready" and snapshot.signed_baseline_bound:
             return "change"
     return None
