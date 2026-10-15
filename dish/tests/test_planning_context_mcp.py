@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
+
+from mcp.server.auth.provider import AccessToken
 
 from dish_service import mcp_server
 from dish_service.planning_context import PlanningContextError, PlanningReceiptStore
@@ -34,9 +37,11 @@ class FakeStore:
             raise PlanningContextError("Call dish_planning_context first")
 
 
-def _caller(monkeypatch):
-    monkeypatch.setattr(mcp_server, "get_access_token", lambda: None)
-    monkeypatch.setattr(mcp_server, "_caller_audit_context", lambda _: {"subject": "192548"})
+def _caller(monkeypatch, subject="192548"):
+    token = None if subject is None else AccessToken(
+        token="t", client_id="c", scopes=[], subject=subject,
+    )
+    monkeypatch.setattr(mcp_server, "get_access_token", lambda: token)
 
 
 def test_planning_context_tool_schema_has_necessary_identity():
@@ -56,6 +61,7 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
         "repository_sha": "b" * 40,
         "scope": "block", "target": "wok-depth-rice",
         "canonical_dish_id": None,
+        "counts": {"docs": 5, "cooked": 288, "logs": 2, "logged_dishes": 2},
         "receipt": "Context loaded (block: wok-depth-rice)\nDocs: dish-planning-protocol",
     }
     monkeypatch.setattr(mcp_server, "assemble_planning_context", lambda *args, **kwargs: payload)
@@ -63,7 +69,11 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
         "client": {"run_id": RUN}, "agent": "gpt",
         "scope": "block", "target": "wok-depth-rice",
     }))
+    assert res.structured_content["ok"] is True
+    assert res.structured_content["code"] == "OK"
     assert res.structured_content["receipt_recorded"] is True
+    assert res.structured_content["receipt"] == payload["receipt"]
+    assert res.structured_content["counts"] == payload["counts"]
     assert res.content[0].text.startswith("Context loaded (block: wok-depth-rice)")
     assert '"repository_sha"' in res.content[0].text
     assert fake.recorded == [{
@@ -79,6 +89,42 @@ def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
     }))
     assert res.structured_content["ok"] is False
     assert len(fake.recorded) == 1
+
+
+def test_full_payload_is_in_structured_content_once_and_not_repeated_in_text(monkeypatch):
+    _caller(monkeypatch)
+    tool = mcp_server.PlanningContextTool(FakeAdapter(), Path("/fake"), FakeStore(allow=True))
+    payload = {
+        "ok": True, "code": "OK", "receipt": "Context loaded (broad: all)",
+        "receipt_recorded": False,  # the tool records it after assembly
+        "scope": "broad", "target": "all", "canonical_dish_id": None,
+        "repository_sha": "c" * 40,
+        "counts": {"docs": 6, "cooked": 288, "logs": 0, "logged_dishes": 0},
+        "files": [{"path": "planning/roadmap.md", "text": "doc-marker-" + "x" * 8000}],
+        "history": {"all_cooked": [{"title": "history-marker"}], "cook_logs": []},
+    }
+    monkeypatch.setattr(mcp_server, "assemble_planning_context", lambda *a, **kw: payload)
+    result = asyncio.run(tool.run({"client": {"run_id": RUN}, "agent": "gpt", "scope": "broad"}))
+    # Codex and Claude Code give the model structuredContent alone, so it
+    # carries the complete payload.
+    full = result.structured_content
+    assert full == payload
+    assert full["receipt_recorded"] is True
+    assert full["files"][0]["text"].startswith("doc-marker-")
+    assert full["history"]["all_cooked"][0]["title"] == "history-marker"
+
+    # Text is the receipt plus a small summary, not a second copy.
+    text = result.content[0].text
+    assert text.startswith(payload["receipt"] + "\n")
+    summary = json.loads(text.removeprefix(payload["receipt"] + "\n"))
+    assert set(summary) == {
+        "ok", "code", "receipt_recorded", "scope", "target",
+        "canonical_dish_id", "repository_sha", "counts",
+    }
+    assert summary["receipt_recorded"] is True
+    assert "doc-marker-" not in text
+    assert "history-marker" not in text
+    assert len(text) < 2_000
 
 
 def test_mcp_write_fence_requires_receipt_before_create(monkeypatch):
@@ -102,6 +148,23 @@ def test_mcp_write_fence_requires_receipt_before_create(monkeypatch):
     approved = asyncio.run(tool.run(args))
     assert approved.structured_content["ok"] is True
     assert len(adapter.calls) == 1
+
+
+def test_mcp_write_fence_refuses_unauthenticated_caller(monkeypatch):
+    _caller(monkeypatch, subject=None)
+    definition = next(x for x in mcp_server.TOOLS if x["name"] == "dish_create")
+    adapter = FakeAdapter()
+    store = FakeStore(allow=True)
+    tool = mcp_server.DishTool(
+        definition, adapter, planning_store=store, planning_required=True,
+    )
+    denied = asyncio.run(tool.run({
+        "client": {"run_id": RUN, "request_id": "22222222-2222-4222-8222-222222222222"},
+        "arguments": {"agent": "gpt", "title": "A dish"},
+    }))
+    assert denied.structured_content["code"] == "PLANNING_CONTEXT_REQUIRED"
+    assert adapter.calls == []
+    assert store.checked == []
 
 
 def test_unguarded_creation_preserves_existing_behavior(monkeypatch):

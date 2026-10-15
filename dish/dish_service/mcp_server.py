@@ -701,12 +701,20 @@ class PlanningContextTool(FastMCPTool):
                 target=target or "",
             )
             result["receipt_recorded"] = True
+            # Only structured content carries the full bundle: Codex and Claude
+            # Code give the model structuredContent alone when it is present.
+            # Text stays small so clients forwarding both do not pay twice.
+            summary_keys = (
+                "ok", "code", "receipt_recorded", "scope", "target",
+                "canonical_dish_id", "repository_sha", "counts",
+            )
+            summary = {key: result.get(key) for key in summary_keys}
             return ToolResult(
                 content=[
                     TextContent(
                         type="text",
                         text=result["receipt"] + "\n" + json.dumps(
-                            result, ensure_ascii=False, sort_keys=True,
+                            summary, ensure_ascii=False, sort_keys=True,
                         ),
                     )
                 ],
