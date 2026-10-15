@@ -31,7 +31,6 @@ from dish_service.command_spec import (
     ACTION_COMMANDS as CONNECTED_ACTION_COMMANDS,
     CLIENT_REQUEST_ID_SCHEMA,
     CLIENT_RUN_ID_SCHEMA,
-    GOVERNED_PLANNING_CHANGE_FIELDS,
     action_openapi_argument_schema,
     validate_action_request as validate_legacy_action_request,
 )
@@ -592,7 +591,10 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
     if command == PREPARE_COMMAND.name:
         result = deepcopy(base)
         attestation = result["properties"]["governed_change_fields"]
-        attestation["items"]["enum"] = list(GOVERNED_PLANNING_CHANGE_FIELDS)
+        attestation["items"]["enum"] = [
+            "Dish candidate", "Purpose", "Role", "Priors", "Locks",
+            "Exemptions", "Research emphasis", "Destination section", "Decisions",
+        ]
         attestation["description"] = (
             "After Marco settles a material choice in chat, name Decisions plus every "
             "Planning field that exact choice intentionally changes. Existing Decisions "
@@ -926,6 +928,22 @@ def validate_postgres_action_request(
     adapted = dict(request)
     adapted_arguments = dict(arguments)
 
+    postgres_governed_change_fields: list[str] | None = None
+    if command == PREPARE_COMMAND.name and "governed_change_fields" in arguments:
+        value = arguments["governed_change_fields"]
+        if isinstance(value, list):
+            for index, field in enumerate(value):
+                if not isinstance(field, str):
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        f"governed_change_fields[{index}] has the wrong type",
+                        rule="argument_type_invalid",
+                        details={"field": f"governed_change_fields[{index}]"},
+                    )
+            postgres_governed_change_fields = list(value)
+            adapted_arguments["governed_change_fields"] = ["Decisions"]
+            adapted["arguments"] = adapted_arguments
+
     inspect_attestation: str | None = None
     if command == "inspect":
         value = arguments.get("independence_attestation")
@@ -965,6 +983,24 @@ def validate_postgres_action_request(
         validated_arguments[canonical_field] = arguments[canonical_field]
     if inspect_attestation is not None:
         validated_arguments["independence_attestation"] = inspect_attestation
+    if postgres_governed_change_fields is not None:
+        allowed = set(
+            postgres_action_argument_schema(PREPARE_COMMAND.name)["properties"]
+            ["governed_change_fields"]["items"]["enum"]
+        )
+        unsupported = sorted(set(postgres_governed_change_fields) - allowed)
+        if unsupported:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "governed_change_fields contains an unsupported value",
+                rule="argument_value_invalid",
+                details={
+                    "field": "governed_change_fields",
+                    "unsupported": unsupported,
+                    "allowed": sorted(allowed),
+                },
+            )
+        validated_arguments["governed_change_fields"] = postgres_governed_change_fields
     return client, validated_arguments
 
 

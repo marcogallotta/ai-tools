@@ -202,6 +202,28 @@ def test_postgresql_discovery_reads_reject_malformed_run_id_consistently() -> No
         assert error.value.details["field"] == "client.run_id"
 
 
+def test_postgresql_prepare_accepts_and_preserves_chat_attested_planning_fields() -> None:
+    client, arguments = validate_postgres_action_request(
+        "prepare",
+        {
+            "client": {
+                "run_id": DISCOVERY_RUN_ID,
+                "request_id": "33333333-3333-4333-8333-333333333333",
+            },
+            "arguments": {
+                "submission_id": "44444444-4444-4444-8444-444444444444",
+                "agent": "gpt",
+                "model": "gpt-5.6-sol",
+                "file_text": "candidate",
+                "governed_change_fields": ["Role", "Purpose", "Decisions"],
+            },
+        },
+    )
+
+    assert client["request_id"] == "33333333-3333-4333-8333-333333333333"
+    assert arguments["governed_change_fields"] == ["Role", "Purpose", "Decisions"]
+
+
 def test_postgresql_search_action_is_read_only_bounded_and_reuses_stable_run_id() -> None:
     assert SEARCH_COMMAND in POSTGRESQL_ACTION_ADDED_COMMANDS
     assert SEARCH_COMMAND in ACTION_COMMANDS
