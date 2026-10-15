@@ -31,6 +31,7 @@ from dish_service.command_spec import (
     ACTION_COMMANDS as CONNECTED_ACTION_COMMANDS,
     CLIENT_REQUEST_ID_SCHEMA,
     CLIENT_RUN_ID_SCHEMA,
+    GOVERNED_PLANNING_CHANGE_FIELDS,
     action_openapi_argument_schema,
     validate_action_request as validate_legacy_action_request,
 )
@@ -591,10 +592,7 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
     if command == PREPARE_COMMAND.name:
         result = deepcopy(base)
         attestation = result["properties"]["governed_change_fields"]
-        attestation["items"]["enum"] = [
-            "Dish candidate", "Purpose", "Role", "Priors", "Locks",
-            "Exemptions", "Research emphasis", "Destination section", "Decisions",
-        ]
+        attestation["items"]["enum"] = list(GOVERNED_PLANNING_CHANGE_FIELDS)
         attestation["description"] = (
             "After Marco settles a material choice in chat, name Decisions plus every "
             "Planning field that exact choice intentionally changes. Existing Decisions "

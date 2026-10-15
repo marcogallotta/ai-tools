@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from dish_service import command_spec
+from dish_service.command_spec import validate_action_request
 from dish_service import openapi
 from dish_service.openapi import action_openapi, implementation_action_openapi
 from dish_tool.constants import APPROVAL_CORRECTIONS, REJECTION_ROUTES
@@ -130,7 +131,9 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     prepare_attestation = prepare["properties"]["governed_change_fields"]
     assert prepare_attestation["type"] == "array"
-    assert set(prepare_attestation["items"]["enum"]) == {"Decisions"}
+    assert set(prepare_attestation["items"]["enum"]) == set(
+        command_spec.GOVERNED_PLANNING_CHANGE_FIELDS
+    )
     assert "provenance" in prepare_attestation["description"]
 
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
@@ -183,6 +186,28 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
 
     prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     assert "no_blockers" not in prepare.get("properties", {})
+
+
+@pytest.mark.smoke
+def test_prepare_runtime_accepts_chat_attested_planning_field_changes():
+    _client, arguments = validate_action_request(
+        "prepare",
+        {
+            "client": {
+                "run_id": "11111111-1111-4111-8111-111111111111",
+                "request_id": "22222222-2222-4222-8222-222222222222",
+            },
+            "arguments": {
+                "submission_id": "33333333-3333-4333-8333-333333333333",
+                "agent": "gpt",
+                "model": "gpt-5.6-sol",
+                "file_text": "candidate",
+                "governed_change_fields": ["Role", "Purpose", "Decisions"],
+            },
+        },
+    )
+
+    assert arguments["governed_change_fields"] == ["Role", "Purpose", "Decisions"]
 
 
 @pytest.mark.smoke

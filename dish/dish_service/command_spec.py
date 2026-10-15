@@ -22,6 +22,18 @@ from .file_transport import MAX_FETCH_BYTES as QUALIFY_FILE_TRANSPORT_MAX_BYTES
 ActionPrincipal = Literal["reader", "agent", "verification"]
 ActionRoute = Literal["agent", "lease"]
 
+GOVERNED_PLANNING_CHANGE_FIELDS = (
+    "Dish candidate",
+    "Purpose",
+    "Role",
+    "Priors",
+    "Locks",
+    "Exemptions",
+    "Research emphasis",
+    "Destination section",
+    "Decisions",
+)
+
 
 @dataclass(frozen=True)
 class ActionCommandSpec:
@@ -288,12 +300,16 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "governed_change_fields": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["Decisions"]},
+                "items": {
+                    "type": "string",
+                    "enum": list(GOVERNED_PLANNING_CHANGE_FIELDS),
+                },
                 "uniqueItems": True,
                 "description": (
-                    "Use only to explicitly attest an append-only `Human — Marco:` Decision "
-                    "that Marco actually stated in conversation. This records agent-attributed "
-                    "provenance; it does not authorize any other governed-field mutation."
+                    "After Marco settles a material choice in chat, name Decisions plus every "
+                    "Planning field that exact choice intentionally changes. Existing Decisions "
+                    "remain append-only; the attestation records provenance and does not authorize "
+                    "unrelated governed-field mutation."
                 ),
             },
         },
