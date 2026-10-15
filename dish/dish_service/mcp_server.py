@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import io
 import json
 import logging
 import os
 import subprocess
 import threading
+import time
+import zipfile
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -26,6 +30,7 @@ from fastmcp.server.auth.providers.github import GitHubProvider
 from fastmcp.tools import FunctionTool
 from fastmcp.tools import Tool as FastMCPTool
 from fastmcp.tools.base import ToolResult
+from fastmcp.utilities.types import File
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.types import TextContent, Tool, ToolAnnotations
@@ -39,7 +44,7 @@ from dish_service.planning_context import (
 )
 
 SERVER_NAME = "dish-postgresql-mcp"
-SERVER_VERSION = "4"
+SERVER_VERSION = "5"
 ACTION_URL_ENV = "DISH_MCP_ACTION_URL"
 ACTION_TOKEN_ENV = "DISH_MCP_ACTION_TOKEN"
 BACKEND_ENV = "DISH_MCP_BACKEND"
@@ -54,6 +59,7 @@ DEFAULT_BIND_PORT = 8765
 HONEST_CHECKOUT = Path("/home/marco/honest-pantry")
 HONEST_MAX_FILES = 16
 HONEST_MAX_BYTES = 512 * 1024
+HONEST_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
 HONEST_LOCK = threading.Lock()
 HONEST_GIT_SSH_COMMAND = "/usr/bin/ssh -F /dev/null"
 LOG = logging.getLogger("dish.mcp")
@@ -82,8 +88,9 @@ SERVER_INSTRUCTIONS = (
     "envelope is an authoritative normal tool result, not an MCP transport failure. "
     "Archive a Dish only when Marco explicitly asks; after unarchive, use a fresh client.run_id "
     "for any further work on that Dish. "
-    "Use dish_honest_read to read current Honest Pantry files; it updates main first and serves "
-    f"nothing if that update fails. {HONEST_STAGE_READING} {HONEST_PLANNING_READING} "
+    "Use dish_honest_archive for one-download local extraction and repository search, or "
+    "dish_honest_read for bounded current Honest Pantry text files. Both update main first and "
+    f"serve nothing if that update fails. {HONEST_STAGE_READING} {HONEST_PLANNING_READING} "
     "Use Dish cooked discovery and immutable cook logs as that protocol directs. "
     "At the start of Planning, call dish_planning_context and display its Context receipt."
 )
@@ -110,6 +117,19 @@ def _honest_git(checkout: Path, *args: str, timeout: int = 10) -> bytes:
     return result.stdout
 
 
+def _refresh_honest_main(checkout: Path) -> str:
+    if _honest_git(checkout, "branch", "--show-current").decode().strip() != "main":
+        raise RuntimeError("Honest Pantry checkout is not on main; no files were served")
+    try:
+        _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
+    except RuntimeError:
+        _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
+    sha = _honest_git(checkout, "rev-parse", "HEAD").decode().strip()
+    if sha != _honest_git(checkout, "rev-parse", "FETCH_HEAD").decode().strip():
+        raise RuntimeError("Honest Pantry checkout does not match origin/main; no files were served")
+    return sha
+
+
 def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
     if not paths or len(paths) > HONEST_MAX_FILES or len(set(paths)) != len(paths):
         raise ValueError(f"paths must contain 1-{HONEST_MAX_FILES} unique entries")
@@ -120,15 +140,7 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
             raise ValueError(f"invalid repository path: {path!r}")
 
     with HONEST_LOCK:
-        if _honest_git(checkout, "branch", "--show-current").decode().strip() != "main":
-            raise RuntimeError("Honest Pantry checkout is not on main; no files were served")
-        try:
-            _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
-        except RuntimeError:
-            _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
-        sha = _honest_git(checkout, "rev-parse", "HEAD").decode().strip()
-        if sha != _honest_git(checkout, "rev-parse", "FETCH_HEAD").decode().strip():
-            raise RuntimeError("Honest Pantry checkout does not match origin/main; no files were served")
+        sha = _refresh_honest_main(checkout)
         files: list[dict[str, str]] = []
         total = 0
         for path in paths:
@@ -194,6 +206,96 @@ def build_honest_tool(checkout: Path = HONEST_CHECKOUT) -> FunctionTool:
             readOnlyHint=True, idempotentHint=True, destructiveHint=False, openWorldHint=False,
         ),
     )
+
+
+def build_honest_archive(checkout: Path) -> dict[str, Any]:
+    """Build a bounded ZIP of the exact refreshed Honest Pantry tracked tree."""
+    with HONEST_LOCK:
+        sha = _refresh_honest_main(checkout)
+        tree = _honest_git(checkout, "rev-parse", f"{sha}^{{tree}}").decode().strip()
+        raw_paths = _honest_git(checkout, "ls-tree", "-r", "-z", "--name-only", sha)
+        paths = [path for path in raw_paths.split(b"\0") if path]
+        if b"FILES-MANIFEST.json" in paths:
+            raise RuntimeError("Honest Pantry tracks reserved FILES-MANIFEST.json; no archive was served")
+        archive = _honest_git(checkout, "archive", "--format=zip", sha, timeout=30)
+        commit_time = int(
+            _honest_git(checkout, "show", "-s", "--format=%ct", sha).decode().strip()
+        )
+        manifest = {
+            "repository": "marcogallotta/honest-pantry",
+            "ref": "refs/heads/main",
+            "commit": sha,
+            "tree": tree,
+            "files": len(paths),
+        }
+        buffer = io.BytesIO(archive)
+        manifest_info = zipfile.ZipInfo(
+            "FILES-MANIFEST.json", date_time=time.gmtime(commit_time)[:6],
+        )
+        manifest_info.compress_type = zipfile.ZIP_DEFLATED
+        manifest_info.external_attr = 0o100644 << 16
+        with zipfile.ZipFile(buffer, mode="a") as bundle:
+            bundle.writestr(
+                manifest_info,
+                json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+            )
+        payload = buffer.getvalue()
+        if len(payload) > HONEST_ARCHIVE_MAX_BYTES:
+            raise RuntimeError(
+                f"Honest Pantry archive exceeds {HONEST_ARCHIVE_MAX_BYTES} bytes; no archive was served"
+            )
+        return {
+            "sha": sha,
+            "tree": tree,
+            "files": len(paths),
+            "archive": payload,
+            "archive_sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+
+class HonestArchiveTool(FastMCPTool):
+    """Return the current Honest Pantry tracked tree as one embedded ZIP file."""
+
+    _checkout: Path = PrivateAttr()
+
+    def __init__(self, checkout: Path = HONEST_CHECKOUT) -> None:
+        super().__init__(
+            name="dish_honest_archive",
+            title="Download current Honest Pantry files",
+            description=(
+                "Download the exact current Honest Pantry main branch as one verified ZIP for "
+                "local extraction and search. Check FILES-MANIFEST.json after extraction."
+            ),
+            parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            annotations=ToolAnnotations(
+                readOnlyHint=True, idempotentHint=True,
+                destructiveHint=False, openWorldHint=False,
+            ),
+        )
+        self._checkout = checkout
+
+    async def run(self, arguments: dict[str, Any]) -> ToolResult:
+        try:
+            result = await asyncio.to_thread(build_honest_archive, self._checkout)
+        except (RuntimeError, ValueError, OSError) as exc:
+            LOG.warning("mcp_honest_archive_failure error_type=%s", type(exc).__name__)
+            return ToolResult(
+                content=[TextContent(type="text", text=f"Honest archive unavailable: {exc}")],
+                is_error=False,
+            )
+        name = f"honest-pantry-files-{result['sha']}.zip"
+        summary = (
+            f"Honest Pantry archive {name}: {result['files']} tracked files, "
+            f"{len(result['archive'])} bytes, sha256 {result['archive_sha256']}. "
+            "Extract it and verify FILES-MANIFEST.json before use."
+        )
+        return ToolResult(
+            content=[
+                TextContent(type="text", text=summary),
+                File(data=result["archive"], format="zip", name=name).to_resource_content(),
+            ],
+            is_error=False,
+        )
 
 
 def _resolve_local_refs(value: Any, schemas: Mapping[str, Any]) -> Any:
@@ -705,6 +807,7 @@ def create_app(adapter: Any, config: MCPAuthConfig):
                 for tool in TOOLS
             ],
             build_honest_tool(),
+            HonestArchiveTool(),
             PlanningContextTool(adapter, HONEST_CHECKOUT, planning_store),
         ],
     )

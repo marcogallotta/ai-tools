@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import io
 import json
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -173,6 +177,89 @@ def test_honest_tool_is_added_outside_connected_command_contract():
     assert tool.name == "dish_honest_read"
     assert tool.annotations.read_only_hint is True
     assert "stage reading guidance" in tool.description
+
+
+def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path):
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    checkout = tmp_path / "checkout"
+    subprocess.run(
+        ["git", "init", "--bare", "--initial-branch=main", str(origin)],
+        check=True, capture_output=True,
+    )
+    subprocess.run(["git", "clone", str(origin), str(source)], check=True, capture_output=True)
+    (source / "nested").mkdir()
+    (source / "README.md").write_text("committed\n")
+    (source / ".hidden").write_text("hidden\n")
+    (source / "nested/file.txt").write_text("nested\n")
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-m", "initial"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(["git", "-C", str(source), "push", "-u", "origin", "main"], check=True)
+    subprocess.run(["git", "clone", "-b", "main", str(origin), str(checkout)], check=True,
+                   capture_output=True)
+    (checkout / "README.md").write_text("working tree only\n")
+    (checkout / "untracked.txt").write_text("not archived\n")
+
+    tool = mcp_server.HonestArchiveTool(checkout)
+    result = asyncio.run(tool.run({}))
+
+    assert tool.name == "dish_honest_archive"
+    assert tool.parameters == {"type": "object", "properties": {}, "additionalProperties": False}
+    assert tool.annotations.read_only_hint is True
+    assert tool.annotations.idempotent_hint is True
+    assert tool.annotations.destructive_hint is False
+    assert tool.annotations.open_world_hint is False
+    assert result.is_error is False
+    assert result.structured_content is None
+    assert len(result.content) == 2
+    resource = result.content[1].resource
+    assert resource.mime_type == "application/zip"
+    sha = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    tree = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD^{tree}"], check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    assert resource.uri == f"file:///honest-pantry-files-{sha}.zip"
+    payload = base64.b64decode(resource.blob)
+    assert hashlib.sha256(payload).hexdigest() in result.content[0].text
+    repeated = asyncio.run(tool.run({}))
+    assert base64.b64decode(repeated.content[1].resource.blob) == payload
+    with zipfile.ZipFile(io.BytesIO(payload)) as bundle:
+        assert set(bundle.namelist()) == {
+            ".hidden", "README.md", "nested/", "nested/file.txt", "FILES-MANIFEST.json",
+        }
+        assert bundle.read("README.md") == b"committed\n"
+        assert bundle.read(".hidden") == b"hidden\n"
+        assert "untracked.txt" not in bundle.namelist()
+        assert not any(name.startswith(".git/") for name in bundle.namelist())
+        manifest = json.loads(bundle.read("FILES-MANIFEST.json"))
+    assert manifest == {
+        "repository": "marcogallotta/honest-pantry",
+        "ref": "refs/heads/main",
+        "commit": sha,
+        "tree": tree,
+        "files": 3,
+    }
+
+
+def test_honest_archive_failure_returns_no_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        mcp_server, "build_honest_archive",
+        lambda checkout: (_ for _ in ()).throw(RuntimeError("refresh failed")),
+    )
+
+    result = asyncio.run(mcp_server.HonestArchiveTool(tmp_path).run({}))
+
+    assert result.is_error is False
+    assert len(result.content) == 1
+    assert result.content[0].text == "Honest archive unavailable: refresh failed"
 
 
 def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):

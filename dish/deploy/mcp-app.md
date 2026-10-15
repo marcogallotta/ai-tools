@@ -79,8 +79,9 @@ Create the custom app with:
 Do not select `Mixed` and do not enter the GitHub client secret in ChatGPT. ChatGPT discovers the
 OAuth endpoints, registers itself, opens GitHub login, and returns through Dish's backend callback.
 
-After connecting, verify that the app lists exactly the 21 `dish_*` tools. Exercise one Honest
-Pantry multi-file read, one Dish read, one
+After connecting or refreshing the app schema, verify that it lists the connected Dish commands and
+the transport-local Honest Pantry tools, including `dish_honest_read`, `dish_honest_archive`, and
+`dish_planning_context`. Exercise one Honest Pantry archive download and manifest check, one Dish read, one
 replay-bound TEST mutation, one continuation flow, and one approved production mutation before
 retiring the old GPT Action route. A failed Dish envelope remains a normal MCP tool result; OAuth
 credentials never replace Dish `run_id` or `request_id`.
