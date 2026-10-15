@@ -191,7 +191,7 @@ Material protected-invariant changes are semantic design movement and use the ex
 
 A review is incomplete until a formal GitHub pull-request review is submitted and verified for the exact reviewed head. A chat verdict or claim comment is not repository review state.
 
-Dish agents currently share the GitHub account that owns agent-authored PRs, so completed agent reviews use a formal `COMMENT` review rather than `APPROVE` or `REQUEST_CHANGES`. Before the final human notification:
+Dish agents currently share the GitHub account that owns agent-authored PRs, so completed agent reviews use a formal `COMMENT` review rather than `APPROVE` or `REQUEST_CHANGES`. Routine PR Review is agent-owned: never tell Marco to open GitHub's **Review changes** form, choose a verdict there, or submit the review. If the current host cannot submit and read back the formal `COMMENT` review, route the exact candidate to an existing capable Review agent; Marco remains the owner only of genuinely consequential decisions. Before the final human notification:
 
 1. submit a `COMMENT` review anchored to the exact head;
 2. include `VERDICT: MERGE` or `VERDICT: BLOCK`;
