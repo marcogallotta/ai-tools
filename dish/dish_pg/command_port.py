@@ -415,6 +415,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 archive_prelocked_operation_id = prelocked.operation_id if prelocked is not None else None
             if operation is not None and call.command_name in {
                 "start",
+                "inspect",
                 "supply-evidence",
                 "prepare",
                 "discard",

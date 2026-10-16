@@ -127,7 +127,7 @@ def test_unchanged_batch_quantity_may_gain_per_sitting_handling_note():
     after = _doc(
         TASK.replace(
             "100 g test ingredient",
-            "100 g test ingredient — divide evenly into 3 portions and keep separate per sitting",
+            "100 g test ingredient — divide evenly into portions and keep separate per sitting",
         )
     )
     assert explicit_material_reasons(before, after) == ()
@@ -140,6 +140,33 @@ def test_per_sitting_handling_note_cannot_add_a_new_ingredient_measurement():
         TASK.replace(
             "100 g test ingredient",
             "100 g test ingredient — divide into 3 portions of 40 g per sitting",
+        )
+    )
+    assert "quantities" in explicit_material_reasons(before, after)
+    with pytest.raises(DishRuleError):
+        require_small_scope(before, after)
+
+
+@pytest.mark.parametrize(
+    ("declared", "allocation"),
+    [
+        ("", "divide evenly into 3 portions and keep separate per sitting"),
+        (" for 3 portions", "divide evenly into 4 portions and keep separate per sitting"),
+        ("", "divide evenly into 0 portions and keep separate per sitting"),
+        ("", "divide into 3 portions for 2 sittings and keep separate"),
+    ],
+    ids=("new-total", "conflicting-total", "zero-total", "inconsistent-counts"),
+)
+def test_quantity_allocation_with_new_numeric_totals_remains_material(
+    declared, allocation
+):
+    before = _doc(
+        TASK.replace("100 g test ingredient", f"100 g test ingredient{declared}")
+    )
+    after = _doc(
+        TASK.replace(
+            "100 g test ingredient",
+            f"100 g test ingredient{declared} — {allocation}",
         )
     )
     assert "quantities" in explicit_material_reasons(before, after)

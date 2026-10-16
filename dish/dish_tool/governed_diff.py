@@ -262,7 +262,7 @@ _ALLOCATION_SUFFIX_RE = re.compile(
     r"(?:divide|divided|evenly|into|across|between|for|per|each|the|"
     r"portion|portions|sitting|sittings|serving|servings|and|keep|kept|"
     r"separate|separately|fresh|freshly|at|just|before|use|used|"
-    r"\d+(?:[.,]\d+)?|\s|[,;:()\[\]\-–—.])+$",
+    r"\s|[,;:()\[\]\-–—.])+$",
     re.IGNORECASE,
 )
 
@@ -270,9 +270,9 @@ _ALLOCATION_SUFFIX_RE = re.compile(
 def _quantity_allocation_only_change(old: str, new: str) -> bool:
     """Allow an unchanged batch quantity to gain handling-only allocation text.
 
-    This deliberately does not accept new ingredient measurements.  Exact
-    per-serving arithmetic belongs in method/storage unless it is independently
-    reclassified as a material quantity change.
+    This deliberately does not accept new ingredient measurements or numeric
+    portion totals.  Those remain material quantity changes even when phrased
+    as allocation instructions.
     """
 
     old_lines = [line.strip() for line in old.splitlines() if line.strip()]
