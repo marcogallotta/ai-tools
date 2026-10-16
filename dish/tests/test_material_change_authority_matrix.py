@@ -143,8 +143,9 @@ def test_per_sitting_handling_note_cannot_add_a_new_ingredient_measurement():
         )
     )
     assert "quantities" in explicit_material_reasons(before, after)
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as exc:
         require_small_scope(before, after)
+    assert exc.value.rule == "large_correction_required"
 
 
 @pytest.mark.parametrize(
@@ -170,8 +171,9 @@ def test_quantity_allocation_with_new_numeric_totals_remains_material(
         )
     )
     assert "quantities" in explicit_material_reasons(before, after)
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as exc:
         require_small_scope(before, after)
+    assert exc.value.rule == "large_correction_required"
 
 
 @pytest.mark.parametrize(
