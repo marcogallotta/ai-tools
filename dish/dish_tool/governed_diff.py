@@ -197,7 +197,7 @@ _PORTION_RE = re.compile(r"\b(?:portion|portions|serving|servings|sittings?|feed
 _PORTION_COUNT_RE = re.compile(
     r"(?<!\w)(?:\d+(?:[.,]\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s*"
     r"(?:portions?|servings?|sittings?|people|persons?)\b",
-    re.IGNORECASE,
+    re.I,
 )
 _NUTRITION_RE = re.compile(r"\b(?:nutrition|nutritional|calorie|calories|kcal|protein|carbohydrate|carbs?|fat|fibre|fiber|sodium)\b", re.I)
 _HALAL_SAFETY_RE = re.compile(r"\b(?:halal|haram|pork|bacon|ham|lard|prosciutto|salami|pepperoni|wine|beer|sherry|mirin|alcohol|allergen|allergy|unsafe|safety|cross[- ]contamination|internal temperature)\b", re.I)
@@ -263,7 +263,7 @@ _ALLOCATION_SUFFIX_RE = re.compile(
     r"portion|portions|sitting|sittings|serving|servings|and|keep|kept|"
     r"separate|separately|fresh|freshly|at|just|before|use|used|"
     r"\d+(?:[.,]\d+)?|\s|[,;:()\[\]\-–—.])+$",
-    re.I,
+    re.IGNORECASE,
 )
 
 
