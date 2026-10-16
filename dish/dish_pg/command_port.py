@@ -416,6 +416,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             if operation is not None and call.command_name in {
                 "start",
                 "inspect",
+                "approve",
+                "reject",
                 "supply-evidence",
                 "prepare",
                 "discard",
