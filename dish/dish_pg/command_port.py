@@ -415,6 +415,9 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 archive_prelocked_operation_id = prelocked.operation_id if prelocked is not None else None
             if operation is not None and call.command_name in {
                 "start",
+                "inspect",
+                "approve",
+                "reject",
                 "supply-evidence",
                 "prepare",
                 "discard",
@@ -996,6 +999,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         call: CommandCall,
         task: models.DishTask,
         operation: wf.WorkflowOperation,
+        exclude_execution_id: uuid.UUID | None = None,
     ) -> tuple[list[str], dict[str, Any]] | None:
         """Return the exact caller's continuation for the current verifier occurrence."""
 
@@ -1066,7 +1070,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     task=task,
                     operation=operation,
                     lease=lease,
-                    exclude_execution_id=None,
+                    exclude_execution_id=exclude_execution_id,
                     allow_initial_cutover_bootstrap=True,
                 )
             except CommandRuleError as exc:
@@ -1191,7 +1195,33 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                         conflicting_actor_fact_id,
                     )
                 )
+        continuation: tuple[list[str], dict[str, Any]] | None = None
+        if (
+            exc.code == "VERIFICATION_OCCURRENCE_EXISTS"
+            and task is not None
+            and operation is not None
+        ):
+            continuation = self._verification_continuation(
+                call=call,
+                task=task,
+                operation=operation,
+                exclude_execution_id=execution_id,
+            )
+            if continuation is not None:
+                exc.data.update(continuation[1])
+                exc.data["legal_actions"] = tuple(continuation[0])
         data = {"message": str(exc), **exc.data}
+        envelope = None
+        stored_data = data
+        if continuation is not None:
+            assert operation is not None
+            envelope = {
+                "task_gid": None,
+                "submission_id": str(operation.operation_id),
+                "state": operation.phase,
+                "allowed_actions": continuation[0],
+            }
+            stored_data = self._stored_result_data(data, envelope)
         self._store_outcome(
             call=call,
             execution_id=execution_id,
@@ -1200,9 +1230,18 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             ok=False,
             code=exc.code,
             http_status=exc.http_status,
-            data=data,
+            data=stored_data,
             audit_event_type=f"{call.command_name}_rejected",
         )
+        if envelope is not None:
+            return self._command_result(
+                False,
+                call.command_name,
+                exc.code,
+                exc.http_status,
+                data,
+                envelope=envelope,
+            )
         return CommandResult(
             False, call.command_name, exc.code, exc.http_status, data
         )
@@ -2949,6 +2988,33 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             expected_status="pending-verification",
             expected_schema_version=binding.schema_release,
         )
+
+        existing_inspection = self.session.scalar(
+            select(wf.VerificationInspectionOccurrence)
+            .where(
+                wf.VerificationInspectionOccurrence.cycle_id == cycle.cycle_id,
+                wf.VerificationInspectionOccurrence.reviewed_content_version_id
+                == reviewed.content_version_id,
+                wf.VerificationInspectionOccurrence.verifier_actor_fact_id
+                == actor.actor_fact_id,
+                wf.VerificationInspectionOccurrence.placement_version
+                == self.workflow.repo.assert_task_fence(
+                    execution.execution_id
+                ).dish_version,
+            )
+            .limit(1)
+        )
+        if existing_inspection is not None:
+            operation.persisted_actions = ["approve", "reject"]
+            operation.operation_revision += 1
+            return {
+                "inspection_id": str(existing_inspection.inspection_id),
+                "cycle_id": str(cycle.cycle_id),
+                "lease_id": str(lease.lease_id),
+                "reviewed_content_version_id": str(reviewed.content_version_id),
+                "reviewed_identity": reviewed.content_identity,
+                "inspection_reused": True,
+            }
 
         inspection = self.workflow.record_inspection(
             inspection_id=self.uuid_factory(),

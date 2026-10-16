@@ -25,7 +25,12 @@ from dish_pg.workflow import (
     WorkflowAuthorityService,
 )
 from tests.support.canonical import TASK
-from tests.support.postgresql.command import _add_verification_queue
+from tests.support.postgresql.command import (
+    _add_verification_queue,
+    _prepare_for_verification,
+    _start_verification,
+    _verification_ready,
+)
 from tests.support.postgresql.concurrency import (
     TransactionGate,
     assert_transaction_blocked,
@@ -71,6 +76,17 @@ class _DelayedOperationPort(PostgresCommandPort):
         self.workflow.repo = _DelayedOperationRepository(self.session, gate=gate)
 
 
+class _DelayedOperationLockPort(PostgresCommandPort):
+    def __init__(self, *args, gate: TransactionGate, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._gate = gate
+
+    def _lock_operation_transition(self, operation_id):
+        operation = super()._lock_operation_transition(operation_id)
+        self._gate.block()
+        return operation
+
+
 def _command_port(session, *, delayed=None) -> PostgresCommandPort:
     cls = _DelayedOperationPort if delayed is not None else PostgresCommandPort
     kwargs = dict(
@@ -80,6 +96,20 @@ def _command_port(session, *, delayed=None) -> PostgresCommandPort:
     )
     if delayed is not None:
         kwargs.update(gate=delayed)
+    return cls(session, **kwargs)
+
+
+def _inspect_port(session, *, gate=None) -> PostgresCommandPort:
+    cls = _DelayedOperationLockPort if gate is not None else PostgresCommandPort
+    kwargs = {
+        "cursor_secret": SECRET,
+        "uuid_factory": uuid.uuid4,
+        "projection_recorder": ProjectionService(
+            session, uuid_factory=uuid.uuid4
+        ),
+    }
+    if gate is not None:
+        kwargs["gate"] = gate
     return cls(session, **kwargs)
 
 
@@ -146,6 +176,246 @@ def _seed_open_operation(factory, ids, context, task_id):
         )
         assert started.ok
         return author_run, admin_run, uuid.UUID(started.data["operation_id"])
+
+
+def test_native_concurrent_distinct_inspects_reuse_one_occurrence(core_db) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    author_run, verifier_run = _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=author_run
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="native concurrent Verification inspect",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+        port = _command_port(session)
+        started = port.execute(
+            CommandCall(
+                command_name="start",
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "initial",
+                    "agent": "claude",
+                },
+                owner_id="owner-1",
+                principal_class="agent",
+                run_id=author_run,
+                request_id=_next(ids),
+                now=NOW,
+            )
+        )
+        assert started.ok, (started.code, started.data)
+        operation_id = uuid.UUID(started.data["operation_id"])
+        prepared = _prepare_for_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=str(operation_id),
+            run_id=author_run,
+        )
+        cycle_id = uuid.UUID(prepared.data["cycle_id"])
+        _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=str(operation_id),
+            run_id=verifier_run,
+            target_operation_id=operation_id,
+            target_cycle_id=cycle_id,
+        )
+
+    gate = TransactionGate(label="first inspect holds the operation lock")
+    second_entered = Event()
+    request_ids = (uuid.uuid4(), uuid.uuid4())
+
+    def inspect(connection, request_id, *, delayed=False):
+        with managed_session(connection) as session:
+            if not delayed:
+                second_entered.set()
+            return _inspect_port(session, gate=gate if delayed else None).execute(
+                CommandCall(
+                    command_name="inspect",
+                    arguments={
+                        "task_id": str(task_id),
+                        "operation_id": str(operation_id),
+                        "agent": "codex",
+                        "independence_attestation": (
+                            "I independently inspected this exact candidate."
+                        ),
+                    },
+                    owner_id="verifier-owner",
+                    principal_class="verification",
+                    run_id=verifier_run,
+                    request_id=request_id,
+                    now=NOW,
+                )
+            )
+
+    engine = factory.kw["bind"]
+    with (
+        independent_connections(engine) as (first_connection, second_connection),
+        ThreadPoolExecutor(max_workers=2) as pool,
+    ):
+        first_future = pool.submit(
+            inspect, first_connection, request_ids[0], delayed=True
+        )
+        gate.wait_until_blocked()
+        second_future = pool.submit(inspect, second_connection, request_ids[1])
+        assert second_entered.wait(timeout=10)
+        try:
+            assert_transaction_blocked(second_future)
+        finally:
+            gate.release()
+        first = first_future.result(timeout=20)
+        second = second_future.result(timeout=20)
+
+    assert first.ok is True
+    assert second.ok is True
+    assert first.data.get("inspection_reused") is None
+    assert second.data["inspection_reused"] is True
+    assert second.data["inspection_id"] == first.data["inspection_id"]
+    with session_scope(factory) as session:
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.VerificationInspectionOccurrence)
+            .where(wf.VerificationInspectionOccurrence.cycle_id == cycle_id)
+        ) == 1
+
+
+def _assert_repeated_inspect_serializes_before_terminal_decision(
+    core_db, *, decision
+) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    with session_scope(factory) as session:
+        (
+            _port,
+            _author_run,
+            verifier_run,
+            started,
+            _prepared,
+            inspected,
+        ) = _verification_ready(session, ids, context, task_id)
+        operation_id = uuid.UUID(started.data["operation_id"])
+        cycle_id = uuid.UUID(inspected.data["cycle_id"])
+        reviewed_identity = inspected.data["reviewed_identity"]
+
+    gate = TransactionGate(
+        label=f"repeated inspect holds operation before {decision} task lock"
+    )
+    decision_entered = Event()
+
+    def repeat_inspect(connection):
+        with managed_session(connection) as session:
+            return _inspect_port(session, gate=gate).execute(
+                CommandCall(
+                    command_name="inspect",
+                    arguments={
+                        "task_id": str(task_id),
+                        "operation_id": str(operation_id),
+                        "agent": "codex",
+                        "independence_attestation": (
+                            "I independently inspected this exact candidate."
+                        ),
+                    },
+                    owner_id="verifier-owner",
+                    principal_class="verification",
+                    run_id=verifier_run,
+                    request_id=uuid.uuid4(),
+                    now=NOW,
+                )
+            )
+
+    def terminal_decision(connection):
+        arguments = {
+            "task_id": str(task_id),
+            "operation_id": str(operation_id),
+            "agent": "codex",
+        }
+        if decision == "approve":
+            arguments.update(
+                model="native-concurrency-test",
+                correction="none",
+                reviewed_identity=reviewed_identity,
+                semantic_review_complete=True,
+                provenance_complete=True,
+            )
+        else:
+            arguments.update(
+                route="large",
+                reason="material correction",
+                file_text=TASK.replace(
+                    "A compact side dish for testing texture.",
+                    "A materially corrected side dish for testing texture.",
+                ),
+            )
+        with managed_session(connection) as session:
+            decision_entered.set()
+            return _inspect_port(session).execute(
+                CommandCall(
+                    command_name=decision,
+                    arguments=arguments,
+                    owner_id="verifier-owner",
+                    principal_class="verification",
+                    run_id=verifier_run,
+                    request_id=uuid.uuid4(),
+                    now=NOW,
+                )
+            )
+
+    engine = factory.kw["bind"]
+    with (
+        independent_connections(engine) as (inspect_connection, decision_connection),
+        ThreadPoolExecutor(max_workers=2) as pool,
+    ):
+        inspect_future = pool.submit(repeat_inspect, inspect_connection)
+        gate.wait_until_blocked()
+        decision_future = pool.submit(terminal_decision, decision_connection)
+        assert decision_entered.wait(timeout=10)
+        try:
+            assert_transaction_blocked(decision_future)
+        finally:
+            gate.release()
+        repeated = inspect_future.result(timeout=20)
+        terminal = decision_future.result(timeout=20)
+
+    assert repeated.ok is True
+    assert repeated.data["inspection_reused"] is True
+    assert repeated.data["inspection_id"] == inspected.data["inspection_id"]
+    assert terminal.ok is True, (terminal.code, terminal.data)
+    with session_scope(factory) as session:
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.VerificationInspectionOccurrence)
+            .where(wf.VerificationInspectionOccurrence.cycle_id == cycle_id)
+        ) == 1
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        assert operation is not None
+        assert operation.phase == (
+            "await_submission" if decision == "approve" else "await_verification"
+        )
+
+
+def test_native_repeated_inspect_serializes_before_approve(core_db) -> None:
+    _assert_repeated_inspect_serializes_before_terminal_decision(
+        core_db, decision="approve"
+    )
+
+
+def test_native_repeated_inspect_serializes_before_reject(core_db) -> None:
+    _assert_repeated_inspect_serializes_before_terminal_decision(
+        core_db, decision="reject"
+    )
 
 
 def test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_intent(

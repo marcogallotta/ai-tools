@@ -386,6 +386,33 @@ def test_verification_occurrence_projection_and_reclaim_are_exact_caller_aware(
         assert same_expired.data["legal_actions"] == ()
         assert same_expired.data["service_access"]["state"] == "same_run_recovery_required"
 
+        stale_start_call = _call(
+            "start",
+            run_id=foreign_run,
+            request_id=_next(ids),
+            owner="foreign-owner",
+            arguments={
+                "dish_id": str(task_id),
+                "kind": "verification",
+                "agent": "claude",
+                "independence_attestation": "independent",
+            },
+        )
+        stale_start = port.execute(
+            replace(stale_start_call, now=stale_start_call.now + timedelta(minutes=11))
+        )
+        assert stale_start.ok is False
+        assert stale_start.code == "VERIFICATION_OCCURRENCE_EXISTS"
+        assert stale_start.allowed_actions == ("safe-reclaim",)
+        assert stale_start.data["legal_actions"] == ("safe-reclaim",)
+        assert stale_start.data["agent_action"]["command"] == "safe-reclaim"
+        replayed_stale_start = port.execute(
+            replace(stale_start_call, now=stale_start_call.now + timedelta(minutes=11))
+        )
+        assert replayed_stale_start.request_replayed is True
+        assert replayed_stale_start.allowed_actions == ("safe-reclaim",)
+        assert replayed_stale_start.data["agent_action"] == stale_start.data["agent_action"]
+
         foreign_expired_call = _call(
             "read",
             run_id=foreign_run,
