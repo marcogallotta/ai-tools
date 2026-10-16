@@ -122,6 +122,31 @@ def test_equivalent_freshness_handling_is_small_in_any_handling_section(section)
     require_small_scope(before, after)
 
 
+def test_unchanged_batch_quantity_may_gain_per_sitting_handling_note():
+    before = _doc()
+    after = _doc(
+        TASK.replace(
+            "100 g test ingredient",
+            "100 g test ingredient — divide evenly into 3 portions and keep separate per sitting",
+        )
+    )
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
+def test_per_sitting_handling_note_cannot_add_a_new_ingredient_measurement():
+    before = _doc()
+    after = _doc(
+        TASK.replace(
+            "100 g test ingredient",
+            "100 g test ingredient — divide into 3 portions of 40 g per sitting",
+        )
+    )
+    assert "quantities" in explicit_material_reasons(before, after)
+    with pytest.raises(DishRuleError):
+        require_small_scope(before, after)
+
+
 @pytest.mark.parametrize(
     ("old", "new"),
     [

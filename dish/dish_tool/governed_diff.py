@@ -197,7 +197,7 @@ _PORTION_RE = re.compile(r"\b(?:portion|portions|serving|servings|sittings?|feed
 _PORTION_COUNT_RE = re.compile(
     r"(?<!\w)(?:\d+(?:[.,]\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s*"
     r"(?:portions?|servings?|sittings?|people|persons?)\b",
-    re.I,
+    re.IGNORECASE,
 )
 _NUTRITION_RE = re.compile(r"\b(?:nutrition|nutritional|calorie|calories|kcal|protein|carbohydrate|carbs?|fat|fibre|fiber|sodium)\b", re.I)
 _HALAL_SAFETY_RE = re.compile(r"\b(?:halal|haram|pork|bacon|ham|lard|prosciutto|salami|pepperoni|wine|beer|sherry|mirin|alcohol|allergen|allergy|unsafe|safety|cross[- ]contamination|internal temperature)\b", re.I)
@@ -255,6 +255,41 @@ _HANDLING_SUBJECT_STOPWORDS = _HANDLING_WORDS | {
     "food", "into", "keep", "mix", "mixed", "reheat", "reheated", "reheating",
     "stored", "stir", "the", "then", "through", "instead", "preserve", "aroma",
 }
+
+_ALLOCATION_SUFFIX_RE = re.compile(
+    r"^[\s,;:()\[\]\-–—]*(?:total[\s,;:()\[\]\-–—]*)?"
+    r"(?=.*\b(?:divide|divided|portion|portions|per sitting|each sitting)\b)"
+    r"(?:divide|divided|evenly|into|across|between|for|per|each|the|"
+    r"portion|portions|sitting|sittings|serving|servings|and|keep|kept|"
+    r"separate|separately|fresh|freshly|at|just|before|use|used|"
+    r"\d+(?:[.,]\d+)?|\s|[,;:()\[\]\-–—.])+$",
+    re.I,
+)
+
+
+def _quantity_allocation_only_change(old: str, new: str) -> bool:
+    """Allow an unchanged batch quantity to gain handling-only allocation text.
+
+    This deliberately does not accept new ingredient measurements.  Exact
+    per-serving arithmetic belongs in method/storage unless it is independently
+    reclassified as a material quantity change.
+    """
+
+    old_lines = [line.strip() for line in old.splitlines() if line.strip()]
+    new_lines = [line.strip() for line in new.splitlines() if line.strip()]
+    if len(old_lines) != len(new_lines):
+        return False
+    changed = False
+    for old_line, new_line in zip(old_lines, new_lines, strict=True):
+        if old_line == new_line:
+            continue
+        if not new_line.startswith(old_line):
+            return False
+        suffix = new_line[len(old_line) :]
+        if _QUANTITY_RE.search(suffix) or not _ALLOCATION_SUFFIX_RE.fullmatch(suffix):
+            return False
+        changed = True
+    return changed
 
 
 def _canonical_body(document) -> dict[str, str]:
@@ -426,6 +461,8 @@ def explicit_material_reasons(before, after) -> tuple[str, ...]:
             continue
         if path.startswith("section."):
             section = path.split(".", 1)[1]
+            if section == "QUANTITIES" and _quantity_allocation_only_change(old, new):
+                continue
             if section in _HANDLING_SECTIONS:
                 # Removing or rewriting a WATCH OUT FOR warning is always Large;
                 # only adding a new bounded handling line may stay Small.

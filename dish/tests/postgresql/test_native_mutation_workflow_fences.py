@@ -330,6 +330,15 @@ def test_native_operation_and_inspection_carry_exact_catalog_identity(workflow_d
             operation_id=str(operation_id),
             run_id=verifier_run,
         )
+        repeated = _inspect(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=str(operation_id),
+            run_id=verifier_run,
+        )
+        assert repeated.data["inspection_id"] == inspected.data["inspection_id"]
+        assert repeated.data["inspection_reused"] is True
         inspection = session.get(
             wf.VerificationInspectionOccurrence,
             uuid.UUID(inspected.data["inspection_id"]),
