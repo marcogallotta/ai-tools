@@ -159,6 +159,14 @@ def test_server_instructions_require_current_turn_dish_discovery():
     assert "earlier missing dish_query is not current availability evidence" in mcp_server.SERVER_INSTRUCTIONS
 
 
+def test_server_instructions_make_archive_the_multifile_default():
+    instructions = mcp_server.SERVER_INSTRUCTIONS
+    assert "call dish_honest_archive first" in instructions
+    assert "Do not request those files individually" in instructions
+    assert "bounded single-file lookup" in instructions
+    assert instructions.index("dish_honest_archive first") < instructions.index("dish_honest_read only")
+
+
 def test_honest_git_ignores_system_ssh_config(monkeypatch, tmp_path):
     observed = {}
 
