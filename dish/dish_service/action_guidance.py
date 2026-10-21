@@ -180,6 +180,10 @@ def connected_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 instructions.append(retry_instruction)
 
         if command == "read":
+            if result.get("ok") and any(f"\nStatus: {stage}\n" in str(data.get("body") or "") for stage in ("pending-research", "pending-verification")):
+                instructions.append(
+                    "Research check-in: compare credible sources before settling construction; present consequential differences, sourcing, source departures and invented/composite routes with a recommendation. If no meaningful choice remains, explain why and obtain Marco's acceptance; no question quota or trivial questions. Record actual options and answers in Decisions. Verification independently checks for missed consequential choices and asks Marco itself; one answered question is not proof of sufficient consultation. Follow the current stage protocol; this reminder does not change workflow authority."
+                )
             task_commands = data.get("task_commands")
             if isinstance(task_commands, list):
                 eligible_commands = {

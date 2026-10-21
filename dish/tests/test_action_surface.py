@@ -336,6 +336,14 @@ def test_service_refuses_to_advertise_non_callable_connected_action():
     assert "apply-proposal" in exc.value.details["callable_actions"]
 
 
+@pytest.mark.parametrize("status,ok,expected", [("pending-research", True, True), ("pending-verification", True, True), ("ready", True, False), ("pending-research", False, False)])
+def test_read_guidance_prompts_meaningful_source_comparison(status, ok, expected):
+    result = {"command": "read", "ok": ok, "data": {"body": f"Recipe\n---\nStatus: {status}\n"}}
+    instructions = " ".join(action_agent_guidance(result)["instructions"])
+    assert ("Research check-in" in instructions) is expected
+    assert not expected or all(text in instructions for text in ("credible sources", "no question quota", "Marco's acceptance", "Decisions", "Verification independently"))
+
+
 def test_action_guidance_renders_state_specific_continuations():
     result = {
         "ok": True,
