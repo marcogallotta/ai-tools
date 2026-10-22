@@ -110,6 +110,17 @@ from .command_port_reads import PostgresCommandReadMixin
 _RESULT_ENVELOPE_KEY = "_postgres_result_envelope"
 
 
+class _SubmittedCandidateError(CanonicalDocumentError):
+    """Validation of caller content, distinct from stored or generated content."""
+
+
+def _validate_submitted_candidate(validator, *args, **kwargs):
+    try:
+        return validator(*args, **kwargs)
+    except CanonicalDocumentError as exc:
+        raise _SubmittedCandidateError(str(exc), errors=list(exc.errors)) from exc
+
+
 class PostgresCommandPort(PostgresCommandReadMixin):
     """Complete retained command surface in one caller-owned transaction."""
 
@@ -531,7 +542,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 data={"errors": list(exc.errors)},
             )
             return self._record_rule_failure(
-                call, rule_error, execution_id, task, operation
+                call, rule_error, execution_id, task, operation,
+                candidate_rejected=isinstance(exc, _SubmittedCandidateError),
             )
         except CommandRuleError as exc:
             return self._record_rule_failure(
@@ -1181,6 +1193,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         execution_id: uuid.UUID | None,
         task: models.DishTask | None,
         operation: wf.WorkflowOperation | None,
+        *,
+        candidate_rejected: bool = False,
     ) -> CommandResult:
         if (
             exc.code == "VERIFIER_NOT_INDEPENDENT"
@@ -1213,6 +1227,43 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         data = {"message": str(exc), **exc.data}
         envelope = None
         stored_data = data
+        if candidate_rejected:
+            # The candidate validator raised inside the rolled-back savepoint.
+            # Admission/audit still persist; this is no claim of zero DB writes.
+            data, envelope = self._continuation_envelope(
+                call=call, task=task, operation=operation, data=data,
+            )
+            findings = data.get("errors")
+            if (
+                exc.code == "VALIDATION_FAILED"
+                and call.command_name in {"prepare", "approve"}
+                and call.command_name in envelope["allowed_actions"]
+                and isinstance(findings, list)
+                and findings
+                and all(
+                    isinstance(item, Mapping)
+                    and item.get("kind") in {"syntax", "agent-correctable", "illegal-combination"}
+                    and item.get("recovery")
+                    for item in findings
+                )
+            ):
+                data["retry"] = {
+                    "mode": "correct_then_retry",
+                    "action": call.command_name,
+                    "same_run": True,
+                    "same_operation": True,
+                    "same_cycle": call.command_name == "approve",
+                    "fresh_request_id": True,
+                    "instruction": (
+                        "Correct every reported candidate finding using its location, current, "
+                        "expected and recovery details, then automatically resubmit "
+                        f"`{call.command_name}` with the corrected arguments and a fresh request ID "
+                        "on this same run and open operation"
+                        + (" and Verification cycle." if call.command_name == "approve" else ".")
+                        + " Do not ask Marco to relay the correction or repeat an unchanged invalid candidate."
+                    ),
+                }
+            stored_data = self._stored_result_data(data, envelope)
         if continuation is not None:
             assert operation is not None
             envelope = {
@@ -2631,7 +2682,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         authorization_reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
         required_authorizations: list[dict[str, Any]] = []
         if operation.kind == "initial" and file_text is not None:
-            parts = prepared_document(
+            parts = _validate_submitted_candidate(
+                prepared_document,
                 str(file_text),
                 agent=str(call.arguments.get("agent")),
                 model=str(call.arguments.get("model")),
@@ -2685,7 +2737,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 after=parts.document,
             )
         else:
-            parts = parse_canonical_document(
+            validator = (
+                lambda **kwargs: _validate_submitted_candidate(parse_canonical_document, **kwargs)
+            ) if operation.kind == "initial" else parse_canonical_document
+            parts = validator(
                 file_text=str(file_text) if file_text is not None else None,
                 title=str(call.arguments.get("title", prior.title)),
                 body=str(body_value) if body_value is not None else None,
@@ -3102,7 +3157,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                     "small correction requires a complete canonical file_text",
                     http_status=400,
                 )
-            source_parts = parse_canonical_document(
+            source_parts = _validate_submitted_candidate(
+                parse_canonical_document,
                 file_text=str(file_text),
                 expected_status="pending-verification",
                 expected_schema_version=binding.schema_release,

@@ -93,9 +93,13 @@ def parse_canonical_document(
         errors.append(
             {
                 "rule": "state.status-required",
+                "kind": "agent-correctable",
                 "message": f"candidate Status must be {expected_status}",
                 "field": "Status",
+                "location": "State.Status",
                 "current": document.state.values["Status"],
+                "expected": expected_status,
+                "recovery": f"Set the submitted candidate Status to {expected_status}.",
             }
         )
     rendered = document.render()
@@ -106,7 +110,12 @@ def parse_canonical_document(
         errors.append(
             {
                 "rule": "document.noncanonical-rendering",
+                "kind": "syntax",
                 "message": "candidate text does not exactly match canonical rendering",
+                "location": "document",
+                "current": raw,
+                "expected": rendered,
+                "recovery": "Use the canonical rendering shown in expected, preserving the candidate content.",
             }
         )
     if errors:
