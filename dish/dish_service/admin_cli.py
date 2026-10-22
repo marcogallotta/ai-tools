@@ -1331,7 +1331,11 @@ def main(
     application: DishAdminApplication | None = None,
 ) -> int:
     arguments = _normalize_output_flags(sys.argv[1:] if argv is None else argv)
-    command_arguments = argv_without_profile(arguments)
+    command_arguments = [
+        token
+        for token in argv_without_profile(arguments)
+        if token not in {"--json", "--verbose"}
+    ]
 
     if "-h" in arguments or "--help" in arguments:
         build_parser().parse_args(arguments)  # prints help and raises SystemExit(0)
