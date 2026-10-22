@@ -247,6 +247,7 @@ tests/postgresql/test_shadow_delivery_authority.py,test,1,8,dark-launch; isolate
 tests/postgresql/test_small_correction_scope.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_stage2_core_authority.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_stage3_marco_authorization_identity.py,test,1,4,isolated-test; native-pg; sqlite-boundary,,,none,,SQLite database-boundary; exact changed test/module,,
+tests/postgresql/test_candidate_validation_retry.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_stage4_command_port.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_cook_logs.py,test,1,4,isolated-test; native-pg,,,none,,exact changed test/module,,
 tests/postgresql/test_stage5_transition_projection.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module,,
