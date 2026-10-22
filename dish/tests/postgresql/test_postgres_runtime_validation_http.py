@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from dish_pg import models
 from dish_pg import postgres_service as postgres_service_module
@@ -1632,6 +1632,44 @@ def test_expire_lease_by_lease_id_resolves_task_from_postgresql_only(
 
     assert result["ok"] is True
     assert result["data"]["state"] == "expired"
+
+
+def test_expire_lease_by_lease_id_needs_no_external_task_alias(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        session.execute(
+            delete(models.TaskExternalAlias).where(
+                models.TaskExternalAlias.task_id == task_id
+            )
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="marco-admin",
+            agent="marco",
+        )
+        operation_id = _open_operation(session, ids, context, task_id)
+        lease_id = _active_actor_lease(session, ids, context, task_id, operation_id, run_id)
+
+    service = runtime_service(factory, tmp_path)
+    principal = ServicePrincipal.from_values("marco-admin", str(run_id))
+    result = service.expire_lease(
+        principal,
+        lease_id=str(lease_id),
+        task_gid=None,
+        reason="operator recovery",
+        request_id=str(_next(ids)),
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["lease_id"] == str(lease_id)
+    assert result["data"]["dish_id"] == str(task_id)
+    assert result["data"]["state"] == "expired"
+    assert result["data"]["request_replayed"] is False
 
 
 def test_expire_lease_by_task_gid_resolves_through_task_external_alias_only(

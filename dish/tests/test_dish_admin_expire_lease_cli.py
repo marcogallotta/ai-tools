@@ -2,6 +2,7 @@ from __future__ import annotations
 import pytest
 
 import json
+import uuid
 
 from dish_service import admin_cli
 from tests.support.lease_expiry import ADMIN_RUN, EXPIRY_REQUEST, TASK_GID
@@ -56,6 +57,28 @@ def test_cli_prints_and_flushes_replay_identity_before_dispatch(capsys):
             "request_id": EXPIRY_REQUEST,
         }
     ]
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("output_flag", ["--json", "--verbose"])
+@pytest.mark.parametrize("flag_first", [True, False])
+def test_output_flags_keep_expiry_on_exact_lease_route(
+    capsys, output_flag, flag_first
+):
+    client = _RecordingAdminClient()
+    lease_id = str(uuid.uuid4())
+    command = ["expire-lease", lease_id, "--reason", "owner gone"]
+    argv = [output_flag, *command] if flag_first else [*command, output_flag]
+
+    status = admin_cli.main(argv, application=client)
+
+    assert status == 0
+    assert len(client.calls) == 1
+    assert client.calls[0]["lease_id"] == lease_id
+    assert client.calls[0]["task_gid"] is None
+    assert client.calls[0]["reason"] == "owner gone"
+    assert uuid.UUID(client.calls[0]["request_id"])
+    assert "expire-lease request_id=" in capsys.readouterr().err
 
 
 @pytest.mark.smoke
