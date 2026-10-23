@@ -593,15 +593,16 @@ review-bounded overlap waivers for their expected skips rather than treat them a
 All four are covered by `dish-pg-process-failure`'s disposable Compose stack and skip with a reason
 when `DISH_SECTION1_COMPOSE_JSON` is unset.
 
-The overlap waivers were reproduced and reassessed on 2026-09-23 and are review-bounded to
-2026-10-23. These are the committed structured waivers; a reason change requires a new reviewed
-signature rather than reusing the node ID:
+The overlap waivers were reassessed on 2026-10-23: all 15 dedicated process-failure tests
+passed, including these four. Their next review is due before 2026-11-23. These are the
+committed structured waivers; a reason change requires a new reviewed signature rather than
+reusing the node ID:
 
 ```sh
---waive-skip '{"nodeid":"tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once","expected_reason_sha256":"a063fdf9a1a005c05496ef29b1a988340866495141fcd3e76a8bb4171c8ffab2","owner_task_gid":"1218793787033330","review_by":"2026-10-23","justification":"covered by dish-pg-process-failure; bare native certification lacks disposable Compose control"}' \
---waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1218793787033330","review_by":"2026-10-23","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
---waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1218793787033330","review_by":"2026-10-23","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
---waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1218793787033330","review_by":"2026-10-23","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}'
+--waive-skip '{"nodeid":"tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once","expected_reason_sha256":"a063fdf9a1a005c05496ef29b1a988340866495141fcd3e76a8bb4171c8ffab2","owner_task_gid":"1219828792146883","review_by":"2026-11-23","justification":"covered by dish-pg-process-failure; bare native certification lacks disposable Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1219828792146883","review_by":"2026-11-23","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1219828792146883","review_by":"2026-11-23","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1219828792146883","review_by":"2026-11-23","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}'
 ```
 
 All four run under `dish-pg-process-failure`; the waiver is purely about bare-native inventory
