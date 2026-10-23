@@ -557,6 +557,8 @@ def materialize_staged_native_section_content(
             raise NativeSectionContentMaterializationError(
                 "source DishState already carries an unexpected native catalog placement"
             )
+        if state.completed and state.completion_reason == "cooked":
+            raise NativeSectionContentMaterializationError("Cooked Dish is frozen")
         next_version = state.dish_version + 1
         next_receipt = session.get(
             models.DishMutationReceipt,

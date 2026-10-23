@@ -364,18 +364,18 @@ def test_cook_log_text_bounds_fail_closed(workflow_db) -> None:
         assert session.scalar(select(func.count()).select_from(wf.CookLogEntry)) == 0
 
 
-@pytest.mark.parametrize("lifecycle", ("open", "cooked", "archived"))
+@pytest.mark.parametrize("lifecycle", ("open", "cooked", "cooked_open", "archived"))
 def test_record_cook_log_is_lifecycle_neutral(workflow_db, lifecycle: str) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         run_id = _next(ids)
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         port = _port(session, ids)
-        if lifecycle == "open":
+        if lifecycle in {"open", "cooked_open"}:
             _start_initial(port, ids, task_id=task_id, run_id=run_id)
-        elif lifecycle == "cooked":
+        if lifecycle in {"cooked", "cooked_open"}:
             assert port.execute(_call("cooked", run_id=run_id, request_id=_next(ids), arguments={"dish_id": str(task_id), "agent": "codex"})).ok
-        else:
+        elif lifecycle == "archived":
             assert port.execute(_call("archive", run_id=run_id, request_id=_next(ids), arguments={"dish_id": str(task_id), "agent": "codex"})).ok
         state = session.get(models.DishState, (context["generation_id"], task_id))
         assert state is not None
@@ -400,9 +400,9 @@ def test_record_cook_log_is_lifecycle_neutral(workflow_db, lifecycle: str) -> No
             state.archived_at,
         ) == before
         cooked = FrontendBoardQuery(session).archived_tasks(max_results=10).results
-        if lifecycle == "cooked":
+        if lifecycle in {"cooked", "cooked_open"}:
             assert [item.task_id for item in cooked] == [task_id]
-            assert [[text for _, text in item.cook_logs] for item in cooked] == [["cooked"]]
+            assert [[text for _, text in item.cook_logs] for item in cooked] == [[lifecycle]]
         else:
             assert not cooked
 
@@ -462,15 +462,9 @@ def test_read_separates_workflow_continuations_from_task_commands(
         }
         assert "record-cook-log" not in result.allowed_actions
         assert "cooked" not in result.allowed_actions
-        assert commands["cooked"]["eligible"] is (lifecycle == "resting")
-        if lifecycle == "open":
-            assert commands["cooked"]["blocked_by"]["rule"] == "TASK_NOT_RESTING"
-            assert commands["cooked"]["blocked_by"]["open_operation_id"]
-            assert commands["cooked"]["blocked_by"]["active_lease_id"]
-        elif lifecycle == "cooked":
-            assert commands["cooked"]["blocked_by"] == {
-                "rule": "TASK_NOT_ACTIVE",
-            }
+        assert commands["cooked"]["eligible"] is (lifecycle in {"resting", "open"})
+        if lifecycle == "cooked":
+            assert commands["cooked"]["blocked_by"] == {"rule": "TASK_COOKED"}
         elif lifecycle == "archived":
             assert commands["cooked"]["blocked_by"] == {
                 "rule": "TASK_ARCHIVED",
@@ -480,11 +474,6 @@ def test_read_separates_workflow_continuations_from_task_commands(
 @pytest.mark.parametrize(
     ("command_name", "blocker_field", "rule"),
     (
-        ("cooked", "open_operation_id", "TASK_NOT_RESTING"),
-        ("cooked", "active_lease_id", "TASK_NOT_RESTING"),
-        ("cooked", "unresolved_projection_attempt_id", "TASK_NOT_RESTING"),
-        ("cooked", "open_hold_id", "TASK_NOT_RESTING"),
-        ("cooked", "open_human_requirement_id", "TASK_NOT_RESTING"),
         ("record-cook-log", "open_abandonment_id", "ABANDONMENT_FENCE_ACTIVE"),
     ),
 )

@@ -373,7 +373,7 @@ def test_historical_imported_identity_scheme_still_rejects_corruption(
             )
 
 
-def test_finalizer_rebases_after_committed_completion_only_command(core_db) -> None:
+def test_finalizer_refuses_content_migration_after_cooked(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
         seeded, expectation, _, _event_id, occurrences = _stage_pr3(session, ids)
@@ -391,30 +391,26 @@ def test_finalizer_rebases_after_committed_completion_only_command(core_db) -> N
         assert state.dish_version == state.completion_version == 2
         assert state.completed is True
 
-    with session_scope(factory) as session:
-        result = finalize_native_catalog_runtime_authority(
+    with (
+        pytest.raises(NativeCatalogRuntimeFinalizerError, match="Cooked Dish is frozen"),
+        session_scope(factory) as session,
+    ):
+        finalize_native_catalog_runtime_authority(
             session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=1)
         )
+    with session_scope(factory) as session:
         state = session.get(models.DishState, (seeded["generation_id"], task_id))
         successor = session.get(models.ContentVersion, successor_id)
         resolved = models.resolve_current_native_catalog_runtime(
             session, seeded["generation_id"]
         )
-        assert result.inserted is True and resolved is not None
-        assert successor is not None and successor.created_dish_version == 3
+        assert resolved is None
+        assert successor is None
         assert state is not None
-        assert state.dish_version == state.placement_version == 3
+        assert state.dish_version == 2
         assert state.completion_version == 2 and state.completed is True
-        assert state.current_content_version_id == successor_id
-        assert state.catalog_version_id == expectation.base_catalog_version_id
-
-    with session_scope(factory) as session:
-        retry = finalize_native_catalog_runtime_authority(
-            session, source_commit_sha="f" * 40, now=NOW + timedelta(hours=2)
-        )
-        assert retry.inserted is False
-        assert retry.materialization.materialized_count == 0
-        assert retry.materialization.already_materialized_count == 23
+        assert state.current_content_version_id == source_content_id
+        assert state.catalog_version_id is None
 
 
 def test_finalizer_roots_compatible_additive_successor_catalog(core_db) -> None:
@@ -590,9 +586,7 @@ def test_finalizer_rejects_incompatible_staged_destination_successor(
             )
 
 
-def test_rebased_finalizer_failure_rolls_back_all_new_authority(
-    core_db, monkeypatch
-) -> None:
+def test_cooked_finalizer_failure_rolls_back_all_new_authority(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
         seeded, _expectation, _, _event_id, occurrences = _stage_pr3(session, ids)
@@ -607,20 +601,10 @@ def test_rebased_finalizer_failure_rolls_back_all_new_authority(
     with session_scope(factory) as session:
         assert _complete_after_staging(session, ids, seeded, rebased_task_id) == 2
 
-    def _fail_after_materialization(*args, **kwargs):
-        materialize_staged_native_section_content(*args, **kwargs)
-        raise NativeSectionContentMaterializationError(
-            "injected failure after rebased staged materialization"
-        )
-
-    monkeypatch.setattr(
-        "dish_pg.native_catalog_runtime_finalizer.materialize_staged_native_section_content",
-        _fail_after_materialization,
-    )
     with (
         pytest.raises(
             NativeCatalogRuntimeFinalizerError,
-            match="injected failure after rebased staged materialization",
+            match="Cooked Dish is frozen",
         ),
         session_scope(factory) as session,
     ):
