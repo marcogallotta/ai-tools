@@ -97,8 +97,8 @@ SERVER_INSTRUCTIONS = (
     f"fails. {HONEST_STAGE_READING} {HONEST_PLANNING_READING} "
     "Use Dish cooked discovery and immutable cook logs as that protocol directs. "
     "At the start of Planning, call dish_planning_context and display its Context receipt, "
-    "except for an accepted-set request (what next, a reported cook, a swap from an existing "
-    "block, or laying out the calendar), which reads only what its route document names."
+    "unless the protocol's route exempts the request (an accepted-set request); call it before "
+    "switching to another route or creating or starting a planning Dish."
 )
 
 
@@ -653,7 +653,8 @@ class PlanningContextTool(FastMCPTool):
             description=(
                 "Load a pinned Planning protocol, scoped Honest Pantry documents and complete "
                 "Dish cooked inventory with selected immutable logs. Use before the first "
-                "Planning answer; show the Context receipt. Broad for open cross-programme "
+                "Planning answer unless the protocol's route exempts the request; show the "
+                "Context receipt. Broad for open cross-programme "
                 "planning, block for an exact registered block, dish for a named dish. "
                 "Supply focus_dish_ids to check full logs for finalists and plausible aliases."
             ),
