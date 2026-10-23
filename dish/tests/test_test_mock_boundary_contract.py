@@ -5,6 +5,12 @@ from pathlib import Path
 
 
 REVIEWED_PRIVATE_FAULT_SEAMS = {
+    ("postgresql/test_cook_logs.py", "_planner_snapshot"): (
+        "Read-action eligibility blocker injection without changing authoritative Dish state."
+    ),
+    ("test_planning_context_mcp.py", "_caller_audit_context"): (
+        "Authenticated caller identity boundary for the Planning context tool."
+    ),
     ("postgresql/test_admin_hold_ergonomics.py", "_queue"): (
         "Queue-derivation fault injection proving admin inspect still reports the hold."
     ),

@@ -1197,8 +1197,7 @@ def test_native_task_transition_commits_before_final_fence_and_stale_start_rejec
             stale = future.result()
 
     assert stale.ok is False
-    assert stale.code == "AUTHORITY_MISMATCH"
-    assert "task fence is stale" in stale.data["message"]
+    assert stale.code == "TASK_COOKED"
     with session_scope(factory) as session:
         state = session.get(models.DishState, (context["generation_id"], task_id))
         assert state is not None and state.completed is True
@@ -1360,7 +1359,7 @@ def test_native_cook_log_binds_post_transition_when_cooked_wins_before_fence_cap
         )
 
 
-def test_native_start_holds_final_task_fence_until_commit_and_cooked_observes_operation(
+def test_native_start_holds_final_task_fence_until_commit_and_cooked_freezes_operation(
     core_db,
 ) -> None:
     factory, ids, context, task_id = native_workflow_db(core_db)
@@ -1417,11 +1416,12 @@ def test_native_start_holds_final_task_fence_until_commit_and_cooked_observes_op
             cooked = cooked_future.result()
 
     assert started.ok is True
-    assert cooked.ok is False
-    assert cooked.code == "TASK_NOT_RESTING"
+    assert cooked.ok is True
+    assert cooked.allowed_actions == ()
     with session_scope(factory) as session:
         state = session.get(models.DishState, (context["generation_id"], task_id))
-        assert state is not None and state.completed is False
+        assert state is not None and state.completed is True
+        assert state.completion_reason == "cooked"
         operations = list(
             session.scalars(
                 select(wf.WorkflowOperation).where(
@@ -1507,8 +1507,7 @@ def test_native_confirmed_planning_observes_completion_committed_before_final_fe
             rejected = future.result()
 
     assert rejected.ok is False
-    assert rejected.code == "WRONG_STATE"
-    assert rejected.data["rule"] == "planning_completed_task_reopen_required"
+    assert rejected.code == "TASK_COOKED"
     with session_scope(factory) as session:
         state = session.get(models.DishState, (context["generation_id"], task_id))
         assert state is not None and state.completed is True

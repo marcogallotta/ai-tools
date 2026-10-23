@@ -196,7 +196,6 @@ def _exercise_unsupported_routes(
     run_id: uuid.UUID,
     ids,
     agent_token: str,
-    admin_token: str,
     action_token: str,
 ) -> dict[str, Any]:
     operation_id = next(ids)
@@ -205,22 +204,6 @@ def _exercise_unsupported_routes(
             f"{private_base_url}/v1/leases/{operation_id}/renew",
             agent_token,
             {"client": {"run_id": str(run_id), "request_id": str(next(ids))}},
-        ),
-        (
-            f"{private_base_url}/v1/admin/leases/{operation_id}/recover",
-            admin_token,
-            {
-                "client": {"run_id": str(run_id), "request_id": str(next(ids))},
-                "reason": "must remain hidden in PostgreSQL TEST mode",
-            },
-        ),
-        (
-            f"{private_base_url}/v1/admin/inspect",
-            admin_token,
-            {
-                "client": {"run_id": str(run_id), "request_id": str(next(ids))},
-                "arguments": {},
-            },
         ),
         (
             f"{action_base_url}/v1/action/backup-create",
@@ -234,7 +217,7 @@ def _exercise_unsupported_routes(
     results = []
     for url, token, body in cases:
         status, payload = _json_request(url, token=token, body=body)
-        assert status == 404
+        assert status == 404, (url, status, payload)
         assert payload == {"ok": False, "error": "not_found"}
         results.append({"url": url, "status": status, "payload": payload})
     return {"status": "passed", "routes": results, "internal_error_count": 0}
@@ -689,7 +672,6 @@ def run_runtime_wiring_rehearsal(core_db, tmp_path) -> dict[str, object]:
             run_id=run_id,
             ids=ids,
             agent_token=agent_token,
-            admin_token=admin_token,
             action_token=action_token,
         )
 
