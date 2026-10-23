@@ -377,6 +377,18 @@ def test_hold_reject_creates_only_preconstruction_evidence_hold_and_replays(work
             )
         ) == 1
 
+        cooked = port.execute(_call(
+            "cooked", run_id=run_id, request_id=_next(ids),
+            arguments={"task_id": str(task_id)},
+        ))
+        assert cooked.ok
+        admin_run = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=admin_run, owner="Marco")
+        for command in ("queue", "holds", "attention", "proposals"):
+            result = port.execute(_call(command, run_id=admin_run, owner="Marco", principal="admin"))
+            assert result.ok
+            assert str(task_id) not in str(result.data)
+
         with pytest.raises(RequestIdentityConflict):
             port.execute(
                 _call(

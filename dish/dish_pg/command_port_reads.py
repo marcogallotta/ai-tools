@@ -44,6 +44,10 @@ from dish_tool.errors import DishRuleError
 class PostgresCommandReadMixin:
     """Read/planning helpers sharing the caller-owned port session."""
 
+    def _is_cooked_task(self, generation_id: uuid.UUID, task_id: uuid.UUID) -> bool:
+        state = self.session.get(models.DishState, (generation_id, task_id))
+        return bool(state is not None and state.completed and state.completion_reason == "cooked")
+
     def _execute_read(self, call: CommandCall) -> CommandResult:
         if call.request_id is not None:
             raise CommandRuleError(
@@ -872,6 +876,8 @@ class PostgresCommandReadMixin:
         )
         rows: list[dict[str, Any]] = []
         for requirement in requirements:
+            if self._is_cooked_task(generation_id, requirement.task_id):
+                continue
             if not requirement.question.startswith(
                 _SEMANTIC_PROPOSAL_PREFIX
             ):
@@ -925,6 +931,7 @@ class PostgresCommandReadMixin:
             )
             .order_by(wf.WorkflowOperation.created_at, wf.WorkflowOperation.operation_id)
         ).all()
+        operations = [op for op in operations if not self._is_cooked_task(generation.generation_id, op.task_id)]
         items: list[dict[str, Any]] = []
         healthy_count = 0
         counts = {"safe_cleanup": 0, "multi_step_safe": 0, "needs_marco": 0, "unsafe": 0}
@@ -1035,6 +1042,7 @@ class PostgresCommandReadMixin:
                 )
             )
         )
+        operations = [op for op in operations if not self._is_cooked_task(generation.generation_id, op.task_id)]
         items: list[dict[str, Any]] = []
         category_counts = {"system": 0, "needs_marco": 0, "unsafe": 0}
         group_order = {
@@ -1343,6 +1351,7 @@ class PostgresCommandReadMixin:
             items.append(item)
 
         legacy_items = unresolved_legacy_attention(self.session, generation.generation_id)
+        legacy_items = [item for item in legacy_items if not self._is_cooked_task(generation.generation_id, uuid.UUID(item["task_id"]))]
         if task_id is not None:
             legacy_items = [
                 item for item in legacy_items if str(item.get("task_id")) == str(task_id)
@@ -1388,6 +1397,7 @@ class PostgresCommandReadMixin:
             )
             .order_by(wf.WorkflowOperation.created_at, wf.WorkflowOperation.operation_id)
         ).all()
+        operations = [op for op in operations if not self._is_cooked_task(generation.generation_id, op.task_id)]
         rows: list[dict[str, Any]] = []
         for operation in operations:
             task = self.session.get(models.DishTask, operation.task_id)

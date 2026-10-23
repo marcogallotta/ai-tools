@@ -712,7 +712,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         )
         if cooked:
             allowed_actions = []
-            result_data["legal_actions"] = ()
+            result_data["legal_actions"] = []
             result_data.pop("required_start_kind", None)
             for key in ("agent_action", "service_access", "verification_eligibility"):
                 result_data.pop(key, None)
