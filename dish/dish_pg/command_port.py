@@ -644,6 +644,8 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 task = None
         if task is not None:
             result_data.setdefault("dish_id", str(task.task_id))
+        task_view = self.reads.task_view(task.task_id) if task is not None else None
+        cooked = task_view is not None and task_view.completion_state == "cooked"
 
         result_operation = operation
         operation_id = result_data.get("operation_id")
@@ -662,6 +664,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             and task is not None
             and result_operation is not None
             and result_operation.phase == "await_verification"
+            and not cooked
         ):
             verification_projection = self._verification_continuation(
                 call=call,
@@ -685,7 +688,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         ):
             raw_actions = ["start"]
         elif task is not None:
-            task_view = self.reads.task_view(task.task_id)
+            assert task_view is not None
             raw_actions = list(task_view.legal_actions)
             if (
                 not raw_actions
@@ -707,15 +710,17 @@ class PostgresCommandPort(PostgresCommandReadMixin):
                 action for action in projected_actions if action in ACTION_COMMANDS
             )
         )
+        if cooked:
+            allowed_actions = []
+            result_data["legal_actions"] = ()
+            result_data.pop("required_start_kind", None)
+            for key in ("agent_action", "service_access", "verification_eligibility"):
+                result_data.pop(key, None)
         if call.command_name == "read" and task is not None:
             generation = self.reads.active_generation()
             snapshot = self._planner_snapshot(
                 generation.generation_id, task, result_operation
             )
-            if snapshot.cooked:
-                allowed_actions = []
-                result_data["legal_actions"] = ()
-                result_data.pop("required_start_kind", None)
             if result_operation is None and not allowed_actions:
                 recovery = self.legacy_verification_recovery(
                     generation_id=generation.generation_id,

@@ -974,6 +974,15 @@ def test_cooked_freezes_dish_with_open_workflow(workflow_db, prepared: bool) -> 
                 port, ids, task_id=task_id,
                 operation_id=started.data["operation_id"], run_id=run_id,
             )
+            verifier_run = _next(ids)
+            _register_run(
+                session, generation_id=context["generation_id"],
+                run_id=verifier_run, owner="verifier-owner", agent="codex",
+            )
+            _start_verification(
+                port, ids, task_id=task_id,
+                operation_id=started.data["operation_id"], run_id=verifier_run,
+            )
         before = session.get(
             models.DishState, (context["generation_id"], task_id)
         )
@@ -990,6 +999,8 @@ def test_cooked_freezes_dish_with_open_workflow(workflow_db, prepared: bool) -> 
         )
 
         assert result.ok is True
+        assert result.allowed_actions == ()
+        assert "agent_action" not in result.data
         current = session.get(
             models.DishState, (context["generation_id"], task_id)
         )
@@ -998,6 +1009,14 @@ def test_cooked_freezes_dish_with_open_workflow(workflow_db, prepared: bool) -> 
         assert (current.current_content_version_id, current.section_id) == (content_id, section_id)
         read = port.execute(_call("read", run_id=run_id, principal="reader", arguments={"dish_id": str(task_id), "agent": "claude"}))
         assert read.ok and read.allowed_actions == ()
+        assert not {"agent_action", "service_access", "verification_eligibility"} & read.data.keys()
+        if prepared:
+            verifier_read = port.execute(_call(
+                "read", run_id=verifier_run, owner="verifier-owner",
+                principal="reader", arguments={"dish_id": str(task_id), "agent": "codex"},
+            ))
+            assert verifier_read.ok and verifier_read.allowed_actions == ()
+            assert not {"agent_action", "service_access"} & verifier_read.data.keys()
         assert {item["command"]: item["eligible"] for item in read.data["task_commands"]} == {
             "record-cook-log": True, "cooked": False,
         }
