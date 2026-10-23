@@ -96,7 +96,9 @@ SERVER_INSTRUCTIONS = (
     "individual repository files. Both tools update main first and serve nothing if that update "
     f"fails. {HONEST_STAGE_READING} {HONEST_PLANNING_READING} "
     "Use Dish cooked discovery and immutable cook logs as that protocol directs. "
-    "At the start of Planning, call dish_planning_context and display its Context receipt."
+    "At the start of Planning, call dish_planning_context and display its Context receipt, "
+    "except for an accepted-set request (what next, a reported cook, a swap from an existing "
+    "block, or laying out the calendar), which reads only what its route document names."
 )
 
 
