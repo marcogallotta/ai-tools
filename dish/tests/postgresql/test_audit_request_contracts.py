@@ -319,9 +319,7 @@ def test_completed_task_rejects_planning_before_challenge_and_after_confirmation
 
         for rejected in (confirmed, fresh_initial):
             assert rejected.ok is False
-            assert rejected.code == "WRONG_STATE"
-            assert rejected.data["rule"] == "planning_completed_task_reopen_required"
-            assert rejected.data["required_admin_action"] == "reopen-planning"
+            assert rejected.code == "TASK_COOKED"
         state = session.get(
             models.DishState, (context["generation_id"], task_id)
         )

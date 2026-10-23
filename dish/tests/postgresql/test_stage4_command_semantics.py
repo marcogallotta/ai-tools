@@ -25,7 +25,7 @@ from dish_pg.planner import (
     plan_command,
 )
 from dish_pg.read_model import PostgresReadModel
-from dish_pg.repositories import DishRepository, ScalarMutationSource
+from dish_pg.repositories import CoreAuthorityError, DishRepository, ScalarMutationSource
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from dish_pg.shadow_worker import (
     _semantic_shadow_command,
@@ -958,19 +958,27 @@ def test_newly_created_incomplete_archive_reason_remains_active_not_archived(
         assert task_id in {item.task_id for item in page.items}
 
 
-def test_cooked_rejects_open_workflow_without_partial_completion(workflow_db) -> None:
+@pytest.mark.parametrize("prepared", (False, True))
+def test_cooked_freezes_dish_with_open_workflow(workflow_db, prepared: bool) -> None:
     factory, ids, context, task_id = workflow_db
     run_id = _next(ids)
     with session_scope(factory) as session:
+        if prepared:
+            _add_verification_queue(session, ids, context)
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         port = _port(session, ids)
         started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
         assert started.ok is True
+        if prepared:
+            _prepare_for_verification(
+                port, ids, task_id=task_id,
+                operation_id=started.data["operation_id"], run_id=run_id,
+            )
         before = session.get(
             models.DishState, (context["generation_id"], task_id)
         )
         assert before is not None
-        before_identity = (before.dish_version, before.completion_version, before.completed)
+        content_id, section_id = before.current_content_version_id, before.section_id
 
         result = port.execute(
             _call(
@@ -981,14 +989,30 @@ def test_cooked_rejects_open_workflow_without_partial_completion(workflow_db) ->
             )
         )
 
-        assert result.ok is False
-        assert result.code == "TASK_NOT_RESTING"
-        assert "open_operation_id" in result.data["guidance"]
+        assert result.ok is True
         current = session.get(
             models.DishState, (context["generation_id"], task_id)
         )
         assert current is not None
-        assert (current.dish_version, current.completion_version, current.completed) == before_identity
+        assert current.completed and current.completion_reason == "cooked"
+        assert (current.current_content_version_id, current.section_id) == (content_id, section_id)
+        read = port.execute(_call("read", run_id=run_id, principal="reader", arguments={"dish_id": str(task_id), "agent": "claude"}))
+        assert read.ok and read.allowed_actions == ()
+        assert {item["command"]: item["eligible"] for item in read.data["task_commands"]} == {
+            "record-cook-log": True, "cooked": False,
+        }
+        late = port.execute(_call("reopen-planning", run_id=run_id, request_id=_next(ids), principal="admin", arguments={"task_id": str(task_id)}))
+        assert not late.ok and late.code == "TASK_COOKED"
+        membership = session.get(models.TaskMembershipHead, (context["generation_id"], task_id))
+        mutation = DishRepository(session, uuid_factory=lambda: _next(ids)).begin_scalar_mutation(
+            generation_id=context["generation_id"], task_id=task_id,
+            expected_dish_version=current.dish_version,
+            expected_membership_revision=membership.membership_revision,
+            source=ScalarMutationSource(route="import", import_run_id=context["import_run_id"], occurred_at=NOW),
+        )
+        mutation.place(section_id=section_id, registry_version_id=current.registry_version_id)
+        with pytest.raises(CoreAuthorityError, match="Cooked Dish is frozen"):
+            mutation.finalize()
 
 
 def test_archive_overrides_open_workflow_preserves_history_and_fences_late_mutation(

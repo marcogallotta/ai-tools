@@ -712,6 +712,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             snapshot = self._planner_snapshot(
                 generation.generation_id, task, result_operation
             )
+            if snapshot.cooked:
+                allowed_actions = []
+                result_data["legal_actions"] = ()
+                result_data.pop("required_start_kind", None)
             if result_operation is None and not allowed_actions:
                 recovery = self.legacy_verification_recovery(
                     generation_id=generation.generation_id,
@@ -2096,6 +2100,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
     def _assert_planning_task_reopened(state: models.DishState) -> None:
         if not state.completed:
             return
+        if state.completion_reason == "cooked":
+            raise CommandRuleError(
+                "TASK_COOKED", "Cooked Dish cannot be reopened for Planning"
+            )
         raise CommandRuleError(
             "WRONG_STATE",
             "completed tasks require Marco to reopen them before Planning",
@@ -4423,21 +4431,6 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         if current.completed:
             raise CommandRuleError(
                 "TASK_NOT_ACTIVE", "Cooked requires an active Dish"
-            )
-        blocking_operation = self.session.scalar(
-            select(wf.WorkflowOperation.operation_id)
-            .where(
-                wf.WorkflowOperation.generation_id == generation.generation_id,
-                wf.WorkflowOperation.task_id == task.task_id,
-                wf.WorkflowOperation.lifecycle == "open",
-            )
-            .limit(1)
-        )
-        if blocking_operation is not None:
-            raise CommandRuleError(
-                "TASK_NOT_RESTING",
-                "Cooked requires a resting Dish with no open workflow operation",
-                data={"open_operation_id": str(blocking_operation)},
             )
         self._set_completion(
             generation.generation_id,

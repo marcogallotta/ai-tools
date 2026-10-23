@@ -34,6 +34,7 @@ class AuthoritativeSnapshot:
     current_content_version_id: str | None = None
     current_section_id: str | None = None
     completed: bool | None = None
+    cooked: bool = False
     open_operation_id: str | None = None
     active_lease_id: str | None = None
     active_lease_owner: str | None = None
@@ -210,6 +211,14 @@ def plan_command(
             fence=snapshot.fence,
             audit_event_type="archived_task_mutation_rejected",
         )
+    if snapshot.cooked and definition.profile != "Q" and intent.command_name != "record-cook-log":
+        return CommandPlan(
+            definition=definition,
+            legal=False,
+            result_code="TASK_COOKED",
+            fence=snapshot.fence,
+            audit_event_type="cooked_task_mutation_rejected",
+        )
     if definition.operation_required and snapshot.workflow is None:
         return CommandPlan(
             definition=definition,
@@ -220,10 +229,11 @@ def plan_command(
         )
     if snapshot.open_abandonment_id and intent.command_name not in {
         "archive",
+        "cooked",
         "reconcile-abandonment",
         "read",
         "inspect",
-    }:
+    } and not (snapshot.cooked and intent.command_name == "record-cook-log"):
         return CommandPlan(
             definition=definition,
             legal=False,
@@ -253,26 +263,6 @@ def plan_command(
                 fence=snapshot.fence,
                 audit_event_type="completion_semantic_rejected",
             )
-        if intent.command_name == "cooked":
-            blocking = {
-                "open_operation_id": snapshot.open_operation_id,
-                "active_lease_id": snapshot.active_lease_id,
-                "unresolved_projection_attempt_id": snapshot.unresolved_projection_attempt_id,
-                "open_hold_id": snapshot.open_hold_id,
-                "open_human_requirement_id": snapshot.open_human_requirement_id,
-            }
-            blocking = {
-                key: value for key, value in blocking.items() if value is not None
-            }
-            if blocking:
-                return CommandPlan(
-                    definition=definition,
-                    legal=False,
-                    result_code="TASK_NOT_RESTING",
-                    fence=snapshot.fence,
-                    audit_event_type="completion_semantic_fence_rejected",
-                    recovery_guidance=blocking,
-                )
     if intent.command_name == "hold-reject" and not _hold_reject_is_legal(
         snapshot, intent, pinned_now=pinned_now
     ):

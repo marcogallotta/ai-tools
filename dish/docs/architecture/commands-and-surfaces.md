@@ -101,9 +101,10 @@ acquires the active authority-generation row exclusively before minting authorit
 not frozen across pages; the event window is. `search` remains active-title discovery and must not be
 used to reconstruct cooked history. Once `cooked-updates` identifies a canonical `dish_id`,
 `cook-logs` supplies that Dish's immutable evidence without Search. `record-cook-log` appends that
-immutable evidence as a replay-bound mutation. `cooked` marks only an active resting Dish complete
-through PostgreSQL authority; it does not terminate an open workflow operation or project an Asana
-effect.
+immutable evidence as a replay-bound mutation. `cooked` completes any active Dish, including one
+with an open workflow. It freezes canonical content and placement and makes unfinished workflow
+actions unavailable, but does not terminate their records or project an Asana effect. Cook logs
+remain appendable.
 `proposals` lists exact PostgreSQL-native semantic proposals whose
 governed changes have durable authorization; `apply-proposal` installs only the exact stored,
 revalidated candidate and opens fresh Verification; and `safe-reclaim` performs different-run
@@ -197,7 +198,7 @@ pre-archive side receives a task-scoped revocation. Exact history remains readab
 uncertain, or blocked external-effect work fails archive closed rather than reporting partial success.
 Every later mutating command except `unarchive` and the immutable-history append
 `record-cook-log` is rejected while archived. Private admin inspection
-remains read-only and available. `cooked` remains resting-only.
+remains read-only and available. `cooked` can complete an active Dish at any workflow stage.
 In PostgreSQL authority the private admin command is a narrow additional principal for the same
 `archive` semantic agents use, and the PostgreSQL path creates no Asana projection. The private admin
 transport also retains exact-ID `inspect` as a PostgreSQL-local read so an archived Dish remains

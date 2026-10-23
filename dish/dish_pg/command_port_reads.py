@@ -1784,6 +1784,7 @@ class PostgresCommandReadMixin:
             current_content_version_id=str(view.content_version_id),
             current_section_id=str(view.section_id),
             completed=view.completed,
+            cooked=view.completion_state == "cooked",
             active_lease_id=self._active_lease_id(task.task_id),
             unresolved_projection_attempt_id=self._unresolved_projection_attempt_id(task.task_id),
             open_hold_id=self._open_id(wf.EvidenceHold, task.task_id),

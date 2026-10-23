@@ -514,6 +514,8 @@ def materialize_staged_native_section_content(
             already += 1
             continue
 
+        if state.completed and state.completion_reason == "cooked":
+            raise NativeSectionContentMaterializationError("Cooked Dish is frozen")
         expected_current_content_id = materialization_source.content_version_id
         if state.current_content_version_id != expected_current_content_id:
             raise NativeSectionContentMaterializationError(

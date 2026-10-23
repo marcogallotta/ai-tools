@@ -248,6 +248,8 @@ class ScalarDishMutation:
         )
         if not changed:
             return ScalarDishMutationResult(None, changed)
+        if self.state.completed and self.state.completion_reason == "cooked":
+            raise CoreAuthorityError("Cooked Dish is frozen")
 
         next_version = self.resulting_dish_version
         receipt = models.DishMutationReceipt(
