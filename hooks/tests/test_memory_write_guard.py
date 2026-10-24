@@ -45,3 +45,28 @@ def test_denies_relative_memory_path(tmp_path):
 ])
 def test_allows_non_memory_paths(tmp_path, path):
     assert _run(tmp_path, "Write", "file_path", str(tmp_path / path)) == {}
+
+
+def test_denies_write_through_symlinked_memory_dir(tmp_path):
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    project = tmp_path / ".claude/projects/p"
+    project.mkdir(parents=True)
+    (project / "memory").symlink_to(outside)
+    output = _run(tmp_path, "Write", "file_path", str(project / "memory/x.md"))
+    assert output["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+@pytest.mark.parametrize("payload", ["[]", '{"tool_name": "Write", "tool_input": "x"}'])
+def test_malformed_payload_does_not_crash(tmp_path, payload):
+    proc = subprocess.run([str(HOOK)], input=payload, env=os.environ | {"HOME": str(tmp_path)},
+                          text=True, capture_output=True)
+    assert proc.returncode == 0 and proc.stdout == ""
+
+
+def test_ignores_non_edit_tools_and_adjacent_names(tmp_path):
+    assert _run(tmp_path, "Read", "file_path",
+                str(tmp_path / ".claude/projects/p/memory/x.md")) == {}
+    assert _run(tmp_path, "Write", "file_path",
+                str(tmp_path / ".claude/projects/p/memory-notes.md")) == {}

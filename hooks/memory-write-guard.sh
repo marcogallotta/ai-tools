@@ -17,29 +17,43 @@ def _inside(path: str, root: str) -> bool:
         return False
 
 
+def _memory_target(path: str, memory_root: str) -> bool:
+    if not _inside(path, memory_root):
+        return False
+    parts = Path(os.path.relpath(path, memory_root)).parts
+    return len(parts) >= 3 and parts[1] == "memory"
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except ValueError:
         return 0
-    event = payload.get("hook_event_name") or "PreToolUse"
-    if event not in {"PreToolUse", "PermissionRequest"} or payload.get("tool_name") not in EDIT_TOOLS:
+    if not isinstance(payload, dict) or payload.get("tool_name") not in EDIT_TOOLS:
         return 0
-    tool_input = payload.get("tool_input") or {}
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return 0
     raw = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not isinstance(raw, str) or not raw:
         return 0
     cwd = str(payload.get("cwd") or os.getcwd())
-    target = os.path.realpath(os.path.join(cwd, os.path.expanduser(raw)))
-    memory_root = os.path.realpath(os.path.expanduser("~/.claude/projects"))
-    if _inside(target, memory_root):
-        parts = Path(os.path.relpath(target, memory_root)).parts
-        if len(parts) >= 3 and parts[1] == "memory":
-            print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": event, "permissionDecision": "deny",
-                "permissionDecisionReason":
-                    f"[memory-write] blocked: auto-memory is not allowed ({target}).",
-            }}))
+    try:
+        # Check both the literal and the resolved path so a symlinked memory
+        # dir pointing elsewhere is still caught.
+        literal = os.path.abspath(os.path.join(cwd, os.path.expanduser(raw)))
+        target = os.path.realpath(literal)
+        home_root = os.path.abspath(os.path.expanduser("~/.claude/projects"))
+        memory_root = os.path.realpath(home_root)
+        blocked = _memory_target(literal, home_root) or _memory_target(target, memory_root)
+    except ValueError:
+        blocked = True
+    if blocked:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny",
+            "permissionDecisionReason":
+                f"[memory-write] blocked: auto-memory is not allowed ({raw}).",
+        }}))
     return 0
 
 
