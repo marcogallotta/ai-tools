@@ -583,23 +583,28 @@ class PostgresReadModel:
         )
 
     def native_search(
-        self, *, query: str, page_size: int, cursor: str | None
+        self, *, query: str, page_size: int, cursor: str | None, scope: str = "active"
     ) -> Mapping[str, Any] | None:
         generation = self.active_generation()
         native = self._native_read_authority(generation.generation_id)
         if native is None:
             return None
+        if scope not in ("active", "all"):
+            raise ReadModelError("search scope is invalid")
         identity = {
             "kind": "active-title-search-v1",
             "generation_id": str(generation.generation_id),
             **native.identity,
             "query": query.lower(),
             "page_size": page_size,
+            **({"scope": scope} if scope == "all" else {}),
         }
         offset = 0
         if cursor is not None:
             payload = self.cursor_codec.decode(cursor)
-            if any(payload.get(key) != value for key, value in identity.items()):
+            if payload.get("scope", "active") != scope or any(
+                payload.get(key) != value for key, value in identity.items()
+            ):
                 raise InvalidCursor("cursor is stale or belongs to another search query")
             try:
                 offset = int(payload["offset"])
@@ -613,6 +618,8 @@ class PostgresReadModel:
                     models.DishTask.task_id, models.ContentVersion.title,
                     models.DishState.section_id, models.SectionCatalogEntry.display_name,
                     models.SectionCatalogEntry.workflow_role, models.GovernedProject.logical_name,
+                    models.DishState.completed, models.DishState.completion_reason,
+                    models.DishState.archived_at,
                 )
                 .select_from(models.DishTask)
                 .join(models.DishState, and_(
@@ -624,15 +631,17 @@ class PostgresReadModel:
                     models.ContentVersion.task_id == models.DishTask.task_id,
                     models.ContentVersion.content_version_id == models.DishState.current_content_version_id,
                 ))
-                .join(models.SectionCatalogEntry, and_(
-                    models.SectionCatalogEntry.catalog_version_id == native.pointer.catalog_version_id,
+                .outerjoin(models.SectionCatalogEntry, and_(
+                    models.SectionCatalogEntry.catalog_version_id == models.DishState.catalog_version_id,
                     models.SectionCatalogEntry.section_id == models.DishState.section_id,
                 ))
                 .outerjoin(models.GovernedSection, models.GovernedSection.section_id == models.DishState.section_id)
                 .outerjoin(models.GovernedProject, models.GovernedProject.project_id == models.GovernedSection.project_id)
                 .where(
-                    models.DishState.catalog_version_id == native.pointer.catalog_version_id,
-                    models.DishState.completed.is_(False), models.DishState.archived_at.is_(None),
+                    *((models.DishState.catalog_version_id == native.pointer.catalog_version_id,
+                       models.DishState.completed.is_(False), models.DishState.archived_at.is_(None),
+                       models.SectionCatalogEntry.section_id.is_not(None))
+                      if scope == "active" else ()),
                     models.DishTask.existence_state.in_(("ordinary", "isolated")),
                     func.lower(models.ContentVersion.title).contains(query.lower(), autoescape=True),
                 )
@@ -642,19 +651,22 @@ class PostgresReadModel:
         )
         visible = rows[:page_size]
         results = []
-        for task_id, title, section_id, section_label, workflow_role, project_label in visible:
+        for task_id, title, section_id, section_label, workflow_role, project_label, completed, completion_reason, archived_at in visible:
             task_gid = self.session.scalar(select(models.TaskExternalAlias.external_id).where(
                 models.TaskExternalAlias.task_id == task_id,
                 models.TaskExternalAlias.external_system == "asana",
                 models.TaskExternalAlias.state == "active",
             ))
+            status = ("archived" if archived_at is not None else "active" if not completed
+                      else "cooked" if completion_reason == "cooked" else "completed")
             results.append({
                 "dish_id": str(task_id), "title": title, "section_id": str(section_id),
                 "section_label": section_label, "workflow_role": workflow_role,
-                "project_label": project_label, **({"task_gid": task_gid} if task_gid else {}),
+                "project_label": project_label, "status": status,
+                **({"task_gid": task_gid} if task_gid else {}),
             })
         next_cursor = self.cursor_codec.encode(identity | {"offset": offset + page_size}) if len(rows) > page_size else None
-        return {"query": query, "results": results, "next_cursor": next_cursor,
+        return {"query": query, "scope": scope, "results": results, "next_cursor": next_cursor,
                 "page_size": page_size, "generation_id": str(generation.generation_id), **native.identity}
 
     def _workflow_snapshot(

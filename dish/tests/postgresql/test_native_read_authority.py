@@ -7,143 +7,14 @@ import pytest
 
 from dish_pg import models
 from dish_pg.database import session_scope
-from dish_pg.read_model import ReadModelError
+from dish_pg.read_model import InvalidCursor, ReadModelError
+from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.repositories import CatalogRepository
 from dish_tool.content_versions import content_identity
+from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.command import _call, _port
-from tests.support.postgresql.workflow import NOW, _next, workflow_db
-
-
-def _install_native_read_authority(
-    session,
-    ids: Iterator[uuid.UUID],
-    context: dict[str, uuid.UUID],
-    *,
-    section_ids: tuple[uuid.UUID, ...],
-    attestation_hash: str | None = None,
-) -> dict[str, uuid.UUID]:
-    catalog = CatalogRepository(session)
-    for index, section_id in enumerate(section_ids):
-        if session.get(models.Section, section_id) is None:
-            catalog.add_section(
-                models.Section(
-                    section_id=section_id,
-                    logical_name=f"native-section-{index}",
-                    lifecycle="active",
-                    created_at=NOW,
-                    retired_at=None,
-                )
-            )
-
-    catalog_version_id = _next(ids)
-    catalog_activation_id = _next(ids)
-    active = catalog.install_catalog_revision(
-        version=models.SectionCatalogVersion(
-            catalog_version_id=catalog_version_id,
-            generation_id=context["generation_id"],
-            version_number=1,
-            contract_binding_id=context["binding_id"],
-            catalog_sha256="a" * 64,
-            source_registry_version_id=None,
-            transform_sha256=None,
-            created_at=NOW,
-        ),
-        entries=tuple(
-            models.SectionCatalogEntry(
-                catalog_version_id=catalog_version_id,
-                section_id=section_id,
-                ordinal=index,
-                display_name=f"Native Section {index}",
-                workflow_role=f"native_role_{index}",
-            )
-            for index, section_id in enumerate(section_ids)
-        ),
-        activation=models.SectionCatalogActivation(
-            catalog_activation_id=catalog_activation_id,
-            generation_id=context["generation_id"],
-            catalog_version_id=catalog_version_id,
-            activation_route="recovery",
-            import_run_id=None,
-            command_execution_id=None,
-            catalog_revision=1,
-            activated_at=NOW,
-        ),
-        expected_catalog_version_id=None,
-        expected_catalog_activation_id=None,
-        expected_catalog_revision=None,
-    )
-    event_id = _next(ids)
-    session.add(
-        models.AppliedMigrationEvent(
-            migration_event_id=event_id,
-            generation_id=context["generation_id"],
-            revision="0050_native_runtime_switch_test",
-            predecessor_revision="0049_native_runtime_authority_spine",
-            migration_code_sha256="d" * 64,
-            dish_release="dish-42619b9",
-            initiator="test",
-            outcome="applied",
-            started_at=NOW,
-            terminal_at=NOW,
-            details={
-                "authority_transition": "native_section_runtime_root_v1",
-                "source_commit_sha": "e" * 40,
-                "catalog_activation_id": str(catalog_activation_id),
-                "catalog_version_id": str(catalog_version_id),
-                "honest_contract_binding_id": str(context["binding_id"]),
-                "inventory_gate": {
-                    "decision": "carry_forward_completed",
-                    "generation_id": str(context["generation_id"]),
-                },
-            },
-        )
-    )
-    session.flush()
-    attestation_id = _next(ids)
-    computed_hash = models.compute_attestation_sha256(
-        generation_id=context["generation_id"],
-        catalog_version_id=catalog_version_id,
-        catalog_activation_id=catalog_activation_id,
-        contract_binding_id=context["binding_id"],
-        attestation_revision=1,
-        predecessor_attestation_id=None,
-        baseline_migration_event_id=event_id,
-        baseline_revision="0050_native_runtime_switch_test",
-        baseline_migration_code_sha256="d" * 64,
-        baseline_dish_release="dish-42619b9",
-        baseline_source_commit_sha="e" * 40,
-    )
-    session.add(
-        models.NativeCatalogRuntimeAttestation(
-            attestation_id=attestation_id,
-            generation_id=context["generation_id"],
-            catalog_version_id=catalog_version_id,
-            catalog_activation_id=catalog_activation_id,
-            predecessor_attestation_id=None,
-            baseline_migration_event_id=event_id,
-            attestation_revision=1,
-            attestation_sha256=attestation_hash or computed_hash,
-            recorded_at=NOW,
-        )
-    )
-    session.flush()
-    session.add(
-        models.CurrentNativeCatalogRuntime(
-            generation_id=context["generation_id"],
-            attestation_id=attestation_id,
-            catalog_version_id=catalog_version_id,
-            catalog_activation_id=catalog_activation_id,
-            attestation_revision=1,
-            updated_at=NOW,
-        )
-    )
-    session.flush()
-    return {
-        "catalog_version_id": active.catalog_version.catalog_version_id,
-        "catalog_activation_id": active.catalog_activation.catalog_activation_id,
-        "attestation_id": attestation_id,
-        "event_id": event_id,
-    }
+from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
+from tests.support.postgresql.native_read_authority import _install_native_read_authority
 
 
 def _add_native_task(
@@ -154,6 +25,8 @@ def _add_native_task(
     section_id: uuid.UUID,
     catalog_version_id: uuid.UUID,
     title: str,
+    completed: bool = False,
+    retired: bool = False,
 ) -> uuid.UUID:
     task_id = _next(ids)
     content_version_id = _next(ids)
@@ -161,12 +34,12 @@ def _add_native_task(
     session.add(
         models.DishTask(
             task_id=task_id,
-            existence_state="isolated",
+            existence_state="retired" if retired else "isolated",
             creation_route="import",
             import_run_id=context["import_run_id"],
             command_execution_id=None,
             created_at=NOW,
-            retired_at=None,
+            retired_at=NOW if retired else None,
         )
     )
     session.flush()
@@ -213,7 +86,7 @@ def _add_native_task(
             section_id=section_id,
             registry_version_id=context["registry_version_id"],
             catalog_version_id=catalog_version_id,
-            completed=False,
+            completed=completed,
             completion_reason="imported",
             archived_at=None,
             dish_version=1,
@@ -224,6 +97,90 @@ def _add_native_task(
     )
     session.flush()
     return task_id
+
+
+def test_native_title_search_all_scope_finds_inactive_dishes_without_changing_default(workflow_db) -> None:
+    factory, ids, context, cooked_id = workflow_db
+    with session_scope(factory) as session:
+        archived_id = _import_one(session, ids, context, asana_gid="123456790").task_id
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        for command, task_id in (("cooked", cooked_id), ("archive", archived_id)):
+            assert port.execute(_call(
+                command, run_id=run_id, request_id=_next(ids),
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )).ok
+        native = _install_native_read_authority(
+            session, ids, context, section_ids=(context["section_id"],)
+        )
+        task_ids = {
+            label: _add_native_task(
+                session, ids, context, section_id=context["section_id"],
+                catalog_version_id=native["catalog_version_id"], title=f"Search task {label}",
+                completed=label == "completed", retired=label == "retired",
+            )
+            for label in ("active", "completed", "retired")
+        }
+        port = _port(session, ids)
+
+        default = port.reads.native_search(query="task", page_size=10, cursor=None)
+        assert default is not None
+        assert [(row["dish_id"], row["status"]) for row in default["results"]] == [
+            (str(task_ids["active"]), "active")
+        ]
+        first = port.reads.native_search(
+            query="task", page_size=2, cursor=None, scope="all"
+        )
+        assert first is not None and first["next_cursor"] is not None
+        with pytest.raises(InvalidCursor):
+            port.reads.native_search(
+                query="task", page_size=2, cursor=first["next_cursor"]
+            )
+        second = port.reads.native_search(
+            query="task", page_size=2, cursor=first["next_cursor"], scope="all"
+        )
+        assert second is not None and second["next_cursor"] is None
+        found = {row["dish_id"]: row["status"] for row in first["results"] + second["results"]}
+        assert found == {
+            str(task_ids["active"]): "active", str(task_ids["completed"]): "completed",
+            str(cooked_id): "cooked", str(archived_id): "archived",
+        }
+
+
+def test_legacy_title_search_all_scope_finds_completed_and_archived_dishes(workflow_db) -> None:
+    factory, ids, context, cooked_id = workflow_db
+    with session_scope(factory) as session:
+        archived_id = _import_one(session, ids, context, asana_gid="123456790").task_id
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        for command, task_id in (("cooked", cooked_id), ("archive", archived_id)):
+            assert port.execute(_call(
+                command, run_id=run_id, request_id=_next(ids),
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )).ok
+        service = object.__new__(PostgresRuntimeService)
+        service._cursor_secret = b"legacy-search-test-secret-is-at-least-32-bytes"
+        default = service._execute_search(session, {"query": "imported task", "page_size": 10})
+        assert default.ok and default.data["results"] == []
+        first = service._execute_search(
+            session, {"query": "imported task", "page_size": 1, "scope": "all"}
+        )
+        assert first.ok and first.data["next_cursor"]
+        wrong_scope = service._execute_search(
+            session, {"query": "imported task", "page_size": 1,
+                      "cursor": first.data["next_cursor"]}
+        )
+        assert not wrong_scope.ok and wrong_scope.code == "INVALID_ARGUMENT"
+        second = service._execute_search(
+            session, {"query": "imported task", "page_size": 1, "scope": "all",
+                      "cursor": first.data["next_cursor"]}
+        )
+        assert second.ok
+        found = {row["dish_id"]: row["status"] for row in
+                 first.data["results"] + second.data["results"]}
+        assert found == {str(cooked_id): "cooked", str(archived_id): "archived"}
 
 
 def test_native_pointer_moves_ordinary_reads_to_native_catalog(workflow_db) -> None:

@@ -89,7 +89,7 @@ class ConnectedCommandSpec:
 _READ_DESCRIPTIONS = {
     "sections": "List current Dish sections from PostgreSQL authority.",
     "section-tasks": "List current Dishes in one section using exact returned identifiers.",
-    "search": "Search current active Dish titles through PostgreSQL authority.",
+    "search": "Search current Dish titles; scope=all includes cooked and archived records for duplicate checks.",
     "query": "Query the complete currently cooked Dish inventory for history and duplicate checks.",
     "cooked-updates": (
         "List paginated cooked-history updates for candidate discovery; cook logs determine actual "

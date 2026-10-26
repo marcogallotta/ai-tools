@@ -366,6 +366,18 @@
                           "file_text": {
                             "type": "string"
                           },
+                          "governed_change_fields": {
+                            "description": "Use only when Marco accepts an already-reviewed fat-limit exception unchanged: attest the appended Decision and matching nutrition-fat Exemptions update.",
+                            "items": {
+                              "enum": [
+                                "Exemptions",
+                                "Decisions"
+                              ],
+                              "type": "string"
+                            },
+                            "type": "array",
+                            "uniqueItems": true
+                          },
                           "model": {
                             "type": "string"
                           },
@@ -384,18 +396,6 @@
                             "minLength": 36,
                             "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                             "type": "string"
-                          },
-                          "governed_change_fields": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "enum": [
-                                "Exemptions",
-                                "Decisions"
-                              ]
-                            },
-                            "uniqueItems": true,
-                            "description": "Use only when Marco accepts an already-reviewed fat-limit exception unchanged: attest the appended Decision and matching nutrition-fat Exemptions update."
                           }
                         },
                         "required": [
@@ -1927,7 +1927,7 @@
     },
     "/v1/action/search": {
       "post": {
-        "description": "Read-only active-title discovery. Use Search when discovering a Dish by title or partial title. If Marco supplies a canonical Dish UUID, call read(dish_id=...) directly instead of searching or browsing sections. request_id is not accepted.",
+        "description": "Read-only title discovery; scope=all includes cooked and archived Dishes for duplicate checks. If Marco supplies a canonical Dish UUID, call read(dish_id=...) directly instead of searching or browsing sections. request_id is not accepted.",
         "operationId": "dish_postgresql_search",
         "requestBody": {
           "content": {
@@ -1957,9 +1957,18 @@
                         "type": "integer"
                       },
                       "query": {
-                        "description": "Case-insensitive literal substring matched only against the current canonical active Dish title.",
+                        "description": "Case-insensitive literal substring matched against current canonical Dish titles in the selected scope.",
                         "maxLength": 160,
                         "minLength": 1,
+                        "type": "string"
+                      },
+                      "scope": {
+                        "default": "active",
+                        "description": "Use all for duplicate checks across active, cooked, completed, and archived Dishes.",
+                        "enum": [
+                          "active",
+                          "all"
+                        ],
                         "type": "string"
                       }
                     },

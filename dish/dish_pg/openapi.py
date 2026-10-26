@@ -28,8 +28,8 @@ def postgres_action_openapi(*, server_url: str = "https://dish-postgresql.exampl
         )
         if command == SEARCH_COMMAND:
             description = (
-                "Read-only active-title discovery. Use Search when discovering a Dish by title or "
-                "partial title. If Marco supplies a canonical Dish UUID, call read(dish_id=...) "
+                "Read-only title discovery; scope=all includes cooked and archived Dishes for "
+                "duplicate checks. If Marco supplies a canonical Dish UUID, call read(dish_id=...) "
                 "directly instead of searching or browsing sections. request_id is not accepted."
             )
         elif command == COOKED_UPDATES_COMMAND:
