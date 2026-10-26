@@ -53,6 +53,20 @@ no receipt is recorded. A pinned source revision is kept as provenance, not a po
 The `last_cooked` inventory field reflects Dish's current-cooked timestamp; imported timestamps
 are not proof of an actual recent cook without an immutable cook log.
 
+## Opt-in local archive delivery
+
+The default `document_delivery=text` is unchanged. Only for Marco's explicitly requested per-chat
+reduced-context trial, pass `document_delivery=local_archive` and `archive_sha` equal to the extracted
+Honest archive manifest's commit. The tool checks that commit against current Honest main before
+history retrieval. A mismatch returns `SOURCE_VERSION_MISMATCH` without recording a new receipt.
+Refresh the archive or fall back to text delivery.
+
+This mode returns the same required paths, canonical identity and complete history, but no document
+bodies. The caller must read every required path locally and follow Honest's
+`planning/context-trial.md`, including PR overlays. Its receipt explicitly states that document
+bodies were not delivered and local reading is not verified. The store records admission/source
+provenance, not comprehension. No server-wide trial flag changes the default.
+
 ## Optional mutation precondition
 
 `DISH_MCP_REQUIRE_PLANNING_CONTEXT=1` makes the **MCP shell** refuse `dish_create` and
