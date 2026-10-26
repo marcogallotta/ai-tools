@@ -46,7 +46,7 @@ from tests.support.postgresql.runtime_validation import (
     without_replay_metadata,
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
-from tests.postgresql.test_native_read_authority import _install_native_read_authority
+from tests.support.postgresql.native_read_authority import _install_native_read_authority
 from tests.support.thread_teardown import start_server_thread, stop_server
 
 
