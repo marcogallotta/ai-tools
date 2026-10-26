@@ -9,6 +9,7 @@ from dish_pg import models
 from dish_pg.database import session_scope
 from dish_pg.read_model import InvalidCursor, ReadModelError
 from dish_pg.postgres_service import PostgresRuntimeService
+from dish_pg.repositories import CatalogRepository
 from dish_tool.content_versions import content_identity
 from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.command import _call, _port
