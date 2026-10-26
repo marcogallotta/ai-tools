@@ -5,7 +5,7 @@ import asyncio
 from pathlib import Path
 
 from dish_service import mcp_server
-from dish_service.planning_context import PlanningContextError, PlanningReceiptStore
+from dish_service.planning_context import PlanningContextError, PlanningReceiptStore, SourceVersionMismatch
 
 RUN = "11111111-1111-4111-8111-111111111111"
 
@@ -45,6 +45,29 @@ def test_planning_context_tool_schema_has_necessary_identity():
     )
     assert tool.name == "dish_planning_context"
     assert set(tool.parameters["required"]) == {"client", "scope", "agent"}
+    assert tool.parameters["properties"]["document_delivery"]["default"] == "text"
+
+
+def test_trial_options_forwarded_and_stale_archive_never_records_receipt(monkeypatch):
+    _caller(monkeypatch)
+    store = FakeStore(allow=True)
+    tool = mcp_server.PlanningContextTool(FakeAdapter(), Path("/fake"), store)
+    seen = {}
+
+    def mismatch(*args, **kwargs):
+        seen.update(kwargs)
+        raise SourceVersionMismatch("Refresh archive")
+
+    monkeypatch.setattr(mcp_server, "assemble_planning_context", mismatch)
+    res = asyncio.run(tool.run({
+        "client": {"run_id": RUN}, "agent": "gpt", "scope": "broad",
+        "document_delivery": "local_archive", "archive_sha": "b" * 40,
+    }))
+    assert seen["document_delivery"] == "local_archive"
+    assert seen["archive_sha"] == "b" * 40
+    assert res.structured_content["code"] == "SOURCE_VERSION_MISMATCH"
+    assert res.structured_content["receipt_recorded"] is False
+    assert store.recorded == []
 
 
 def test_complete_context_is_the_only_receipt_writing_path(monkeypatch):
