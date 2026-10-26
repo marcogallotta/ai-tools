@@ -20,13 +20,13 @@ BROAD_DOCS = (
     "dish-planning-protocol.md",
     "planning/index.md",
     "planning/roadmap.md",
-    "cuisine-map.md",
+    "planning/direction.md",
     "dish-classes.md",
     "planning/blocks/index.md",
 )
 BLOCK_BASE_DOCS = (
     "dish-planning-protocol.md",
-    "cuisine-map.md",
+    "planning/direction.md",
     "dish-classes.md",
     "planning/blocks/index.md",
 )
