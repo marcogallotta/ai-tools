@@ -7,11 +7,12 @@ import pytest
 
 from dish_pg import models
 from dish_pg.database import session_scope
-from dish_pg.read_model import ReadModelError
+from dish_pg.read_model import InvalidCursor, ReadModelError
 from dish_pg.repositories import CatalogRepository
 from dish_tool.content_versions import content_identity
+from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.command import _call, _port
-from tests.support.postgresql.workflow import NOW, _next, workflow_db
+from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 
 
 def _install_native_read_authority(
@@ -154,6 +155,8 @@ def _add_native_task(
     section_id: uuid.UUID,
     catalog_version_id: uuid.UUID,
     title: str,
+    completed: bool = False,
+    retired: bool = False,
 ) -> uuid.UUID:
     task_id = _next(ids)
     content_version_id = _next(ids)
@@ -161,12 +164,12 @@ def _add_native_task(
     session.add(
         models.DishTask(
             task_id=task_id,
-            existence_state="isolated",
+            existence_state="retired" if retired else "isolated",
             creation_route="import",
             import_run_id=context["import_run_id"],
             command_execution_id=None,
             created_at=NOW,
-            retired_at=None,
+            retired_at=NOW if retired else None,
         )
     )
     session.flush()
@@ -213,7 +216,7 @@ def _add_native_task(
             section_id=section_id,
             registry_version_id=context["registry_version_id"],
             catalog_version_id=catalog_version_id,
-            completed=False,
+            completed=completed,
             completion_reason="imported",
             archived_at=None,
             dish_version=1,
@@ -224,6 +227,55 @@ def _add_native_task(
     )
     session.flush()
     return task_id
+
+
+def test_native_title_search_all_scope_finds_inactive_dishes_without_changing_default(workflow_db) -> None:
+    factory, ids, context, cooked_id = workflow_db
+    with session_scope(factory) as session:
+        archived_id = _import_one(session, ids, context, asana_gid="123456790").task_id
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        for command, task_id in (("cooked", cooked_id), ("archive", archived_id)):
+            assert port.execute(_call(
+                command, run_id=run_id, request_id=_next(ids),
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )).ok
+        native = _install_native_read_authority(
+            session, ids, context, section_ids=(context["section_id"],)
+        )
+        task_ids = {
+            label: _add_native_task(
+                session, ids, context, section_id=context["section_id"],
+                catalog_version_id=native["catalog_version_id"], title=f"Search task {label}",
+                completed=label == "completed", retired=label == "retired",
+            )
+            for label in ("active", "completed", "retired")
+        }
+        port = _port(session, ids)
+
+        default = port.reads.native_search(query="task", page_size=10, cursor=None)
+        assert default is not None
+        assert [(row["dish_id"], row["status"]) for row in default["results"]] == [
+            (str(task_ids["active"]), "active")
+        ]
+        first = port.reads.native_search(
+            query="task", page_size=2, cursor=None, scope="all"
+        )
+        assert first is not None and first["next_cursor"] is not None
+        with pytest.raises(InvalidCursor):
+            port.reads.native_search(
+                query="task", page_size=2, cursor=first["next_cursor"]
+            )
+        second = port.reads.native_search(
+            query="task", page_size=2, cursor=first["next_cursor"], scope="all"
+        )
+        assert second is not None and second["next_cursor"] is None
+        found = {row["dish_id"]: row["status"] for row in first["results"] + second["results"]}
+        assert found == {
+            str(task_ids["active"]): "active", str(task_ids["completed"]): "completed",
+            str(cooked_id): "cooked", str(archived_id): "archived",
+        }
 
 
 def test_native_pointer_moves_ordinary_reads_to_native_catalog(workflow_db) -> None:

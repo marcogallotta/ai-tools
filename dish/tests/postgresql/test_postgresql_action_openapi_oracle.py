@@ -255,7 +255,13 @@ def test_postgresql_search_action_is_read_only_bounded_and_reuses_stable_run_id(
         },
     )
     assert client == {"run_id": DISCOVERY_RUN_ID}
-    assert arguments == {"query": "Potato", "agent": "gpt", "page_size": 2}
+    assert arguments == {"query": "Potato", "agent": "gpt", "page_size": 2, "scope": "active"}
+    _, all_arguments = validate_postgres_action_request(
+        SEARCH_COMMAND,
+        {"client": {"run_id": DISCOVERY_RUN_ID},
+         "arguments": {"query": "Potato", "agent": "gpt", "scope": "all"}},
+    )
+    assert all_arguments["scope"] == "all"
     assert "request_id" not in client
 
 
@@ -293,6 +299,7 @@ def test_postgresql_search_action_rejects_bad_pagination_and_unknown_fields() ->
         ({"query": "potato", "agent": "gpt", "page_size": 0}, "argument_range_invalid"),
         ({"query": "potato", "agent": "gpt", "page_size": 101}, "argument_range_invalid"),
         ({"query": "potato", "agent": "gpt", "cursor": ""}, "argument_type_invalid"),
+        ({"query": "potato", "agent": "gpt", "scope": "other"}, "argument_value_invalid"),
         ({"query": "potato", "agent": "gpt", "body": "no"}, "argument_field_forbidden"),
     ):
         with pytest.raises(DishRuleError) as error:

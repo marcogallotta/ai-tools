@@ -766,10 +766,11 @@ class PostgresRuntimeService:
     ) -> CommandResult:
         query = str(arguments["query"])
         page_size = int(arguments["page_size"])
+        scope = str(arguments.get("scope", "active"))
         reads = PostgresReadModel(session, cursor_secret=self._cursor_secret)
         try:
             native_result = reads.native_search(
-                query=query, page_size=page_size, cursor=arguments.get("cursor")
+                query=query, page_size=page_size, cursor=arguments.get("cursor"), scope=scope
             )
         except InvalidCursor as exc:
             return CommandResult(False, SEARCH_COMMAND, "INVALID_ARGUMENT", 400, {"message": str(exc), "field": "cursor"})
@@ -777,6 +778,9 @@ class PostgresRuntimeService:
             return CommandResult(False, SEARCH_COMMAND, "BACKEND_REJECTED", 409, {"message": str(exc)}, retryable=True)
         if native_result is not None:
             return CommandResult(True, SEARCH_COMMAND, "OK", 200, native_result)
+        if scope == "all":
+            return CommandResult(False, SEARCH_COMMAND, "BACKEND_REJECTED", 409,
+                                 {"message": "all-status search requires native catalog authority"})
         board = FrontendBoardQuery(session)
         context = board.context()
         normalized_query = query.lower()
@@ -801,7 +805,9 @@ class PostgresRuntimeService:
                 "query": normalized_query,
                 "page_size": page_size,
             }
-            if any(payload.get(key) != value for key, value in expected.items()):
+            if payload.get("scope", "active") != scope or any(
+                payload.get(key) != value for key, value in expected.items()
+            ):
                 return CommandResult(
                     False,
                     SEARCH_COMMAND,
@@ -856,6 +862,7 @@ class PostgresRuntimeService:
                 "section_label": fact.section_label,
                 "workflow_role": fact.workflow_role,
                 "project_label": fact.project_label,
+                "status": "active",
             }
             if task_gid is not None:
                 result["task_gid"] = str(task_gid)
@@ -897,6 +904,7 @@ class PostgresRuntimeService:
                     "registry_revision": context.registry_revision,
                     "query": normalized_query,
                     "page_size": page_size,
+                    **({"scope": scope} if scope == "all" else {}),
                     "offset": offset + page_size,
                 }
             )
@@ -907,6 +915,7 @@ class PostgresRuntimeService:
             200,
             {
                 "query": query,
+                "scope": scope,
                 "results": results,
                 "next_cursor": next_cursor,
                 "page_size": page_size,

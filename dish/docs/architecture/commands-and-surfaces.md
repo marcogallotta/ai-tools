@@ -98,8 +98,9 @@ acquires the active authority-generation row exclusively before minting authorit
 `through`; continuation binds that generation, `since`, `through`, page size, and the deterministic
 `(latest qualifying update time, dish_id)` keyset boundary. Generation movement fails closed with
 `GENERATION_CHANGED` rather than silently crossing a rollover. Current cooked state is intentionally
-not frozen across pages; the event window is. `search` remains active-title discovery and must not be
-used to reconstruct cooked history. Once `cooked-updates` identifies a canonical `dish_id`,
+not frozen across pages; the event window is. `search` defaults to active-title discovery;
+`scope=all` also finds cooked and archived titles for identity checks. It must not be used to
+reconstruct cooked history. Once `cooked-updates` identifies a canonical `dish_id`,
 `cook-logs` supplies that Dish's immutable evidence without Search. `record-cook-log` appends that
 immutable evidence as a replay-bound mutation. `cooked` completes any active Dish, including one
 with an open workflow. It freezes canonical content and placement and makes unfinished workflow

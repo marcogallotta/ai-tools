@@ -218,7 +218,7 @@ def build_parser() -> JsonArgumentParser:
 
     search = subparsers.add_parser(
         SEARCH_COMMAND,
-        help="search current active Dish titles through PostgreSQL authority",
+        help="search current Dish titles; --scope all includes cooked and archived records",
     )
     search.add_argument("query")
     search.add_argument(
@@ -228,6 +228,7 @@ def build_parser() -> JsonArgumentParser:
     )
     search.add_argument("--cursor", default=None, help="opaque next_cursor from a prior search page")
     search.add_argument("--page-size", type=int, default=SEARCH_PAGE_SIZE_DEFAULT)
+    search.add_argument("--scope", choices=("active", "all"), default="active")
 
     cooked_updates = subparsers.add_parser(
         COOKED_UPDATES_COMMAND,
