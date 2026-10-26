@@ -256,7 +256,8 @@ _SAFE_HANDLING_ADDITIONS = (
         r"(?:\d+\.\s*)?Keep the (?:crisp component|crisp topping|sauce|dressing|"
         r"noodles|herbs|lime) separate until serving\.", re.I,
     ),
-    re.compile(r"(?:\d+\.\s*)?Finish freshly just before serving\.", re.I),
+    re.compile(r"(?:\d+\.\s*)?Finish (?:fresh|freshly) just before serving\.", re.I),
+    re.compile(r"(?:\d+\.\s*)?Keep crisp until serving\.", re.I),
     re.compile(
         r"(?:\d+\.\s*)?Reheat the (?:sauce|stored batch|batch|noodles|vegetables) "
         r"first and fold in fresh "
