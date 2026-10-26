@@ -31,6 +31,7 @@ from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
 from tests.support.canonical import TASK
 from tests.support.postgresql.command import (
+    _call,
     _add_destination_section,
     _add_verification_queue,
     _port,
@@ -45,6 +46,7 @@ from tests.support.postgresql.runtime_validation import (
     without_replay_metadata,
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
+from tests.postgresql.test_native_read_authority import _install_native_read_authority
 from tests.support.thread_teardown import start_server_thread, stop_server
 
 
@@ -816,6 +818,48 @@ def test_postgresql_agent_search_normalizes_and_paginates_with_strict_progress(
     assert seen_aliases == ["123456789", "123456790", "123456791"]
     assert len(set(emitted)) == 2
     assert cursor is None
+
+
+def test_postgresql_action_search_all_scope_finds_cooked_and_archived_dishes(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, cooked_id = workflow_db
+    with session_scope(factory) as session:
+        archived_id = _import_one(session, ids, context, asana_gid="123456790").task_id
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        for command, task_id in (("cooked", cooked_id), ("archive", archived_id)):
+            assert port.execute(_call(
+                command, run_id=run_id, request_id=_next(ids),
+                arguments={"dish_id": str(task_id), "agent": "gpt"},
+            )).ok
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(service.config, action_token="postgres-action-token")
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="postgres-search-all-action-http")
+        try:
+            def search_all():
+                return _post_json(
+                    f"http://127.0.0.1:{server.server_address[1]}/v1/action/search",
+                    token="postgres-action-token",
+                    body={"client": {"run_id": str(run_id)},
+                          "arguments": {"query": "imported task", "agent": "gpt", "scope": "all"}},
+                )
+
+            legacy_status, legacy_result = search_all()
+            with session_scope(factory) as session:
+                _install_native_read_authority(
+                    session, ids, context, section_ids=(context["section_id"],)
+                )
+            native_status, native_result = search_all()
+        finally:
+            stop_server(server, thread)
+    for status, result in ((legacy_status, legacy_result), (native_status, native_result)):
+        assert status == 200 and result["ok"] is True
+        assert {row["dish_id"]: row["status"] for row in result["data"]["results"]} == {
+            str(cooked_id): "cooked", str(archived_id): "archived",
+        }
 
 
 def test_postgresql_agent_search_rejects_invalid_pagination_before_execution(
