@@ -138,8 +138,8 @@ def _spec(name: str) -> ConnectedCommandSpec:
         title=f"Dish {name}",
         description=_description(name),
         read_only=kind == "read",
-        # These governed commands preserve Dish history; a replay-bound write is not deletion.
-        destructive=False,
+        # Archive terminalizes active workflow authority; the other commands do not.
+        destructive=name == "archive",
         open_world=False,
         # Exact Dish request IDs make admitted mutation replays idempotent.
         idempotent=True,
