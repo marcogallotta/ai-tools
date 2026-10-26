@@ -146,7 +146,7 @@ def test_mcp_tool_inventory_is_exact_postgresql_connected_contract():
         assert arguments["required"] == ["dish_id", "agent"]
         assert set(arguments["properties"]) == {"dish_id", "agent"}
         assert arguments["additionalProperties"] is False
-        assert tool["annotations"]["destructiveHint"] is True
+        assert tool["annotations"]["destructiveHint"] is False
     assert "reversible with unarchive" in _tool("archive")["description"]
     assert "new client.run_id" in _tool("unarchive")["description"]
     assert "complete currently cooked Dish inventory" in _tool("query")["description"]
@@ -424,14 +424,14 @@ def test_mcp_tool_schemas_project_postgresql_action_openapi():
         assert "$ref" not in json.dumps(tool["outputSchema"])
 
 
-def test_mcp_annotations_follow_replay_metadata_conservatively():
+def test_mcp_annotations_do_not_classify_governed_writes_as_destructive():
     for command in EXPECTED_COMMANDS:
         is_mutation = COMMAND_DEFINITIONS[command].request_replay
         annotations = _tool(command)["annotations"]
         assert annotations == {
             "readOnlyHint": not is_mutation,
             "idempotentHint": True,
-            "destructiveHint": is_mutation,
+            "destructiveHint": False,
             "openWorldHint": False,
         }
 
