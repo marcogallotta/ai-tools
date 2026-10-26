@@ -167,17 +167,21 @@ def test_server_instructions_make_archive_the_multifile_default():
     assert instructions.index("dish_honest_archive first") < instructions.index("dish_honest_read only")
 
 
-def test_honest_git_ignores_system_ssh_config(monkeypatch, tmp_path):
+def test_honest_git_ignores_inherited_git_configuration(monkeypatch, tmp_path):
+    from dish_service import honest_store
     observed = {}
+    real_popen = subprocess.Popen
 
-    def fake_run(argv, **kwargs):
+    def observe(argv, **kwargs):
         observed.update(kwargs)
-        return subprocess.CompletedProcess(argv, 0, stdout=b"ok", stderr=b"")
+        return real_popen(argv, **kwargs)
 
-    monkeypatch.setattr(mcp_server.subprocess, "run", fake_run)
-
-    assert mcp_server._honest_git(tmp_path, "status") == b"ok"
-    assert observed["env"]["GIT_SSH_COMMAND"] == "/usr/bin/ssh -F /dev/null"
+    monkeypatch.setenv("GIT_DIR", "/unrelated/repository")
+    monkeypatch.setattr(honest_store.subprocess, "Popen", observe)
+    assert honest_store.git(tmp_path, "--version").startswith(b"git version")
+    assert observed["env"]["GIT_SSH_COMMAND"] == honest_store.SSH_COMMAND
+    assert observed["env"]["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    assert "GIT_DIR" not in observed["env"]
 
 
 def test_honest_tool_is_added_outside_connected_command_contract():
@@ -187,7 +191,7 @@ def test_honest_tool_is_added_outside_connected_command_contract():
     assert "stage reading guidance" in tool.description
 
 
-def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path):
+def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path, monkeypatch):
     origin = tmp_path / "origin.git"
     source = tmp_path / "source"
     checkout = tmp_path / "checkout"
@@ -212,7 +216,9 @@ def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path
     (checkout / "README.md").write_text("working tree only\n")
     (checkout / "untracked.txt").write_text("not archived\n")
 
-    tool = mcp_server.HonestArchiveTool(checkout)
+    from dish_service import honest_store
+    monkeypatch.setattr(honest_store, "REMOTE_URL", str(origin))
+    tool = mcp_server.HonestArchiveTool(tmp_path / "store.git")
     result = asyncio.run(tool.run({}))
 
     assert tool.name == "dish_honest_archive"
@@ -270,7 +276,7 @@ def test_honest_archive_failure_returns_no_file(monkeypatch, tmp_path):
     assert result.content[0].text == "Honest archive unavailable: refresh failed"
 
 
-def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
+def test_honest_read_fetches_main_and_returns_pinned_text(tmp_path, monkeypatch):
     origin = tmp_path / "origin.git"
     source = tmp_path / "source"
     checkout = tmp_path / "checkout"
@@ -286,7 +292,10 @@ def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
     subprocess.run(["git", "-C", str(source), "push", "-u", "origin", "main"], check=True, capture_output=True)
     subprocess.run(["git", "clone", "-b", "main", str(origin), str(checkout)], check=True, capture_output=True)
 
-    result = mcp_server.read_honest_files(checkout, ["CLAUDE.md"])
+    from dish_service import honest_store
+    monkeypatch.setattr(honest_store, "REMOTE_URL", str(origin))
+    store = tmp_path / "store.git"
+    result = mcp_server.read_honest_files(store, ["CLAUDE.md"])
 
     assert result["sha"] == subprocess.run(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
@@ -295,7 +304,7 @@ def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
     assert result["reading_guidance"]["recommended_paths"] == []
     assert result["reading_guidance"]["missing_recommended_paths"] == []
     wrapped = asyncio.run(
-        mcp_server.build_honest_tool(checkout).run({"paths": ["CLAUDE.md"]})
+        mcp_server.build_honest_tool(store).run({"paths": ["CLAUDE.md"]})
     )
     assert wrapped.is_error is False
     assert wrapped.structured_content == {
@@ -306,7 +315,7 @@ def test_honest_read_pulls_main_and_returns_pinned_text(tmp_path):
     }
 
 
-def _planning_checkout(tmp_path):
+def _planning_checkout(tmp_path, monkeypatch):
     checkout = tmp_path / "checkout"
     subprocess.run(["git", "init", "-b", "main", str(checkout)], check=True, capture_output=True)
     for path in (*mcp_server.HONEST_PLANNING_TRIGGER_PATHS, "planning/index.md"):
@@ -321,11 +330,13 @@ def _planning_checkout(tmp_path):
     subprocess.run(["git", "init", "--bare", str(tmp_path / "origin.git")], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", str(tmp_path / "origin.git")], check=True)
     subprocess.run(["git", "-C", str(checkout), "push", "-u", "origin", "main"], check=True, capture_output=True)
-    return checkout
+    from dish_service import honest_store
+    monkeypatch.setattr(honest_store, "REMOTE_URL", str(tmp_path / "origin.git"))
+    return tmp_path / "store.git"
 
 
-def test_honest_read_reports_missing_planning_start_paths(tmp_path):
-    checkout = _planning_checkout(tmp_path)
+def test_honest_read_reports_missing_planning_start_paths(tmp_path, monkeypatch):
+    checkout = _planning_checkout(tmp_path, monkeypatch)
 
     result = mcp_server.read_honest_files(checkout, ["planning/index.md"])
 
@@ -337,24 +348,24 @@ def test_honest_read_reports_missing_planning_start_paths(tmp_path):
     ]
 
 
-def test_honest_read_planning_protocol_alone_has_no_missing_paths(tmp_path):
-    result = mcp_server.read_honest_files(_planning_checkout(tmp_path), ["dish-planning-protocol.md"])
+def test_honest_read_planning_protocol_alone_has_no_missing_paths(tmp_path, monkeypatch):
+    result = mcp_server.read_honest_files(_planning_checkout(tmp_path, monkeypatch), ["dish-planning-protocol.md"])
 
     assert result["reading_guidance"]["recommended_paths"] == ["dish-planning-protocol.md"]
     assert result["reading_guidance"]["missing_recommended_paths"] == []
 
 
 @pytest.mark.parametrize("path", ["dish-classes.md", "planning/direction.md"])
-def test_honest_read_planning_index_docs_recommend_protocol(tmp_path, path):
-    result = mcp_server.read_honest_files(_planning_checkout(tmp_path), [path])
+def test_honest_read_planning_index_docs_recommend_protocol(tmp_path, monkeypatch, path):
+    result = mcp_server.read_honest_files(_planning_checkout(tmp_path, monkeypatch), [path])
 
     assert result["reading_guidance"]["missing_recommended_paths"] == [
         "dish-planning-protocol.md"
     ]
 
 
-def test_reading_guidance_never_routes_through_claude_md(tmp_path):
-    result = mcp_server.read_honest_files(_planning_checkout(tmp_path), ["planning/index.md"])
+def test_reading_guidance_never_routes_through_claude_md(tmp_path, monkeypatch):
+    result = mcp_server.read_honest_files(_planning_checkout(tmp_path, monkeypatch), ["planning/index.md"])
 
     assert "CLAUDE.md" not in mcp_server.SERVER_INSTRUCTIONS
     assert not any("CLAUDE.md" in line for line in result["reading_guidance"]["instructions"])
@@ -362,11 +373,11 @@ def test_reading_guidance_never_routes_through_claude_md(tmp_path):
     assert mcp_server.HONEST_PLANNING_READING in result["reading_guidance"]["instructions"]
 
 
-def test_honest_read_fails_without_serving_when_pull_fails(tmp_path):
-    checkout = tmp_path / "checkout"
-    subprocess.run(["git", "init", "-b", "main", str(checkout)], check=True, capture_output=True)
+def test_honest_read_fails_without_serving_when_fetch_fails(tmp_path, monkeypatch):
+    from dish_service import honest_store
+    monkeypatch.setattr(honest_store, "REMOTE_URL", str(tmp_path / "missing-upstream"))
     with pytest.raises(RuntimeError, match="no files were served"):
-        mcp_server.read_honest_files(checkout, ["CLAUDE.md"])
+        mcp_server.read_honest_files(tmp_path / "store.git", ["CLAUDE.md"])
 
 
 def test_honest_tool_contains_refresh_failure_as_normal_result(monkeypatch):
@@ -769,3 +780,236 @@ def test_caddy_and_runbook_expose_github_oauth_proxy_paths():
     assert "Both Projects are **MCP-app-only**" in runbook
     assert "Never\nconnect, select, or invoke the GitHub Connector" in runbook
     assert runbook.count("TRANSPORT — MCP APPS ONLY") == 2
+
+
+def _honest_upstream(tmp_path, monkeypatch):
+    from dish_service import honest_store
+    origin, source, store = (tmp_path / name for name in ("origin.git", "source", "store.git"))
+    subprocess.run(["git", "init", "--bare", "--initial-branch=main", str(origin)],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "clone", str(origin), str(source)], check=True, capture_output=True)
+    (source / "README.md").write_text("published\n")
+    (source / "other.md").write_text("same revision\n")
+    _publish_honest(source, "initial")
+    monkeypatch.setattr(honest_store, "REMOTE_URL", str(origin))
+    return origin, source, store
+
+
+def _publish_honest(source, message):
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(source), "-c", "user.name=Test", "-c",
+                    "user.email=test@example.com", "commit", "-m", message],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(source), "push", "origin", "HEAD:main"],
+                   check=True, capture_output=True)
+    return subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"]).decode().strip()
+
+
+def test_honest_store_does_not_depend_on_human_checkout(tmp_path, monkeypatch):
+    _origin, source, store = _honest_upstream(tmp_path, monkeypatch)
+    (source / "README.md").write_text("uncommitted draft\n")
+    (source / "untracked.md").write_text("private draft\n")
+    subprocess.run(["git", "-C", str(source), "checkout", "-b", "human-work"], check=True,
+                   capture_output=True)
+    result = mcp_server.read_honest_files(store, ["README.md"])
+    assert result["files"] == [{"path": "README.md", "text": "published\n"}]
+    assert subprocess.check_output(["git", "--git-dir", str(store), "rev-parse",
+                                    "--is-bare-repository"]).strip() == b"true"
+    source.rename(tmp_path / "human-checkout-moved")
+    assert mcp_server.read_honest_files(store, ["README.md"]) == result
+
+
+def test_honest_read_pins_all_files_while_upstream_advances(tmp_path, monkeypatch):
+    from dish_service import honest_store
+    _origin, source, store = _honest_upstream(tmp_path, monkeypatch)
+    old = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"]).decode().strip()
+    real_git = honest_store.git
+    advanced = []
+
+    def advance_after_revision_resolves(path, *args, **kwargs):
+        result = real_git(path, *args, **kwargs)
+        if args == ("rev-parse", "--verify", f"{honest_store.SERVED_REF}^{{commit}}") and not advanced:
+            (source / "README.md").write_text("new published\n")
+            (source / "other.md").write_text("new same revision\n")
+            advanced.append(_publish_honest(source, "advance"))
+        return result
+
+    monkeypatch.setattr(honest_store, "git", advance_after_revision_resolves)
+    result = mcp_server.read_honest_files(store, ["README.md", "other.md"])
+    assert result["sha"] == old
+    assert [file["text"] for file in result["files"]] == ["published\n", "same revision\n"]
+    assert mcp_server.read_honest_files(store, ["README.md"])["sha"] == advanced[0]
+
+
+def test_honest_repeated_rewind_rejected_without_losing_baseline(tmp_path, monkeypatch):
+    from dish_service import honest_store
+    _origin, source, store = _honest_upstream(tmp_path, monkeypatch)
+    initial = mcp_server.read_honest_files(store, ["README.md"])["sha"]
+    (source / "README.md").write_text("second\n")
+    accepted = _publish_honest(source, "second")
+    assert mcp_server.read_honest_files(store, ["README.md"])["sha"] == accepted
+    subprocess.run(["git", "-C", str(source), "push", "--force", "origin", f"{initial}:main"],
+                   check=True, capture_output=True)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="non-fast-forward"):
+            mcp_server.read_honest_files(store, ["README.md"])
+        assert honest_store.git(store, "rev-parse", honest_store.SERVED_REF).decode().strip() == accepted
+    (source / "README.md").write_text("third\n")
+    recovered = _publish_honest(source, "third")
+    assert mcp_server.read_honest_files(store, ["README.md"])["sha"] == recovered
+
+
+def test_honest_failed_fetch_does_not_serve_cached_text_then_recovers(tmp_path, monkeypatch):
+    from dish_service import honest_store
+    origin, _source, store = _honest_upstream(tmp_path, monkeypatch)
+    good = mcp_server.read_honest_files(store, ["README.md"])
+    monkeypatch.setattr(honest_store, "REMOTE_URL", str(tmp_path / "missing.git"))
+    result = asyncio.run(mcp_server.build_honest_tool(store).run({"paths": ["README.md"]}))
+    assert result.structured_content["ok"] is False
+    assert result.structured_content["files"] == []
+    assert result.structured_content["sha"] is None
+    assert "fetch failed" in result.structured_content["message"]
+    assert "does not appear to be a git repository" in result.structured_content["message"]
+    monkeypatch.setattr(honest_store, "REMOTE_URL", str(origin))
+    assert mcp_server.read_honest_files(store, ["README.md"]) == good
+
+
+def test_honest_partial_initialization_retries_and_invalid_store_is_preserved(tmp_path, monkeypatch):
+    from dish_service import honest_store
+    _origin, _source, store = _honest_upstream(tmp_path, monkeypatch)
+    real_git = honest_store.git
+    failed = []
+
+    def interrupt_init(path, *args, **kwargs):
+        if args[0] == "init" and not failed:
+            failed.append(True)
+            path.mkdir()
+            raise RuntimeError("interrupted initial init")
+        return real_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(honest_store, "git", interrupt_init)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        mcp_server.read_honest_files(store, ["README.md"])
+    assert mcp_server.read_honest_files(store, ["README.md"])["files"][0]["text"] == "published\n"
+    invalid = tmp_path / "unexpected"
+    invalid.mkdir()
+    (invalid / "keep.txt").write_text("do not delete")
+    with pytest.raises(RuntimeError, match="no files were served"):
+        mcp_server.read_honest_files(invalid, ["README.md"])
+    assert (invalid / "keep.txt").read_text() == "do not delete"
+
+
+def test_honest_simultaneous_first_requests_from_processes(tmp_path, monkeypatch):
+    import sys
+    origin, _source, store = _honest_upstream(tmp_path, monkeypatch)
+    script = """
+import sys
+from pathlib import Path
+from dish_service import honest_store
+honest_store.REMOTE_URL = sys.argv[1]
+with honest_store.snapshot(Path(sys.argv[2])) as sha:
+    print(sha)
+"""
+    processes = [subprocess.Popen([sys.executable, "-c", script, str(origin), str(store)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  cwd=Path(mcp_server.__file__).parents[1]) for _ in range(3)]
+    results = [process.communicate(timeout=30) for process in processes]
+    assert all(process.returncode == 0 for process in processes), results
+    assert len({stdout.strip() for stdout, stderr in results}) == 1
+
+
+def test_honest_threads_wait_for_snapshot_and_external_lock_wait_is_bounded(tmp_path, monkeypatch):
+    import fcntl
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from dish_service import honest_store
+    _origin, _source, store = _honest_upstream(tmp_path, monkeypatch)
+    started = threading.Event()
+
+    def read():
+        started.set()
+        return mcp_server.read_honest_files(store, ["README.md"])
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with honest_store.snapshot(store):
+            future = executor.submit(read)
+            assert started.wait(2)
+            assert not future.done()
+        assert future.result(timeout=10)["files"][0]["text"] == "published\n"
+    monkeypatch.setattr(honest_store, "LOCK_TIMEOUT", 0.1)
+    with store.with_name(store.name + ".lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        with pytest.raises(RuntimeError, match="timed out waiting for another Honest process"):
+            mcp_server.read_honest_files(store, ["README.md"])
+
+
+def test_honest_git_timeout_kills_ssh_descendants(tmp_path, monkeypatch):
+    import shlex
+    import sys
+
+    from dish_service import honest_store
+    _origin, _source, store = _honest_upstream(tmp_path, monkeypatch)
+    mcp_server.read_honest_files(store, ["README.md"])
+    child_file = tmp_path / "child.pid"
+    ssh = tmp_path / "ssh.py"
+    ssh.write_text("import subprocess,time,pathlib\n"
+                   "child=subprocess.Popen(['sleep','60'])\n"
+                   f"pathlib.Path({str(child_file)!r}).write_text(str(child.pid))\n"
+                   "time.sleep(60)\n")
+    monkeypatch.setattr(honest_store, "SSH_COMMAND", shlex.join([sys.executable, str(ssh)]))
+    with pytest.raises(RuntimeError, match="subprocess group stopped"):
+        honest_store.git(store, "fetch", "ssh://fixture/upstream", timeout=1)
+    child = int(child_file.read_text())
+    status = Path(f"/proc/{child}/stat")
+    # A reparented zombie is dead; its reaping belongs to the host's init process.
+    assert not status.exists() or status.read_text().split()[2] == "Z"
+
+
+def test_honest_preserves_regular_file_encoding_and_size_guards(tmp_path, monkeypatch):
+    _origin, source, store = _honest_upstream(tmp_path, monkeypatch)
+    (source / "link").symlink_to("README.md")
+    (source / "binary").write_bytes(b"\xff")
+    _publish_honest(source, "invalid text fixtures")
+    for name, error in [("../README.md", "invalid repository path"),
+                        ("link", "not a regular tracked file"), ("binary", "not UTF-8"),
+                        ("missing", "tracked file not found")]:
+        with pytest.raises(ValueError, match=error):
+            mcp_server.read_honest_files(store, [name])
+    monkeypatch.setattr(mcp_server, "HONEST_MAX_BYTES", 1)
+    with pytest.raises(ValueError, match="exceed"):
+        mcp_server.read_honest_files(store, ["README.md"])
+
+
+def test_honest_missing_upstream_branch_fails_closed_and_recovers(tmp_path, monkeypatch):
+    origin, source, store = _honest_upstream(tmp_path, monkeypatch)
+    good = mcp_server.read_honest_files(store, ["README.md"])
+    # Local disposable upstream only: remove its advertised main without changing accepted store.
+    subprocess.run(["git", "--git-dir", str(origin), "update-ref", "-d", "refs/heads/main"], check=True)
+    with pytest.raises(RuntimeError, match="couldn't find remote ref"):
+        mcp_server.read_honest_files(store, ["README.md"])
+    subprocess.run(["git", "-C", str(source), "push", "origin", "HEAD:main"], check=True,
+                   capture_output=True)
+    assert mcp_server.read_honest_files(store, ["README.md"]) == good
+
+
+def test_honest_stale_git_lock_is_preserved_and_never_serves_cached_files(tmp_path, monkeypatch):
+    _origin, source, store = _honest_upstream(tmp_path, monkeypatch)
+    mcp_server.read_honest_files(store, ["README.md"])
+    internal_lock = store / "refs/heads/served-main.lock"
+    internal_lock.write_text("preserve for manual diagnosis")
+    (source / "README.md").write_text("advance\n")
+    _publish_honest(source, "advance")
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="fetch failed"):
+            mcp_server.read_honest_files(store, ["README.md"])
+        assert internal_lock.read_text() == "preserve for manual diagnosis"
+
+
+def test_honest_diagnostics_keep_context_and_redact_credentials():
+    from dish_service import honest_store
+    error = str(honest_store._error("fetch", "first cause\nhttps://user:secret@example.com/repo\nAborting"))
+    assert "first cause" in error and "Aborting" in error
+    assert "user:secret" not in error
+    assert "[redacted]@example.com" in error
+    assert len(str(honest_store._error("fetch", "x" * 10000))) < 2200

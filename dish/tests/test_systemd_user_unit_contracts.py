@@ -171,6 +171,12 @@ UNIT_CONTRACTS = {
     "dish-mcp.service": _service(
         "/home/marco/ai-tools/dish/.venv/bin/python -m dish_service.mcp_server",
         environment_files=("/home/marco/.config/dish-service/mcp.env",),
+        service_extra={
+            "Environment": (
+                "DISH_MCP_HONEST_STORE=/home/marco/.local/share/dish/honest-mcp/prod/repository.git",
+            ),
+            "KillMode": ("control-group",),
+        },
         hardening={
             "NoNewPrivileges": ("true",),
             "UMask": ("0077",),
@@ -178,7 +184,7 @@ UNIT_CONTRACTS = {
             "ProtectSystem": ("strict",),
             "ProtectHome": ("read-only",),
             "ReadWritePaths": (
-                "/home/marco/.local/share/fastmcp /home/marco/honest-pantry",
+                "/home/marco/.local/share/fastmcp /home/marco/.local/share/dish/honest-mcp/prod",
             ),
         },
     ),

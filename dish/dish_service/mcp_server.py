@@ -8,8 +8,6 @@ import io
 import json
 import logging
 import os
-import subprocess
-import threading
 import time
 import zipfile
 from copy import deepcopy
@@ -39,6 +37,7 @@ from starlette.responses import JSONResponse, RedirectResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dish_service.client import DishActionClient
+from dish_service.honest_store import git as _honest_git, snapshot as honest_snapshot
 from dish_service.planning_context import (
     PlanningContextError, PlanningReceiptStore, assemble_planning_context,
 )
@@ -56,12 +55,12 @@ BIND_HOST_ENV = "DISH_MCP_BIND_HOST"
 BIND_PORT_ENV = "DISH_MCP_BIND_PORT"
 DEFAULT_BIND_HOST = "127.0.0.1"
 DEFAULT_BIND_PORT = 8765
-HONEST_CHECKOUT = Path("/home/marco/honest-pantry")
+HONEST_STORE = Path(os.environ.get(
+    "DISH_MCP_HONEST_STORE", str(Path.home() / ".local/share/dish/honest-mcp/prod/repository.git"),
+))
 HONEST_MAX_FILES = 16
 HONEST_MAX_BYTES = 512 * 1024
 HONEST_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
-HONEST_LOCK = threading.Lock()
-HONEST_GIT_SSH_COMMAND = "/usr/bin/ssh -F /dev/null"
 LOG = logging.getLogger("dish.mcp")
 HONEST_PLANNING_START_PATHS = ("dish-planning-protocol.md",)
 HONEST_PLANNING_TRIGGER_PATHS = (*HONEST_PLANNING_START_PATHS, "dish-classes.md", "planning/direction.md")
@@ -102,40 +101,6 @@ SERVER_INSTRUCTIONS = (
 )
 
 
-def _honest_git(checkout: Path, *args: str, timeout: int = 10) -> bytes:
-    try:
-        result = subprocess.run(
-            ["/usr/bin/git", *args], cwd=checkout, capture_output=True,
-            env={
-                **os.environ,
-                "GIT_TERMINAL_PROMPT": "0",
-                "GIT_SSH_COMMAND": HONEST_GIT_SSH_COMMAND,
-            },
-            timeout=timeout,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(f"Honest Pantry update failed; no files were served ({exc})") from exc
-    if result.returncode:
-        stderr_lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
-        reason = stderr_lines[-1] if stderr_lines else f"git {' '.join(args)} exited {result.returncode}"
-        raise RuntimeError(f"Honest Pantry update failed; no files were served ({reason})")
-    return result.stdout
-
-
-def _refresh_honest_main(checkout: Path) -> str:
-    if _honest_git(checkout, "branch", "--show-current").decode().strip() != "main":
-        raise RuntimeError("Honest Pantry checkout is not on main; no files were served")
-    try:
-        _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
-    except RuntimeError:
-        _honest_git(checkout, "pull", "--ff-only", "origin", "main", timeout=30)
-    sha = _honest_git(checkout, "rev-parse", "HEAD").decode().strip()
-    if sha != _honest_git(checkout, "rev-parse", "FETCH_HEAD").decode().strip():
-        raise RuntimeError("Honest Pantry checkout does not match origin/main; no files were served")
-    return sha
-
-
 def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
     if not paths or len(paths) > HONEST_MAX_FILES or len(set(paths)) != len(paths):
         raise ValueError(f"paths must contain 1-{HONEST_MAX_FILES} unique entries")
@@ -145,8 +110,7 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
                 or any(ord(char) < 32 for char in path)):
             raise ValueError(f"invalid repository path: {path!r}")
 
-    with HONEST_LOCK:
-        sha = _refresh_honest_main(checkout)
+    with honest_snapshot(checkout) as sha:
         files: list[dict[str, str]] = []
         total = 0
         for path in paths:
@@ -188,7 +152,7 @@ def read_honest_files(checkout: Path, paths: list[str]) -> dict[str, Any]:
         }
 
 
-def build_honest_tool(checkout: Path = HONEST_CHECKOUT) -> FunctionTool:
+def build_honest_tool(checkout: Path = HONEST_STORE) -> FunctionTool:
     def dish_honest_read(paths: list[str]) -> dict[str, Any]:
         """Read current Honest Pantry files and return stage reading guidance."""
         try:
@@ -216,8 +180,7 @@ def build_honest_tool(checkout: Path = HONEST_CHECKOUT) -> FunctionTool:
 
 def build_honest_archive(checkout: Path) -> dict[str, Any]:
     """Build a bounded ZIP of the exact refreshed Honest Pantry tracked tree."""
-    with HONEST_LOCK:
-        sha = _refresh_honest_main(checkout)
+    with honest_snapshot(checkout) as sha:
         tree = _honest_git(checkout, "rev-parse", f"{sha}^{{tree}}").decode().strip()
         raw_paths = _honest_git(checkout, "ls-tree", "-r", "-z", "--name-only", sha)
         paths = [path for path in raw_paths.split(b"\0") if path]
@@ -264,7 +227,7 @@ class HonestArchiveTool(FastMCPTool):
 
     _checkout: Path = PrivateAttr()
 
-    def __init__(self, checkout: Path = HONEST_CHECKOUT) -> None:
+    def __init__(self, checkout: Path = HONEST_STORE) -> None:
         super().__init__(
             name="dish_honest_archive",
             title="Download current Honest Pantry files",
@@ -815,7 +778,7 @@ def create_app(adapter: Any, config: MCPAuthConfig):
             ],
             build_honest_tool(),
             HonestArchiveTool(),
-            PlanningContextTool(adapter, HONEST_CHECKOUT, planning_store),
+            PlanningContextTool(adapter, HONEST_STORE, planning_store),
         ],
     )
     return JSONRegistrationContentType(
