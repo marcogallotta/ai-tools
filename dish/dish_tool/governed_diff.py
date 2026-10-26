@@ -239,22 +239,38 @@ _HANDLING_SECTIONS = {
     "STORAGE",
 }
 _HANDLING_WORDS = {
-    "gently", "carefully", "briefly", "fresh", "freshly", "separate", "separately",
-    "serving", "serve", "sitting", "sittings", "per", "last", "minute", "minutes",
-    "immediately", "just", "before", "finish", "finished", "finishing", "early",
-    "ahead", "crisp", "raw", "undressed", "unmixed", "covered", "uncovered", "first",
+    "gently", "carefully", "and", "covered",
 }
-_HANDLING_CUE_RE = re.compile(
-    r"\b(?:fresh|freshly|reheat(?:ed|ing)?|warm(?:ed|ing)?|separate|separately|"
-    r"per sitting|at serving|before serving|after reheating|last minute|until serving|"
-    r"just before serving|finish(?:ed|ing)?|garnish(?:ed|ing)?)\b",
+_PROBE_SEAR_TIMING_RE = re.compile(
+    r"\b(?:insert|place)\s+(?:the\s+)?(?:[\w-]+\s+){0,2}probe\s+"
+    r"(?:(?:in|into)\s+(?:the\s+)?(?:[\w-]+\s+){1,7})?"
+    r"(before|after)\s+(?:the\s+)?sear(?:ing)?\b",
     re.I,
 )
-_HANDLING_SUBJECT_STOPWORDS = _HANDLING_WORDS | {
-    "add", "after", "and", "batch", "before", "combine", "dish", "divide", "fold",
-    "food", "into", "keep", "mix", "mixed", "reheat", "reheated", "reheating",
-    "stored", "stir", "the", "then", "through", "instead", "preserve", "aroma",
-}
+_FRESH_FINISH_ITEM = (
+    r"(?:herbs?|basil|coriander|parsley|mint|dill|chives|"
+    r"lime|lemon|spring onions?|scallions?)"
+)
+_SAFE_HANDLING_ADDITIONS = (
+    re.compile(
+        r"(?:\d+\.\s*)?Keep the (?:crisp component|crisp topping|sauce|dressing|"
+        r"noodles|herbs|lime) separate until serving\.", re.I,
+    ),
+    re.compile(r"(?:\d+\.\s*)?Finish freshly just before serving\.", re.I),
+    re.compile(
+        r"(?:\d+\.\s*)?Reheat the (?:sauce|stored batch|batch|noodles|vegetables) "
+        r"first and fold in fresh "
+        + _FRESH_FINISH_ITEM + r" after reheating(?: to preserve aroma)?\.", re.I,
+    ),
+    re.compile(
+        r"(?:\d+\.\s*)?(?:Add|Fold in) fresh " + _FRESH_FINISH_ITEM
+        + r" (?:just before serving|after reheating)\.", re.I,
+    ),
+)
+_MIXED_STORAGE_RE = re.compile(r"Keep the (?P<item>[\w -]+) mixed into the dish\.", re.I)
+_REHEAT_HERB_RE = re.compile(
+    r"Reheat gently and add fresh (?P<herb>" + _FRESH_FINISH_ITEM + r")\.", re.I,
+)
 
 _ALLOCATION_SUFFIX_RE = re.compile(
     r"^[\s,;:()\[\]\-–—]*(?:total[\s,;:()\[\]\-–—]*)?"
@@ -356,6 +372,22 @@ def _removes_existing_line(old: str, new: str) -> bool:
 
 def _handling_only_change(old: str, new: str) -> bool:
     """Recognise bounded freshness and per-sitting handling without material drift."""
+    old_lines = [line.strip() for line in old.splitlines() if line.strip()]
+    new_lines = [line.strip() for line in new.splitlines() if line.strip()]
+    if len(old_lines) == len(new_lines):
+        changed = [(a, b) for a, b in zip(old_lines, new_lines, strict=True) if a != b]
+        if len(changed) == 1:
+            before, after = changed[0]
+            old_probe = list(_PROBE_SEAR_TIMING_RE.finditer(before))
+            new_probe = list(_PROBE_SEAR_TIMING_RE.finditer(after))
+            if len(old_probe) == len(new_probe) == 1:
+                old_match, new_match = old_probe[0], new_probe[0]
+                if (
+                    old_match.group(1).casefold() != new_match.group(1).casefold()
+                    and before[: old_match.start(1)] + before[old_match.end(1) :]
+                    == after[: new_match.start(1)] + after[new_match.end(1) :]
+                ):
+                    return True
     if any(
         _signature(pattern, old) != _signature(pattern, new)
         for pattern in (
@@ -373,39 +405,42 @@ def _handling_only_change(old: str, new: str) -> bool:
     ):
         return False
 
-    def bounded(lines: list[str]) -> bool:
-        return bool(lines) and all(_HANDLING_CUE_RE.search(line) for line in lines)
-
-    def shares_subject(removed: list[str], added: list[str]) -> bool:
-        old_subjects = {
-            token for token in _tokens(" ".join(removed))
-            if len(token) >= 3 and token not in _HANDLING_SUBJECT_STOPWORDS
-        }
-        new_subjects = {
-            token for token in _tokens(" ".join(added))
-            if len(token) >= 3 and token not in _HANDLING_SUBJECT_STOPWORDS
-        }
-        return bool(old_subjects & new_subjects)
-
     import difflib
-    old_lines = [line.strip() for line in old.splitlines() if line.strip()]
-    new_lines = [line.strip() for line in new.splitlines() if line.strip()]
     matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
         removed = old_lines[i1:i2]
         added = new_lines[j1:j2]
-        if tag == "insert" and bounded(added):
-            continue
-        if tag == "delete" and bounded(removed):
-            continue
-        if tag == "replace" and bounded(added) and (
-            bounded(removed) or shares_subject(removed, added)
+        if tag == "insert" and all(
+            any(pattern.fullmatch(line) for pattern in _SAFE_HANDLING_ADDITIONS)
+            for line in added
         ):
             continue
+        if tag == "replace" and len(removed) == len(added) == 1:
+            mixed = _MIXED_STORAGE_RE.fullmatch(removed[0])
+            herb = _REHEAT_HERB_RE.fullmatch(removed[0])
+            if mixed and added[0].casefold() == (
+                f"Keep the {mixed.group('item')} separate and divide it per sitting "
+                "instead of mixing it into the stored batch."
+            ).casefold():
+                continue
+            if herb and re.fullmatch(
+                r"Reheat the (?:sauce|stored batch|batch|noodles|vegetables) "
+                r"first, then add fresh "
+                + re.escape(herb.group("herb"))
+                + r" after reheating\.",
+                added[0],
+                re.I,
+            ):
+                continue
         old_tokens = _tokens(" ".join(removed))
         new_tokens = _tokens(" ".join(added))
+        if (
+            [token for token in old_tokens if token not in _HANDLING_WORDS]
+            != [token for token in new_tokens if token not in _HANDLING_WORDS]
+        ):
+            return False
         common = list(old_tokens)
         for token in new_tokens:
             if token in common:

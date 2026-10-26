@@ -102,6 +102,145 @@ def test_handling_only_method_changes_remain_small_capable(replacement):
     require_small_scope(before, after)
 
 
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "Finish with the chicken raw.",
+        "Finish with the chicken uncooked just before serving.",
+        "Finish by skipping the chicken cooking step.",
+        "Finish the chicken rare just before serving.",
+        "Finish with the chicken pink in the middle before serving.",
+        "Add fresh raw chicken just before serving.",
+        "Keep the raw chicken separate until serving.",
+        "Reheat the chicken first and fold in fresh raw chicken after reheating to preserve aroma.",
+        "Reheat the raw chicken first and fold in fresh basil after reheating.",
+        "Reheat the chicken without cooking it first and fold in fresh basil after reheating.",
+    ],
+)
+def test_handling_cue_cannot_hide_unsafe_cooking_instruction(addition):
+    before = _doc()
+    after = _doc(TASK.replace("1. Cook it.", f"1. Cook it.\n2. {addition}"))
+    assert "method" in explicit_material_reasons(before, after)
+    with pytest.raises(DishRuleError) as exc:
+        require_small_scope(before, after)
+    assert exc.value.rule == "large_correction_required"
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        (
+            "Insert the probe before searing, then sear the beef.",
+            "Insert the probe after searing, then sear the beef.",
+        ),
+        (
+            "Insert the probe into the beef before searing, then sear it.",
+            "Insert the probe into the beef after searing, then sear it.",
+        ),
+        (
+            "Place the temperature probe in the beef before searing.",
+            "Place the temperature probe in the beef after searing.",
+        ),
+        (
+            "Insert the probe before the sear, then sear the beef.",
+            "Insert the probe after the sear, then sear the beef.",
+        ),
+        (
+            "Insert the probe into the thickest part of the beef before searing.",
+            "Insert the probe into the thickest part of the beef after searing.",
+        ),
+    ],
+)
+def test_probe_sear_timing_only_is_small_capable(old, new):
+    before = _doc(TASK.replace("1. Cook it.", old))
+    after = _doc(TASK.replace("1. Cook it.", new))
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
+def test_probe_timing_with_changed_heat_step_stays_large():
+    old = "Insert the probe before searing, then sear the beef."
+    new = "Insert the probe after searing, then roast the beef."
+    before = _doc(TASK.replace("1. Cook it.", old))
+    after = _doc(TASK.replace("1. Cook it.", new))
+    assert "method" in explicit_material_reasons(before, after)
+
+
+def test_probe_word_elsewhere_does_not_make_searing_order_small():
+    old = "Set aside the probe; serve chicken before searing."
+    new = "Set aside the probe; serve chicken after searing."
+    before = _doc(TASK.replace("1. Cook it.", old))
+    after = _doc(TASK.replace("1. Cook it.", new))
+    assert "method" in explicit_material_reasons(before, after)
+
+
+def test_handling_cue_cannot_reverse_chicken_cooking_order():
+    old = "Cook the chicken fully before serving."
+    new = "Serve the chicken before cooking; finish freshly."
+    before = _doc(TASK.replace("1. Cook it.", old))
+    after = _doc(TASK.replace("1. Cook it.", new))
+    assert "method" in explicit_material_reasons(before, after)
+
+
+def test_handling_tokens_cannot_reorder_cooking_actions():
+    old = "Finish cooking the chicken before serving."
+    new = "Serve the chicken before cooking and finish."
+    before = _doc(TASK.replace("1. Cook it.", old))
+    after = _doc(TASK.replace("1. Cook it.", new))
+    assert "method" in explicit_material_reasons(before, after)
+
+
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "Fold in fresh basil just before serving.",
+        "Add fresh basil after reheating.",
+        "Reheat the sauce first and fold in fresh basil after reheating.",
+    ],
+)
+def test_bounded_fresh_herb_handling_remains_small(addition):
+    before = _doc()
+    after = _doc(TASK.replace("1. Cook it.", f"1. Cook it.\n2. {addition}"))
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
+def test_unchanged_raw_state_can_gain_covering_instruction():
+    old = "Keep raw chicken separate during prep."
+    new = "Keep raw chicken separate and covered during prep."
+    before = _doc(TASK.replace("1. Cook it.", old))
+    after = _doc(TASK.replace("1. Cook it.", new))
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
+def test_raw_chicken_cover_state_reversal_requires_large():
+    old = "Keep raw chicken covered in the fridge."
+    new = "Keep raw chicken uncovered in the fridge."
+    before = _doc(TASK.replace("1. Cook it.", old))
+    after = _doc(TASK.replace("1. Cook it.", new))
+    assert "method" in explicit_material_reasons(before, after)
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        (
+            "Keep raw chicken covered in the fridge.",
+            "Keep raw chicken covered in the fridge and serve immediately.",
+        ),
+        (
+            "Store raw chicken separate.",
+            "Store raw chicken separate and serve fresh.",
+        ),
+    ],
+)
+def test_handling_words_cannot_add_serving_raw_chicken(old, new):
+    before = _doc(TASK.replace("1. Cook it.", old))
+    after = _doc(TASK.replace("1. Cook it.", new))
+    assert "method" in explicit_material_reasons(before, after)
+
+
 def _with_section(document, section, text):
     return dataclasses.replace(document, sections={**document.sections, section: text})
 
@@ -116,7 +255,7 @@ def test_equivalent_freshness_handling_is_small_in_any_handling_section(section)
     after = _with_section(
         before,
         section,
-        f"{old}\nReheat the chicken first and fold in fresh basil after reheating to preserve aroma.".strip(),
+        f"{old}\nReheat the stored batch first and fold in fresh basil after reheating to preserve aroma.".strip(),
     )
     assert explicit_material_reasons(before, after) == ()
     require_small_scope(before, after)
@@ -185,7 +324,7 @@ def test_quantity_allocation_with_new_numeric_totals_remains_material(
         ),
         (
             "Reheat gently and add fresh coriander.",
-            "Reheat the chicken first, then add fresh coriander after reheating.",
+            "Reheat the sauce first, then add fresh coriander after reheating.",
         ),
     ],
 )
@@ -194,6 +333,20 @@ def test_storage_freshness_and_reheating_corrections_are_small(old, new):
     after = _with_section(before, "STORAGE", new)
     assert explicit_material_reasons(before, after) == ()
     require_small_scope(before, after)
+
+
+@pytest.mark.parametrize(
+    "new",
+    [
+        "Reheat the raw chicken first, then add fresh basil after reheating.",
+        "Reheat the chicken without cooking it first, then add fresh basil after reheating.",
+        "Reheat the chicken first, then add fresh basil after reheating.",
+    ],
+)
+def test_reheating_correction_cannot_add_raw_chicken_route(new):
+    before = _with_section(_doc(), "STORAGE", "Reheat gently and add fresh basil.")
+    after = _with_section(before, "STORAGE", new)
+    assert "section:storage" in explicit_material_reasons(before, after)
 
 
 @pytest.mark.parametrize(
@@ -256,7 +409,7 @@ def test_real_small_route_accepts_fresh_basil_after_reheating(tmp_path):
             "\n---\n",
             (
                 "\n## STORAGE\n"
-                "Reheat the chicken first and fold in fresh basil after reheating "
+                "Reheat the stored batch first and fold in fresh basil after reheating "
                 "to preserve aroma.\n---\n"
             ),
         )
@@ -277,6 +430,23 @@ def test_real_small_route_rejects_same_keyword_halal_reversal(tmp_path):
     review = _review(app)
     candidate = tmp_path / "small-halal.txt"
     candidate.write_text(TASK.replace("1. Cook it.", "1. Pork is permitted; cook it."))
+    result = app.execute(
+        "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
+        correction="small", file_path=str(candidate),
+        reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True, provenance_complete=True, run_id="review",
+    )
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["errors"][0]["rule"] == "large_correction_required"
+
+
+def test_real_small_route_rejects_raw_chicken_finish(tmp_path):
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    review = _review(app)
+    candidate = tmp_path / "small-raw-chicken.txt"
+    candidate.write_text(
+        TASK.replace("1. Cook it.", "1. Cook it.\n2. Finish with the chicken raw.")
+    )
     result = app.execute(
         "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
         correction="small", file_path=str(candidate),
