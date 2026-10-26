@@ -203,7 +203,7 @@ remains read-only and available. `cooked` can complete an active Dish at any wor
 In PostgreSQL authority the private admin command is a narrow additional principal for the same
 `archive` semantic agents use, and the PostgreSQL path creates no Asana projection. The private admin
 transport also retains exact-ID `inspect` as a PostgreSQL-local read so an archived Dish remains
-diagnosable after it leaves active and title-search views; this does not widen the agent/Action
+diagnosable after it leaves active views; `search(scope=all)` still finds its title. This does not widen the agent/Action
 inspect contract.
 
 `unarchive <dish>` is the PostgreSQL inverse of archive, reachable by agents (`dish unarchive` and

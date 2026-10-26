@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import select, text
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.exc import (
     DBAPIError,
     InterfaceError,
@@ -778,9 +778,6 @@ class PostgresRuntimeService:
             return CommandResult(False, SEARCH_COMMAND, "BACKEND_REJECTED", 409, {"message": str(exc)}, retryable=True)
         if native_result is not None:
             return CommandResult(True, SEARCH_COMMAND, "OK", 200, native_result)
-        if scope == "all":
-            return CommandResult(False, SEARCH_COMMAND, "BACKEND_REJECTED", 409,
-                                 {"message": "all-status search requires native catalog authority"})
         board = FrontendBoardQuery(session)
         context = board.context()
         normalized_query = query.lower()
@@ -834,35 +831,65 @@ class PostgresRuntimeService:
                     {"message": "cursor page boundary is invalid", "field": "cursor"},
                 )
 
-        # The settled frontend primitive owns title matching, active-corpus membership,
-        # placement, section-registry metadata, and deterministic ordering. Passing the
-        # captured context makes every returned Search fact belong to the same authority
-        # identity that validates and signs the continuation cursor.
-        facts = board.search_titles(
-            query=query,
-            projection_delay=_SEARCH_PROJECTION_DELAY,
-            max_results=offset + page_size + 1,
-            context=context,
-        )
-        visible = facts.results[offset : offset + page_size]
-        has_more = facts.truncated or len(facts.results) > offset + page_size
+        # Active Search uses the frontend board primitive. All-status Search reads the
+        # same generation's current Dish state without active-board eligibility. Both
+        # paths bind pagination to the captured authority context.
         results: list[dict[str, Any]] = []
+        if scope == "all":
+            rows = session.execute(
+                select(models.DishTask.task_id, models.ContentVersion.title,
+                       models.DishState.section_id, models.SectionRegistryEntry.display_name,
+                       models.SectionRegistryEntry.workflow_role, models.GovernedProject.logical_name,
+                       models.DishState.completed, models.DishState.completion_reason,
+                       models.DishState.archived_at)
+                .select_from(models.DishTask)
+                .join(models.DishState, and_(
+                    models.DishState.task_id == models.DishTask.task_id,
+                    models.DishState.generation_id == context.generation_id))
+                .join(models.ContentVersion, and_(
+                    models.ContentVersion.task_id == models.DishTask.task_id,
+                    models.ContentVersion.content_version_id == models.DishState.current_content_version_id))
+                .outerjoin(models.SectionRegistryEntry, and_(
+                    models.SectionRegistryEntry.registry_version_id == models.DishState.registry_version_id,
+                    models.SectionRegistryEntry.section_id == models.DishState.section_id))
+                .outerjoin(models.GovernedSection,
+                           models.GovernedSection.section_id == models.DishState.section_id)
+                .outerjoin(models.GovernedProject,
+                           models.GovernedProject.project_id == models.GovernedSection.project_id)
+                .where(models.DishTask.existence_state.in_(("ordinary", "isolated")),
+                       func.lower(models.ContentVersion.title).contains(normalized_query, autoescape=True))
+                .order_by(func.lower(models.ContentVersion.title), models.DishTask.task_id)
+                .offset(offset).limit(page_size + 1)
+            ).all()
+            has_more = len(rows) > page_size
+            visible = rows[:page_size]
+        else:
+            facts = board.search_titles(
+                query=query, projection_delay=_SEARCH_PROJECTION_DELAY,
+                max_results=offset + page_size + 1, context=context,
+            )
+            visible = facts.results[offset : offset + page_size]
+            has_more = facts.truncated or len(facts.results) > offset + page_size
         for fact in visible:
+            task_id = fact.task_id
             task_gid = session.scalar(
                 select(models.TaskExternalAlias.external_id).where(
-                    models.TaskExternalAlias.task_id == fact.task_id,
+                    models.TaskExternalAlias.task_id == task_id,
                     models.TaskExternalAlias.external_system == "asana",
                     models.TaskExternalAlias.state == "active",
                 )
             )
             result = {
-                "dish_id": str(fact.task_id),
+                "dish_id": str(task_id),
                 "title": fact.title,
                 "section_id": str(fact.section_id),
-                "section_label": fact.section_label,
+                "section_label": fact.display_name if scope == "all" else fact.section_label,
                 "workflow_role": fact.workflow_role,
-                "project_label": fact.project_label,
-                "status": "active",
+                "project_label": fact.logical_name if scope == "all" else fact.project_label,
+                "status": ("archived" if fact.archived_at is not None else
+                           "active" if not fact.completed else
+                           "cooked" if fact.completion_reason == "cooked" else "completed")
+                          if scope == "all" else "active",
             }
             if task_gid is not None:
                 result["task_gid"] = str(task_gid)

@@ -8,6 +8,7 @@ import pytest
 from dish_pg import models
 from dish_pg.database import session_scope
 from dish_pg.read_model import InvalidCursor, ReadModelError
+from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.repositories import CatalogRepository
 from dish_tool.content_versions import content_identity
 from tests.support.postgresql.core import _import_one
@@ -276,6 +277,41 @@ def test_native_title_search_all_scope_finds_inactive_dishes_without_changing_de
             str(task_ids["active"]): "active", str(task_ids["completed"]): "completed",
             str(cooked_id): "cooked", str(archived_id): "archived",
         }
+
+
+def test_legacy_title_search_all_scope_finds_completed_and_archived_dishes(workflow_db) -> None:
+    factory, ids, context, cooked_id = workflow_db
+    with session_scope(factory) as session:
+        archived_id = _import_one(session, ids, context, asana_gid="123456790").task_id
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        for command, task_id in (("cooked", cooked_id), ("archive", archived_id)):
+            assert port.execute(_call(
+                command, run_id=run_id, request_id=_next(ids),
+                arguments={"dish_id": str(task_id), "agent": "codex"},
+            )).ok
+        service = object.__new__(PostgresRuntimeService)
+        service._cursor_secret = b"legacy-search-test-secret-is-at-least-32-bytes"
+        default = service._execute_search(session, {"query": "imported task", "page_size": 10})
+        assert default.ok and default.data["results"] == []
+        first = service._execute_search(
+            session, {"query": "imported task", "page_size": 1, "scope": "all"}
+        )
+        assert first.ok and first.data["next_cursor"]
+        wrong_scope = service._execute_search(
+            session, {"query": "imported task", "page_size": 1,
+                      "cursor": first.data["next_cursor"]}
+        )
+        assert not wrong_scope.ok and wrong_scope.code == "INVALID_ARGUMENT"
+        second = service._execute_search(
+            session, {"query": "imported task", "page_size": 1, "scope": "all",
+                      "cursor": first.data["next_cursor"]}
+        )
+        assert second.ok
+        found = {row["dish_id"]: row["status"] for row in
+                 first.data["results"] + second.data["results"]}
+        assert found == {str(cooked_id): "cooked", str(archived_id): "archived"}
 
 
 def test_native_pointer_moves_ordinary_reads_to_native_catalog(workflow_db) -> None:
