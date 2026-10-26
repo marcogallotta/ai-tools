@@ -27,7 +27,7 @@ DOCS = {
     "dish-planning-protocol.md": "# Planning Protocol\n",
     "planning/index.md": "# Planning Index\n",
     "planning/roadmap.md": "# Roadmap\n",
-    "cuisine-map.md": "# Cuisine Map\n",
+    "planning/direction.md": "# Cooking Direction\n",
     "dish-classes.md": "# Dish Classes\n",
     "planning/blocks/index.md": BLOCK_INDEX,
     "planning/blocks/wok-depth-rice.md":
@@ -97,13 +97,13 @@ def test_named_block_loads_its_registered_row_parent_protocol_classes_and_histor
     bundle = context(adapter)
     paths = [entry["path"] for entry in bundle["files"]]
     assert paths == [
-        "dish-planning-protocol.md", "cuisine-map.md", "dish-classes.md",
+        "dish-planning-protocol.md", "planning/direction.md", "dish-classes.md",
         "planning/blocks/wok-depth-rice.md", "planning/blocks/wok-heat.md",
     ]
     assert "wok-depth-rice.md" in bundle["block_index_row"]
     assert bundle["receipt"].splitlines() == [
         "Context loaded (block: wok-depth-rice)",
-        "Docs: dish-planning-protocol, cuisine-map, dish-classes, blocks/wok-depth-rice, "
+        "Docs: dish-planning-protocol, planning/direction, dish-classes, blocks/wok-depth-rice, "
         "blocks/wok-heat (parent)",
         "Cook history: 2 dishes cooked in total",
         "Logs read: Chengdu egg fried rice (1)",
@@ -127,7 +127,7 @@ def test_broad_loads_full_discovery_set_without_guessing_a_block():
     bundle = context(adapter, scope="broad", target="")
     assert [f["path"] for f in bundle["files"]] == [
         "dish-planning-protocol.md", "planning/index.md",
-        "planning/roadmap.md", "cuisine-map.md", "dish-classes.md",
+        "planning/roadmap.md", "planning/direction.md", "dish-classes.md",
         "planning/blocks/index.md",
     ]
     assert len(bundle["history"]["recent_updates"]) == 2

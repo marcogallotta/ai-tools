@@ -64,7 +64,7 @@ HONEST_LOCK = threading.Lock()
 HONEST_GIT_SSH_COMMAND = "/usr/bin/ssh -F /dev/null"
 LOG = logging.getLogger("dish.mcp")
 HONEST_PLANNING_START_PATHS = ("dish-planning-protocol.md",)
-HONEST_PLANNING_TRIGGER_PATHS = (*HONEST_PLANNING_START_PATHS, "dish-classes.md", "cuisine-map.md")
+HONEST_PLANNING_TRIGGER_PATHS = (*HONEST_PLANNING_START_PATHS, "dish-classes.md", "planning/direction.md")
 HONEST_STAGE_READING = (
     "ChatGPT stage agents read the files their Project settings name; repository agents follow "
     "their own instructions."
