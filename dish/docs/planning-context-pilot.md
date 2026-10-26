@@ -31,7 +31,7 @@ The receipt is **multiline**, shown at the top of the first Planning answer and 
 
 ```text
 Context loaded (block: wok-depth-rice)
-Docs: dish-planning-protocol, cuisine-map, dish-classes, blocks/wok-depth-rice, blocks/wok-heat (parent)
+Docs: dish-planning-protocol, planning/direction, dish-classes, blocks/wok-depth-rice, blocks/wok-heat (parent)
 Cook history: 41 dishes cooked in total
 Logs read: Nasi goreng (3), Khao pad (2)
 Finalists checked: none yet

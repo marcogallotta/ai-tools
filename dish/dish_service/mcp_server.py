@@ -63,7 +63,7 @@ HONEST_MAX_BYTES = 512 * 1024
 HONEST_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
 LOG = logging.getLogger("dish.mcp")
 HONEST_PLANNING_START_PATHS = ("dish-planning-protocol.md",)
-HONEST_PLANNING_TRIGGER_PATHS = (*HONEST_PLANNING_START_PATHS, "dish-classes.md", "cuisine-map.md")
+HONEST_PLANNING_TRIGGER_PATHS = (*HONEST_PLANNING_START_PATHS, "dish-classes.md", "planning/direction.md")
 HONEST_STAGE_READING = (
     "ChatGPT stage agents read the files their Project settings name; repository agents follow "
     "their own instructions."

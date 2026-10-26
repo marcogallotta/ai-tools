@@ -355,7 +355,7 @@ def test_honest_read_planning_protocol_alone_has_no_missing_paths(tmp_path, monk
     assert result["reading_guidance"]["missing_recommended_paths"] == []
 
 
-@pytest.mark.parametrize("path", ["dish-classes.md", "cuisine-map.md"])
+@pytest.mark.parametrize("path", ["dish-classes.md", "planning/direction.md"])
 def test_honest_read_planning_index_docs_recommend_protocol(tmp_path, monkeypatch, path):
     result = mcp_server.read_honest_files(_planning_checkout(tmp_path, monkeypatch), [path])
 
