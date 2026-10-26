@@ -162,7 +162,7 @@ def test_registry_derives_identity_classification_and_annotations() -> None:
         assert ("request_id" in client["required"]) is definition.request_replay
         assert spec.annotations() == {
             "readOnlyHint": not definition.request_replay,
-            "destructiveHint": definition.request_replay,
+            "destructiveHint": spec.name == "archive",
             "openWorldHint": False,
             "idempotentHint": True,
         }
