@@ -820,19 +820,21 @@ def test_honest_store_does_not_depend_on_human_checkout(tmp_path, monkeypatch):
 
 
 def test_honest_read_pins_all_files_while_upstream_advances(tmp_path, monkeypatch):
+    from dish_service import honest_store
     _origin, source, store = _honest_upstream(tmp_path, monkeypatch)
     old = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"]).decode().strip()
-    real_git = mcp_server._honest_git
+    real_git = honest_store.git
     advanced = []
 
-    def advance_during_read(path, *args, **kwargs):
-        if args[0] == "ls-tree" and not advanced:
+    def advance_after_revision_resolves(path, *args, **kwargs):
+        result = real_git(path, *args, **kwargs)
+        if args == ("rev-parse", "--verify", f"{honest_store.SERVED_REF}^{{commit}}") and not advanced:
             (source / "README.md").write_text("new published\n")
             (source / "other.md").write_text("new same revision\n")
             advanced.append(_publish_honest(source, "advance"))
-        return real_git(path, *args, **kwargs)
+        return result
 
-    monkeypatch.setattr(mcp_server, "_honest_git", advance_during_read)
+    monkeypatch.setattr(honest_store, "git", advance_after_revision_resolves)
     result = mcp_server.read_honest_files(store, ["README.md", "other.md"])
     assert result["sha"] == old
     assert [file["text"] for file in result["files"]] == ["published\n", "same revision\n"]
