@@ -111,7 +111,7 @@ COMMAND_DEFINITIONS = {
             False,
             False,
             action_exposed=True,
-            description="Search current active Dish titles through canonical PostgreSQL authority.",
+            description="Search current Dish titles; scope=all includes cooked and archived records.",
         ),
         CommandDefinition(
             QUERY_COMMAND, "Q", "reader", False, False, False, action_exposed=True,
@@ -341,9 +341,13 @@ def _search_argument_schema() -> dict[str, Any]:
                 "minLength": 1,
                 "maxLength": SEARCH_QUERY_MAX_LENGTH,
                 "description": (
-                    "Case-insensitive literal substring matched only against the current "
-                    "canonical active Dish title."
+                    "Case-insensitive literal substring matched against current canonical Dish "
+                    "titles in the selected scope."
                 ),
+            },
+            "scope": {
+                "type": "string", "enum": ["active", "all"], "default": "active",
+                "description": "Use all for duplicate checks across active, cooked, completed, and archived Dishes.",
             },
             "agent": {"type": "string", "enum": list(_SEARCH_AGENT_VALUES)},
             "cursor": {
@@ -664,7 +668,7 @@ def normalize_postgres_search_arguments(arguments: Mapping[str, Any]) -> dict[st
             "arguments must be an object",
             rule="argument_object_required",
         )
-    allowed = {"query", "agent", "cursor", "page_size"}
+    allowed = {"query", "agent", "cursor", "page_size", "scope"}
     unknown = sorted(set(arguments) - allowed)
     if unknown:
         raise DishRuleError(
@@ -680,6 +684,12 @@ def normalize_postgres_search_arguments(arguments: Mapping[str, Any]) -> dict[st
             "agent must name a supported agent family",
             rule="argument_value_invalid",
             details={"field": "agent", "allowed": list(_SEARCH_AGENT_VALUES)},
+        )
+    scope = arguments.get("scope", "active")
+    if scope not in ("active", "all"):
+        raise DishRuleError(
+            "INVALID_ARGUMENT", "scope must be active or all", rule="argument_value_invalid",
+            details={"field": "scope", "allowed": ["active", "all"]},
         )
     query = arguments.get("query")
     if not isinstance(query, str):
@@ -731,6 +741,7 @@ def normalize_postgres_search_arguments(arguments: Mapping[str, Any]) -> dict[st
         "query": clean_query,
         "agent": agent,
         "page_size": page_size,
+        "scope": scope,
         **({"cursor": cursor} if cursor is not None else {}),
     }
 
