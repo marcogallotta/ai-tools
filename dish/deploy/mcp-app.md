@@ -41,6 +41,7 @@ sessions survive restarts.
 ```sh
 cd /home/marco/ai-tools/dish
 .venv/bin/python -m pip install -r requirements.txt
+install -d -m700 /home/marco/.local/share/dish/honest-mcp/prod
 install -Dm644 deploy/systemd/dish-mcp.service ~/.config/systemd/user/dish-mcp.service
 systemctl --user daemon-reload
 systemctl --user restart dish-mcp.service
@@ -56,6 +57,40 @@ Caddy must proxy these public paths to `127.0.0.1:8787`:
 
 Reload the checked-in Caddy configuration with the existing `dish-action-router` service after
 validating it.
+
+## Honest file store and recovery
+
+Honest read/archive delivery uses a persistent bare repository, separate from any human working
+checkout. `DISH_MCP_HONEST_STORE` names its absolute path; the default and checked-in production
+unit use `/home/marco/.local/share/dish/honest-mcp/prod/repository.git`. A TEST MCP instance must
+explicitly use a different store under `honest-mcp/test/`, a private loopback listener, and its own
+environment; never reuse production OAuth/token storage or alter the public route for a rehearsal.
+Grant that instance write access only to its own store parent. The first successful upstream fetch
+establishes the accepted baseline. Existing stores must be bare repositories; interrupted initial
+creation is retried without deleting the repository or its accepted branch.
+
+Each request fetches fixed upstream main into `refs/heads/served-main` without force. A fetch
+failure, including a history rewind, serves no files; cached objects are retained for later
+recovery, not silently served. The resolved commit SHA pins all text/archive reads. The stable
+sibling `repository.git.lock` covers initialization, fetch and reads and must never be unlinked or
+replaced. Waits are bounded (10 seconds per lock stage, 90 seconds total request budget; fetch up to
+30 seconds). A timed-out Git process group is killed and reaped before releasing the lock.
+
+Keep `KillMode=control-group` on every MCP unit. It is required so abrupt service death cannot leave
+Git/SSH descendants mutating the store after a replacement process starts. TEST must exercise real
+service-owner death during a blocked fetch, confirm descendants disappear before restart/delivery,
+and then prove read/archive recovery. Unit tests alone do not establish that service-manager
+boundary.
+
+A hard kill or interrupted filesystem write may leave Git's internal lock files. Requests then fail
+closed with Git operation/exit diagnostics; there is no automatic lock deletion or store reset. For
+manual recovery, stop the exact affected user service, confirm its entire cgroup and all other users
+of that store are stopped, then acquire the stable external lock before inspecting the repository.
+Only after establishing that an internal Git lock is stale, move it aside to a dated recovery path;
+retain the accepted branch and repository objects. Release the external lock, restart the same
+service, and verify a fresh successful read/archive. Do not remove the stable external lock file.
+For an upstream rewrite, reconcile the intended upstream history explicitly; do not reset the
+accepted branch merely to make delivery succeed.
 
 ## Verify
 

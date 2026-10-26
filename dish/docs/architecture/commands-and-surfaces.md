@@ -15,12 +15,16 @@ Current anchors include `dish_service/cli.py`, `dish_service/admin_cli.py`, `dis
 Stable connected-agent command names are owned below transport composition by `dish_tool/command_identity.py`. `ACTION_COMMAND_DEFINITIONS` in `dish_service/command_spec.py` must cover that identity set exactly and remains authoritative for Action-specific principal, request-ID/replay, route, workflow-link, validation, and schema metadata. The generated Action schema derives from those service definitions. A command existing elsewhere in CLI/application code does not by itself mean that the connected GPT can call it.
 
 The MCP app additionally exposes two transport-local, read-only Honest Pantry context tools; neither
-is a Dish workflow command or joins the connected command identity set. `dish_honest_read` updates
-the single host checkout before returning bounded text files. Its response may identify missing
-recommended routing files, including the Planning protocol, whose "Route by intent" decides which
-further docs a request reads. `dish_honest_archive` applies the same fail-closed exact-main refresh
-and returns the tracked tree as one bounded embedded ZIP with a commit/tree manifest for local
-extraction and search. Discovery or delivery is not proof that the caller read or followed a file.
+is a Dish workflow command or joins the connected command identity set. `dish_honest_read` fetches
+upstream main into a service-owned bare repository, independent of the human working checkout,
+before returning bounded text files. The non-forced accepted branch preserves fast-forward history;
+every response requires a successful fetch and pins all reads to one commit. A stable external lock
+serializes initialization, fetching and reads across threads/processes. TEST and production use
+separate stores. Its response may identify missing recommended routing files, including the Planning
+protocol, whose "Route by intent" decides which further docs a request reads. `dish_honest_archive`
+applies the same fail-closed exact-main refresh and returns the tracked tree as one bounded embedded
+ZIP with a commit/tree manifest for local extraction and search. Discovery or delivery is not proof
+that the caller read or followed a file.
 
 ## Actors, processes, and stores
 

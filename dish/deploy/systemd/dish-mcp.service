@@ -8,6 +8,8 @@ Type=simple
 WorkingDirectory=/home/marco/ai-tools/dish
 EnvironmentFile=/home/marco/.config/dish-service/mcp.env
 ExecStart=/home/marco/ai-tools/dish/.venv/bin/python -m dish_service.mcp_server
+Environment=DISH_MCP_HONEST_STORE=/home/marco/.local/share/dish/honest-mcp/prod/repository.git
+KillMode=control-group
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
@@ -16,7 +18,7 @@ UMask=0077
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/marco/.local/share/fastmcp /home/marco/honest-pantry
+ReadWritePaths=/home/marco/.local/share/fastmcp /home/marco/.local/share/dish/honest-mcp/prod
 
 [Install]
 WantedBy=default.target
