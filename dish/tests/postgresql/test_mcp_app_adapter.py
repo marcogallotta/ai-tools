@@ -220,6 +220,8 @@ def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path
                    capture_output=True)
     (checkout / "README.md").write_text("working tree only\n")
     (checkout / "untracked.txt").write_text("not archived\n")
+    (checkout / ".git/info/exclude").write_text("ignored.txt\n")
+    (checkout / "ignored.txt").write_text("also not archived\n")
 
     from dish_service import honest_store
     monkeypatch.setattr(honest_store, "REMOTE_URL", str(origin))
@@ -267,6 +269,7 @@ def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path
         assert bundle.read("README.md") == b"committed\n"
         assert bundle.read(".hidden") == b"hidden\n"
         assert "untracked.txt" not in bundle.namelist()
+        assert "ignored.txt" not in bundle.namelist()
         assert not any(name.startswith(".git/") for name in bundle.namelist())
         manifest = json.loads(bundle.read("FILES-MANIFEST.json"))
     assert manifest == {
@@ -306,15 +309,15 @@ def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path
 
 def test_honest_archive_failure_returns_no_file(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        mcp_server, "build_honest_archive",
-        lambda checkout, full_zip=False: (_ for _ in ()).throw(RuntimeError("refresh failed")),
+        mcp_server, "honest_snapshot",
+        lambda checkout: (_ for _ in ()).throw(RuntimeError("refresh failed")),
     )
 
-    result = asyncio.run(mcp_server.HonestArchiveTool(tmp_path).run({}))
-
-    assert result.is_error is False
-    assert len(result.content) == 1
-    assert result.content[0].text == "Honest archive unavailable: refresh failed"
+    for requested in ({}, {"full_zip": True}):
+        result = asyncio.run(mcp_server.HonestArchiveTool(tmp_path).run(requested))
+        assert result.is_error is False
+        assert len(result.content) == 1
+        assert result.content[0].text == "Honest archive unavailable: refresh failed"
 
 
 def test_honest_read_fetches_main_and_returns_pinned_text(tmp_path, monkeypatch):
