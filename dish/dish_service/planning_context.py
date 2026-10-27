@@ -45,10 +45,6 @@ class PlanningContextError(ValueError):
     """No incomplete or ambiguous bundle is eligible for a context receipt."""
 
 
-class SourceVersionMismatch(PlanningContextError):
-    """The trial's local corpus does not match the resolved repository source."""
-
-
 def canonical_run_id(run_id: str) -> str:
     try:
         parsed = str(uuid.UUID(run_id))
@@ -299,16 +295,8 @@ def assemble_planning_context(
     read_files: Callable[[Path, list[str]], Mapping[str, Any]], *,
     run_id: str, agent: str, scope: str, target: str = "",
     focus_dish_ids: list[str] | None = None,
-    document_delivery: str = "text", archive_sha: str | None = None,
 ) -> dict[str, Any]:
     canonical_run_id(run_id)
-    if document_delivery not in {"text", "local_archive"}:
-        raise PlanningContextError("document_delivery must be text or local_archive")
-    if document_delivery == "local_archive":
-        if not isinstance(archive_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", archive_sha):
-            raise PlanningContextError("local_archive requires the manifest's 40-character commit as archive_sha")
-    elif archive_sha is not None:
-        raise PlanningContextError("archive_sha is only used with local_archive")
     if agent not in {"gpt", "claude", "codex"}:
         raise PlanningContextError("agent must be gpt, claude, or codex")
     if scope not in {"broad", "block", "dish"}:
@@ -335,8 +323,6 @@ def assemble_planning_context(
     paths = list(BROAD_DOCS if scope == "broad" else
                  BLOCK_BASE_DOCS if scope == "block" else DISH_DOCS)
     sha, files = _read(read_files, checkout, paths)
-    if document_delivery == "local_archive" and archive_sha != sha:
-        raise SourceVersionMismatch("Archive commit differs from current Honest Pantry main; refresh the archive or use text mode")
     index_row = None
     parent_path = None
     block_detail_text = ""
@@ -459,12 +445,6 @@ def assemble_planning_context(
                 )
             extra_titles[dish_id] = label
 
-    if document_delivery == "local_archive":
-        # Resolve exactly the same source files and history as text mode, but
-        # leave the document bodies in the caller's verified local archive.
-        payload["files"] = [{"path": entry["path"]} for entry in files]
-        payload["document_delivery"] = "local_archive"
-        payload["documents_delivered"] = False
     if len(json.dumps(payload, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
         raise PlanningContextError("Context exceeds the configured budget; no receipt was issued")
     payload["receipt"] = _format_receipt(
@@ -472,17 +452,11 @@ def assemble_planning_context(
         cooked=compact_cooked, logs=logs, checked_dish_ids=sorted(relevant_ids),
         focus=focus, canonical=canonical, extra_titles=extra_titles,
     )
-    if document_delivery == "local_archive":
-        payload["receipt"] = payload["receipt"].replace(
-            "Context loaded (", "Context sources and history loaded (", 1,
-        ).replace("\nDocs: ", "\nRequired local docs: ", 1) + (
-            "\nDocument bodies not delivered; local reading is not verified."
-        )
     return payload
 
 
 class PlanningReceiptStore:
-    """Run admission/source provenance, not proof of document reading."""
+    """MCP-owned evidence that an authenticated run received a complete bundle."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
