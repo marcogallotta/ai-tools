@@ -39,7 +39,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from dish_service.client import DishActionClient
 from dish_service.honest_store import git as _honest_git, snapshot as honest_snapshot
 from dish_service.planning_context import (
-    PlanningContextError, PlanningReceiptStore, SourceVersionMismatch, assemble_planning_context,
+    PlanningContextError, PlanningReceiptStore, assemble_planning_context,
 )
 
 SERVER_NAME = "dish-postgresql-mcp"
@@ -619,10 +619,7 @@ class PlanningContextTool(FastMCPTool):
                 "Planning answer unless the protocol's route exempts the request; show the "
                 "Context receipt. Broad for open cross-programme "
                 "planning, block for an exact registered block, dish for a named dish. "
-                "Supply focus_dish_ids to check full logs for finalists and plausible aliases. "
-                "Default document_delivery=text. Only when Marco explicitly opts into the "
-                "reduced-context trial for this chat, use local_archive with the extracted "
-                "manifest commit as archive_sha; then read every returned path locally."
+                "Supply focus_dish_ids to check full logs for finalists and plausible aliases."
             ),
             parameters={
                 "type": "object",
@@ -634,14 +631,6 @@ class PlanningContextTool(FastMCPTool):
                     },
                     "scope": {"type": "string", "enum": ["broad", "block", "dish"]},
                     "target": {"type": "string", "default": ""},
-                    "document_delivery": {
-                        "type": "string", "enum": ["text", "local_archive"], "default": "text",
-                        "description": "local_archive is an explicit per-chat trial, never automatic.",
-                    },
-                    "archive_sha": {
-                        "type": "string", "pattern": "^[0-9a-f]{40}$",
-                        "description": "FILES-MANIFEST.json commit, required only for local_archive.",
-                    },
                     "focus_dish_ids": {
                         "type": "array",
                         "items": {"type": "string", "format": "uuid"},
@@ -674,8 +663,6 @@ class PlanningContextTool(FastMCPTool):
                 run_id=run_id, agent=arguments.get("agent"),
                 scope=arguments.get("scope"), target=arguments.get("target", ""),
                 focus_dish_ids=arguments.get("focus_dish_ids"),
-                document_delivery=arguments.get("document_delivery", "text"),
-                archive_sha=arguments.get("archive_sha"),
             )
             target = result["canonical_dish_id"] if result["scope"] == "dish" else result["target"]
             self._store.record(
@@ -698,9 +685,7 @@ class PlanningContextTool(FastMCPTool):
         except (PlanningContextError, ValueError, RuntimeError, OSError) as exc:
             LOG.warning("mcp_planning_context_failure error_type=%s", type(exc).__name__)
             error = {
-                "ok": False,
-                "code": "SOURCE_VERSION_MISMATCH" if isinstance(exc, SourceVersionMismatch)
-                else "PLANNING_CONTEXT_FAILED",
+                "ok": False, "code": "PLANNING_CONTEXT_FAILED",
                 "message": str(exc), "receipt_recorded": False,
             }
             return ToolResult(
