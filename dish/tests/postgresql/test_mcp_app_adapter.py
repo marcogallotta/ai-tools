@@ -201,6 +201,11 @@ def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path
     )
     subprocess.run(["git", "clone", str(origin), str(source)], check=True, capture_output=True)
     (source / "nested").mkdir()
+    for directory in ("archive", "dish-incidents", "rollout-tests", "dish-schema-migrations"):
+        (source / directory / "deep").mkdir(parents=True)
+        (source / directory / "deep" / "old.txt").write_text(directory)
+    (source / "archive-like").mkdir()
+    (source / "archive-like" / "keep.txt").write_text("keep\n")
     (source / "README.md").write_text("committed\n")
     (source / ".hidden").write_text("hidden\n")
     (source / "nested/file.txt").write_text("nested\n")
@@ -215,6 +220,8 @@ def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path
                    capture_output=True)
     (checkout / "README.md").write_text("working tree only\n")
     (checkout / "untracked.txt").write_text("not archived\n")
+    (checkout / ".git/info/exclude").write_text("ignored.txt\n")
+    (checkout / "ignored.txt").write_text("also not archived\n")
 
     from dish_service import honest_store
     monkeypatch.setattr(honest_store, "REMOTE_URL", str(origin))
@@ -222,7 +229,11 @@ def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path
     result = asyncio.run(tool.run({}))
 
     assert tool.name == "dish_honest_archive"
-    assert tool.parameters == {"type": "object", "properties": {}, "additionalProperties": False}
+    assert tool.parameters == {
+        "type": "object",
+        "properties": {"full_zip": {"type": "boolean", "default": False}},
+        "additionalProperties": False,
+    }
     assert tool.annotations.read_only_hint is True
     assert tool.annotations.idempotent_hint is True
     assert tool.annotations.destructive_hint is False
@@ -240,18 +251,25 @@ def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path
         ["git", "-C", str(source), "rev-parse", "HEAD^{tree}"], check=True,
         capture_output=True, text=True,
     ).stdout.strip()
-    assert resource.uri == f"file:///honest-pantry-files-{sha}.zip"
+    assert resource.uri == f"file:///honest-pantry-files-filtered-{sha}.zip"
     payload = base64.b64decode(resource.blob)
     assert hashlib.sha256(payload).hexdigest() in result.content[0].text
     repeated = asyncio.run(tool.run({}))
     assert base64.b64decode(repeated.content[1].resource.blob) == payload
+    assert base64.b64decode(asyncio.run(tool.run({"full_zip": False})).content[1].resource.blob) == payload
+    assert "Omitted 4 tracked files" in result.content[0].text
+    assert "dish_honest_archive(full_zip=true)" in result.content[0].text
+    assert "Missing files in this filtered ZIP" in result.content[0].text
+    assert "compare manifests" in result.content[0].text
     with zipfile.ZipFile(io.BytesIO(payload)) as bundle:
         assert set(bundle.namelist()) == {
-            ".hidden", "README.md", "nested/", "nested/file.txt", "FILES-MANIFEST.json",
+            ".hidden", "README.md", "nested/", "nested/file.txt",
+            "archive-like/", "archive-like/keep.txt", "FILES-MANIFEST.json",
         }
         assert bundle.read("README.md") == b"committed\n"
         assert bundle.read(".hidden") == b"hidden\n"
         assert "untracked.txt" not in bundle.namelist()
+        assert "ignored.txt" not in bundle.namelist()
         assert not any(name.startswith(".git/") for name in bundle.namelist())
         manifest = json.loads(bundle.read("FILES-MANIFEST.json"))
     assert manifest == {
@@ -259,21 +277,47 @@ def test_honest_archive_tool_returns_exact_tracked_main_as_embedded_zip(tmp_path
         "ref": "refs/heads/main",
         "commit": sha,
         "tree": tree,
-        "files": 3,
+        "files": 4,
+        "full_zip": False,
+        "source_files": 8,
+        "excluded_directories": [
+            "archive/", "dish-incidents/", "rollout-tests/", "dish-schema-migrations/",
+        ],
+        "excluded_files": 4,
     }
+    full = asyncio.run(tool.run({"full_zip": True}))
+    assert full.content[1].resource.uri == f"file:///honest-pantry-files-full-{sha}.zip"
+    assert "No directories omitted" in full.content[0].text
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(full.content[1].resource.blob))) as bundle:
+        for directory in ("archive", "dish-incidents", "rollout-tests", "dish-schema-migrations"):
+            assert f"{directory}/deep/old.txt" in bundle.namelist()
+        full_manifest = json.loads(bundle.read("FILES-MANIFEST.json"))
+    assert full_manifest == {
+        **manifest, "files": 8, "full_zip": True, "excluded_directories": [],
+        "excluded_files": 0,
+    }
+    for invalid in ("false", 0, None, []):
+        rejected = asyncio.run(tool.run({"full_zip": invalid}))
+        assert len(rejected.content) == 1
+        assert "full_zip must be a boolean" in rejected.content[0].text
+    monkeypatch.setattr(mcp_server, "HONEST_ARCHIVE_MAX_BYTES", 1)
+    for requested in ({}, {"full_zip": True}):
+        oversized = asyncio.run(tool.run(requested))
+        assert len(oversized.content) == 1
+        assert "exceeds 1 bytes" in oversized.content[0].text
 
 
 def test_honest_archive_failure_returns_no_file(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        mcp_server, "build_honest_archive",
+        mcp_server, "honest_snapshot",
         lambda checkout: (_ for _ in ()).throw(RuntimeError("refresh failed")),
     )
 
-    result = asyncio.run(mcp_server.HonestArchiveTool(tmp_path).run({}))
-
-    assert result.is_error is False
-    assert len(result.content) == 1
-    assert result.content[0].text == "Honest archive unavailable: refresh failed"
+    for requested in ({}, {"full_zip": True}):
+        result = asyncio.run(mcp_server.HonestArchiveTool(tmp_path).run(requested))
+        assert result.is_error is False
+        assert len(result.content) == 1
+        assert result.content[0].text == "Honest archive unavailable: refresh failed"
 
 
 def test_honest_read_fetches_main_and_returns_pinned_text(tmp_path, monkeypatch):
