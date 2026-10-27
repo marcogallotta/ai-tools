@@ -61,6 +61,9 @@ HONEST_STORE = Path(os.environ.get(
 HONEST_MAX_FILES = 16
 HONEST_MAX_BYTES = 512 * 1024
 HONEST_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
+HONEST_ARCHIVE_EXCLUDED_DIRECTORIES = (
+    "archive/", "dish-incidents/", "rollout-tests/", "dish-schema-migrations/",
+)
 LOG = logging.getLogger("dish.mcp")
 HONEST_PLANNING_START_PATHS = ("dish-planning-protocol.md",)
 HONEST_PLANNING_TRIGGER_PATHS = (*HONEST_PLANNING_START_PATHS, "dish-classes.md", "planning/direction.md")
@@ -89,7 +92,12 @@ SERVER_INSTRUCTIONS = (
     "for any further work on that Dish. "
     "For any Honest Pantry task needing multiple files, repository search, or routing context, "
     "call dish_honest_archive first, extract its ZIP, verify FILES-MANIFEST.json, and use that "
-    "local tree for the task. Do not request those files individually or call dish_honest_read "
+    "local tree for the task. The default ZIP omits archive/, dish-incidents/, rollout-tests/, "
+    "and dish-schema-migrations/; missing files there may still exist in the repository. "
+    "If those files are needed, including required incident reads before protocol edits, re-call "
+    "dish_honest_archive(full_zip=true) without asking Marco. A re-call can have a newer commit; "
+    "compare manifests and use the latest commit consistently. Do not request those files "
+    "individually or call dish_honest_read "
     "first. Use dish_honest_read only for a genuinely bounded single-file lookup or after "
     "dish_honest_archive returns a concrete failure. Never ask Marco to supply or approve "
     "individual repository files. Both tools update main first and serve nothing if that update "
@@ -178,15 +186,26 @@ def build_honest_tool(checkout: Path = HONEST_STORE) -> FunctionTool:
     )
 
 
-def build_honest_archive(checkout: Path) -> dict[str, Any]:
-    """Build a bounded ZIP of the exact refreshed Honest Pantry tracked tree."""
+def build_honest_archive(checkout: Path, full_zip: bool = False) -> dict[str, Any]:
+    """Build a bounded ZIP from the exact refreshed Honest Pantry tracked tree."""
+    if type(full_zip) is not bool:
+        raise ValueError("full_zip must be a boolean")
     with honest_snapshot(checkout) as sha:
         tree = _honest_git(checkout, "rev-parse", f"{sha}^{{tree}}").decode().strip()
         raw_paths = _honest_git(checkout, "ls-tree", "-r", "-z", "--name-only", sha)
         paths = [path for path in raw_paths.split(b"\0") if path]
         if b"FILES-MANIFEST.json" in paths:
             raise RuntimeError("Honest Pantry tracks reserved FILES-MANIFEST.json; no archive was served")
-        archive = _honest_git(checkout, "archive", "--format=zip", sha, timeout=30)
+        excluded_directories = [] if full_zip else list(HONEST_ARCHIVE_EXCLUDED_DIRECTORIES)
+        included = [path for path in paths if not any(
+            path.startswith(prefix.encode()) for prefix in excluded_directories
+        )]
+        archive_args = ["archive", "--format=zip", sha]
+        if not full_zip:
+            archive_args.extend(["--", ".", *(
+                f":(exclude,top){prefix}**" for prefix in excluded_directories
+            )])
+        archive = _honest_git(checkout, *archive_args, timeout=30)
         commit_time = int(
             _honest_git(checkout, "show", "-s", "--format=%ct", sha).decode().strip()
         )
@@ -195,7 +214,11 @@ def build_honest_archive(checkout: Path) -> dict[str, Any]:
             "ref": "refs/heads/main",
             "commit": sha,
             "tree": tree,
-            "files": len(paths),
+            "files": len(included),
+            "full_zip": full_zip,
+            "source_files": len(paths),
+            "excluded_directories": excluded_directories,
+            "excluded_files": len(paths) - len(included),
         }
         buffer = io.BytesIO(archive)
         manifest_info = zipfile.ZipInfo(
@@ -216,14 +239,17 @@ def build_honest_archive(checkout: Path) -> dict[str, Any]:
         return {
             "sha": sha,
             "tree": tree,
-            "files": len(paths),
+            "files": len(included),
+            "full_zip": full_zip,
+            "excluded_directories": excluded_directories,
+            "excluded_files": len(paths) - len(included),
             "archive": payload,
             "archive_sha256": hashlib.sha256(payload).hexdigest(),
         }
 
 
 class HonestArchiveTool(FastMCPTool):
-    """Return the current Honest Pantry tracked tree as one embedded ZIP file."""
+    """Return current Honest Pantry tracked files as one embedded ZIP file."""
 
     _checkout: Path = PrivateAttr()
 
@@ -232,10 +258,16 @@ class HonestArchiveTool(FastMCPTool):
             name="dish_honest_archive",
             title="Download current Honest Pantry files",
             description=(
-                "Download the exact current Honest Pantry main branch as one verified ZIP for "
-                "local extraction and search. Check FILES-MANIFEST.json after extraction."
+                "Download current Honest Pantry main as a verified ZIP. By default it omits "
+                "archive/, dish-incidents/, rollout-tests/, and dish-schema-migrations/. "
+                "Use full_zip=true for every tracked file, including incident material. "
+                "Check FILES-MANIFEST.json after extraction."
             ),
-            parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            parameters={
+                "type": "object",
+                "properties": {"full_zip": {"type": "boolean", "default": False}},
+                "additionalProperties": False,
+            },
             annotations=ToolAnnotations(
                 readOnlyHint=True, idempotentHint=True,
                 destructiveHint=False, openWorldHint=False,
@@ -245,18 +277,33 @@ class HonestArchiveTool(FastMCPTool):
 
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
         try:
-            result = await asyncio.to_thread(build_honest_archive, self._checkout)
+            full_zip = arguments.get("full_zip", False)
+            if type(full_zip) is not bool:
+                raise ValueError("full_zip must be a boolean")
+            result = await asyncio.to_thread(build_honest_archive, self._checkout, full_zip)
         except (RuntimeError, ValueError, OSError) as exc:
             LOG.warning("mcp_honest_archive_failure error_type=%s", type(exc).__name__)
             return ToolResult(
                 content=[TextContent(type="text", text=f"Honest archive unavailable: {exc}")],
                 is_error=False,
             )
-        name = f"honest-pantry-files-{result['sha']}.zip"
+        mode = "full" if result["full_zip"] else "filtered"
+        name = f"honest-pantry-files-{mode}-{result['sha']}.zip"
+        omissions = (
+            "No directories omitted."
+            if result["full_zip"] else
+            f"Omitted {result['excluded_files']} tracked files under "
+            f"{', '.join(result['excluded_directories'])}. "
+            "Missing files in this filtered ZIP may still exist in the repository. "
+            "If omitted material is needed, re-call dish_honest_archive(full_zip=true) "
+            "without asking Marco."
+        )
         summary = (
             f"Honest Pantry archive {name}: {result['files']} tracked files, "
             f"{len(result['archive'])} bytes, sha256 {result['archive_sha256']}. "
-            "Extract it and verify FILES-MANIFEST.json before use."
+            f"{omissions} Extract it and verify FILES-MANIFEST.json before use. "
+            "A re-call may refresh to a newer commit; compare manifests and use one latest "
+            "commit consistently."
         )
         return ToolResult(
             content=[

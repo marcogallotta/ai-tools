@@ -22,9 +22,12 @@ every response requires a successful fetch and pins all reads to one commit. A s
 serializes initialization, fetching and reads across threads/processes. TEST and production use
 separate stores. Its response may identify missing recommended routing files, including the Planning
 protocol, whose "Route by intent" decides which further docs a request reads. `dish_honest_archive`
-applies the same fail-closed exact-main refresh and returns the tracked tree as one bounded embedded
-ZIP with a commit/tree manifest for local extraction and search. Discovery or delivery is not proof
-that the caller read or followed a file.
+applies the same fail-closed exact-main refresh and returns a bounded embedded ZIP with a commit/tree
+manifest for local extraction and search. By default, it excludes tracked files under `archive/`,
+`dish-incidents/`, `rollout-tests/`, and `dish-schema-migrations/`; the optional boolean
+`full_zip=true` includes the entire tracked tree. The manifest retains the source tree identity
+and records inclusion and exclusion counts. The GitHub Actions artifact remains full. Discovery or
+delivery is not proof that the caller read or followed a file.
 
 ## Actors, processes, and stores
 
