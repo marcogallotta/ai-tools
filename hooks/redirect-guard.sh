@@ -6,7 +6,7 @@ input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 
 deny() {
-  jq -nc --arg r "$1 Do not work around this guard with another shell write (heredoc, cp, printf, python -c, etc.); use the named alternative or stop and ask Marco." \
+  jq -nc --arg r "$1" \
     '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
   exit 0
 }
