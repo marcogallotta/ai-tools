@@ -32,7 +32,6 @@ def test_denies_edit_tools_writing_auto_memory(tmp_path, tool, field, path):
     output = _run(tmp_path, tool, field, str(tmp_path / path))["hookSpecificOutput"]
     assert output["permissionDecision"] == "deny"
     assert "[memory-write]" in output["permissionDecisionReason"]
-    assert "Do not work around this" in output["permissionDecisionReason"]
 
 
 def test_denies_relative_memory_path(tmp_path):

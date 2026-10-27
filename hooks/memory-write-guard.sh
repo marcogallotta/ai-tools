@@ -52,10 +52,7 @@ def main() -> int:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse", "permissionDecision": "deny",
             "permissionDecisionReason":
-                f"[memory-write] blocked: auto-memory is not allowed ({raw}). "
-                "Do not work around this: no Bash, scripts, other tools, or other "
-                "paths to write memory or MEMORY.md. If something is worth "
-                "remembering, tell Marco in chat and let him decide.",
+                f"[memory-write] blocked: auto-memory is not allowed ({raw}).",
         }}))
     return 0
 
