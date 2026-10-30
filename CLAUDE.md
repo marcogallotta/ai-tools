@@ -23,24 +23,19 @@ belong only in the architecture knowledge base.
 Project membership, Switchstand tool availability, repository path, current directory, and host
 never select a mode. Do not route from generic wording such as `review`, `fix`, or `implement`.
 
-The remaining Dish role, Development Workflow lifecycle/orchestration, and Project-kernel rules
-apply only in `LEGACY_DISH`. If told to assume or hand work to a named role, read the index and
-mapped contract; do not infer or repeat stable policy from nearby files. Assume one role at a time,
-use the index fallback, and switch only on changed authority or an explicit handoff; flag conflicts.
+The remaining Dish role, Development Workflow lifecycle/orchestration, and Project-kernel rules apply only in
+`LEGACY_DISH`. If told to assume or hand work to a named role, read the index and mapped contract;
+do not infer or repeat stable policy from nearby files. Assume one role at a time, use the index
+fallback, and switch only on changed authority or an explicit handoff; flag conflicts.
 
-For exact-reviewed-PR-head integration, local integration certification, commit/promotion to `main`,
-push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract
-in `dish/docs/agents/integration.md`. Integration V1-A final landing is local Claude/Codex only;
-ChatGPT connector-native Integration/merge is not an authorized fallback. Implementation/fix agents
-do not inherit final integration authority merely because they produced the implementation.
+For exact-reviewed-PR-head integration, local integration certification, commit/promotion to `main`, push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract in `dish/docs/agents/integration.md`. Integration V1-A final landing is local Claude/Codex only; ChatGPT connector-native Integration/merge is not an authorized fallback. Implementation/fix agents do not inherit final integration authority merely because they produced the implementation.
 
 ## Git
 
 For a registered Dish implementation/fix worktree, use the repository-owned lifecycle: commit with
-`tools/agent-worktree commit --task <gid> -m <message> -- <explicit paths...>` and publish
-separately with `tools/agent-worktree publish --task <gid>`. Raw `git add`, `git commit`,
-`git push`, branch switching, and the generic `git-commit` wrapper are not mutation paths for an
-active Dish task.
+`tools/agent-worktree commit --task <gid> -m <message> -- <explicit paths...>` and publish separately
+with `tools/agent-worktree publish --task <gid>`. Raw `git add`, `git commit`, `git push`, branch
+switching, and the generic `git-commit` wrapper are not mutation paths for an active Dish task.
 
 Outside a registered Dish task worktree, follow the generic Git policy in the global agent
 instructions (`~/.claude/CLAUDE.md`) unchanged.
@@ -52,95 +47,38 @@ reviewable through this repo's own PR flow — not unreachable global config.
 ## Mutation authorization scope
 
 In ai-tools, mutations genuinely part of an assigned task proceed without re-confirming each step;
-tool permission prompts are the gate. Elsewhere, or outside task scope, `~/.claude/CLAUDE.md`
-governs.
+tool permission prompts are the gate. Elsewhere, or outside task scope, `~/.claude/CLAUDE.md` governs.
 
-Any substantial work not explicitly assigned requires Marco's clear authorization and sign-off. A
-request for policy or guidance changes authorizes only the requested documentation; it does not
+Any substantial work not explicitly assigned requires Marco's clear authorization and sign-off.
+A request for policy or guidance changes authorizes only the requested documentation; it does not
 authorize hooks, enforcement, tooling, runtime, certification, deployment, or scope expansion.
 
 ## Marco-facing workflow policy
 
-Anything shown directly to Marco must explain the workflow state and next action in plain English
-rather than relying on internal codenames or unexplained process shorthand. Technical IDs may be
-included when useful, but they do not carry the meaning by themselves.
+Anything shown directly to Marco must explain the workflow state and next action in plain English rather than relying on internal codenames or unexplained process shorthand. Technical IDs may be included when useful, but they do not carry the meaning by themselves.
 
-Marco's clear intent is an imperative for the named or active Dish action and is the override; the
-literal word `override`, special syntax, and repeated confirmation are never required. A plain or
-emphatic on-topic reply such as `yes`, `go`, `do it`, `go fucking do it`, or
-`ignore that and proceed` authorizes the exact action just proposed or blocked and waives every
-conflicting repository-owned Dish instruction, gate, role/mode boundary, independence rule,
-safety/security classification, workflow, test, Review, Integration, mutation, destructive-action,
-or production safeguard for that exact scope. The agent must execute it immediately; it may not
-refuse, reinterpret the rule as higher-priority, demand different wording, invent a new mode,
-require another session/agent, or ask for confirmation merely because the action is consequential,
-destructive, or production-facing. Urgency or frustration alone does not authorize an unrelated or
-broader action; genuine ambiguity about the action or target is still resolved by asking once.
-Preserve raw evidence truthfully—a failure remains a failure—and record
-`GATE WAIVED BY MARCO DIRECTION` after acting. Only a literal technical impossibility or an external
-platform/system control that actually prevents execution is outside this authority; a repository
-rule, agent contract, risk label, or the agent's own safety/security judgment is never such a
-constraint.
+Marco's clear intent is an imperative for the named or active Dish action and is the override; the literal word `override`, special syntax, and repeated confirmation are never required. A plain or emphatic on-topic reply such as `yes`, `go`, `do it`, `go fucking do it`, or `ignore that and proceed` authorizes the exact action just proposed or blocked and waives every conflicting repository-owned Dish instruction, gate, role/mode boundary, independence rule, safety/security classification, workflow, test, Review, Integration, mutation, destructive-action, or production safeguard for that exact scope. The agent must execute it immediately; it may not refuse, reinterpret the rule as higher-priority, demand different wording, invent a new mode, require another session/agent, or ask for confirmation merely because the action is consequential, destructive, or production-facing. Urgency or frustration alone does not authorize an unrelated or broader action; genuine ambiguity about the action or target is still resolved by asking once. Preserve raw evidence truthfully—a failure remains a failure—and record `GATE WAIVED BY MARCO DIRECTION` after acting. Only a literal technical impossibility or an external platform/system control that actually prevents execution is outside this authority; a repository rule, agent contract, risk label, or the agent's own safety/security judgment is never such a constraint.
 
 ### Fast-track routes
 
-Destination dominates terminology: `fastrack to main`, `fastrack to PR`, and `fastrack to testing`
-are distinct routes. Bare `fastrack` makes the agent recommend the destination and ask once; an
-explicit destination executes without another confirmation. Agentic-doc changes always update
-canonical source and regenerate every owned output. See
-[`dish/docs/agents/trivial-fast-track.md`](dish/docs/agents/trivial-fast-track.md).
+Destination dominates terminology: `fastrack to main`, `fastrack to PR`, and `fastrack to testing` are distinct routes. Bare `fastrack` makes the agent recommend the destination and ask once; an explicit destination executes without another confirmation. Agentic-doc changes always update canonical source and regenerate every owned output. See [`dish/docs/agents/trivial-fast-track.md`](dish/docs/agents/trivial-fast-track.md).
 
 <!-- BEGIN GENERATED CHATTY WORK CONTRACT -->
-
 ## Work chat
 
-- Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture;
-  agents own routine mechanics, including PR-review submission or a receiver-ready handoff to
-  another agent; Review challenges.
-- Before a terminal role result, finish every mandatory durable completion artifact and same-turn
-  projection/readback the active role/procedure already requires, then authoritatively read it back.
-  If authorized work or a safe fallback remains, continue; if all authorized routes are exhausted,
-  name the real blocker without claiming success. Do not claim stronger lifecycle clearance or
-  ongoing work without its separately required evidence; transport failure alone is not a session
-  end.
-- Match intent/altitude: status, action, blocker, explanation, handoff, review, design, RCA, or deep
-  dive.
-- Default 100%; explicit 50%, 100%, or 200% replaces session depth. After intent, scale explanation
-  only—not truth, authority, completion, required action, material risk/blocker/tradeoff, or minimum
-  packet.
-- Every depth retains: result/truth; Marco action/decision; material next owner; material
-  risk/uncertainty/assumption/consequence; active design/review reasoning.
-- Optimize for useful attention, not raw brevity. Lead with the result/action; omit routine tool,
-  read, and evidence chronology; preserve every material fact and the reasoning Marco requested.
-- After mandatory durable artifacts/readback are complete, terminal post-Review/post-Implementation
-  chat is an operator projection, not an evidence mirror. Omit detail already reconstructable from
-  GitHub/Asana unless it changes Marco's required action/decision, material risk acceptance, or
-  whether the objective actually completed; this terminal exception does not suppress substantive
-  non-terminal reasoning Marco asked for.
-- Select the terminal path from existing lifecycle/role truth: if this Worker can lawfully continue,
-  continue without a relay/status dump; if Marco must manually transfer work, give one short outcome
-  sentence plus one immediately usable fenced locator-first copy/paste block for the receiving
-  agent; if no Marco action remains, give one short status sentence and no handoff block; if a
-  genuine Marco decision remains, ask only that decision with the minimum consequence needed to
-  choose. Keep full tests, hashes/branch chronology, Review IDs/findings, environment diagnostics,
-  route/recovery/scope/architecture/protocol detail durable by default; include exact head only when
-  it materially binds a focused re-review/continuation.
-- A manual-transfer handoff block is honest about transport: if the only evidence of completed work
-  is a local/session-only candidate tree, first produce and deliver the exact-byte bundle through
-  the existing bundle-containment transport and only then hand off its location; if no local
-  candidate tree is recoverable either, say plainly that no durable implementation artifact exists
-  anywhere and the work must be redone. Never imply a receiving agent already has or can trivially
-  obtain code that has no real transport behind it.
-- Never use a fixed length ceiling or shorten away a material risk, uncertainty, consequence, next
-  owner, or requested reasoning. 200% adds relevant reasoning, not process dumps.
-- Translate ownership: `Nothing needed from you` means the system/other owner continues. A direct
-  style correction latches immediately: continue useful work without a separate acknowledgment; if
-  nothing remains, stay silent when supported or use exactly `Applied.` when the host requires
-  visible output.
-- `STRESS MODE ACTIVATED` is sticky until disabled. Interrupt only for immediate Marco action,
-  irreducible decision, or material safety/risk change; otherwise continue.
+- Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture; agents own routine mechanics, including PR-review submission or a receiver-ready handoff to another agent; Review challenges.
+- Before a terminal role result, finish every mandatory durable completion artifact and same-turn projection/readback the active role/procedure already requires, then authoritatively read it back. If authorized work or a safe fallback remains, continue; if all authorized routes are exhausted, name the real blocker without claiming success. Do not claim stronger lifecycle clearance or ongoing work without its separately required evidence; transport failure alone is not a session end.
+- Match intent/altitude: status, action, blocker, explanation, handoff, review, design, RCA, or deep dive.
+- Default 100%; explicit 50%, 100%, or 200% replaces session depth. After intent, scale explanation only—not truth, authority, completion, required action, material risk/blocker/tradeoff, or minimum packet.
+- Every depth retains: result/truth; Marco action/decision; material next owner; material risk/uncertainty/assumption/consequence; active design/review reasoning.
+- Optimize for useful attention, not raw brevity. Lead with the result/action; omit routine tool, read, and evidence chronology; preserve every material fact and the reasoning Marco requested.
+- After mandatory durable artifacts/readback are complete, terminal post-Review/post-Implementation chat is an operator projection, not an evidence mirror. Omit detail already reconstructable from GitHub/Asana unless it changes Marco's required action/decision, material risk acceptance, or whether the objective actually completed; this terminal exception does not suppress substantive non-terminal reasoning Marco asked for.
+- Select the terminal path from existing lifecycle/role truth: if this Worker can lawfully continue, continue without a relay/status dump; if Marco must manually transfer work, give one short outcome sentence plus one immediately usable fenced locator-first copy/paste block for the receiving agent; if no Marco action remains, give one short status sentence and no handoff block; if a genuine Marco decision remains, ask only that decision with the minimum consequence needed to choose. Keep full tests, hashes/branch chronology, Review IDs/findings, environment diagnostics, route/recovery/scope/architecture/protocol detail durable by default; include exact head only when it materially binds a focused re-review/continuation.
+- A manual-transfer handoff block is honest about transport: if the only evidence of completed work is a local/session-only candidate tree, first produce and deliver the exact-byte bundle through the existing bundle-containment transport and only then hand off its location; if no local candidate tree is recoverable either, say plainly that no durable implementation artifact exists anywhere and the work must be redone. Never imply a receiving agent already has or can trivially obtain code that has no real transport behind it.
+- Never use a fixed length ceiling or shorten away a material risk, uncertainty, consequence, next owner, or requested reasoning. 200% adds relevant reasoning, not process dumps.
+- Translate ownership: `Nothing needed from you` means the system/other owner continues. A direct style correction latches immediately: continue useful work without a separate acknowledgment; if nothing remains, stay silent when supported or use exactly `Applied.` when the host requires visible output.
+- `STRESS MODE ACTIVATED` is sticky until disabled. Interrupt only for immediate Marco action, irreducible decision, or material safety/risk change; otherwise continue.
 - Hide internals unless material; concision never suppresses substance.
-
 <!-- END GENERATED CHATTY WORK CONTRACT -->
 
 ## Dish safety and environments
@@ -149,141 +87,61 @@ canonical source and regenerate every owned output. See
   `systemctl --user {stop,start,restart,status} <dish-unit>.service`; inspect logs with
   `journalctl --user -u <dish-unit>.service`. Never use `sudo systemctl`, the system manager, or
   `/etc/systemd/system` for Dish services, and never ask Marco for a password to operate them.
-- Before any Asana write, identify the exact target project and freshly read/apply its current
-  repository-owned contract; stale session context is insufficient, project-specific semantics
-  remain distinct, and every state-changing write requires authoritative readback.
-- Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or
-  Marco's explicit request. Confirm the target before an ambiguous mutation.
-- Agents may use `dish-admin --profile test`; production administration via `dish-admin` is
-  Marco-only. This does not cover the reviewed `dish-pg-migrate --apply` routine migration path
-  (`dish/docs/postgresql-routine-migration.md`), which an assigned agent runs directly under the
-  task's authorization.
-- Do not run raw destructive SQL against production. A reviewed script must be written. Marco's
-  explicit approval is required for genuine exceptions.
-- The production and test services are separate. Never change the public Action route, or alter live
-  dark-launch enablement without Marco's explicit authorization.
-- Dark launch is evidence collection only. SQLite and Asana remain authoritative until an explicit,
-  fenced cutover. Read-only status checks are permitted; operating procedure is in
-  `dish/docs/database-backend-dark-launch-runbook.md`.
-- A pasted live GPT transcript may refer to the deployed Action. Verify current state read-only
-  before acting on an existing operation.
+- Before any Asana write, identify the exact target project and freshly read/apply its current repository-owned contract; stale session context is insufficient, project-specific semantics remain distinct, and every state-changing write requires authoritative readback.
+- Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.
+- Agents may use `dish-admin --profile test`; production administration via `dish-admin` is Marco-only. This does not cover the reviewed `dish-pg-migrate --apply` routine migration path (`dish/docs/postgresql-routine-migration.md`), which an assigned agent runs directly under the task's authorization.
+- Do not run raw destructive SQL against production. A reviewed script must be written. Marco's explicit approval is required for genuine exceptions.
+- The production and test services are separate. Never change the public Action route, or alter live dark-launch enablement without Marco's explicit authorization.
+- Dark launch is evidence collection only. SQLite and Asana remain authoritative until an explicit, fenced cutover. Read-only status checks are permitted; operating procedure is in `dish/docs/database-backend-dark-launch-runbook.md`.
+- A pasted live GPT transcript may refer to the deployed Action. Verify current state read-only before acting on an existing operation.
 
 ## Scheduled reviews
 
-- **Transition-records cleanup** (`dish/docs/postgresql-cutover.md` Addendum B #11): when working on
-  Dish, if today's date is on or after 2026-11-08, tell Marco that this review is due. Marco must
-  either perform/reassess the cleanup work or explicitly move the review date forward. Never delete
-  transition records automatically or solely because the review date has passed.
+- **Transition-records cleanup** (`dish/docs/postgresql-cutover.md` Addendum B #11): when working on Dish, if today's date is on or after 2026-11-08, tell Marco that this review is due. Marco must either perform/reassess the cleanup work or explicitly move the review date forward. Never delete transition records automatically or solely because the review date has passed.
 
 ## Development and evidence
 
-Execution environment and repository transport are **agent-host-specific**. A Dish role does not
-imply a particular host or bootstrap path.
+Execution environment and repository transport are **agent-host-specific**. A Dish role does not imply a particular host or bootstrap path.
 
 ### Bounded diagnosis and research reads
 
-After mandatory startup/context reads are complete, keep diagnosis and research retrieval bounded.
-Search/find the relevant heading, term, or symbol first, then open only the range needed to answer
-the current question. Read an entire large runbook only when the task genuinely requires
-whole-document review or targeted retrieval cannot establish the answer.
+After mandatory startup/context reads are complete, keep diagnosis and research retrieval bounded. Search/find the relevant heading, term, or symbol first, then open only the range needed to answer the current question. Read an entire large runbook only when the task genuinely requires whole-document review or targeted retrieval cannot establish the answer.
 
-`ACTION_READY` is the semantic stop: mandatory grounding/admission is complete, the responsible
-mechanism or implementation seam is identified, the smallest in-scope next action plus its focused
-proof are known, and no named unresolved material question can change that next action. Before
-another exploratory read, name that decision-changing question and the alternative action its answer
-could select. If there is no such question, act now. After `ACTION_READY`, general
-policy/history/repository archaeology is invalid; only the known action, focused execution/proof, or
-investigation of a genuinely new execution blocker remains in scope.
+`ACTION_READY` is the semantic stop: mandatory grounding/admission is complete, the responsible mechanism or implementation seam is identified, the smallest in-scope next action plus its focused proof are known, and no named unresolved material question can change that next action. Before another exploratory read, name that decision-changing question and the alternative action its answer could select. If there is no such question, act now. After `ACTION_READY`, general policy/history/repository archaeology is invalid; only the known action, focused execution/proof, or investigation of a genuinely new execution blocker remains in scope.
 
-On local hosts with deterministic `PreToolUse` interception, `hooks/investigation-guard` is the
-independent resource backstop. It meters non-renewable investigative consumption outside model
-reasoning, preserves first-use mandatory authority exemptions plus a finite focused-proof tail, and
-enters `CHECKPOINT_REQUIRED` at a mechanically calibrated cap. A hard cap is active only when
-legitimate + incident trace replay yields a qualifying threshold and the exact tool surface is
-certified intercepted; otherwise that surface is observe-only/degraded. The model cannot renew the
-broad envelope or self-promote ordinary work into a separately calibrated deep-research class.
-ChatGPT Project/manual connector operation has no repository-controlled deterministic interceptor
-here and remains `DEGRADED_SOFT_ONLY`; Project rules/evals improve behavior but are not a
-hard-closure claim. Managed/other runners are HARD only when their actual native ceiling is proven
-to cover every investigation-capable tool surface used by the supported route; a built-in-only or
-otherwise partial ceiling remains DEGRADED and never implies total closure.
+On local hosts with deterministic `PreToolUse` interception, `hooks/investigation-guard` is the independent resource backstop. It meters non-renewable investigative consumption outside model reasoning, preserves first-use mandatory authority exemptions plus a finite focused-proof tail, and enters `CHECKPOINT_REQUIRED` at a mechanically calibrated cap. A hard cap is active only when legitimate + incident trace replay yields a qualifying threshold and the exact tool surface is certified intercepted; otherwise that surface is observe-only/degraded. The model cannot renew the broad envelope or self-promote ordinary work into a separately calibrated deep-research class. ChatGPT Project/manual connector operation has no repository-controlled deterministic interceptor here and remains `DEGRADED_SOFT_ONLY`; Project rules/evals improve behavior but are not a hard-closure claim. Managed/other runners are HARD only when their actual native ceiling is proven to cover every investigation-capable tool surface used by the supported route; a built-in-only or otherwise partial ceiling remains DEGRADED and never implies total closure.
 
-This context-efficiency rule never relaxes required startup/context preload, standing-role reads,
-task-authority reads, or any other explicitly mandatory source. Likewise, when a durable
-local-certification/local-work handoff already unambiguously names the receiving role and work,
-follow that receiving role's current standing contract and execute the authorized handoff instead of
-asking Marco to choose the same routine route again. This does not create or expand role authority;
-missing authority or materially incomplete/ambiguous handoff information still fails closed.
+This context-efficiency rule never relaxes required startup/context preload, standing-role reads, task-authority reads, or any other explicitly mandatory source. Likewise, when a durable local-certification/local-work handoff already unambiguously names the receiving role and work, follow that receiving role's current standing contract and execute the authorized handoff instead of asking Marco to choose the same routine route again. This does not create or expand role authority; missing authority or materially incomplete/ambiguous handoff information still fails closed.
 
 ### Claude Code and Codex
 
-Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment.
-For implementation/fix work, use the repository-owned `tools/agent-worktree` lifecycle rather than
-creating a competing branch/worktree or synchronizing the operator `main` checkout. First creation
-requires the coordinator-supplied exact base ref + SHA to still match `origin`; resume observes
-current origin state without automatically resetting, merging, rebasing, or chasing a moved `main`.
-Enter the returned owned path directly or use
-`tools/agent-worktree exec --task <gid> -- <agent-command>`.
+Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment. For implementation/fix work, use the repository-owned `tools/agent-worktree` lifecycle rather than creating a competing branch/worktree or synchronizing the operator `main` checkout. First creation requires the coordinator-supplied exact base ref + SHA to still match `origin`; resume observes current origin state without automatically resetting, merging, rebasing, or chasing a moved `main`. Enter the returned owned path directly or use `tools/agent-worktree exec --task <gid> -- <agent-command>`.
 
-Never place a Dish worktree, resumable test checkout, continuation artifact, human handoff
-helper/result, or any other reboot-sensitive work under `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, or
-another volatile runtime directory. Every worktree, from any tool or agent, goes under
+Never place a Dish worktree, resumable test checkout, continuation artifact, human handoff helper/result,
+or any other reboot-sensitive work under `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, or another volatile
+runtime directory. Every worktree, from any tool or agent, goes under
 `~/.local/state/dish/worktrees/<repo>/<task-or-purpose>/`; other state/evidence goes under
-`~/.local/state/dish/`. When a PR merges or closes, the acting agent removes its worktree and
-branches in the same pass
-(`tools/agent-worktree cleanup --task <gid> --disposition <merged|closed>`, or `git worktree remove`
-plus branch deletion for other worktrees); leaving them behind is unfinished work. Volatile
-temporary storage is permitted only for scratch whose loss before the next command cannot affect
-task continuation, diagnosis, or evidence. Raw `git worktree add` targeting volatile storage is
-prohibited by policy; use `tools/agent-worktree` for Implementation or a clearly named persistent
-Dish-owned audit/test directory for read-only work.
+`~/.local/state/dish/`. When a PR merges or closes, the acting agent removes its worktree and branches
+in the same pass (`tools/agent-worktree cleanup --task <gid> --disposition <merged|closed>`, or
+`git worktree remove` plus branch deletion for other worktrees); leaving them behind is unfinished
+work. Volatile temporary storage is permitted only for
+scratch whose loss before the next command cannot affect task continuation, diagnosis, or evidence.
+Raw `git worktree add` targeting volatile storage is prohibited by policy; use `tools/agent-worktree` for
+Implementation or a clearly named persistent Dish-owned audit/test directory for read-only work.
 
-Before changing repository-owned agent tooling, lifecycle tooling, development-workflow automation,
-or tests of those surfaces to unblock a product/PR task, local Claude Code/Codex agents need Marco's
-explicit authorization unless the assigned scope already includes that tooling change. Authorization
-to finish or merge the original task, work around a tool for a named PR, or log friction does not
-authorize repairing the tool. When tooling causes friction, log its concrete original root cause to
-Development Workflow Friction and continue through the smallest supported in-scope route; do not
-investigate or repair the tooling inside the original task. Ask Marco only when no supported route
-remains, in one clear plain-language question naming the needed tool change and consequence.
+Before changing repository-owned agent tooling, lifecycle tooling, development-workflow automation, or tests of those surfaces to unblock a product/PR task, local Claude Code/Codex agents need Marco's explicit authorization unless the assigned scope already includes that tooling change. Authorization to finish or merge the original task, work around a tool for a named PR, or log friction does not authorize repairing the tool. When tooling causes friction, log its concrete original root cause to Development Workflow Friction and continue through the smallest supported in-scope route; do not investigate or repair the tooling inside the original task. Ask Marco only when no supported route remains, in one clear plain-language question naming the needed tool change and consequence.
 
-When a local Claude Code/Codex worker publishes a review-ready PR and subagents are available, it
-immediately dispatches a fresh independent Review agent for the exact head and keeps owning the
-routine outer loop. A `MERGE` verdict proceeds directly into the authorized local Integration path
-and expected-head merge without asking Marco to relay the handoff or say `go` again. A `BLOCK`
-returns to the applicable fix/design path. Pending CI is observed in parallel: candidate-caused
-failures block; a mechanically proven unrelated current-main/baseline failure uses the repository
-baseline-debt path when its evidence requirements are met, then receives only a bounded post-merge
-investigation. Disproportionate CI selection/setup is logged to Development Workflow Friction and
-does not pause otherwise-authorized work.
+When a local Claude Code/Codex worker publishes a review-ready PR and subagents are available, it immediately dispatches a fresh independent Review agent for the exact head and keeps owning the routine outer loop. A `MERGE` verdict proceeds directly into the authorized local Integration path and expected-head merge without asking Marco to relay the handoff or say `go` again. A `BLOCK` returns to the applicable fix/design path. Pending CI is observed in parallel: candidate-caused failures block; a mechanically proven unrelated current-main/baseline failure uses the repository baseline-debt path when its evidence requirements are met, then receives only a bounded post-merge investigation. Disproportionate CI selection/setup is logged to Development Workflow Friction and does not pause otherwise-authorized work.
 
-`CLAUDE.md` takes precedence over agentic handoffs. A handoff's terminal wording limits work *after*
-mandatory standing lifecycle steps; it cannot cancel them. Thus
-`mark ready for fresh independent Review, then stop` means dispatch the required independent Review,
-persist/read back that handoff, then stop the current worker. It is not a conflict to raise to
-Marco.
+`CLAUDE.md` takes precedence over agentic handoffs. A handoff's terminal wording limits work *after* mandatory standing lifecycle steps; it cannot cancel them. Thus `mark ready for fresh independent Review, then stop` means dispatch the required independent Review, persist/read back that handoff, then stop the current worker. It is not a conflict to raise to Marco.
 
-For local Claude Code/Codex, if role, task, or PR context is incomplete or stale after compaction,
-treat unverified pre-compaction history as `UNKNOWN`. Do not resume substantive work until the
-repository re-grounding barrier restores current authority; the hook is the primary mechanism and
-this instruction is its fail-closed fallback.
+For local Claude Code/Codex, if role, task, or PR context is incomplete or stale after compaction, treat unverified pre-compaction history as `UNKNOWN`. Do not resume substantive work until the repository re-grounding barrier restores current authority; the hook is the primary mechanism and this instruction is its fail-closed fallback.
 
 ### Codex usage budget
 
-Codex must treat its weekly usage limit as scarce, operator-owned budget. A concrete small, bounded
-task Marco assigns is pre-authorized for its routine completion chain: focused diagnosis, the
-smallest in-scope repair, focused proof, independent review, and normal authorized fix/review/merge
-continuation. Keep it scoped: stop at the first material expansion in size, authority, product
-behavior, irreversible effect, or required design decision; do not turn a small task into a broad
-audit, deep research, or large implementation. Local Claude Code/Codex agents context-free fork an
-independent peer when that capability is available; ChatGPT cannot fork and must use its available
-review route without claiming a fork capability. Work sent to ChatGPT remains ChatGPT-owned unless
-Marco explicitly directs Codex to take it over or coordinate it.
+Codex must treat its weekly usage limit as scarce, operator-owned budget. A concrete small, bounded task Marco assigns is pre-authorized for its routine completion chain: focused diagnosis, the smallest in-scope repair, focused proof, independent review, and normal authorized fix/review/merge continuation. Keep it scoped: stop at the first material expansion in size, authority, product behavior, irreversible effect, or required design decision; do not turn a small task into a broad audit, deep research, or large implementation. Local Claude Code/Codex agents context-free fork an independent peer when that capability is available; ChatGPT cannot fork and must use its available review route without claiming a fork capability. Work sent to ChatGPT remains ChatGPT-owned unless Marco explicitly directs Codex to take it over or coordinate it.
 
-For Claude Code/Codex Implementation/fix work, human action handoffs and durable PR updates follow
-[`tools/agent-worktree-handoff.md`](tools/agent-worktree-handoff.md). Keep routine narration out of
-chat; when privileged local work is genuinely required, write the complete helper and persisted
-result first, then give one exact command.
+For Claude Code/Codex Implementation/fix work, human action handoffs and durable PR updates follow [`tools/agent-worktree-handoff.md`](tools/agent-worktree-handoff.md). Keep routine narration out of chat; when privileged local work is genuinely required, write the complete helper and persisted result first, then give one exact command.
 
 Create or use the repository-local environment with the current interpreter as needed:
 
@@ -294,10 +152,7 @@ python3 -m venv .venv
 .venv/bin/python scripts/dish-test-plan --base <revision>
 ```
 
-The ChatGPT GitHub connector and ChatGPT repository/dependency-bundle retrieval paths below are
-**not** standing instructions for Claude Code or Codex. Do not put connector setup, Actions-artifact
-bundle retrieval, or a user-supplied bundle into their handoffs unless Marco explicitly makes that a
-task-specific requirement.
+The ChatGPT GitHub connector and ChatGPT repository/dependency-bundle retrieval paths below are **not** standing instructions for Claude Code or Codex. Do not put connector setup, Actions-artifact bundle retrieval, or a user-supplied bundle into their handoffs unless Marco explicitly makes that a task-specific requirement.
 
 ### ChatGPT agents
 
@@ -306,110 +161,42 @@ For ChatGPT agents, use the active Project's mutually exclusive GitHub transport
 authority for this private repository. Never mix Connector tools and MCP apps in one chat. A
 repository bundle is a verified bootstrap/cache only; it never overrides GitHub source/history.
 
-For recurring ChatGPT Dish role Projects, the canonical concise Project kernels and version manifest
-live in [`dish/docs/chatgpt-projects/`](dish/docs/chatgpt-projects/README.md). This applies
-regardless of how old or stale the installed Project's own custom-instruction text is: at the first
-substantive action, fetch this role's current generated Project kernel from that directory on
-current `main` and read it as current session policy before proceeding. Installed Project
-custom-instruction text is a bootstrap/version witness only until this fetch succeeds; it never
-overrides the freshly fetched current kernel. Then compare the Project-declared
-`PROJECT_CANONICAL_VERSION` with the current repository manifest. A mismatch is not a blocker by
-itself: fold the manifest history for the exact role and action. Continue under current Git
-authority for compatible/unrelated drift (`DRIFT 1/3`) and additive drift (`DRIFT 2/3`), applying
-additive policy when relevant. Stop and resynchronize only for a proven applicable BREAKING
-incompatibility (`DRIFT 3/3`). Missing, malformed, or unproved drift metadata is
-`INTEGRITY ERROR · DRIFT ?/3`: fail closed only the affected action for repository-authority repair,
-and do not resynchronize the Project. Exact-current settings use no drift fraction. Project kernels
-bootstrap critical gates; they never replace the current role index or standing role contract.
+For recurring ChatGPT Dish role Projects, the canonical concise Project kernels and version manifest live in [`dish/docs/chatgpt-projects/`](dish/docs/chatgpt-projects/README.md). This applies regardless of how old or stale the installed Project's own custom-instruction text is: at the first substantive action, fetch this role's current generated Project kernel from that directory on current `main` and read it as current session policy before proceeding. Installed Project custom-instruction text is a bootstrap/version witness only until this fetch succeeds; it never overrides the freshly fetched current kernel. Then compare the Project-declared `PROJECT_CANONICAL_VERSION` with the current repository manifest. A mismatch is not a blocker by itself: fold the manifest history for the exact role and action. Continue under current Git authority for compatible/unrelated drift (`DRIFT 1/3`) and additive drift (`DRIFT 2/3`), applying additive policy when relevant. Stop and resynchronize only for a proven applicable BREAKING incompatibility (`DRIFT 3/3`). Missing, malformed, or unproved drift metadata is `INTEGRITY ERROR · DRIFT ?/3`: fail closed only the affected action for repository-authority repair, and do not resynchronize the Project. Exact-current settings use no drift fraction. Project kernels bootstrap critical gates; they never replace the current role index or standing role contract.
 
-For substantial repository/system reasoning that can affect a consequential Dish decision **outside
-ordinary ChatGPT PR Review**, use the repository bundle first. Tiny targeted lookups that do not
-support such reasoning are exempt. Ordinary ChatGPT PR Review follows the Review-specific
-active-route fallback when the exact bundle cannot be discovered or retrieved; any bundle actually
-used still must pass exact-current identity/integrity validation:
+For substantial repository/system reasoning that can affect a consequential Dish decision **outside ordinary ChatGPT PR Review**, use the repository bundle first. Tiny targeted lookups that do not support such reasoning are exempt. Ordinary ChatGPT PR Review follows the Review-specific active-route fallback when the exact bundle cannot be discovered or retrieved; any bundle actually used still must pass exact-current identity/integrity validation:
 
 - resolve the intended current `refs/heads/main` SHA and repository identity from GitHub authority;
-- retrieve the exact matching Actions artifact named `repository-bundle-<SHA>`; never substitute a
-  stale/newer/older bundle. If the exact current-main artifact is missing/expired but its immutable
-  exact-SHA Release is expected to exist, create at most one bounded issue titled
-  `repository-bundle mirror refresh` with body
-  `<!-- dish-repository-bundle-mirror-refresh:v1 sha=<SHA> -->`, then boundedly re-read current
-  main/status and resume only after a fresh exact mirror appears; malformed/untrusted requests,
-  stale SHA, invalid Release bytes, or failed refresh remain fail-closed;
-- materialize the artifact in the runtime and run `scripts/repository_bundle.py verify` against the
-  authoritative repository full name/numeric identity, exact SHA, and `refs/heads/main`;
-- use the verified local clone for `git log`, `git diff`, search/grep, tests, and local
-  branch/commit preparation; for stacked/PR work, overlay the exact current branch/PR delta from
-  GitHub authority because v1 bundles remain `main`-only;
-- outside ordinary ChatGPT PR Review, fail closed if authorized-route retrieval, materialization,
-  checksum/manifest verification, `git bundle verify`, advertised-main validation, or cloned-HEAD
-  validation fails; ordinary Review treats bundle unavailability alone as non-blocking when
-  active-route exact evidence is sufficient.
+- retrieve the exact matching Actions artifact named `repository-bundle-<SHA>`; never substitute a stale/newer/older bundle. If the exact current-main artifact is missing/expired but its immutable exact-SHA Release is expected to exist, create at most one bounded issue titled `repository-bundle mirror refresh` with body `<!-- dish-repository-bundle-mirror-refresh:v1 sha=<SHA> -->`, then boundedly re-read current main/status and resume only after a fresh exact mirror appears; malformed/untrusted requests, stale SHA, invalid Release bytes, or failed refresh remain fail-closed;
+- materialize the artifact in the runtime and run `scripts/repository_bundle.py verify` against the authoritative repository full name/numeric identity, exact SHA, and `refs/heads/main`;
+- use the verified local clone for `git log`, `git diff`, search/grep, tests, and local branch/commit preparation; for stacked/PR work, overlay the exact current branch/PR delta from GitHub authority because v1 bundles remain `main`-only;
+- outside ordinary ChatGPT PR Review, fail closed if authorized-route retrieval, materialization, checksum/manifest verification, `git bundle verify`, advertised-main validation, or cloned-HEAD validation fails; ordinary Review treats bundle unavailability alone as non-blocking when active-route exact evidence is sufficient.
 
-Ordinary ChatGPT PR Review therefore never blocks, routes local, or asks Marco solely for bundle
-transport when live active-route exact evidence is sufficient for the merge question. If a bundle is
-actually used, stale, mismatched, corrupt, or wrong-SHA material remains fail-closed and is never
-substituted. Review fails closed only on a named unresolved semantic, tool, or environment evidence
-boundary that the authorized route cannot satisfy. This exception does not relax bundle-first
-admission for broad architecture, Implementation, or other substantial non-Review reasoning.
+Ordinary ChatGPT PR Review therefore never blocks, routes local, or asks Marco solely for bundle transport when live active-route exact evidence is sufficient for the merge question. If a bundle is actually used, stale, mismatched, corrupt, or wrong-SHA material remains fail-closed and is never substituted. Review fails closed only on a named unresolved semantic, tool, or environment evidence boundary that the authorized route cannot satisfy. This exception does not relax bundle-first admission for broad architecture, Implementation, or other substantial non-Review reasoning.
 
-The publication and verification contract, cadence, retention, and v1 main-only scope are in
-[`ci/repository-bundle.md`](ci/repository-bundle.md). The bundle is read-only context: the active
-Project-authorized GitHub route remains live source/history/PR/review authority and Asana remains
-orchestration authority. Current-state decisions still require those live reads. Unless
-authenticated Git transport is deliberately added later, publish branch/commit/PR state through that
-authorized remote GitHub route rather than assuming the verified clone can push.
+The publication and verification contract, cadence, retention, and v1 main-only scope are in [`ci/repository-bundle.md`](ci/repository-bundle.md). The bundle is read-only context: the active Project-authorized GitHub route remains live source/history/PR/review authority and Asana remains orchestration authority. Current-state decisions still require those live reads. Unless authenticated Git transport is deliberately added later, publish branch/commit/PR state through that authorized remote GitHub route rather than assuming the verified clone can push.
 
-Bootstrap Python runtime dependencies from the authoritative GitHub-built dependency bundle rather
-than asking Marco to upload a virtual environment or bundle manually:
+Bootstrap Python runtime dependencies from the authoritative GitHub-built dependency bundle rather than asking Marco to upload a virtual environment or bundle manually:
 
 - the versioned GitHub Release is publication authority for the bundle;
-- the matching GitHub Actions artifact is the ChatGPT retrieval/evidence mirror and must carry the
-  same bundle identity;
-- resolve the current expected bundle identity from authoritative repository metadata/tooling rather
-  than hard-coding a historical bundle ID;
-- download through the active Project-authorized GitHub route, verify the manifest and checksum, and
-  use `scripts/dependency_bundle.py install` to recreate the repository environments;
-- preserve the bundle's fail-closed Python/platform/architecture/libc checks. For glibc, a runtime
-  newer than the declared minimum is compatible; an older runtime is not;
-- if authorized-route access, the matching artifact, or runtime compatibility is unavailable, report
-  that exact missing capability rather than falling back to an uploaded archived `.venv`.
+- the matching GitHub Actions artifact is the ChatGPT retrieval/evidence mirror and must carry the same bundle identity;
+- resolve the current expected bundle identity from authoritative repository metadata/tooling rather than hard-coding a historical bundle ID;
+- download through the active Project-authorized GitHub route, verify the manifest and checksum, and use `scripts/dependency_bundle.py install` to recreate the repository environments;
+- preserve the bundle's fail-closed Python/platform/architecture/libc checks. For glibc, a runtime newer than the declared minimum is compatible; an older runtime is not;
+- if authorized-route access, the matching artifact, or runtime compatibility is unavailable, report that exact missing capability rather than falling back to an uploaded archived `.venv`.
 
-These connector-and-bundle bootstraps are **ChatGPT-only policy**. They must not be copied into
-Claude Code or Codex handoffs.
+These connector-and-bundle bootstraps are **ChatGPT-only policy**. They must not be copied into Claude Code or Codex handoffs.
 
-On Marco's local development machine, the preferred reviewed fast path is
-`.venv/bin/python scripts/dish-test-lane parallel-safe --workers 4`, or the planner's equivalent
-`--parallel-workers 4` focused command. Four workers is a locally benchmarked recommendation, not a
-repository-wide hardware constant. Keep serial execution available for diagnosis and for every
-selection outside the currently qualified parallel-safe inventory.
+On Marco's local development machine, the preferred reviewed fast path is `.venv/bin/python scripts/dish-test-lane parallel-safe --workers 4`, or the planner's equivalent `--parallel-workers 4` focused command. Four workers is a locally benchmarked recommendation, not a repository-wide hardware constant. Keep serial execution available for diagnosis and for every selection outside the currently qualified parallel-safe inventory.
 
-Use the test planner for the complete tracked changed-path set and execute the union of focused
-tests and semantically required governed lanes. New in-scope paths must be classified in
-`dish/test_selection/ownership.csv`. A classified narrow or documentation-only change does not
-acquire an ordinary full-suite requirement merely because it is complete or ready for handoff;
-broad/full evidence is required only when the governed selector, unresolved semantic uncertainty, an
-explicit high-consequence rule, or a named review/task gate requires it. Testing policy and evidence
-boundaries are in `dish/docs/testing.md` and `dish/docs/architecture/testing-boundaries.md`.
+Use the test planner for the complete tracked changed-path set and execute the union of focused tests and semantically required governed lanes. New in-scope paths must be classified in `dish/test_selection/ownership.csv`. A classified narrow or documentation-only change does not acquire an ordinary full-suite requirement merely because it is complete or ready for handoff; broad/full evidence is required only when the governed selector, unresolved semantic uncertainty, an explicit high-consequence rule, or a named review/task gate requires it. Testing policy and evidence boundaries are in `dish/docs/testing.md` and `dish/docs/architecture/testing-boundaries.md`.
 
-Do not package `.venv`, test caches, or generated test artifacts. Do not add runtime mutation paths,
-duplicate workflow authority in transports or CLIs, or preserve compatibility without a real
-producer or database-preservation requirement.
+Do not package `.venv`, test caches, or generated test artifacts. Do not add runtime mutation paths, duplicate workflow authority in transports or CLIs, or preserve compatibility without a real producer or database-preservation requirement.
 
-While doing assigned work, flag material maintainability or correctness issues you encounter that
-are relevant to the area you are touching: architecture/documentation gaps or contradictions that
-could cause mistakes; rules that do not match the actual code; likely bugs or weak/misleading tests;
-duplicated authority; significant code smells; brittle tooling; or recurring development friction.
-Do not broaden the implementation merely to fix unrelated observations. Report confirmed defects
-separately from suspicions and include enough concrete context for later triage.
+While doing assigned work, flag material maintainability or correctness issues you encounter that are relevant to the area you are touching: architecture/documentation gaps or contradictions that could cause mistakes; rules that do not match the actual code; likely bugs or weak/misleading tests; duplicated authority; significant code smells; brittle tooling; or recurring development friction. Do not broaden the implementation merely to fix unrelated observations. Report confirmed defects separately from suspicions and include enough concrete context for later triage.
 
 ## External instruction sources
 
-`dish/deploy/gpt-action.md` contains a template, not the deployed custom GPT instructions. Changes
-to that template require a separate synchronized change in the live instructions repository and an
-explicit notice to Marco. If work changes the protocol's own structure, canonical fields, process
-records, or change classes, read `~/honest-pantry/dish-docs-design.md` and the relevant current
-Honest protocol/schema assets first.
+`dish/deploy/gpt-action.md` contains a template, not the deployed custom GPT instructions. Changes to that template require a separate synchronized change in the live instructions repository and an explicit notice to Marco. If work changes the protocol's own structure, canonical fields, process records, or change classes, read `~/honest-pantry/dish-docs-design.md` and the relevant current Honest protocol/schema assets first.
 
 ## Memory
 
