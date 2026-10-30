@@ -119,8 +119,12 @@ Claude Code and Codex use their live checkout plus their host-native Git/tooling
 
 Never place a Dish worktree, resumable test checkout, continuation artifact, human handoff helper/result,
 or any other reboot-sensitive work under `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, or another volatile
-runtime directory. Use a purpose-specific persistent path under `~/.local/share/dish/` for working
-bytes and `~/.local/state/dish/` for state/evidence. Volatile temporary storage is permitted only for
+runtime directory. Every worktree, from any tool or agent, goes under
+`~/.local/state/dish/worktrees/<repo>/<task-or-purpose>/`; other state/evidence goes under
+`~/.local/state/dish/`. When a PR merges or closes, the acting agent removes its worktree and branches
+in the same pass (`tools/agent-worktree cleanup --task <gid> --disposition <merged|closed>`, or
+`git worktree remove` plus branch deletion for other worktrees); leaving them behind is unfinished
+work. Volatile temporary storage is permitted only for
 scratch whose loss before the next command cannot affect task continuation, diagnosis, or evidence.
 Raw `git worktree add` targeting volatile storage is prohibited by policy; use `tools/agent-worktree` for
 Implementation or a clearly named persistent Dish-owned audit/test directory for read-only work.
