@@ -228,6 +228,7 @@ def stage_release(
                 str(dish_root / "requirements.txt"),
             ],
             check=True,
+            stdout=sys.stderr,
         )
         _write_manifest(staging, _manifest_payload(staging, source_commit))
         os.replace(staging, destination)
