@@ -1189,6 +1189,13 @@ class PostgresRuntimeService:
                 if view.operation_id is None
                 else self._admin_inspect_active_lease_id(view.operation_id)
             )
+            if active_lease_id is not None:
+                next_actions.setdefault("human_actions", []).append({
+                    "kind": "expire-lease",
+                    "summary": "Clear this actor lease.",
+                    "effect": "expire this lease without changing the recipe or transferring workflow ownership",
+                    "shell_command": " ".join([*_dish_admin_prefix(self._profile), "expire-lease", active_lease_id, "--reason", shlex.quote("Marco requested lease release.")]),
+                })
             return result_envelope(
                 command=command,
                 state=view.completion_state,

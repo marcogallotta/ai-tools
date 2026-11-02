@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import shlex
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -527,8 +528,9 @@ def test_exact_operation_target_reports_no_dish_resolution(
     )
 
 
-def test_admin_inspect_shows_active_lease_for_abandon_operation(
-    workflow_db, tmp_path: Path
+@pytest.mark.parametrize("profile", ["prod", "test"])
+def test_admin_inspect_offers_runnable_exact_lease_expiry(
+    workflow_db, tmp_path: Path, profile: str, capsys, monkeypatch
 ) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
@@ -542,18 +544,49 @@ def test_admin_inspect_shows_active_lease_for_abandon_operation(
                 wf.ServiceLease.state == "active",
             )
         )
+        _retire_asana_alias(session, task_id)
+        content_id = session.get(models.DishState, (context["generation_id"], task_id)).current_content_version_id
+        phase = session.get(wf.WorkflowOperation, uuid.UUID(operation_id)).phase
     assert lease_id is not None
     service = runtime_service(factory, tmp_path)
+    service._profile = profile
     result = service.execute_admin("inspect", {"dish": str(task_id)})
 
     assert result["ok"] is True, result
     assert result["data"]["operation_id"] == operation_id
     assert result["data"]["active_lease_id"] == str(lease_id)
     assert f"Active lease: {lease_id}" in render_admin_result(result, profile="test")
-    abandon = next(
-        action.choices["abandon-operation"]
-        for action in admin_cli.build_parser()._actions
-        if isinstance(getattr(action, "choices", None), dict)
-        and "abandon-operation" in action.choices
-    )
-    assert "shown by inspect as Active lease" in abandon.format_help()
+    [action] = result["data"]["human_actions"]
+    command = shlex.split(action["shell_command"])
+    assert command[0] == "dish-admin"
+    parsed = admin_cli.build_parser().parse_args(command[1:])
+    assert getattr(parsed, "profile", None) == ("test" if profile == "test" else None)
+    assert parsed.command == "expire-lease" and parsed.target == str(lease_id)
+    assert parsed.reason == "Marco requested lease release."
+    assert action["summary"] in render_admin_result(result, profile=profile)
+    preserved = {"kind": "inspect", "shell_command": f"dish-admin inspect {task_id}"}
+    monkeypatch.setattr(service, "_admin_inspect_queue_fields", lambda _task: {"human_actions": [preserved]})
+    assert service.execute_admin("inspect", {"dish": str(task_id)})["data"]["human_actions"] == [preserved, action]
+
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-exact-lease-expiry")
+        client = DishAdminServiceClient(f"http://127.0.0.1:{server.server_address[1]}", token="postgres-admin-token", run_id=str(_next(ids)))
+        try:
+            assert admin_cli.main(["--profile", profile, "--json", "inspect", str(task_id)], application=client) == 0
+            inspected = json.loads(capsys.readouterr().out)
+            [expiry] = [a for a in inspected["data"]["human_actions"] if a["kind"] == "expire-lease"]
+            assert admin_cli.main([*shlex.split(expiry["shell_command"])[1:], "--json"], application=client) == 0
+            expired = json.loads(capsys.readouterr().out)
+            assert expired["ok"] and expired["data"]["lease_id"] == str(lease_id)
+            assert expired["data"]["state"] == "expired"
+            assert admin_cli.main(["--profile", profile, "--json", "inspect", str(task_id)], application=client) == 0
+            after = json.loads(capsys.readouterr().out)
+            assert after["data"]["active_lease_id"] is None
+            assert after["data"]["human_actions"] == [preserved]
+        finally:
+            stop_server(server, thread)
+    with session_scope(factory) as session:
+        assert session.get(wf.ServiceLease, lease_id).state == "expired"
+        assert session.get(wf.WorkflowOperation, uuid.UUID(operation_id)).phase == phase
+        assert session.get(models.DishState, (context["generation_id"], task_id)).current_content_version_id == content_id
+        assert session.scalar(select(wf.OperationRunRevocation)) is None
