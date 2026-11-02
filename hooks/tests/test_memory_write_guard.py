@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 
-HOOK = Path(__file__).resolve().parents[1] / "memory-write-guard.sh"
+HOOK = Path(__file__).resolve().parents[1] / "memory-write-guard.py"
 
 
 def _run(home: Path, tool: str, field: str, path: str) -> dict:

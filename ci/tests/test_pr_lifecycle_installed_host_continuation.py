@@ -181,10 +181,10 @@ def test_non_host_change_does_not_create_installed_host_gate():
 
 
 def test_dormant_hook_and_active_core_only_do_not_select_tier_c_host_certificate():
-    assert installed_host_cert.hook_surface_classification("hooks/memory-write-guard.sh") == "DORMANT_COMPONENT"
+    assert installed_host_cert.hook_surface_classification("hooks/memory-write-guard.py") == "DORMANT_COMPONENT"
     assert installed_host_cert.hook_surface_classification("hooks/protected_checkout.py") == "CODEX_ACTIVE"
     assert installed_host_cert.requirement_for_files(
-        [{"filename": "hooks/memory-write-guard.sh", "status": "modified", "sha": "e" * 40}]
+        [{"filename": "hooks/memory-write-guard.py", "status": "modified", "sha": "e" * 40}]
     ) is None
     assert installed_host_cert.requirement_for_files(
         [{"filename": "hooks/protected_checkout.py", "status": "modified", "sha": "f" * 40}]
