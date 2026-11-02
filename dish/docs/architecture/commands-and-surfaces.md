@@ -153,8 +153,9 @@ contract.
 
 `dish-admin` intentionally has a small normal operator surface even though older recovery and
 maintenance commands remain callable for exact handoffs and scripting. Root help presents the normal
-entry points in operator order: `inspect`, `archive`, `unarchive`, `queue`, `audit`, `active`, `kill`,
-`kill-all-expired`, then `kill-all`. `issues`, `attention`, `review-queue`, and `active-leases`
+entry points in operator order: `inspect`, `archive`, `unarchive`, `queue`, `audit`, then `active`.
+Unsupported PostgreSQL `kill`, `kill-all-expired`, and `kill-all` commands are hidden.
+`issues`, `attention`, `review-queue`, and `active-leases`
 remain hidden compatibility/detail aliases; low-level recovery, migration, backup, governance, and
 direct review mutation commands remain callable escape hatches. Hiding a command from root help does
 not remove or weaken its backend authority checks.

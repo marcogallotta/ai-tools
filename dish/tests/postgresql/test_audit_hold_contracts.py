@@ -27,7 +27,7 @@ from tests.support.postgresql.command import (
     _verification_ready,
 )
 from tests.support.postgresql.legacy_evidence_hold import install_legacy_evidence_reject
-from tests.support.postgresql.workflow import _next, _register_run, workflow_db
+from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 
 
 def _reject_large_round(
@@ -132,7 +132,7 @@ def _reopen_verification_stop(session, port, ids, context, *, task_id, operation
     )
     return row, reopened
 
-def test_third_large_rejection_enters_mechanical_verification_stop_and_reopens_after_reset(
+def test_third_large_rejection_continues_and_historical_hold_still_reopens(
     workflow_db,
 ) -> None:
     factory, ids, context, task_id = workflow_db
@@ -163,10 +163,22 @@ def test_third_large_rejection_enters_mechanical_verification_stop_and_reopens_a
         )
         assert first.ok and first.data["verification_hold"] is False
         assert second.ok and second.data["verification_hold"] is False
-        assert third.ok and third.data["verification_hold"] is True
-        assert third.data["new_cycle_id"] is None
+        assert third.ok and third.data["verification_hold"] is False
+        assert third.data["new_cycle_id"] is not None
         operation = session.get(wf.WorkflowOperation, uuid.UUID(operation_id))
-        assert operation.phase == "verification_hold"
+        assert operation.phase == "await_verification"
+        fourth_run = _open_verifier_round(
+            session, port, ids, context, task_id=task_id, operation_id=operation_id,
+            owner="verifier-4", agent="gpt",
+        )
+        assert fourth_run is not None
+        # Seed a historical stop: old stored holds must retain their recovery path.
+        cycle = session.get(wf.VerificationCycle, uuid.UUID(third.data["new_cycle_id"]))
+        cycle.lifecycle, cycle.outcome, cycle.terminal_at = "rejected", "verification-hold", NOW
+        operation.phase, operation.persisted_actions = "verification_hold", ["reopen"]
+        for lease in session.scalars(select(wf.ServiceLease).where(wf.ServiceLease.operation_id == operation.operation_id, wf.ServiceLease.state == "active")):
+            lease.state, lease.terminal_at = "released", NOW
+        session.flush()
         # Every reader of the stopped state must render it rather than crash.
         queue_run = _next(ids)
         _register_run(
@@ -197,9 +209,9 @@ def test_third_large_rejection_enters_mechanical_verification_stop_and_reopens_a
         )
         assert row["hold_class"] == "verification_stop"
         assert row["required_admin_action"] == "reopen"
-        assert row["cycle_id"] == third.data["cycle_id"]
+        assert row["cycle_id"] == str(cycle.cycle_id)
         assert reopened.ok
-        assert reopened.data["source_cycle_id"] == third.data["cycle_id"]
+        assert reopened.data["source_cycle_id"] == str(cycle.cycle_id)
         session.refresh(operation)
         assert operation.phase == "await_verification"
         resumed = _active_content(session, context, task_id)

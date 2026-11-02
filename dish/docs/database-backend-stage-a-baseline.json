@@ -78,12 +78,12 @@
   ],
   "governing_source_sha256": {
     "dish_pg/release.py": "e2295fec87e85366013d3906c2ce79f48f9eb726a7fa687a74a34bce660e3648",
-    "dish_service/admin_cli.py": "8e045d7be43eb1e408e8cdeade224a7a93d84b360cd7508e47ecf41e2db0b5a1",
+    "dish_service/admin_cli.py": "236f9a09233391efe67d1fdd9f349a26193db57b13c792587c1345a246d7a403",
     "dish_service/application.py": "61a2cd7e9728f5ac5a662af2b41e4c947ed427c927dc16a35abe0155ac173cd0",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
     "dish_service/command_spec.py": "881a2f37e5bfca71208fe2678cee5c1887152bdea2b5ca5d9ca90426cd861c4d",
     "dish_service/planning_reopen.py": "28321ba068fb2b271a8cc5ec54a1d2584f44d6425231e33c77490b721bd0a872",
-    "dish_tool/admin_command_spec.py": "724c57954f0ed4ba7385b66b35e37f00c5ef697385718025278c4249e5ef78c2",
+    "dish_tool/admin_command_spec.py": "3cf9a8019edb8689a40ce3086ca42b9fe836299a3ec3f29e9094dbb814dba13f",
     "dish_tool/command_identity.py": "c12a3afe0225583862a35f37b4b602350403616ab1d0f8edfb97fe93090ba381",
     "dish_tool/database_initialization.py": "13b49cf8f722a0b6a56ca30cce5f8e2a9a037acaa50d1bb74776929fedb7343d",
     "dish_tool/database_migrations.py": "31bdbf9966f399ce7a21966e35ff9183f75958911456d9a80a68c1e54a8af6b9",
@@ -96,7 +96,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Record the reviewed all-status Search contract wording in the frozen source hashes",
+  "last_rebaseline_reason": "Reviewed admin help hides unsupported kill commands and offers existing lease expiry; synchronize governing source hashes.",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",

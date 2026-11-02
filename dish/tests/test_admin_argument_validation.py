@@ -221,7 +221,8 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
         parser.parse_args(["--help"])
     root_help = " ".join(capsys.readouterr().out.split())
     assert "Start with `dish-admin inspect <dish>`" in root_help
-    assert "Normal use: inspect one Dish; queue processes work waiting for Marco; audit checks fleet integrity; active shows current run ownership" in root_help
+    assert "inspect offers an exact lease-expiry command when a lease is held" in root_help
+    assert "kill" not in root_help
     assert "Advanced recovery, review-detail, migration, backup" in root_help
     assert "recover-lease" not in root_help.split("options:")[0]
     assert "attention" not in root_help.split("options:")[0]
@@ -236,9 +237,6 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
         "queue",
         "audit",
         "active",
-        "kill",
-        "kill-all-expired",
-        "kill-all",
     )
     positions = [command_help.index(command) for command in expected_commands[:-1]]
     positions.append(command_help.rindex(expected_commands[-1]))

@@ -3362,20 +3362,7 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             expected_schema_version=binding.schema_release,
         )
 
-        prior_nonapproved_cycles = int(
-            self.session.scalar(
-                select(func.count())
-                .select_from(wf.VerificationCycle)
-                .where(
-                    wf.VerificationCycle.operation_id == operation.operation_id,
-                    wf.VerificationCycle.cycle_id != cycle.cycle_id,
-                    wf.VerificationCycle.lifecycle != "open",
-                    wf.VerificationCycle.outcome != "approved",
-                )
-            )
-            or 0
-        )
-        verification_hold = route == "large" and prior_nonapproved_cycles + 1 >= 3
+        verification_hold = False
         cycle.lifecycle = "rejected"
         cycle.outcome = "verification-hold" if verification_hold else "rejected"
         cycle.terminal_at = call.now

@@ -23,6 +23,7 @@ from dish_tool.backend import AsanaBackend
 from dish_tool.admin_command_spec import (
     ADMIN_COMMANDS as _ADMIN_COMMANDS,
     ADMIN_COMMAND_SPECS,
+    PRIMARY_ADMIN_COMMANDS,
     RESOLVED_OPERATION_TARGET_COMMANDS as _OPERATION_ADMIN_COMMANDS,
 )
 from dish_tool.admin_human import render_admin_result
@@ -72,7 +73,7 @@ def build_parser() -> JsonArgumentParser:
         ),
         epilog=(
             "Normal use: inspect one Dish; queue processes work waiting for Marco; audit checks "
-            "fleet integrity; active shows current run ownership; kill safely replaces one run. "
+            "fleet integrity; inspect offers an exact lease-expiry command when a lease is held. "
             "Advanced recovery, review-detail, migration, backup, and governance commands remain "
             "callable when Dish returns one as an exact next action, but are intentionally omitted "
             "from this top-level help. No admin command submits a dish."
@@ -504,7 +505,7 @@ def build_parser() -> JsonArgumentParser:
     subparsers._choices_actions = [
         action
         for action in subparsers._choices_actions
-        if action.help != argparse.SUPPRESS
+        if action.help != argparse.SUPPRESS and action.dest in PRIMARY_ADMIN_COMMANDS
     ]
     return parser
 
