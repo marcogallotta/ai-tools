@@ -185,6 +185,10 @@ def target_config(profile):
                 raise OperationError(
                     "TEST_ISOLATION", f"TEST {name} escapes isolation root"
                 )
+            if path.exists() and not path.resolve().is_relative_to(root):
+                raise OperationError(
+                    "TEST_ISOLATION", f"TEST {name} resolves outside isolation root"
+                )
         for p in values["env_files"]:
             if not Path(p).resolve().is_relative_to(root):
                 raise OperationError(

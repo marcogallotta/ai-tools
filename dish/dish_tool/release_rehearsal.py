@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import secrets
 import socket
@@ -233,7 +234,37 @@ def install_target(
     return Target("test", values)
 
 
-def setup(repository, candidate, root):
+def setup(repository, candidate, root, *, resume_build=False):
+    if resume_build:
+        if (root / "setup-probe.json").exists():
+            raise RuntimeError("completed setup cannot resume its build")
+        upstream = root / "upstream.git"
+        command(["git", "-C", upstream, "fetch", str(repository), candidate])
+        tree = command(["git", "-C", upstream, "rev-parse", candidate + "^{tree}"])
+        prior = command(
+            ["git", "-C", upstream, "commit-tree", tree, "-m", "Retained TEST rebuild"]
+        )
+        command(["git", "-C", upstream, "update-ref", "refs/heads/main", candidate])
+        targets = []
+        for name in ("operator", "qualification"):
+            target = Target(
+                "test", json.loads((root / name / "target.json").read_text())
+            )
+            for sha in (prior, candidate):
+                release.stage_release(
+                    upstream, sha, target.path("release_root"), release.DEFAULT_PYTHON
+                )
+            release._set_pointer(
+                target.path("current"), str(target.path("release_root") / prior)
+            )
+            release._set_pointer(
+                target.path("previous"), str(target.path("release_root") / candidate)
+            )
+            release._set_pointer(
+                root / name / "mcp-current", str(target.path("release_root") / prior)
+            )
+            targets.append(target)
+        return finish_setup(root, candidate, prior, *targets)
     if root.exists():
         raise RuntimeError(
             "rehearsal root already exists; preserving all evidence and fixtures"
@@ -263,11 +294,15 @@ def setup(repository, candidate, root):
                 f"refusing to replace existing installed TEST configuration {destination}"
             )
         atomic_json(destination, target.values)
+    return finish_setup(root, candidate, prior, operator, qualification)
+
+
+def finish_setup(root, candidate, prior, operator, qualification):
     command(["systemctl", "--user", "daemon-reload"])
     for target in (operator, qualification):
         for component in ("backend", "mcp"):
             command(
-                ["systemctl", "--user", "start", target.values[f"{component}_unit"]]
+                ["systemctl", "--user", "restart", target.values[f"{component}_unit"]]
             )
     budget = Budget(30)
     while True:
@@ -300,10 +335,22 @@ def main():
     parser.add_argument("--repository", type=Path, required=True)
     parser.add_argument("--candidate", required=True)
     parser.add_argument(
+        "--resume-build",
+        action="store_true",
+        help="rebuild an incomplete setup, preserving prior artifacts",
+    )
+    parser.add_argument(
         "--root", type=Path, default=Path.home() / ".local/state/dish/release-rehearsal"
     )
     args = parser.parse_args()
-    print(setup(args.repository.resolve(), args.candidate, args.root.resolve()))
+    print(
+        setup(
+            args.repository.resolve(),
+            args.candidate,
+            args.root.resolve(),
+            resume_build=args.resume_build,
+        )
+    )
     return 0
 
 

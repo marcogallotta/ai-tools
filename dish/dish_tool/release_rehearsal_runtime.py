@@ -41,7 +41,7 @@ def main():
             authenticated_owner_id="release-test"
         )
         service.config = replace(
-            ServiceConfig.from_environment(os.environ), legacy_writer_fence_path=None
+            ServiceConfig.from_env(), legacy_writer_fence_path=None
         )
         server = DishHTTPServer(
             ("127.0.0.1", int(os.environ["DISH_SERVICE_PORT"])),
