@@ -426,7 +426,47 @@ def runtime_read(url, token, budget):
     return value
 
 
+def resource_identity(target, budget):
+    url = target.values["mcp_url"]
+    request = urllib.request.Request(
+        url, data=b"{}", headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=budget.left()):
+            raise OperationError(
+                "ENDPOINT_IDENTITY", "MCP endpoint did not require authentication"
+            )
+    except urllib.error.HTTPError as exc:
+        if exc.code != 401:
+            raise OperationError(
+                "ENDPOINT_IDENTITY", "MCP authentication discovery failed"
+            ) from exc
+        from .release_mcp_conformance import _RESOURCE_METADATA
+
+        match = _RESOURCE_METADATA.search(exc.headers.get("WWW-Authenticate", ""))
+    if match is None:
+        raise OperationError(
+            "ENDPOINT_IDENTITY", "MCP challenge omitted resource metadata"
+        )
+    metadata_url = match.group(1)
+    parsed = urllib.parse.urlsplit(metadata_url)
+    expected = urllib.parse.urlsplit(url)
+    if (
+        (parsed.scheme, parsed.netloc) != (expected.scheme, expected.netloc)
+        or parsed.username
+        or parsed.password
+    ):
+        raise OperationError(
+            "ENDPOINT_IDENTITY", "MCP resource metadata escaped endpoint origin"
+        )
+    if request_json(metadata_url, budget).get("resource") != url:
+        raise OperationError(
+            "ENDPOINT_IDENTITY", "MCP resource metadata identifies a different endpoint"
+        )
+
+
 def authenticated_read(target, budget, *, refresh=False):
+    resource_identity(target, budget)
     token = private_token(target)
     try:
         rpc(
@@ -497,9 +537,15 @@ def observe_component(target, component, expected, budget):
                 observed=before,
             )
         python = str((expected.dish_root / ".venv/bin/python").resolve())
+        import shlex
+
+        argv = shlex.split(before["arguments"])
         if (
             before["executable"] != python
-            or not str(expected.dish_root / ".venv/bin/") in before["arguments"]
+            or not argv
+            or Path(argv[0]).resolve() != Path(python)
+            or Path(argv[0]).parent.resolve()
+            != (expected.dish_root / ".venv/bin").resolve()
         ):
             raise OperationError(
                 "PROCESS_UNKNOWN",

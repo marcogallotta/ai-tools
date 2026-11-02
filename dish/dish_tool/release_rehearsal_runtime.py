@@ -32,6 +32,9 @@ def main():
         native_adapter_from_environment,
         runtime_service_from_environment,
     )
+    from dish_service import honest_store
+
+    honest_store.REMOTE_URL = str(root / "honest/upstream.git")
 
     if args.component == "backend":
         from dish_service.config import ServiceConfig
@@ -57,15 +60,21 @@ def main():
         import uvicorn
         from dish_service.mcp_server import MCPAuthConfig, create_app
         from fastmcp.server.auth.providers.jwt import JWTVerifier
+        from fastmcp.server.auth import RemoteAuthProvider
 
         resource = os.environ["DISH_MCP_RESOURCE_URL"]
         key_file = root / "jwt-key"
         key = key_file.read_text()
-        auth = JWTVerifier(
+        verifier = JWTVerifier(
             public_key=key,
             algorithm="HS256",
             issuer="dish-release-rehearsal",
             audience=resource,
+            base_url=resource.removesuffix("/mcp"),
+        )
+        auth = RemoteAuthProvider(
+            token_verifier=verifier,
+            authorization_servers=[resource.removesuffix("/mcp")],
             base_url=resource.removesuffix("/mcp"),
         )
         config = MCPAuthConfig(
