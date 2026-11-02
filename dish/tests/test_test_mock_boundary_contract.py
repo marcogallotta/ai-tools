@@ -5,6 +5,9 @@ from pathlib import Path
 
 
 REVIEWED_PRIVATE_FAULT_SEAMS = {
+    ("postgresql/test_admin_hold_ergonomics.py", "_admin_inspect_queue_fields"): (
+        "Injects an existing admin action to prove lease expiry appends without replacing it."
+    ),
     ("postgresql/test_cook_logs.py", "_planner_snapshot"): (
         "Read-action eligibility blocker injection without changing authoritative Dish state."
     ),

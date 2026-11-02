@@ -23,6 +23,7 @@ from dish_tool.backend import AsanaBackend
 from dish_tool.admin_command_spec import (
     ADMIN_COMMANDS as _ADMIN_COMMANDS,
     ADMIN_COMMAND_SPECS,
+    PRIMARY_ADMIN_COMMANDS,
     RESOLVED_OPERATION_TARGET_COMMANDS as _OPERATION_ADMIN_COMMANDS,
 )
 from dish_tool.admin_human import render_admin_result
@@ -504,7 +505,7 @@ def build_parser() -> JsonArgumentParser:
     subparsers._choices_actions = [
         action
         for action in subparsers._choices_actions
-        if action.help != argparse.SUPPRESS and action.dest not in {"kill", "kill-all", "kill-all-expired"}
+        if action.help != argparse.SUPPRESS and action.dest in PRIMARY_ADMIN_COMMANDS
     ]
     return parser
 

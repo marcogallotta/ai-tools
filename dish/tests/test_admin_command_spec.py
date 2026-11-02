@@ -137,8 +137,7 @@ def test_registry_derives_runtime_classifications() -> None:
 
 def test_registry_presentation_tiers_match_operator_surface() -> None:
     assert PRIMARY_ADMIN_COMMANDS == {
-        "queue", "inspect", "archive", "unarchive", "audit", "active", "kill",
-        "kill-all", "kill-all-expired",
+        "queue", "inspect", "archive", "unarchive", "audit", "active",
     }
     assert COMPATIBILITY_ADMIN_COMMANDS == {"issues", "attention", "active-leases"}
     assert (

@@ -366,9 +366,9 @@ In service mode, normal operator navigation is intentionally small:
 - `queue` works through everything currently waiting for Marco; use `--non-interactive` for a read-only listing;
 - `inspect` explains what one task is waiting on and shows the exact safe next action;
 - `audit` checks fleet integrity without treating Marco-managed Asana organization as drift;
-- `active` shows current run ownership;
-- `kill`, `kill-all-expired`, and `kill-all` are the visible run-replacement controls.
+- `active` shows current run ownership.
 
+The unsupported PostgreSQL `kill`, `kill-all-expired`, and `kill-all` commands remain hidden advanced commands.
 Advanced recovery, review-detail, migration, backup, and governance commands remain callable when
 Dish returns one as an exact next action. They are not normal navigation. The compatibility aliases
 `issues`, `attention`, and `active-leases` remain executable for old callers but must not be recommended
