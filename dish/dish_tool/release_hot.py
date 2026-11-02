@@ -89,6 +89,8 @@ class Target:
     def fingerprint(self):
         # Bind configuration bytes including secret-file digests, never their contents.
         files = [*self.values["env_files"], self.values["mcp_env_file"]]
+        if self.profile == "test" and self.values.get("runtime_launcher"):
+            files.append(self.values["runtime_launcher"])
         payload = {
             "target": self.values,
             "files": {
@@ -153,6 +155,8 @@ def target_config(profile):
             "honest_store",
             "isolation_root",
             "database_url",
+            "runtime_launcher",
+            "action_url",
         }
         if required - values.keys():
             raise OperationError(
@@ -176,6 +180,7 @@ def target_config(profile):
             "mcp_env_file",
             "oauth_root",
             "honest_store",
+            "runtime_launcher",
             *[],
         ):
             # Pointers themselves must be inside root; follow their target separately.
@@ -202,7 +207,7 @@ def target_config(profile):
                 raise OperationError(
                     "TEST_ISOLATION", "TEST requires dedicated rehearsal user units"
                 )
-        for name in ("health_url", "mcp_url", "mcp_local_url"):
+        for name in ("health_url", "mcp_url", "mcp_local_url", "action_url"):
             url = urllib.parse.urlsplit(values[name])
             if (
                 url.hostname != "127.0.0.1"
@@ -222,6 +227,17 @@ def target_config(profile):
                 "TEST_ISOLATION", "TEST database requires an isolated server and name"
             )
         env = release._read_env(tuple(map(Path, values["env_files"])))
+        mcp_env = release._read_env((Path(values["mcp_env_file"]),))
+        if mcp_env.get("DISH_MCP_BACKEND", "action") == "action" and (
+            mcp_env.get("DISH_MCP_ACTION_URL") != values["action_url"]
+            or not mcp_env.get("DISH_MCP_ACTION_TOKEN")
+            or mcp_env.get("DISH_MCP_ACTION_TOKEN")
+            != env.get("DISH_SERVICE_ACTION_TOKEN")
+        ):
+            raise OperationError(
+                "TEST_ISOLATION",
+                "TEST Action endpoint/credential configuration differs from backend listener",
+            )
         if env.get("DISH_PG_DATABASE_URL") != values["database_url"]:
             raise OperationError(
                 "TEST_ISOLATION",
@@ -730,6 +746,10 @@ def pair_binding(target, a, b):
         "source_digests": [m["source_tree_sha256"] for m in manifests],
         "config": target.fingerprint(),
         "contract": CONTRACT,
+        "qualification_protocol": 2,
+        "backend_transport": release._read_env((target.path("mcp_env_file"),)).get(
+            "DISH_MCP_BACKEND", "action"
+        ),
     }
 
 
@@ -795,23 +815,32 @@ def prepare(target, sha, python=None):
     if retained.schema_head != candidate.schema_head and fallback:
         retained = read_release(target, fallback)
     pair_binding(target, candidate, retained)
-    if not pair_valid(target, candidate, retained, check_only=True):
+    proofs = []
+    pairs = [(candidate, retained)]
+    if candidate.source_commit != retained.source_commit:
+        pairs.append((candidate, candidate))
+    for a, b in pairs:
+        if pair_valid(target, a, b, check_only=True):
+            continue
         from .release_qualification import qualify_pair
 
-        proof = qualify_pair(target, candidate, retained)
+        proofs.append((a, b, qualify_pair(target, a, b)))
+    # Publish eligibility only after every required pair, including same-target
+    # repair after A→B, passed real qualification.
+    for a, b, proof in proofs:
         atomic_json(
-            pair_path(target, candidate, retained),
+            pair_path(target, a, b),
             {
-                "binding": pair_binding(target, candidate, retained),
+                "binding": pair_binding(target, a, b),
                 "mixed_pairs": [True, True],
                 "proof": proof,
             },
         )
         # Same two mixed pairs certify the reverse direction as well.
         atomic_json(
-            pair_path(target, retained, candidate),
+            pair_path(target, b, a),
             {
-                "binding": pair_binding(target, retained, candidate),
+                "binding": pair_binding(target, b, a),
                 "mixed_pairs": [True, True],
                 "proof": proof,
             },

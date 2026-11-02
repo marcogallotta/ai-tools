@@ -396,3 +396,87 @@ def test_recorded_old_process_launcher_remains_valid_after_pointer_switch(
         },
     )
     assert hot.observe_component(target, "backend", old, hot.Budget(1))["ok"]
+
+
+def test_prepare_then_a_to_b_and_stale_mcp_same_target_repairs_without_reprepare(
+    system, monkeypatch, tmp_path
+):
+    from dish_tool import release_qualification
+
+    target, old, new, _older, events = system
+    target.values.update(repository=str(tmp_path), python=str(tmp_path / "python"))
+    hot.pair_path(target, new, old).unlink()
+    qualified = []
+    monkeypatch.setattr(release, "stage_release", lambda *a: new)
+
+    def qualify(t, a, b):
+        qualified.append((a.source_commit, b.source_commit))
+        return {
+            "backend_transport": "action",
+            "pairs": [
+                {"backend": a.source_commit, "mcp": b.source_commit},
+                {"backend": b.source_commit, "mcp": a.source_commit},
+            ],
+        }
+
+    monkeypatch.setattr(release_qualification, "qualify_pair", qualify)
+    hot.prepare(target, new.source_commit)
+    assert qualified == [
+        (new.source_commit, old.source_commit),
+        (new.source_commit, new.source_commit),
+    ]
+    assert hot.pair_valid(target, new, new)
+    running = {"backend": old.source_commit, "mcp": old.source_commit}
+
+    def restart(command, *a, **k):
+        if command[-1] in running:
+            running[command[-1]] = hot.selected(target).source_commit
+
+    monkeypatch.setattr(hot, "run", restart)
+
+    def verify(t, candidate, budget):
+        assert set(running.values()) == {candidate.source_commit}
+        return {c: {"ok": True, "code_release": sha} for c, sha in running.items()}
+
+    monkeypatch.setattr(hot, "verify_pair", verify)
+    hot.activate(target, new)
+    running["mcp"] = old.source_commit
+    result = hot.activate(target, new)
+    assert result["ok"] and running == {
+        "backend": new.source_commit,
+        "mcp": new.source_commit,
+    }
+    assert len(qualified) == 2
+
+
+def test_failed_self_pair_does_not_publish_partial_candidate_eligibility(
+    system, monkeypatch, tmp_path
+):
+    from dish_tool import release_qualification
+
+    target, old, new, _older, _events = system
+    target.values.update(repository=str(tmp_path), python=str(tmp_path / "python"))
+    hot.pair_path(target, new, old).unlink()
+    monkeypatch.setattr(release, "stage_release", lambda *a: new)
+
+    def qualify(t, a, b):
+        if a.source_commit == b.source_commit:
+            raise hot.OperationError("PAIR_INCOMPATIBLE", "broken self pair")
+        return {"pairs": [True, True]}
+
+    monkeypatch.setattr(release_qualification, "qualify_pair", qualify)
+    with pytest.raises(hot.OperationError, match="broken self pair"):
+        hot.prepare(target, new.source_commit)
+    assert not hot.pair_path(target, new, old).exists()
+    assert not hot.pair_path(target, new, new).exists()
+    assert hot.selected(target).source_commit == old.source_commit
+
+
+def test_old_native_qualification_receipt_cannot_authorize_action_pair(system):
+    target, old, new, _older, _events = system
+    path = hot.pair_path(target, new, old)
+    proof = json.loads(path.read_text())
+    proof["binding"].pop("qualification_protocol")
+    proof["binding"].pop("backend_transport")
+    hot.atomic_json(path, proof)
+    assert not hot.pair_valid(target, new, old, check_only=True)

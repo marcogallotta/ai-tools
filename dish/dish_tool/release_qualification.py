@@ -43,6 +43,15 @@ def qualify_pair(target, candidate, retained):
             "qualification and operator rehearsal must be separate",
         )
     root = qualification.path("release_root")
+    topology = pair_binding(target, candidate, retained)["backend_transport"]
+    qualification_topology = release._read_env(
+        (qualification.path("mcp_env_file"),)
+    ).get("DISH_MCP_BACKEND", "action")
+    if topology not in {"action", "postgresql"} or qualification_topology != topology:
+        raise OperationError(
+            "QUALIFICATION_TOPOLOGY",
+            "isolated qualification must use the actual configured MCP backend transport",
+        )
     copies = []
     for source in (candidate, retained):
         copied = release.stage_release(
@@ -67,6 +76,7 @@ def qualify_pair(target, candidate, retained):
     budget = Budget(60)
     pair_binding(target, candidate, retained)
     for backend, mcp in (copies, copies[::-1]):
+        pair_start = time.time()
         # Dedicated units use independent component pointers only inside this
         # qualification fixture. The operator controller has one paired pointer.
         release._set_pointer(qualification.path("current"), str(backend.root))
@@ -91,6 +101,15 @@ def qualify_pair(target, candidate, retained):
             }
             if all(v["ok"] for v in observed.values()):
                 break
+            if (
+                observed["backend"]["ok"]
+                and observed["mcp"].get("state") == "CONFORMANCE_FAILED"
+            ):
+                raise OperationError(
+                    "PAIR_INCOMPATIBLE",
+                    "actual MCP/backend request failed",
+                    observed=observed,
+                )
             if budget.left() < 0.2:
                 raise OperationError(
                     "PAIR_INCOMPATIBLE",
@@ -98,15 +117,46 @@ def qualify_pair(target, candidate, retained):
                     observed=observed,
                 )
             time.sleep(0.1)
+        action_reply = None
+        if topology == "action":
+            replies = [
+                json.loads(line)
+                for line in (
+                    qualification.path("isolation_root") / "action-reads.jsonl"
+                )
+                .read_text()
+                .splitlines()
+            ]
+            action_reply = next(
+                (
+                    r
+                    for r in reversed(replies)
+                    if r["at"] >= pair_start
+                    and r["path"] == "/v1/action/sections"
+                    and r["status"] == 200
+                    and r["ok"] is True
+                    and r["code_release"] == backend.source_commit
+                    and r["pid"] == observed["backend"]["process"]["pid"]
+                ),
+                None,
+            )
+            if action_reply is None:
+                raise OperationError(
+                    "PAIR_INCOMPATIBLE",
+                    "no actual opposite backend Action reply witness",
+                )
         evidence.append(
             {
                 "backend": backend.source_commit,
                 "mcp": mcp.source_commit,
                 "observed": observed,
+                "backend_action_reply": action_reply,
             }
         )
     return {
         "boundary": "real user units + native PostgreSQL + authenticated FastMCP JWT TEST trust domain",
+        "backend_transport": topology,
+        "qualification_config": qualification.fingerprint(),
         "pairs": evidence,
         "observed_at": time.time(),
     }

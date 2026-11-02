@@ -54,7 +54,10 @@ environment selected by the production current pointer. A routine release restar
 then MCP; this is recoverable sequential deployment, with a brief mixed-version interval. A
 source-controlled `paired-hot-v1` declaration and exact-pair read-only transport qualification bind
 eligibility to candidate/retained source digests, schema and configuration. Declaration alone is
-insufficient. Configuration, OAuth state, Honest stores, database schema and routing remain outside
+insufficient. Qualification uses the configured MCP backend topology: with Action HTTP, both mixed
+pairs must carry real MCP requests through the opposite release's Action listener. Direct native
+PostgreSQL reads certify only that distinct topology. Candidate self-pair qualification preserves
+eligibility for same-target repair after an ordinary deployment. Configuration, OAuth state, Honest stores, database schema and routing remain outside
 the routine release's mutation scope.
 
 The existing release-root lock serializes pointer changes. One fsynced pending-operation record

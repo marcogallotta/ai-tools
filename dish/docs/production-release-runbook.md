@@ -51,8 +51,12 @@ Owner-only `~/.config/dish-service/release-prod.json` may set `python` and exact
 
 The manifest binds commit, complete source digest, dependencies, actual interpreter and checked-in
 `deploy/hot-deploy-contract.json`. Routine eligibility requires `paired-hot-v1`, transport generation
-1 and config generation 1. Both mixed pairs must pass real authenticated read-only qualification
-on isolated native resources. Evidence binds candidate and retained/recovery SHAs, source digests,
+1 and config generation 1. Both mixed pairs and candidate/candidate must pass real authenticated
+read-only qualification using the configured MCP backend transport. For Action HTTP, MCP calls
+the opposite release's actual Action listener using isolated credentials; successful backend replies
+bind the serving code/PID. Candidate/candidate evidence permits later same-target stale-MCP repair
+without a second prepare. Native PostgreSQL-only MCP reads do not certify the Action interface.
+Evidence binds candidate and retained/recovery SHAs, source digests,
 schema, config and contract generations. Missing/stale evidence refuses disruption and names
 `prepare latest`. Missing declaration or incompatible transport/config changes require the existing
 rollout plan rather than a compatibility guess.
@@ -133,6 +137,13 @@ state and deterministic local upstream. It installs fixed `~/.config/dish-servic
 and `release-qualification.json`. Existing fixtures are preserved. TEST admission refuses incomplete
 or overlapping configurations. Separate qualification resources exercise both exact mixed pairs
 without changing operator rehearsal pointers. `setup-probe.json` must pass before timed agents launch.
+The separate TEST bootstrap launcher imports application modules/dependencies from each immutable
+release's working directory. This permits retained artifacts to use the same isolated auth/listener
+setup without editing their bytes. Its digest is bound into TEST configuration evidence. Each backend
+hosts actual private-health and Action HTTP listeners; MCP selects its real configured adapter. An
+append-only observer records only Action path/status/success and process identity, never credentials
+or response content. A negative control disabling the Action route must fail pair qualification while
+backend health and operator services remain intact.
 If the first build fails, retain its logs and use the same command with `--resume-build` and the
 corrected committed candidate. This rebuilds only incomplete TEST fixtures and preserves earlier
 immutable releases, databases and logs; it refuses a setup that already passed.

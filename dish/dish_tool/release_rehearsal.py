@@ -134,7 +134,12 @@ def install_target(
     root, repository, upstream, candidate, prior, *, name, qualification=False
 ):
     root.mkdir(parents=True, mode=0o700)
-    dbport, backend_port, mcp_port = free_port(), free_port(), free_port()
+    dbport, backend_port, mcp_port, action_port = (
+        free_port(),
+        free_port(),
+        free_port(),
+        free_port(),
+    )
     dsn, generation, schema = create_database(root, dbport, repository)
     for directory in ("authority", "oauth", "honest", "operations", "state"):
         (root / directory).mkdir(mode=0o700)
@@ -170,6 +175,7 @@ def install_target(
         "DISH_PG_AUTHORITY_STATE_DIR": str(root / "authority"),
         "DISH_PG_CURSOR_SECRET": secrets.token_hex(32),
         "DISH_SERVICE_PORT": str(backend_port),
+        "DISH_ACTION_PORT": str(action_port),
         "DISH_MCP_BIND_PORT": str(mcp_port),
         "DISH_MCP_RESOURCE_URL": resource,
         "DISH_SERVICE_AGENT_TOKEN": secrets.token_hex(24),
@@ -185,6 +191,15 @@ def install_target(
         "DISH_MCP_HONEST_REMOTE": str(root / "honest/upstream.git"),
         "DISH_MCP_PLANNING_CONTEXT_DB": str(root / "state/planning.sqlite3"),
     }
+    env.update(
+        DISH_MCP_BACKEND="action",
+        DISH_MCP_ACTION_URL=f"http://127.0.0.1:{action_port}",
+        DISH_MCP_ACTION_TOKEN=env["DISH_SERVICE_ACTION_TOKEN"],
+    )
+    write_private(
+        root / "runtime.py",
+        Path(__file__).with_name("release_rehearsal_runtime.py").read_text(),
+    )
     write_private(root / "service.env", "".join(f"{k}={v}\n" for k, v in env.items()))
     values = {
         "release_root": str(root / "releases"),
@@ -196,6 +211,8 @@ def install_target(
         "backend_unit": f"dish-release-test-{name}-backend.service",
         "mcp_unit": f"dish-release-test-{name}-mcp.service",
         "health_url": f"http://127.0.0.1:{backend_port}/health",
+        "action_url": f"http://127.0.0.1:{action_port}",
+        "runtime_launcher": str(root / "runtime.py"),
         "mcp_url": resource,
         "mcp_local_url": resource,
         "token_file": str(root / "token"),
@@ -228,7 +245,7 @@ def install_target(
         if unit.exists():
             raise RuntimeError(f"refusing to replace existing unit: {unit}")
         unit.write_text(
-            f"[Unit]\nDescription=Isolated Dish release TEST {name} {component}\n[Service]\nType=simple\nWorkingDirectory={pointer}/dish\nEnvironmentFile={root}/service.env\nEnvironment=DISH_RELEASE_MANIFEST={pointer}/.dish-release.json\nExecStart={pointer}/dish/.venv/bin/python -m dish_tool.release_rehearsal_runtime {component}\nKillMode=control-group\nTimeoutStopSec=3\nUMask=0077\n"
+            f"[Unit]\nDescription=Isolated Dish release TEST {name} {component}\n[Service]\nType=simple\nWorkingDirectory={pointer}/dish\nEnvironmentFile={root}/service.env\nEnvironment=DISH_RELEASE_MANIFEST={pointer}/.dish-release.json\nExecStart={pointer}/dish/.venv/bin/python {root}/runtime.py {component}\nKillMode=control-group\nTimeoutStopSec=3\nUMask=0077\n"
         )
     atomic_json(root / "target.json", values)
     return Target("test", values)

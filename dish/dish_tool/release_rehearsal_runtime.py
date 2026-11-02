@@ -8,9 +8,17 @@ production GitHub OAuth or public routing.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import sys
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
+
+# The fixture launcher is separate from immutable artifacts. All application
+# modules and dependencies come from the selected release working directory.
+sys.path.insert(0, str(Path.cwd().resolve()))
 
 
 def main():
@@ -29,7 +37,6 @@ def main():
         if not Path(os.environ[name]).resolve().is_relative_to(root):
             raise RuntimeError("rehearsal store escapes owned isolation root")
     from dish_service.native_mcp_server import (
-        native_adapter_from_environment,
         runtime_service_from_environment,
     )
     from dish_service import honest_store
@@ -38,7 +45,7 @@ def main():
 
     if args.component == "backend":
         from dish_service.config import ServiceConfig
-        from dish_service.http import DishHTTPServer
+        from dish_service.http import DishHTTPServer, DishRequestHandler
 
         service = runtime_service_from_environment(
             authenticated_owner_id="release-test"
@@ -51,14 +58,51 @@ def main():
             service,
             surface_mode="private",
         )
+        action = DishHTTPServer(
+            ("127.0.0.1", int(os.environ["DISH_ACTION_PORT"])),
+            service,
+            surface_mode="private"
+            if (root / "broken-action-interface").exists()
+            else "action",
+        )
+
+        class ObservedActionHandler(DishRequestHandler):
+            def _write_json(self, status, payload):
+                super()._write_json(status, payload)
+                event = {
+                    "at": time.time(),
+                    "path": self.path,
+                    "status": int(status),
+                    "ok": payload.get("ok") if isinstance(payload, dict) else None,
+                    **self.server.runtime_identity,
+                }
+                fd = os.open(
+                    root / "action-reads.jsonl",
+                    os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                    0o600,
+                )
+                with os.fdopen(fd, "w") as stream:
+                    stream.write(json.dumps(event) + "\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+
+        action.RequestHandlerClass = ObservedActionHandler
+        thread = threading.Thread(target=action.serve_forever, daemon=True)
+        thread.start()
         try:
             server.serve_forever()
         finally:
+            action.shutdown()
+            action.server_close()
             server.server_close()
             service.close()
     else:
         import uvicorn
-        from dish_service.mcp_server import MCPAuthConfig, create_app
+        from dish_service.mcp_server import (
+            MCPAuthConfig,
+            create_app,
+            backend_from_environment,
+        )
         from fastmcp.server.auth.providers.jwt import JWTVerifier
         from fastmcp.server.auth import RemoteAuthProvider
 
@@ -84,12 +128,14 @@ def main():
             resource,
             bind_port=int(os.environ["DISH_MCP_BIND_PORT"]),
         )
-        adapter = native_adapter_from_environment(authenticated_owner_id="release-test")
+        adapter = backend_from_environment(config)
         try:
             app = create_app(adapter, config, test_auth=auth)
             uvicorn.run(app, host="127.0.0.1", port=config.bind_port, access_log=False)
         finally:
-            adapter.close()
+            close = getattr(adapter, "close", None)
+            if close:
+                close()
 
 
 if __name__ == "__main__":
