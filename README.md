@@ -7,6 +7,8 @@ hook scripts and instruction files that make agents use them.
 
 ## The tools
 
+Dish deploy, status, rollback and interrupted-operation recovery: [short operations entry](dish/docs/production-release-runbook.md#commands-from-the-repository-root).
+
 **`tools/git-commit`** — commits instead of `git add` + `git commit`.
 
 ```

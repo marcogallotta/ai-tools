@@ -792,9 +792,11 @@ class CanonicalMCPRedirect:
         await self.app(scope, receive, send)
 
 
-def create_app(adapter: Any, config: MCPAuthConfig):
+def create_app(adapter: Any, config: MCPAuthConfig, *, test_auth=None):
     """Build the one authenticated GitHub OAuth MCP shell around a backend adapter."""
-    auth = DishGitHubProvider(
+    from dish_tool.code_identity import process_code_identity
+    runtime_identity = process_code_identity()
+    auth = test_auth or DishGitHubProvider(
         client_id=config.github_client_id,
         client_secret=config.github_client_secret,
         allowed_user_id=config.github_user_id,
@@ -828,6 +830,11 @@ def create_app(adapter: Any, config: MCPAuthConfig):
             PlanningContextTool(adapter, HONEST_STORE, planning_store),
         ],
     )
+    @server.tool(name="dish_runtime_identity", annotations={"readOnlyHint": True})
+    def runtime_code_identity() -> dict[str, object]:
+        """Authenticated transport-local process-start code witness."""
+        return dict(runtime_identity)
+
     return JSONRegistrationContentType(
         CanonicalMCPRedirect(
             server.http_app(

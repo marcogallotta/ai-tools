@@ -49,6 +49,23 @@ Clients do not own durable workflow truth. The service coordinates current workf
 
 ## Process and transaction boundaries
 
+The backend and authenticated MCP process share one immutable source release and private Python
+environment selected by the production current pointer. A routine release restarts the backend and
+then MCP; this is recoverable sequential deployment, with a brief mixed-version interval. A
+source-controlled `paired-hot-v1` declaration and exact-pair read-only transport qualification bind
+eligibility to candidate/retained source digests, schema and configuration. Declaration alone is
+insufficient. Configuration, OAuth state, Honest stores, database schema and routing remain outside
+the routine release's mutation scope.
+
+The existing release-root lock serializes pointer changes. One fsynced pending-operation record
+prevents a second deploy/rollback from overwriting interrupted evidence. Recovery restores the
+recorded compatible prior release or explicit fallback; it never chooses latest. Matching terminal
+receipts allow verification without duplicate restarts. Status uses live process-start identities,
+PID/start ticks, listener ownership, immutable paths and authenticated endpoint reads for both
+processes. Historical receipts do not certify current health. TEST rehearsals have separate units,
+native PostgreSQL, fixed upstream, credentials and stores; their evidence does not commission
+production OAuth or public routing. Operations belong in the [release runbook](../production-release-runbook.md).
+
 Transport processes authenticate and validate their own protocol concerns, then invoke application/runtime authority. The architecture does not require transports to be logic-free; it requires them not to become competing authorities for workflow transitions or durable facts.
 
 ## Normal flow

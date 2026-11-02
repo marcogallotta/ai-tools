@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from dish_tool.admin_command_spec import (
     RESOLVED_OPERATION_TARGET_COMMANDS as _ADMIN_OPERATION_TARGET_COMMANDS,
 )
-from dish_tool.code_identity import executable_code_release
+from dish_tool.code_identity import process_code_identity
 from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import require_asana_gid, require_dish_uuid, validate_identifier_fields
 from dish_tool.results import error_envelope
@@ -178,6 +178,7 @@ class DishHTTPServer(ThreadingHTTPServer):
         if surface_mode not in {"combined", "private", "action"}:
             raise ValueError("invalid HTTP surface mode")
         self.service = service
+        self.runtime_identity = process_code_identity()
         self.surface_mode = surface_mode
         self.frontend_runtime = frontend_runtime
         self._stop_event = threading.Event()
@@ -459,9 +460,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/health" and self.server.surface_mode != "action":
             payload = self.server.service.health()
-            code_release = executable_code_release()
-            if code_release is not None:
-                payload["code_release"] = code_release
+            payload.update(self.server.runtime_identity)
             self._write_json(HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE, payload)
             return
         if path == "/openapi/action.json":

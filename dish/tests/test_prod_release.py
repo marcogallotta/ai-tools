@@ -131,7 +131,7 @@ def test_certify_existing_rejects_mislabeled_git_worktree(
         certify_existing_release(tmp_path, identity)
 
     def exact(command, **kwargs):
-        return _Completed(identity + "\n" if "rev-parse" in command else "")
+        return _Completed(identity + "\n" if "rev-parse" in command else ("{}" if "-c" in command else ""))
 
     monkeypatch.setattr("dish_tool.prod_release.subprocess.run", exact)
     assert certify_existing_release(tmp_path, identity).source_commit == identity
@@ -413,72 +413,14 @@ def test_preflight_combines_canonical_service_environment_files_in_order(
 
 
 @pytest.mark.parametrize("command", ["activate", "rollback"])
-def test_documented_commands_use_both_canonical_environment_files_before_mutation(
-    command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    release = _write_release(tmp_path / "releases", "a" * 40)
-    current = tmp_path / "prod-current"
-    previous = tmp_path / "prod-previous"
-    if command == "rollback":
-        previous.symlink_to(release.root)
-    observed: list[tuple[Path, ...]] = []
-    events: list[str] = []
-
-    def fake_preflight(candidate: Release, env_files: tuple[Path, ...]) -> None:
-        assert candidate == release
-        observed.append(env_files)
-        events.append("preflight")
-
-    class _RecordingOperations:
-        def restart(self) -> None:
-            events.append("restart")
-
-        def verify(self, candidate: Release) -> None:
-            assert candidate == release
-            events.append("verify")
-
-    class _Conformance:
-        def __init__(self, **kwargs) -> None:
-            pass
-
-        def preflight(self, candidate: Release) -> None:
-            assert candidate == release
-            events.append("mcp-preflight")
-
-        def verify_and_write_receipt(self, candidate: Release) -> None:
-            assert candidate == release
-            events.append("mcp-receipt")
-
-    monkeypatch.setattr(prod_release, "preflight_database", fake_preflight)
-    monkeypatch.setattr(
-        prod_release,
-        "SystemOperations",
-        lambda *args, **kwargs: _RecordingOperations(),
-    )
-    monkeypatch.setattr(
-        "dish_tool.release_mcp_conformance.MCPReleaseConformance", _Conformance
-    )
-    argv = [
-        "--release-root",
-        str(release.root.parent),
-        "--current",
-        str(current),
-        "--previous",
-        str(previous),
-        command,
-    ]
+def test_target_overrides_require_installed_test_profile(command, tmp_path, capsys):
+    # Arbitrary historical target flags must never be silently ignored and run PROD.
+    argv = ["--release-root", str(tmp_path), command]
     if command == "activate":
-        argv.append(release.source_commit)
+        argv.append("a" * 40)
+    assert prod_release.main(argv) == 2
+    assert "fixed TEST" in capsys.readouterr().out
 
-    assert prod_release.main(argv) == 0
-    assert observed == [DEFAULT_ENV_FILES]
-    assert events == [
-        "preflight",
-        "mcp-preflight",
-        "restart",
-        "verify",
-        "mcp-receipt",
-    ]
 
 
 def test_mcp_conformance_receipt_binds_backend_but_not_mutable_mcp_checkout(

@@ -15,7 +15,7 @@ def executable_code_release() -> str | None:
     if not manifest:
         return None
     try:
-        value = json.loads(Path(manifest).read_text(encoding="utf-8")).get(
+        value = json.loads(Path(manifest).resolve().read_text(encoding="utf-8")).get(
             "source_commit"
         )
     except (OSError, ValueError, AttributeError):
@@ -24,3 +24,9 @@ def executable_code_release() -> str | None:
 
 
 __all__ = ["executable_code_release"]
+
+
+def process_code_identity() -> dict[str, object]:
+    """Capture once during server construction, before serving requests."""
+    return {"code_release": executable_code_release(), "pid": os.getpid(),
+            "start_ticks": Path('/proc/self/stat').read_text().rsplit(')', 1)[1].split()[19]}

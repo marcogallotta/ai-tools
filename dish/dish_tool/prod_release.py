@@ -32,6 +32,8 @@ DEFAULT_ENV_FILES = (
 )
 DEFAULT_HEALTH_URL = "http://127.0.0.1:8775/health"
 DEFAULT_UNIT = "dish-service-prod.service"
+DEFAULT_PYTHON = Path("/home/marco/.local/share/dish/python-3.12.13/bin/python3.12")
+CONTRACT_PATH = "dish/deploy/hot-deploy-contract.json"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _SCHEMA_ASSIGNMENT = re.compile(
     r'^ALEMBIC_HEAD\s*=\s*["\']([^"\']+)["\']\s*$', re.MULTILINE
@@ -151,6 +153,9 @@ def _manifest_payload(release_root: Path, source_commit: str) -> dict[str, objec
         "hashes": {name: _sha256(release_root / name) for name in _HASHED_PATHS},
         "source_tree_sha256": _source_tree_sha256(release_root),
         "installed_packages_sha256": _installed_packages_sha256(python),
+        "hot_deploy_contract": json.loads((release_root / CONTRACT_PATH).read_text()) if (release_root / CONTRACT_PATH).exists() else None,
+        "python": json.loads(subprocess.check_output(
+            [str(python), "-c", "import sys,json; print(json.dumps({'executable':sys.executable,'base_executable':sys._base_executable,'version':sys.version}))"], text=True)),
     }
 
 
@@ -173,6 +178,11 @@ def stage_release(
     repository = repository.resolve()
     release_root.mkdir(parents=True, exist_ok=True)
     source_commit = _exact_commit(repository, revision)
+    builder = python_executable or DEFAULT_PYTHON
+    if not builder.is_file():
+        raise ReleaseError(f"Python 3.12 interpreter unavailable: {builder}; install it before prepare")
+    if subprocess.check_output([str(builder), "-c", "import sys; print('.'.join(map(str,sys.version_info[:2])))"], text=True).strip() != "3.12":
+        raise ReleaseError("staging requires the configured Python 3.12 interpreter")
     destination = release_root / source_commit
     if destination.exists() or destination.is_symlink():
         return load_release(release_root, source_commit)
@@ -196,9 +206,15 @@ def stage_release(
             bundle.extractall(staging, filter="data")
         dish_root = staging / "dish"
         python = dish_root / ".venv/bin/python"
-        builder = python_executable or repository / "dish/.venv/bin/python"
+        builder = python_executable or DEFAULT_PYTHON
         if not builder.is_file():
-            builder = Path(sys.executable)
+            raise ReleaseError(f"Python 3.12 interpreter unavailable: {builder}; install the configured interpreter before prepare")
+        version = subprocess.check_output([str(builder), "-c", "import sys; print('.'.join(map(str,sys.version_info[:2])))"], text=True).strip()
+        if version != "3.12":
+            raise ReleaseError("staging requires the configured Python 3.12 interpreter")
+        declaration = json.loads((staging / CONTRACT_PATH).read_text())
+        if declaration != {"release_contract": "paired-hot-v1", "transport_generation": 1, "config_generation": 1}:
+            raise ReleaseError("unsupported hot-deploy contract; use the migration/config rollout runbook")
         subprocess.run(
             [str(builder), "-m", "venv", str(dish_root / ".venv")], check=True
         )
@@ -494,7 +510,9 @@ def activate_release(
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Paired Dish backend + MCP release. Production default; --profile test selects installed isolated rehearsal.", epilog="From repository root: dish/scripts/dish-prod-release deploy latest | rollback | status. Exit 0 verified; 1 unhealthy/unknown; 2 usage/precondition; 3 failed deploy recovered; 4 recovery failed.")
+    parser.add_argument("--profile", choices=("prod", "test"), default="prod")
+    parser.add_argument("--json", action="store_true", help="machine-readable result with identical health semantics")
     parser.add_argument("--release-root", type=Path, default=DEFAULT_RELEASE_ROOT)
     parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
     parser.add_argument("--previous", type=Path, default=DEFAULT_PREVIOUS)
@@ -523,6 +541,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mcp-unit", default="dish-mcp.service")
     commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("deploy", "prepare"):
+        command = commands.add_parser(name, help="resolve canonical main once, stage/qualify" + (" and activate both processes" if name == "deploy" else " without activation"))
+        command.add_argument("target", choices=("latest",))
+        command.add_argument("--python", type=Path)
+    commands.add_parser("recover", help="restore recorded compatible recovery release after interruption")
     stage = commands.add_parser("stage")
     stage.add_argument("--repository", type=Path, required=True)
     stage.add_argument("--revision", required=True)
@@ -607,6 +630,27 @@ def _run(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command in {"deploy", "prepare", "recover", "activate", "rollback", "status"}:
+            from .release_hot import execute, OperationError
+            try:
+                result, code = execute(args)
+            except OperationError as exc:
+                result, code = {"ok": False, "state": exc.code, "error": str(exc), "observed": exc.observed, "next_action": ("dish/scripts/dish-prod-release" + (" --profile test" if args.profile == "test" else "") + " recover") if exc.code in {"PENDING_OPERATION", "RECOVERY_FAILED", "EXTERNAL_STATE_CHANGED"} else str(exc)}, exc.exit_code
+            if args.json:
+                print(json.dumps(result, sort_keys=True))
+            else:
+                state = result.get("state", "HEALTHY" if result["ok"] else "UNKNOWN")
+                print(f"{args.profile.upper()} {state}: current={result.get('current', result.get('receipt', {}).get('pointers', {}).get('current', result.get('release', 'UNKNOWN')))}")
+                for component, observation in result.get("components", result.get("receipt", {}).get("components", {})).items():
+                    print(f"  {component}: {observation.get('code_release', observation.get('state', 'UNKNOWN'))}")
+                if result.get("error"):
+                    print(result["error"])
+                if result.get("next_action") not in (None, "none"):
+                    print("Next: " + result["next_action"])
+                for name in ("preparation_seconds", "activation_seconds"):
+                    if name in result:
+                        print(f"  {name}: {result[name]:.3f}")
+            return code
         with _release_lock(args.release_root):
             _run(args)
         return 0

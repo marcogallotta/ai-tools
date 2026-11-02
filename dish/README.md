@@ -1,5 +1,7 @@
 # dish
 
+Deploy latest, status, rollback or recover an interrupted release: [short operations entry](docs/production-release-runbook.md#commands-from-the-repository-root), including isolated TEST rehearsal commands.
+
 `dish` is the guarded interface for protocol-governed Cooking tasks. The live Asana task remains the content authority; the tool validates exact content, records durable operation evidence, enforces independent Verification, and confirms every write and movement by reread.
 
 ## Supported runtime modes

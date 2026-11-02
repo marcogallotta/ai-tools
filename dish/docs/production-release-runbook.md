@@ -1,188 +1,143 @@
 # Production release and rollback
 
-This runbook owns Dish application-code deployment and rollback. PostgreSQL migrations remain
-owned by the [routine migration runbook](postgresql-routine-migration.md). A code rollback never
-downgrades the database.
-
-Production runs from the immutable release selected by
-`/home/marco/.local/share/dish/prod-current`. The controller records the displaced exact release in
-`prod-previous`; it never guesses from directory timestamps. Each release directory is named for
-its full Git commit and contains a manifest binding that commit to the expected schema head, the
-complete exported source tree, and the installed dependency set.
-
-## One-time service installation
-
-Install the reviewed per-user unit and reload the user manager:
+## Commands from the repository root
 
 ```sh
-install -Dm0644 deploy/systemd/dish-service-prod.service /home/marco/.config/systemd/user/dish-service-prod.service
-systemctl --user daemon-reload
-systemctl --user add-wants default.target dish-service-prod.service
-```
-
-Remove or disable any obsolete duplicate before enabling the per-user unit. The canonical
-production unit is controlled only with `systemctl --user ... dish-service-prod.service`; never use
-the system manager or `sudo` for it.
-
-If `prod-current` already names a working release created before this controller, certify it once
-before the first managed activation. Certification requires the directory name and Git `HEAD` to
-be the same full commit, no modified or untracked files, a built virtual environment, the current
-schema identity source, and matching source/dependency digests:
-
-```sh
-dish/scripts/dish-prod-release certify-existing <exact-40-character-commit>
-```
-
-This transition command rejects the mislabelled or modified directory instead of blessing it.
-
-## Stage a release
-
-Run from a clean repository that contains the reviewed commit. Staging exports committed bytes,
-builds a private virtual environment, hashes the complete exported source tree and installed
-package set, and publishes the directory only after all steps succeed.
-
-```sh
-dish/scripts/dish-prod-release stage \
-  --repository /home/marco/ai-tools \
-  --revision <exact-40-character-commit>
-```
-
-Staging does not change a service or pointer. Before a schema migration, stage and retain at least
-one reviewed fallback release that expects the destination schema. A release expecting an older
-schema is not a usable fallback after a forward-only migration.
-
-## Activate
-
-Keep a currently authorized MCP bearer token in
-`/home/marco/.config/dish-service/mcp-conformance-token` with mode `0600`. This credential is read
-only in process; it is never passed on the command line or written to the receipt.
-
-The token is the GitHub-OAuth access token the MCP server issues; it lasts about 8 hours, so renew
-it immediately before every `activate`. A 401 from the MCP conformance check means the file is
-stale. Marco has standing-authorized the activating agent to renew it without asking.
-
-Run the script below. It first renews silently from the stored refresh token
-(`mcp-conformance-refresh.json`, mode `0600`, valid about a year) and prints
-`token refreshed silently`. Only when that fails (first use, or the refresh token expired or was
-revoked) does it print `OPEN THIS LINK TO SIGN IN:`; then send Marco that link, which he opens on the
-laptop (the callback is `localhost`), and the script stores a new refresh token. Run `activate` once
-it prints `token refreshed silently` or `token written`.
-
-```python
-import asyncio, json, os, urllib.parse, urllib.request
-from fastmcp import Client
-from fastmcp.client.auth import OAuth
-
-URL = "https://laptop.tail46f0b9.ts.net/dish/mcp"
-TOKEN_URL = "https://laptop.tail46f0b9.ts.net/dish/token"
-DIR = "/home/marco/.config/dish-service/"
-ACCESS_FILE = DIR + "mcp-conformance-token"
-STATE_FILE = DIR + "mcp-conformance-refresh.json"
-
-def write_private(path, text):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as handle:
-        handle.write(text)
-
-def save(client_id, tokens):
-    write_private(ACCESS_FILE, tokens["access_token"].strip())
-    if tokens.get("refresh_token"):
-        write_private(STATE_FILE, json.dumps(
-            {"client_id": client_id, "refresh_token": tokens["refresh_token"]}))
-
-def refresh():
-    state = json.load(open(STATE_FILE))
-    body = urllib.parse.urlencode({
-        "grant_type": "refresh_token", "refresh_token": state["refresh_token"],
-        "client_id": state["client_id"], "resource": URL}).encode()
-    with urllib.request.urlopen(urllib.request.Request(TOKEN_URL, body), timeout=30) as r:
-        tokens = json.load(r)
-    tokens.setdefault("refresh_token", state["refresh_token"])
-    save(state["client_id"], tokens)
-
-class PrintLinkOAuth(OAuth):
-    async def redirect_handler(self, authorization_url):
-        print("OPEN THIS LINK TO SIGN IN:", authorization_url, flush=True)
-
-async def sign_in():
-    auth = PrintLinkOAuth(mcp_url=URL, client_name="dish-release-conformance",
-                          callback_timeout=1500.0)
-    async with Client(URL, auth=auth) as client:
-        await client.list_tools()
-        tokens = await auth.token_storage_adapter.get_tokens()
-        info = await auth.token_storage_adapter.get_client_info()
-    save(info.client_id, tokens.model_dump(mode="json"))
-
-try:
-    refresh()
-    print("token refreshed silently")
-except Exception as exc:
-    print("refresh unavailable (%s); signing in" % type(exc).__name__, flush=True)
-    asyncio.run(sign_in())
-    print("token written")
-```
-
-Save it outside the repository and run it with a release's interpreter
-(`releases/<commit>/dish/.venv/bin/python -u -I <file>`), in the background with unpiped stdout so
-the link, if needed, appears immediately.
-
-```sh
-dish/scripts/dish-prod-release activate <exact-40-character-commit>
-```
-
-Before changing the pointer, the controller verifies the complete exported source-tree digest and
-uses the candidate's own runtime to prove that the configured database, schema, authority-generation
-ID, and generation release all exactly match live PostgreSQL. It then atomically records
-`prod-previous`, switches `prod-current`, performs one service restart, and requires all of these
-within the bounded readiness interval:
-
-- the per-user service is active;
-- its main process working directory is the selected immutable release;
-- private `/health` is ready;
-- `/health.code_release` equals the selected Git commit.
-- the existing public MCP endpoint accepts an authenticated initialize and a read-only
-  `dish_sections` call.
-
-The MCP checks are part of this existing readiness/recovery boundary, not a separate release gate.
-Before the pointer switch, the controller also checks the unauthenticated challenge and exact
-protected-resource metadata. After successful readiness it writes a mode-`0600` machine-readable
-receipt under `/home/marco/.local/state/dish/release-receipts/`. The receipt binds the exact
-immutable backend commit and schema, but truthfully records the MCP executable as an
-`unbound_mutable_checkout`; `dish-mcp.service` does not execute from the selected release. Unit
-evidence is collected through the user manager. Journal content is represented only by a bounded
-line count and digest, so credentials and response bodies are not copied into the receipt.
-
-The bare commands read the same environment split and precedence as the production unit:
-`prod.env` first, then `postgres-prod.env`. For an explicit non-production rehearsal, repeat
-`--env-file` in the desired precedence order before the subcommand.
-
-The database generation identity remains `identity.dish_release`; it is intentionally distinct
-from executable `code_release`.
-
-If readiness fails, the controller restores both pointer values exactly, restarts the displaced
-release, and verifies that recovery. A failure message explicitly distinguishes a recovered failed
-activation from a failure where the prior release also could not be recovered.
-
-## Roll back
-
-```sh
+dish/scripts/dish-prod-release deploy latest
+dish/scripts/dish-prod-release status
 dish/scripts/dish-prod-release rollback
 ```
 
-Rollback targets only the exact `prod-previous` release and runs the same integrity, schema,
-process-path, health, and MCP conformance checks as activation. If no compatible previous release
-is recorded, it fails before stopping or restarting production. Never change `prod-current`
-manually and never select a release merely because its directory is old.
-
-Read pointer state without mutation:
+These commands target **production** and release backend and MCP together. For the separately
+installed **TEST rehearsal**, use the explicit profile:
 
 ```sh
-dish/scripts/dish-prod-release status
+dish/scripts/dish-prod-release --profile test deploy latest
+dish/scripts/dish-prod-release --profile test status
+dish/scripts/dish-prod-release --profile test rollback
+dish/scripts/dish-prod-release --profile test recover
 ```
 
-For diagnosis, use:
+Run the requested command and consume its result. It scripts its own checks; no manual SHA,
+health curl, process inspection or token copying is needed. `--json` before the command returns
+the same verdict and machine-readable evidence. Exit 0 means verified success; 1 means status
+unhealthy/unknown; 2 means usage/precondition failure; 3 means failed deployment with verified
+recovery; 4 means recovery failed. A failed deploy remains a failure after successful recovery.
+
+An interrupted operation blocks deploy, pinned activate and rollback. Status names its identity
+and exact recovery command. `recover` restores the recorded compatible recovery release, without
+resolving latest. A matching terminal receipt makes retry observational. External pointer,
+configuration, unit-binding or schema drift is refused before recovery effects; restore the
+recorded state before retrying rather than guessing.
+
+## Preparation and pinned operations
+
+`latest` resolves fixed canonical `marcogallotta/ai-tools` GitHub `refs/heads/main` once and prints
+the full SHA immediately. Main moving later does not retarget it. Fetching uses the object store
+without changing checkout/index. This command does not merge code.
 
 ```sh
-systemctl --user status dish-service-prod.service
-journalctl --user -u dish-service-prod.service
+dish/scripts/dish-prod-release prepare latest
+dish/scripts/dish-prod-release stage --repository /home/marco/ai-tools --revision <exact-40-character-commit>
+dish/scripts/dish-prod-release activate <exact-40-character-commit>
 ```
+
+`prepare latest` builds and qualifies without changing operational pointers/processes. Cold deploy
+includes preparation; warm deploy reuses a staged, exact-qualified artifact. Results separate
+preparation and activation durations. Activation and rollback never install dependencies or fetch.
+Staging requires configured Python 3.12 at
+`/home/marco/.local/share/dish/python-3.12.13/bin/python3.12`; invalid explicit `--python` fails.
+Owner-only `~/.config/dish-service/release-prod.json` may set `python` and exact `recovery_release`.
+
+The manifest binds commit, complete source digest, dependencies, actual interpreter and checked-in
+`deploy/hot-deploy-contract.json`. Routine eligibility requires `paired-hot-v1`, transport generation
+1 and config generation 1. Both mixed pairs must pass real authenticated read-only qualification
+on isolated native resources. Evidence binds candidate and retained/recovery SHAs, source digests,
+schema, config and contract generations. Missing/stale evidence refuses disruption and names
+`prepare latest`. Missing declaration or incompatible transport/config changes require the existing
+rollout plan rather than a compatibility guess.
+
+Production environments retain `prod.env` then `postgres-prod.env` precedence. Differing ad-hoc
+target flags are explicitly refused for control commands: use installed `--profile test`, whose
+`env_files` preserve declared order. Pinned stage/activate command forms remain supported. The
+controller never silently ignores a target override and operates production instead.
+
+## Readiness, credentials and recovery
+
+Before effects, the controller verifies source/dependency integrity, live PostgreSQL schema/database/
+authority identity through the candidate runtime, effective paired unit bindings, endpoint identity,
+credential permissions and authenticated reads, exact pair evidence, and an integrity-checked compatible
+recovery release. Current is normally recovery. If a forward-only migration made it incompatible,
+configure an explicitly prepared compatible fallback. Missing fallback refuses disruption.
+[Routine migrations](postgresql-routine-migration.md) retain schema authority; rollback never downgrades
+any database.
+
+MCP bearer file `~/.config/dish-service/mcp-conformance-token` requires mode `0600`. Deploy preflight
+can refresh using existing `mcp-conformance-refresh.json`; it never opens a browser or creates
+credential authority. If interactive renewal is required, the supported action is:
+
+```sh
+dish/scripts/dish-release-credential sign-in
+```
+
+The helper prints the login URL and stores credentials privately. Explicit silent renewal is
+`dish/scripts/dish-release-credential renew`. Results/receipts exclude tokens, response bodies and
+OAuth contents.
+
+Deployment durably records exact prior pointer values and recovery identity before switching. It
+sets previous to the displaced release, changes current, restarts backend then MCP and verifies both
+within one readiness deadline. This is recoverable sequential deployment, with a brief mixed-version
+interval. Failed activation has a separate bounded recovery deadline. Compatible prior recovery
+restores both exact pointer strings; fallback recovery reports actual current/previous values and
+never calls a never-running fallback previous. Unproven recovery remains pending and reports failure.
+
+Status proves live versions through PID/start identity, immutable cwd/executable/arguments, listener
+ownership, backend health and authenticated MCP process-start identity. Missing evidence is unknown.
+Previous incompatibility reports `rollback_available=false` without making healthy current processes
+unhealthy. Persistent receipts describe historical operations only.
+
+## One-time installation and bootstrap
+
+Routine commands refuse uncommissioned units/releases. Installation and bootstrap require separately
+authorized work. Preserve prod/postgres/MCP environments, public ports/routes, OAuth storage and
+Honest store/write paths. Install both reviewed user units:
+
+```sh
+install -Dm0644 dish/deploy/systemd/dish-service-prod.service ~/.config/systemd/user/dish-service-prod.service
+install -Dm0644 dish/deploy/systemd/dish-mcp.service ~/.config/systemd/user/dish-mcp.service
+```
+
+The installed host may have `dish-mcp.service.d/10-merged-source.conf` pinning an older release.
+During that separately authorized installation, retain a persistent copy and remove only its
+superseded WorkingDirectory/ExecStart overrides. Preserve unrelated overrides/secrets. Then run
+`systemctl --user daemon-reload` and verify effective ExecStart/WorkingDirectory for both units
+select `prod-current/dish`. Do not restart production during repository implementation or TEST
+qualification. Retain `KillMode=control-group`.
+
+For pre-controller releases, `certify-existing <exact SHA>` checks clean exact Git identity and
+source/dependency bytes. It does not invent hot-deploy declaration or pair evidence. Bootstrap must
+establish a declared, qualified current/recovery pair before routine use.
+
+## Isolated qualification and timing fixture
+
+The implementation/test owner installs real persistent resources once from a committed candidate
+using the repository-local test environment:
+
+```sh
+dish/.venv/bin/python dish/scripts/dish-release-rehearsal --repository /home/marco/ai-tools --candidate <exact candidate SHA>
+```
+
+Setup creates `~/.local/state/dish/release-rehearsal/` with native PG17, real user units, private
+ports/env/database, separate signed bearer trust/storage, Pantry snapshot, release/pointer/receipt
+state and deterministic local upstream. It installs fixed `~/.config/dish-service/release-test.json`
+and `release-qualification.json`. Existing fixtures are preserved. TEST admission refuses incomplete
+or overlapping configurations. Separate qualification resources exercise both exact mixed pairs
+without changing operator rehearsal pointers. `setup-probe.json` must pass before timed agents launch.
+
+TEST uses real cryptographically verified bearer authentication and production HTTP/FastMCP apps.
+It does not commission live GitHub OAuth, canonical GitHub fetch or production activation. Check
+production-default resolution read-only until separately authorized commissioning. The synthetic
+retained fixture has identical transport source with a distinct immutable commit; retain that limit.
+No fake shell, production credentials or hidden agent environment injection may replace execution.
+After independent implementation Review passes, timing agents receive only checkout entry point
+and a goal explicitly naming TEST.
