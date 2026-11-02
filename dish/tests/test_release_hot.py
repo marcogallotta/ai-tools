@@ -371,7 +371,6 @@ def test_recorded_old_process_launcher_remains_valid_after_pointer_switch(
     )
     binary = old.dish_root / ".venv/bin/python"
     binary.parent.mkdir(parents=True, exist_ok=True)
-    binary.symlink_to("/usr/bin/python3")
     launcher = str(target.path("current") / "dish/.venv/bin/python")
     release._set_pointer(target.path("current"), str(new.root))
     witness = {
