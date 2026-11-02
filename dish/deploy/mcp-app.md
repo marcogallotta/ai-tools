@@ -38,14 +38,11 @@ sessions survive restarts.
 
 ## Install and start
 
-```sh
-cd /home/marco/ai-tools/dish
-.venv/bin/python -m pip install -r requirements.txt
-install -d -m700 /home/marco/.local/share/dish/honest-mcp/prod
-install -Dm644 deploy/systemd/dish-mcp.service ~/.config/systemd/user/dish-mcp.service
-systemctl --user daemon-reload
-systemctl --user restart dish-mcp.service
-```
+Use the separately authorized installation/bootstrap procedure in the
+[production release runbook](../docs/production-release-runbook.md). The reviewed user unit now
+runs the immutable paired release's private Python environment. Reconcile any older source-pinning
+drop-in during installation, preserving OAuth/Action environments and storage. Routine backend and
+MCP updates use `dish/scripts/dish-prod-release deploy latest` from the repository root.
 
 Caddy must proxy these public paths to `127.0.0.1:8787`:
 

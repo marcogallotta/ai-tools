@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -540,12 +541,18 @@ def observe_component(target, component, expected, budget):
         import shlex
 
         argv = shlex.split(before["arguments"])
+        permitted_launchers = {
+            str(expected.dish_root / ".venv/bin/python"),
+            str(target.path("current") / "dish/.venv/bin/python"),
+        }
+        if target.profile == "test":
+            permitted_launchers.add(
+                str(target.path("isolation_root") / "mcp-current/dish/.venv/bin/python")
+            )
         if (
             before["executable"] != python
             or not argv
-            or Path(argv[0]).resolve() != Path(python)
-            or Path(argv[0]).parent.resolve()
-            != (expected.dish_root / ".venv/bin").resolve()
+            or argv[0] not in permitted_launchers
         ):
             raise OperationError(
                 "PROCESS_UNKNOWN",
@@ -756,7 +763,7 @@ def resolve_latest(target, budget):
         raise OperationError(
             "UPSTREAM_INVALID", "canonical main did not resolve exactly"
         )
-    print(f"Resolved latest: {sha}", flush=True)
+    print(f"Resolved latest: {sha}", file=sys.stderr, flush=True)
     repository = target.path("repository")
     # Fetch only the pinned object into the object store; no checkout/index changes.
     run(
@@ -1134,7 +1141,16 @@ def execute(args):
             if command == "prepare" or not (target.path("release_root") / sha).exists():
                 candidate, preparation = prepare(target, sha, args.python)
             else:
-                candidate = read_release(target, sha)
+                candidate = (
+                    release.stage_release(
+                        target.path("repository"),
+                        sha,
+                        target.path("release_root"),
+                        args.python,
+                    )
+                    if args.python is not None
+                    else read_release(target, sha)
+                )
             if command == "prepare":
                 return {
                     "ok": True,

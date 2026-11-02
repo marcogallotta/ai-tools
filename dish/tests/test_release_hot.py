@@ -300,3 +300,100 @@ def test_invalid_explicit_python_fails_even_for_staged_release(tmp_path, monkeyp
     (tmp_path / ("a" * 40)).mkdir()
     with pytest.raises(release.ReleaseError, match="interpreter unavailable"):
         release.stage_release(tmp_path, "a" * 40, tmp_path, tmp_path / "invalid-python")
+
+
+@pytest.mark.parametrize(
+    "metadata_url,resource,success",
+    [
+        (
+            "http://127.0.0.1:32001/.well-known/oauth-protected-resource/mcp",
+            "http://127.0.0.1:32001/mcp",
+            True,
+        ),
+        (
+            "http://127.0.0.1:32002/.well-known/oauth-protected-resource/mcp",
+            "http://127.0.0.1:32001/mcp",
+            False,
+        ),
+        (
+            "http://127.0.0.1:32001/.well-known/oauth-protected-resource/mcp",
+            "http://127.0.0.1:32002/mcp",
+            False,
+        ),
+    ],
+)
+def test_discovery_binds_exact_resource_origin(
+    monkeypatch, metadata_url, resource, success
+):
+    import urllib.error
+    from email.message import Message
+
+    headers = Message()
+    headers["WWW-Authenticate"] = 'Bearer resource_metadata="' + metadata_url + '"'
+
+    def unauthorized(*args, **kwargs):
+        raise urllib.error.HTTPError(
+            "http://127.0.0.1:32001/mcp", 401, "auth", headers, None
+        )
+
+    monkeypatch.setattr(hot.urllib.request, "urlopen", unauthorized)
+    monkeypatch.setattr(hot, "request_json", lambda *a, **k: {"resource": resource})
+    target = hot.Target("test", {"mcp_url": "http://127.0.0.1:32001/mcp"})
+    if success:
+        hot.resource_identity(target, hot.Budget(1))
+    else:
+        with pytest.raises(hot.OperationError, match="metadata"):
+            hot.resource_identity(target, hot.Budget(1))
+
+
+def test_warm_deploy_validates_explicit_interpreter_before_effects(
+    system, monkeypatch, tmp_path
+):
+    target, old, new, older, events = system
+    target.values["repository"] = str(tmp_path)
+    monkeypatch.setattr(hot, "target_config", lambda *a: target)
+    monkeypatch.setattr(hot, "resolve_latest", lambda *a: new.source_commit)
+    monkeypatch.setattr(release, "_exact_commit", lambda *a: new.source_commit)
+    args = release._parser().parse_args(
+        ["--profile", "test", "deploy", "latest", "--python", str(tmp_path / "absent")]
+    )
+    with pytest.raises(release.ReleaseError, match="interpreter unavailable"):
+        hot.execute(args)
+    assert not events and not target.pending.exists()
+
+
+def test_recorded_old_process_launcher_remains_valid_after_pointer_switch(
+    system, monkeypatch, tmp_path
+):
+    target, old, new, older, events = system
+    target.values.update(
+        isolation_root=str(tmp_path), health_url="http://127.0.0.1:32001/health"
+    )
+    binary = old.dish_root / ".venv/bin/python"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.symlink_to("/usr/bin/python3")
+    launcher = str(target.path("current") / "dish/.venv/bin/python")
+    release._set_pointer(target.path("current"), str(new.root))
+    witness = {
+        "pid": 123,
+        "start_ticks": "456",
+        "cwd": str(old.dish_root),
+        "executable": str(binary.resolve()),
+        "arguments": launcher + " -m dish_service",
+    }
+    monkeypatch.setattr(
+        hot, "unit_values", lambda *a: {"MainPID": "123", "ActiveState": "active"}
+    )
+    monkeypatch.setattr(hot, "process_witness", lambda *a: witness)
+    monkeypatch.setattr(hot, "owns_listener", lambda *a: True)
+    monkeypatch.setattr(
+        hot,
+        "request_json",
+        lambda *a: {
+            "ok": True,
+            "code_release": old.source_commit,
+            "pid": 123,
+            "start_ticks": "456",
+        },
+    )
+    assert hot.observe_component(target, "backend", old, hot.Budget(1))["ok"]

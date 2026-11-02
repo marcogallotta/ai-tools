@@ -133,6 +133,9 @@ state and deterministic local upstream. It installs fixed `~/.config/dish-servic
 and `release-qualification.json`. Existing fixtures are preserved. TEST admission refuses incomplete
 or overlapping configurations. Separate qualification resources exercise both exact mixed pairs
 without changing operator rehearsal pointers. `setup-probe.json` must pass before timed agents launch.
+If the first build fails, retain its logs and use the same command with `--resume-build` and the
+corrected committed candidate. This rebuilds only incomplete TEST fixtures and preserves earlier
+immutable releases, databases and logs; it refuses a setup that already passed.
 
 TEST uses real cryptographically verified bearer authentication and production HTTP/FastMCP apps.
 It does not commission live GitHub OAuth, canonical GitHub fetch or production activation. Check
