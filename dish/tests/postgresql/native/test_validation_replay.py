@@ -64,7 +64,7 @@ def _without_replay_metadata(payload):
     return normalized
 
 
-def test_native_validation_failure_replays_one_authoritative_outcome(core_db) -> None:
+def _assert_validation_failure_replays_one_authoritative_outcome(core_db, command) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
         context = _bootstrap_registry(session, ids, generation_status="active")
@@ -83,14 +83,14 @@ def test_native_validation_failure_replays_one_authoritative_outcome(core_db) ->
     principal = ServicePrincipal.from_values("owner-1", str(run_id))
     arguments = {"operation_id": "not-a-uuid"}
     first = runtime.record_replay_validation_failure(
-        "create",
+        command,
         arguments,
         principal=principal,
         request_id=str(request_id),
         error=_error(),
     )
     replay = runtime.record_replay_validation_failure(
-        "create",
+        command,
         arguments,
         principal=principal,
         request_id=str(request_id),
@@ -114,7 +114,7 @@ def test_native_validation_failure_replays_one_authoritative_outcome(core_db) ->
 
     with pytest.raises(DishRuleError) as caught:
         runtime.record_replay_validation_failure(
-            "create",
+            command,
             arguments,
             principal=principal,
             request_id=str(request_id),
@@ -133,6 +133,23 @@ def test_native_validation_failure_replays_one_authoritative_outcome(core_db) ->
         assert dict(outcome.result_payload) == authoritative_payload
         assert outcome.result_sha256 == authoritative_sha256
     _assert_one_validation_outcome(factory, request_id)
+
+
+
+def test_native_validation_failure_replays_one_authoritative_outcome(core_db) -> None:
+    _assert_validation_failure_replays_one_authoritative_outcome(core_db, "create")
+
+
+def test_native_approve_validation_failure_replays_one_authoritative_outcome(core_db) -> None:
+    _assert_validation_failure_replays_one_authoritative_outcome(core_db, "approve")
+
+
+def test_native_reject_validation_failure_replays_one_authoritative_outcome(core_db) -> None:
+    _assert_validation_failure_replays_one_authoritative_outcome(core_db, "reject")
+
+
+def test_native_inspect_validation_failure_replays_one_authoritative_outcome(core_db) -> None:
+    _assert_validation_failure_replays_one_authoritative_outcome(core_db, "inspect")
 
 
 def test_native_concurrent_identical_validation_failures_converge(core_db) -> None:

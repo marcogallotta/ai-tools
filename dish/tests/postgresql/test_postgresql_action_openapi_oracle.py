@@ -317,3 +317,45 @@ def test_postgresql_connected_recovery_commands_are_retained() -> None:
     for command in ("proposals", "apply-proposal", "safe-reclaim"):
         assert command in ACTION_COMMANDS
         assert CONNECTED_COMMAND_DISPOSITIONS[command] == "retained"
+
+
+@pytest.mark.parametrize("fields", [["Exemptions", "Decisions"], [], ["Decisions"]])
+def test_small_approve_preserves_postgresql_governed_fields(fields) -> None:
+    request = {
+        "client": {"run_id": DISCOVERY_RUN_ID,
+                   "request_id": "33333333-3333-4333-8333-333333333333"},
+        "arguments": {
+            "submission_id": "44444444-4444-4444-8444-444444444444",
+            "agent": "codex", "model": "test-model", "correction": "small",
+            "file_text": "candidate", "reviewed_identity": "reviewed",
+            "semantic_review_complete": True, "provenance_complete": True,
+            "governed_change_fields": fields,
+        },
+    }
+    _, arguments = validate_postgres_action_request("approve", request)
+    assert arguments["governed_change_fields"] == fields
+
+
+@pytest.mark.parametrize(("correction", "fields", "expected_rule"), [
+    ("none", ["Exemptions", "Decisions"], "argument_unexpected"),
+    ("small", ["Purpose"], "argument_value_invalid"),
+    ("small", [1], "argument_type_invalid"),
+    ("small", "Decisions", "argument_unexpected"),
+])
+def test_approve_rejects_governed_fields_outside_advertised_contract(
+    correction, fields, expected_rule
+) -> None:
+    request = {
+        "client": {"run_id": DISCOVERY_RUN_ID,
+                   "request_id": "33333333-3333-4333-8333-333333333333"},
+        "arguments": {
+            "submission_id": "44444444-4444-4444-8444-444444444444",
+            "agent": "codex", "model": "test-model", "correction": correction,
+            "file_text": "candidate", "reviewed_identity": "reviewed",
+            "semantic_review_complete": True, "provenance_complete": True,
+            "governed_change_fields": fields,
+        },
+    }
+    with pytest.raises(DishRuleError) as error:
+        validate_postgres_action_request("approve", request)
+    assert error.value.rule == expected_rule

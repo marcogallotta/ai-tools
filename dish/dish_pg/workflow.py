@@ -562,7 +562,7 @@ class WorkflowAuthorityRepository:
             else None
         )
         return (
-            spec.principal_class in {"agent", "admin"}
+            spec.principal_class in {"agent", "admin", "verification"}
             and payload.get("request_kind") == VALIDATION_FAILURE_REQUEST_KIND
             and payload.get("command") == spec.command_name
             and payload.get("owner_id") == spec.owner_id

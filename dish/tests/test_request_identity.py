@@ -291,28 +291,53 @@ def test_nil_client_identities_are_rejected_before_request_journaling(
 
 
 def test_first_validation_failure_is_replayed_and_changed_reuse_conflicts(tmp_path):
-    _service_obj, backend, server, thread, url = _running(tmp_path)
+    service, backend, server, thread, url = _running(tmp_path)
+    from dish_tool.database_initialization import initialize_database
+
+    def stored_requests():
+        conn = initialize_database(service.config.db_path)
+        try:
+            return [dict(row) for row in conn.execute("SELECT * FROM service_requests")]
+        finally:
+            conn.close()
+
     payload = {
         "client": {"run_id": RUN_ID, "request_id": REQUEST_ID},
         "arguments": {"agent": "gpt", "task_gid": "bad-gid", "kind": "initial"},
     }
     try:
         first_status, first = _post(url, "/v1/action/start", token="action-secret", payload=payload)
+        original_requests = stored_requests()
         second_status, second = _post(url, "/v1/action/start", token="action-secret", payload=payload)
         changed = {
             **payload,
             "arguments": {"agent": "gpt", "task_gid": "different", "kind": "initial"},
         }
-        conflict_status, conflict = _post(
+        invalid_status, invalid = _post(
             url, "/v1/action/start", token="action-secret", payload=changed
+        )
+        valid_changed = {**payload, "arguments": AGENT_ARGUMENTS["start"]}
+        conflict_status, conflict = _post(
+            url, "/v1/action/start", token="action-secret", payload=valid_changed
+        )
+        replay_status, replay = _post(
+            url, "/v1/action/start", token="action-secret", payload=payload
         )
     finally:
         stop_server(server, thread)
-    assert first_status == second_status == conflict_status == 200
-    assert first["code"] == second["code"] == "INVALID_ARGUMENT"
+    assert first_status == second_status == invalid_status == conflict_status == replay_status == 200
+    assert first["code"] == second["code"] == invalid["code"] == replay["code"] == "INVALID_ARGUMENT"
+    assert invalid["errors"] == first["errors"]
     assert second["data"]["request_replayed"] is True
+    assert replay["data"]["request_replayed"] is True
+    assert replay["errors"] == first["errors"]
     assert conflict["code"] == "CONFLICT"
     assert conflict["errors"][0]["rule"] == "service_request_identity_conflict"
+    assert len(original_requests) == 1
+    assert original_requests[0]["request_id"] == REQUEST_ID
+    assert original_requests[0]["status"] == "completed"
+    assert json.loads(original_requests[0]["result_json"])["errors"] == first["errors"]
+    assert stored_requests() == original_requests
     assert backend.writes == 0
 
 

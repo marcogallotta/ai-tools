@@ -376,13 +376,15 @@ def test_http_admin_validation_failure_preserves_admin_request_identity_and_repl
         finally:
             stop_server(server, thread)
 
-    assert first_status == replay_status == conflict_status == 200
+    assert first_status == replay_status == 200
+    assert conflict_status == 400
     assert first["errors"][0]["rule"] == "uuid_identifier_required"
     assert "request_replayed" not in first["data"]
     assert replay["data"]["request_replayed"] is True
     assert without_replay_metadata(replay) == first
-    assert conflict["code"] == "CONFLICT"
-    assert conflict["errors"][0]["rule"] == "service_request_identity_conflict"
+    # A failure to persist a second malformed request must retain its validation error.
+    assert conflict["code"] == "INVALID_ARGUMENT"
+    assert conflict["errors"][0]["rule"] == "uuid_identifier_required"
     with session_scope(factory) as session:
         request = session.get(wf.ServiceRequest, request_id)
         assert request is not None
