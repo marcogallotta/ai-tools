@@ -64,8 +64,7 @@ def _without_replay_metadata(payload):
     return normalized
 
 
-@pytest.mark.parametrize("command", ["create", "approve", "reject", "inspect"])
-def test_native_validation_failure_replays_one_authoritative_outcome(core_db, command) -> None:
+def _assert_validation_failure_replays_one_authoritative_outcome(core_db, command) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
         context = _bootstrap_registry(session, ids, generation_status="active")
@@ -134,6 +133,23 @@ def test_native_validation_failure_replays_one_authoritative_outcome(core_db, co
         assert dict(outcome.result_payload) == authoritative_payload
         assert outcome.result_sha256 == authoritative_sha256
     _assert_one_validation_outcome(factory, request_id)
+
+
+
+def test_native_validation_failure_replays_one_authoritative_outcome(core_db) -> None:
+    _assert_validation_failure_replays_one_authoritative_outcome(core_db, "create")
+
+
+def test_native_approve_validation_failure_replays_one_authoritative_outcome(core_db) -> None:
+    _assert_validation_failure_replays_one_authoritative_outcome(core_db, "approve")
+
+
+def test_native_reject_validation_failure_replays_one_authoritative_outcome(core_db) -> None:
+    _assert_validation_failure_replays_one_authoritative_outcome(core_db, "reject")
+
+
+def test_native_inspect_validation_failure_replays_one_authoritative_outcome(core_db) -> None:
+    _assert_validation_failure_replays_one_authoritative_outcome(core_db, "inspect")
 
 
 def test_native_concurrent_identical_validation_failures_converge(core_db) -> None:
