@@ -189,7 +189,7 @@ class NativeMCPAdapter:
         caller: Mapping[str, str | None] | None,
     ) -> dict[str, Any] | None:
         spec = definition_for(command)
-        if not spec.request_replay or spec.principal == "verification":
+        if not spec.request_replay:
             return None
         client = request.get("client") if isinstance(request, Mapping) else None
         arguments = request.get("arguments") if isinstance(request, Mapping) else None

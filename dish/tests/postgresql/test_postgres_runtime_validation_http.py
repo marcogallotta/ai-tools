@@ -2317,17 +2317,13 @@ def test_verification_validation_failures_preserve_and_replay_original_error(
         assert [status for status, _ in results] == [200, 200]
         first, replayed = [payload for _, payload in results]
     else:
-        recorder = native_mcp_server.NativeValidationRecorder(service)
-        def record():
-            return recorder.record(
-                command, body["arguments"],
-                principal=ServicePrincipal.from_values("gpt-action", str(run_id)),
-                request_id=str(request_id), error=expected.value,
-                invocation_surface=native_mcp_server.NATIVE_VALIDATION_SURFACE,
-            )
-        first, replayed = record(), record()
+        adapter = native_mcp_server.NativeMCPAdapter(service, owner_id="gpt-action")
+        caller = {"subject": "gpt-action"}
+        first = adapter.call(f"dish_{command}", body, caller=caller)
+        replayed = adapter.call(f"dish_{command}", body, caller=caller)
     assert first["errors"][0]["rule"] == expected.value.rule
     assert replayed["errors"] == first["errors"]
+    assert not first["data"].get("request_replayed", False)
     assert replayed["data"]["request_replayed"] is True
     with session_scope(factory) as session:
         request = session.get(wf.ServiceRequest, request_id)
