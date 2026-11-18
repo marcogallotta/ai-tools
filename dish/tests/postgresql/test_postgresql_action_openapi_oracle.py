@@ -336,11 +336,15 @@ def test_small_approve_preserves_postgresql_governed_fields(fields) -> None:
     assert arguments["governed_change_fields"] == fields
 
 
-@pytest.mark.parametrize(("correction", "fields"), [
-    ("none", ["Exemptions", "Decisions"]),
-    ("small", ["Purpose"]), ("small", [1]), ("small", "Decisions"),
+@pytest.mark.parametrize(("correction", "fields", "expected_rule"), [
+    ("none", ["Exemptions", "Decisions"], "argument_unexpected"),
+    ("small", ["Purpose"], "argument_value_invalid"),
+    ("small", [1], "argument_type_invalid"),
+    ("small", "Decisions", "argument_unexpected"),
 ])
-def test_approve_rejects_governed_fields_outside_advertised_contract(correction, fields) -> None:
+def test_approve_rejects_governed_fields_outside_advertised_contract(
+    correction, fields, expected_rule
+) -> None:
     request = {
         "client": {"run_id": DISCOVERY_RUN_ID,
                    "request_id": "33333333-3333-4333-8333-333333333333"},
@@ -352,5 +356,6 @@ def test_approve_rejects_governed_fields_outside_advertised_contract(correction,
             "governed_change_fields": fields,
         },
     }
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as error:
         validate_postgres_action_request("approve", request)
+    assert error.value.rule == expected_rule
