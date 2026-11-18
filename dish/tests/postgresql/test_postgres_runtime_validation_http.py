@@ -4,6 +4,7 @@ import asyncio
 import json
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -15,7 +16,7 @@ from sqlalchemy import delete, func, select
 from dish_pg import models
 from dish_pg import postgres_service as postgres_service_module
 from dish_pg import stage3_models as wf
-from dish_pg.command_contract import ACTION_COMMANDS
+from dish_pg.command_contract import ACTION_COMMANDS, validate_postgres_action_request
 from dish_pg.command_effects import effect_spec_for
 from dish_pg.command_port import CommandResult
 from dish_pg.connected_command_spec import result_envelope_schema
@@ -23,7 +24,7 @@ from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import RequestSpec, WorkflowAuthorityService, sha256_json
-from dish_service import admin_cli, cli, mcp_server
+from dish_service import admin_cli, cli, mcp_server, native_mcp_server
 from dish_service.client import DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import DishHTTPServer
@@ -310,8 +311,9 @@ def test_action_reclaim_rejects_agent_mismatch_and_bootstraps_fresh_run(
             stop_server(server, thread)
 
 
+@pytest.mark.parametrize("correction", ["none", "small"])
 def test_postgresql_action_lifecycle_is_driven_by_each_immediate_response(
-    workflow_db, tmp_path: Path
+    workflow_db, tmp_path: Path, correction: str
 ) -> None:
     factory, ids, context, _task_id = workflow_db
     planning_run = _next(ids)
@@ -368,6 +370,13 @@ Exemptions: None
 Research emphasis: Compare two hydration levels
 Destination section: Sichuan — 12345
 """
+
+    research_text = TASK
+    if correction == "small":
+        planning = planning.replace("Role: non-main — small side for comparison", "Role: main")
+        research_text = TASK.replace("[non-main] ", "").replace(
+            "Role: non-main — small side for comparison", "Role: main"
+        )
 
     def call(
         base: str,
@@ -471,7 +480,7 @@ Destination section: Sichuan — 12345
             command, arguments = returned_action(research_started)
             assert arguments == {"submission_id": research_started["submission_id"]}
             arguments.update(
-                {"agent": "claude", "model": "test-model", "file_text": TASK}
+                {"agent": "claude", "model": "test-model", "file_text": research_text}
             )
             research_prepared = call(
                 base, command, run_id=research_run, arguments=arguments
@@ -516,6 +525,11 @@ Destination section: Sichuan — 12345
 
             inspected_data = inspected["data"]
             assert isinstance(inspected_data, dict)
+            with session_scope(factory) as session:
+                reviewed = session.get(models.ContentVersion, uuid.UUID(
+                    inspected_data["reviewed_content_version_id"]
+                ))
+                reviewed_text = reviewed.title + "\n" + reviewed.body
             approved = call(
                 base,
                 "approve",
@@ -524,13 +538,32 @@ Destination section: Sichuan — 12345
                     "submission_id": inspected["submission_id"],
                     "agent": "codex",
                     "model": "test-model",
-                    "correction": "none",
+                    "correction": correction,
+                    **({
+                        "file_text": reviewed_text.replace(
+                            "Exemptions: None",
+                            "Exemptions: [nutrition-fat] — exceptional high-fat dish accepted by Marco",
+                        ).replace(
+                            "### Research basis",
+                            "Human — Marco: Accept the high-fat dish unchanged, 2026-11-18\n"
+                            "### Research basis",
+                        ),
+                        "governed_change_fields": ["Exemptions", "Decisions"],
+                    } if correction == "small" else {}),
                     "reviewed_identity": inspected_data["reviewed_identity"],
                     "semantic_review_complete": True,
                     "provenance_complete": True,
                 },
             )
             assert approved["ok"] is True, approved
+            if correction == "small":
+                with session_scope(factory) as session:
+                    signed = session.get(models.ContentVersion, uuid.UUID(
+                        approved["data"]["signed_content_version_id"]
+                    ))
+                    assert "Exemptions: [nutrition-fat]" in signed.body
+                    assert "Human — Marco: Accept the high-fat dish unchanged, 2026-11-18" in signed.body
+                    assert session.scalar(select(func.count()).select_from(wf.VerificationCorrection)) == 1
 
             command, arguments = returned_action(approved)
             assert arguments == {"submission_id": approved["submission_id"]}
@@ -2253,3 +2286,85 @@ def test_no_externally_exposed_command_can_open_an_evidence_hold(command: str) -
         ):
             spec = effect_spec_for(command, arguments, **flags)
             assert "open_evidence_hold" not in spec.mutation_kinds, (command, route, flags)
+
+
+@pytest.mark.parametrize("command", ["approve", "reject", "inspect"])
+@pytest.mark.parametrize("transport", ["http", "native"])
+def test_verification_validation_failures_preserve_and_replay_original_error(
+    workflow_db, tmp_path: Path, command: str, transport: str
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id, request_id = _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id,
+                      owner="gpt-action", agent="codex")
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(service.config, action_token="postgres-action-token")
+    body = {"client": {"run_id": str(run_id), "request_id": str(request_id)},
+            "arguments": {"agent": "codex"}}
+    with pytest.raises(DishRuleError) as expected:
+        validate_postgres_action_request(command, body)
+    if transport == "http":
+        with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+            thread = start_server_thread(server, name="verification-validation-http")
+            try:
+                results = [_post_json(
+                    f"http://127.0.0.1:{server.server_address[1]}/v1/action/{command}",
+                    body=body, token="postgres-action-token",
+                ) for _ in range(2)]
+            finally:
+                stop_server(server, thread)
+        assert [status for status, _ in results] == [200, 200]
+        first, replayed = [payload for _, payload in results]
+    else:
+        recorder = native_mcp_server.NativeValidationRecorder(service)
+        def record():
+            return recorder.record(
+                command, body["arguments"],
+                principal=ServicePrincipal.from_values("gpt-action", str(run_id)),
+                request_id=str(request_id), error=expected.value,
+                invocation_surface=native_mcp_server.NATIVE_VALIDATION_SURFACE,
+            )
+        first, replayed = record(), record()
+    assert first["errors"][0]["rule"] == expected.value.rule
+    assert replayed["errors"] == first["errors"]
+    assert replayed["data"]["request_replayed"] is True
+    with session_scope(factory) as session:
+        request = session.get(wf.ServiceRequest, request_id)
+        assert request.principal_class == "verification"
+        assert session.scalar(select(func.count()).select_from(wf.ServiceRequestOutcome)
+                              .where(wf.ServiceRequestOutcome.request_id == request_id)) == 1
+        assert session.scalar(select(func.count()).select_from(wf.CommandExecution)
+                              .where(wf.CommandExecution.request_id == request_id)) == 0
+
+
+@pytest.mark.parametrize("command", ["approve", "reject", "inspect"])
+@pytest.mark.parametrize("failure", [
+    DishRuleError("CONFLICT", "persistence failed", rule="postgresql_command_rejected"),
+    RuntimeError("unexpected persistence failure"),
+])
+def test_http_verification_persistence_failure_does_not_mask_validation(
+    workflow_db, tmp_path: Path, command: str, failure: Exception
+) -> None:
+    factory, ids, _context, _task_id = workflow_db
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(service.config, action_token="postgres-action-token")
+    def fail_persistence(*args, **kwargs):
+        raise failure
+    service.record_replay_validation_failure = fail_persistence
+    body = {"client": {"run_id": str(_next(ids)), "request_id": str(_next(ids))},
+            "arguments": {"agent": "codex"}}
+    with pytest.raises(DishRuleError) as expected:
+        validate_postgres_action_request(command, body)
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="verification-validation-fallback")
+        try:
+            status, result = _post_json(
+                f"http://127.0.0.1:{server.server_address[1]}/v1/action/{command}",
+                body=body, token="postgres-action-token",
+            )
+        finally:
+            stop_server(server, thread)
+    assert status == 200
+    assert result["http_status"] == 400
+    assert result["errors"][0]["rule"] == expected.value.rule

@@ -568,7 +568,7 @@ class PostgresRuntimeService:
             ) from exc
 
         definition = COMMAND_DEFINITIONS.get(command)
-        if definition is None or definition.principal not in {"agent", "admin"}:
+        if definition is None or definition.principal not in {"agent", "admin", "verification"}:
             raise DishRuleError(
                 "INVALID_ARGUMENT",
                 "command is not eligible for replay-bound HTTP validation",

@@ -747,17 +747,14 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                                     request_id=candidate_request_id,
                                     error=exc,
                                 )
-                        except DishRuleError as replay_exc:
-                            if replay_exc.rule == "postgresql_authority_unavailable":
+                        except Exception as replay_exc:
+                            # Persistence is secondary to the original validation error.
+                            # An authority outage remains a retryable transport failure.
+                            if (
+                                isinstance(replay_exc, DishRuleError)
+                                and replay_exc.rule == "postgresql_authority_unavailable"
+                            ):
                                 exc = replay_exc
-                            else:
-                                replay_payload = _error_payload(
-                                    self.server.service,
-                                    surface,
-                                    command,
-                                    replay_exc,
-                                    http_status=400,
-                                )
             if replay_payload is not None:
                 if surface == "action":
                     replay_payload = attach_action_agent_guidance(replay_payload)

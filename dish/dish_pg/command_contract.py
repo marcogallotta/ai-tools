@@ -940,7 +940,8 @@ def validate_postgres_action_request(
     adapted_arguments = dict(arguments)
 
     postgres_governed_change_fields: list[str] | None = None
-    if command == PREPARE_COMMAND.name and "governed_change_fields" in arguments:
+    small_approve = command == APPROVE_COMMAND.name and arguments.get("correction") == "small"
+    if (command == PREPARE_COMMAND.name or small_approve) and "governed_change_fields" in arguments:
         value = arguments["governed_change_fields"]
         if isinstance(value, list):
             for index, field in enumerate(value):
@@ -952,7 +953,10 @@ def validate_postgres_action_request(
                         details={"field": f"governed_change_fields[{index}]"},
                     )
             postgres_governed_change_fields = list(value)
-            adapted_arguments["governed_change_fields"] = ["Decisions"]
+            if small_approve:
+                adapted_arguments.pop("governed_change_fields")
+            else:
+                adapted_arguments["governed_change_fields"] = ["Decisions"]
             adapted["arguments"] = adapted_arguments
 
     inspect_attestation: str | None = None
@@ -995,10 +999,14 @@ def validate_postgres_action_request(
     if inspect_attestation is not None:
         validated_arguments["independence_attestation"] = inspect_attestation
     if postgres_governed_change_fields is not None:
-        allowed = set(
-            postgres_action_argument_schema(PREPARE_COMMAND.name)["properties"]
-            ["governed_change_fields"]["items"]["enum"]
-        )
+        if small_approve:
+            schema = next(
+                variant for variant in postgres_action_argument_schema(command)["oneOf"]
+                if variant["properties"]["correction"].get("const") == "small"
+            )
+        else:
+            schema = postgres_action_argument_schema(PREPARE_COMMAND.name)
+        allowed = set(schema["properties"]["governed_change_fields"]["items"]["enum"])
         unsupported = sorted(set(postgres_governed_change_fields) - allowed)
         if unsupported:
             raise DishRuleError(
