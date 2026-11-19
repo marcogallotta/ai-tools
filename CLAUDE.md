@@ -87,6 +87,11 @@ Destination dominates terminology: `fastrack to main`, `fastrack to PR`, and `fa
   `systemctl --user {stop,start,restart,status} <dish-unit>.service`; inspect logs with
   `journalctl --user -u <dish-unit>.service`. Never use `sudo systemctl`, the system manager, or
   `/etc/systemd/system` for Dish services, and never ask Marco for a password to operate them.
+- `dish-mcp.service` runs from the operator `~/ai-tools` checkout, not a release. After merging any
+  change under `dish/`, fast-forward that checkout to `origin/main` and restart the service without
+  asking (Marco's standing direction), then confirm it is active. If local edits block the
+  fast-forward, discard only those identical to `origin/main`; report any others. Backend code goes
+  live only through `dish/docs/production-release-runbook.md`.
 - Before any Asana write, identify the exact target project and freshly read/apply its current repository-owned contract; stale session context is insufficient, project-specific semantics remain distinct, and every state-changing write requires authoritative readback.
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.
 - Agents may use `dish-admin --profile test`; production administration via `dish-admin` is Marco-only. This does not cover the reviewed `dish-pg-migrate --apply` routine migration path (`dish/docs/postgresql-routine-migration.md`), which an assigned agent runs directly under the task's authorization.
