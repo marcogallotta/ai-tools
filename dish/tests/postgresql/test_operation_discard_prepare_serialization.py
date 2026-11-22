@@ -83,6 +83,7 @@ def _call(
 ) -> CommandCall:
     arguments = {"task_id": str(task_id), "operation_id": str(operation_id)}
     if command_name == "prepare":
+        arguments["research_protocol_password"] = "test-research-password"
         arguments["file_text"] = TASK
         arguments["agent"] = "claude"
         arguments["model"] = "test-model"
