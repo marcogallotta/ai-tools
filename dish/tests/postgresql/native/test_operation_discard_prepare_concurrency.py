@@ -130,6 +130,7 @@ def _call(
             file_text=TASK,
             agent="claude",
             model="native-concurrency-test",
+            research_protocol_password="test-research-password",
         )
     return CommandCall(
         command_name=command_name,
@@ -750,6 +751,7 @@ def test_operation_bound_command_commit_precedes_rollover_and_is_cloned_to_succe
                             "file_text": TASK,
                             "agent": "claude",
                             "model": "native-generation-liveness",
+                            "research_protocol_password": "test-research-password",
                         },
                         owner_id="owner-1",
                         principal_class="agent",
