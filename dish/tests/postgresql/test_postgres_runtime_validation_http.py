@@ -480,7 +480,8 @@ Destination section: Sichuan — 12345
             command, arguments = returned_action(research_started)
             assert arguments == {"submission_id": research_started["submission_id"]}
             arguments.update(
-                {"agent": "claude", "model": "test-model", "file_text": research_text}
+                    {"agent": "claude", "model": "test-model", "file_text": research_text,
+                     "research_protocol_password": "test-research-password"}
             )
             research_prepared = call(
                 base, command, run_id=research_run, arguments=arguments
@@ -1594,8 +1595,8 @@ def test_execute_admin_uses_admin_principal_class(
     captured: dict[str, object] = {}
 
     class _CapturingCommandPort:
-        def __init__(self, session, *, cursor_secret):
-            del session, cursor_secret
+        def __init__(self, session, *, cursor_secret, honest_root):
+            del session, cursor_secret, honest_root
 
         def execute(self, call):
             captured["principal_class"] = call.principal_class

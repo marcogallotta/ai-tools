@@ -1108,6 +1108,10 @@
                       "model": {
                         "type": "string"
                       },
+                      "research_protocol_password": {
+                        "description": "Required for Research: supply the password from the current dish-research-protocol.md.",
+                        "type": "string"
+                      },
                       "submission_id": {
                         "format": "uuid",
                         "maxLength": 36,

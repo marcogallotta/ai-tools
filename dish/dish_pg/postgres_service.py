@@ -1042,6 +1042,7 @@ class PostgresRuntimeService:
                     result = PostgresCommandPort(
                         session,
                         cursor_secret=self._cursor_secret,
+                        honest_root=self.config.honest_root,
                     ).execute(
                         CommandCall(
                             command_name=execution_command,

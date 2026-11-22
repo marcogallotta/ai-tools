@@ -23,7 +23,12 @@ def _next(ids: Iterator[uuid.UUID]) -> uuid.UUID:
 
 
 @pytest.fixture
-def workflow_db(tmp_path: Path):
+def workflow_db(tmp_path: Path, monkeypatch):
+    # Isolate current-main retrieval; command tests supply this fixture's password.
+    monkeypatch.setattr(
+        "dish_pg.command_port.current_research_password",
+        lambda root: "test-research-password",
+    )
     path = tmp_path / "workflow.sqlite3"
     engine = create_engine(
         f"sqlite+pysqlite:///{path}",

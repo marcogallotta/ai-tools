@@ -36,9 +36,12 @@ def _port(session, ids) -> PostgresCommandPort:
 
 
 def _call(command, *, run_id, request_id=None, arguments=None, principal="agent", owner="owner-1"):
+    arguments = dict(arguments or {})
+    if command == "prepare":
+        arguments.setdefault("research_protocol_password", "test-research-password")
     return CommandCall(
         command_name=command,
-        arguments=arguments or {},
+        arguments=arguments,
         owner_id=owner,
         principal_class=principal,
         run_id=run_id,

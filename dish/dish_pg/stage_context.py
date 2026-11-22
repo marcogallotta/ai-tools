@@ -11,10 +11,14 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import subprocess
 import threading
 from pathlib import Path
 from typing import Any
+
+from dish_tool.errors import ReleaseResolutionError
+from dish_tool.releases import configured_honest_path
 
 STAGE_CONTEXT_FORMAT = "dish-stage-context-v2"
 STAGE_CONTEXT_MAX_TEXT_BYTES = 160 * 1024
@@ -41,6 +45,22 @@ LOG = logging.getLogger("dish.stage_context")
 
 class StageContextUnavailable(RuntimeError):
     """Current Honest main cannot be served exactly."""
+
+
+def current_research_password(honest_root: Path | None) -> str:
+    """Read the sole password from the current-main protocol, never a cached value."""
+    try:
+        honest_root = honest_root if honest_root is not None else configured_honest_path()
+    except ReleaseResolutionError as exc:
+        raise StageContextUnavailable("Honest Pantry path is unconfigured") from exc
+    commit = _current_main_commit(honest_root)
+    protocol = _file_entry(
+        honest_root, commit, STAGE_PROTOCOL_PATHS["research"], kind="stage_protocol"
+    )
+    matches = re.findall(r"^Research protocol password: `([^`\s]+)`$", protocol["text"], re.MULTILINE)
+    if len(matches) != 1:
+        raise StageContextUnavailable("Research protocol must contain exactly one password line")
+    return matches[0]
 
 
 def role_for_start_kind(kind: object) -> str | None:

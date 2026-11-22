@@ -418,6 +418,10 @@ def build_parser() -> JsonArgumentParser:
     prepare.add_argument("--model", required=True)
     prepare.add_argument("--file", dest="file_path", required=True)
     prepare.add_argument(
+        "--research-protocol-password", default=argparse.SUPPRESS,
+        help="required for Research: password from the current dish-research-protocol.md",
+    )
+    prepare.add_argument(
         "--material-classification",
         choices=_canonical_enum_choices(PREPARE_COMMAND, "material_classification"),
         help=(
