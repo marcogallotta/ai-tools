@@ -594,6 +594,10 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
         return result
     if command == PREPARE_COMMAND.name:
         result = deepcopy(base)
+        result["properties"]["research_protocol_password"] = {
+            "type": "string",
+            "description": "Required for Research: supply the password from the current dish-research-protocol.md.",
+        }
         attestation = result["properties"]["governed_change_fields"]
         attestation["items"]["enum"] = [
             "Dish candidate", "Purpose", "Role", "Priors", "Locks",
@@ -939,6 +943,17 @@ def validate_postgres_action_request(
     adapted = dict(request)
     adapted_arguments = dict(arguments)
 
+    if command == PREPARE_COMMAND.name and "research_protocol_password" in arguments:
+        value = arguments["research_protocol_password"]
+        if not isinstance(value, str):
+            raise DishRuleError(
+                "INVALID_ARGUMENT", "research_protocol_password must be a string",
+                rule="argument_type_invalid",
+                details={"field": "research_protocol_password"},
+            )
+        adapted_arguments.pop("research_protocol_password")
+        adapted["arguments"] = adapted_arguments
+
     postgres_governed_change_fields: list[str] | None = None
     small_approve = command == APPROVE_COMMAND.name and arguments.get("correction") == "small"
     if (command == PREPARE_COMMAND.name or small_approve) and "governed_change_fields" in arguments:
@@ -992,6 +1007,8 @@ def validate_postgres_action_request(
             adapted["arguments"] = adapted_arguments
 
     client, validated_arguments = validate_legacy_action_request(command, adapted)
+    if command == PREPARE_COMMAND.name and "research_protocol_password" in arguments:
+        validated_arguments["research_protocol_password"] = arguments["research_protocol_password"]
     if identity_pair is not None and identity_pair[0] in arguments:
         canonical_field, legacy_field = identity_pair
         validated_arguments.pop(legacy_field, None)

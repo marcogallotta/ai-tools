@@ -13,6 +13,7 @@ from dish_pg.stage_context import (
     STAGE_CONTEXT_GUIDANCE,
     StageContextUnavailable,
     build_stage_context,
+    current_research_password,
 )
 from dish_pg.transition import ProjectionService
 from dish_service.action_guidance import attach_connected_agent_guidance
@@ -193,3 +194,107 @@ def test_budget_omits_claude_md_before_protocol(honest_repo) -> None:
 
 def test_default_budget_covers_current_protocol_sizes() -> None:
     assert stage_context_module.STAGE_CONTEXT_MAX_TEXT_BYTES >= 100 * 1024
+
+
+def test_research_password_uses_current_committed_protocol(honest_repo) -> None:
+    root, _old, _current = honest_repo
+    seed = root.parent / "seed"
+    path = "dish-research-protocol.md"
+    (seed / path).write_text("# Research\n\nResearch protocol password: `new-value`\n")
+    _git(seed, "commit", "-am", "rotate password")
+    _git(seed, "push", "origin", "main")
+    # Dirty working bytes are not the main protocol authority.
+    (root / path).write_text("Research protocol password: `dirty-value`\n")
+    _git(root, "restore", path)
+    assert current_research_password(root) == "new-value"
+    (root / path).write_text("Research protocol password: `dirty-value`\n")
+    assert current_research_password(root) == "new-value"
+
+
+@pytest.mark.parametrize("text", ["# No password\n", "Research protocol password: ``\n",
+    "Research protocol password: `one`\nResearch protocol password: `two`\n"])
+def test_research_password_refuses_missing_or_ambiguous_marker(honest_repo, text) -> None:
+    root, _old, _current = honest_repo
+    seed = root.parent / "seed"
+    (seed / "dish-research-protocol.md").write_text(text)
+    _git(seed, "commit", "-am", "invalid password marker")
+    _git(seed, "push", "origin", "main")
+    with pytest.raises(StageContextUnavailable, match="exactly one"):
+        current_research_password(root)
+
+
+@pytest.mark.parametrize("password", [None, "", "wrong", "test-research-password"])
+def test_research_prepare_password_rejection_and_success(workflow_db, password) -> None:
+    from sqlalchemy import func, select
+    from dish_pg import models, stage3_models as wf
+    from tests.support.postgresql.command import _port, _call, _start_initial, _add_verification_queue
+    from tests.support.canonical import TASK
+
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        _add_verification_queue(session, ids, context)
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
+        before = session.get(models.DishState, (context["generation_id"], task_id)).current_content_version_id
+        call = _call("prepare", run_id=run_id, request_id=_next(ids), arguments={
+            "operation_id": started.data["operation_id"], "file_text": TASK,
+            "agent": "claude", "model": "test-model",
+        })
+        call.arguments.pop("research_protocol_password")
+        if password is not None:
+            call.arguments["research_protocol_password"] = password
+        result = port.execute(call)
+        if password == "test-research-password":
+            assert result.ok, result
+            assert session.get(models.DishState, (context["generation_id"], task_id)).current_content_version_id != before
+        else:
+            assert result.code == "RESEARCH_PROTOCOL_PASSWORD_REQUIRED", result
+            assert "test-research-password" not in str(result)
+            assert session.get(models.DishState, (context["generation_id"], task_id)).current_content_version_id == before
+            assert session.scalar(select(func.count()).select_from(wf.VerificationCycle)) == 0
+            call = replace(call, request_id=_next(ids), arguments={
+                **call.arguments, "research_protocol_password": "test-research-password",
+            })
+            assert port.execute(call).ok
+
+
+def test_research_prepare_refuses_unavailable_protocol(workflow_db, monkeypatch) -> None:
+    from tests.support.postgresql.command import _port, _call, _start_initial
+
+    def unavailable(root):
+        raise StageContextUnavailable("offline")
+
+    monkeypatch.setattr("dish_pg.command_port.current_research_password", unavailable)
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
+        result = port.execute(_call("prepare", run_id=run_id, request_id=_next(ids), arguments={
+            "operation_id": started.data["operation_id"], "agent": "claude",
+        }))
+        assert result.code == "RESEARCH_PROTOCOL_UNAVAILABLE"
+        assert result.http_status == 503
+
+
+def test_research_password_argument_survives_cli_and_connected_validation() -> None:
+    import uuid
+    from dish_service.cli import build_parser
+    from dish_pg.command_contract import connected_argument_schema, validate_connected_request
+
+    submission = str(uuid.uuid4())
+    parsed = build_parser().parse_args([
+        "prepare", submission, "--agent", "codex", "--model", "test", "--file", "recipe.txt",
+        "--research-protocol-password", "supplied-value",
+    ])
+    assert parsed.research_protocol_password == "supplied-value"
+    assert "research_protocol_password" in connected_argument_schema("prepare")["properties"]
+    _, arguments = validate_connected_request("prepare", {
+        "client": {"run_id": str(uuid.uuid4()), "request_id": str(uuid.uuid4())},
+        "arguments": {"submission_id": submission, "agent": "codex", "model": "test",
+                      "file_text": "recipe", "research_protocol_password": "supplied-value"},
+    })
+    assert arguments["research_protocol_password"] == "supplied-value"

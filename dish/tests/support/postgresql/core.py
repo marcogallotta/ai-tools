@@ -60,7 +60,11 @@ def _reset_postgresql_schema(dsn: str) -> None:
 
 
 @pytest.fixture
-def core_db(request) -> tuple[sessionmaker[Session], Iterator[uuid.UUID]]:
+def core_db(request, monkeypatch) -> tuple[sessionmaker[Session], Iterator[uuid.UUID]]:
+    monkeypatch.setattr(
+        "dish_pg.command_port.current_research_password",
+        lambda root: "test-research-password",
+    )
     if request.config.getoption("--postgresql"):
         # The native lane must exercise the deployed migration history, including hand-written
         # PostgreSQL triggers that cannot be produced by ORM metadata.create_all().

@@ -12,6 +12,7 @@ import hashlib
 import json
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from sqlalchemy import func, select
@@ -58,6 +59,7 @@ from .repositories import (
     registry_source_import_run,
 )
 from .transition import ProjectionService, TransitionAuthorityError
+from .stage_context import current_research_password, StageContextUnavailable
 from dish_tool.constants import NO_EVIDENCE_HOLD_MESSAGE
 from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
 from dish_tool.governed_diff import (
@@ -133,8 +135,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
         projection_recorder: ProjectionAuthority | None = None,
         projection_origin: str = "live",
         lease_duration: timedelta = timedelta(minutes=15),
+        honest_root: Path | None = None,
     ) -> None:
         self.session = session
+        self.honest_root = honest_root
         self.uuid_factory = uuid_factory
         self.reads = PostgresReadModel(session, cursor_secret=cursor_secret)
         self.workflow = WorkflowAuthorityService(session, uuid_factory=uuid_factory)
@@ -2540,6 +2544,23 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             raise CommandRuleError(
                 "OPEN_OPERATION_REQUIRED", "prepare requires an open operation"
             )
+        if operation.kind in {"initial", "change"}:
+            try:
+                expected = current_research_password(self.honest_root)
+            except StageContextUnavailable as exc:
+                raise CommandRuleError(
+                    "RESEARCH_PROTOCOL_UNAVAILABLE",
+                    "Current Research protocol unavailable; retry with a fresh request ID "
+                    "when it can be loaded.",
+                    http_status=503,
+                ) from exc
+            if call.arguments.get("research_protocol_password") != expected:
+                raise CommandRuleError(
+                    "RESEARCH_PROTOCOL_PASSWORD_REQUIRED",
+                    "Read the current dish-research-protocol.md and supply its password "
+                    "as research_protocol_password; retry with a fresh request ID.",
+                    http_status=400,
+                )
         self.workflow.repo.assert_task_fence(execution.execution_id)
         self.workflow.repo.assert_operation_fence(execution.execution_id)
         state = self.session.get(models.DishState, (generation.generation_id, task.task_id))
@@ -3864,7 +3885,10 @@ class PostgresCommandPort(PostgresCommandReadMixin):
             prior.command_name == "prepare"
             and prior.status == "failed"
             and outcome.outcome_class == "rule_error"
-            and outcome.result_code == "VALIDATION_FAILED"
+            and outcome.result_code in {
+                "VALIDATION_FAILED", "RESEARCH_PROTOCOL_PASSWORD_REQUIRED",
+                "RESEARCH_PROTOCOL_UNAVAILABLE",
+            }
             and outcome.immutable_success is False
             for prior, outcome in prior_execution_rows
         ) and len(prior_execution_rows) == prior_executions
