@@ -5,7 +5,7 @@ import pytest
 from dish_tool.admin import DishAdminApplication
 from dish_tool.database import reserve_marco_authorizations
 from dish_tool.errors import DishRuleError
-from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
+from dish_tool.governed_diff import explicit_material_reasons, require_small_scope, validate_semantic_proposal
 from dish_tool.task_document import parse_task_document
 from tests.support.readiness import _approve_and_submit
 from tests.support.verification import TASK, make_app
@@ -605,3 +605,24 @@ def test_semantic_proposal_gate_rejects_non_main_with_nutrition_exemption(tmp_pa
     assert error["rule"] == "semantic_proposal_incoherent"
     assert "non-main role cannot rely" in error["contradictions"][0]
     assert "resolve every linked contradiction" in error["required_action"]
+
+
+@pytest.mark.parametrize("role", ["main", "non-main"])
+@pytest.mark.parametrize("tags", [
+    "[nutrition-fat]", "[nutrition-kcal]", "[nutrition-protein]",
+    "[nutrition-fat] [nutrition-kcal]", "[nutrition-fat] [nutrition-protein]",
+])
+def test_nutrition_exemption_role_compatibility(role, tags):
+    before = _doc()
+    candidate = TASK.replace("Exemptions: None", f"Exemptions: {tags} — approved scope")
+    if role == "main":
+        candidate = candidate.replace("[non-main] ", "").replace(
+            "Role: non-main — small side for comparison", "Role: main"
+        )
+    after = _doc(candidate)
+    if role == "non-main" and tags != "[nutrition-fat]":
+        with pytest.raises(DishRuleError) as error:
+            validate_semantic_proposal(before, after)
+        assert error.value.rule == "semantic_proposal_incoherent"
+    else:
+        validate_semantic_proposal(before, after)
