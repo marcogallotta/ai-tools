@@ -64,12 +64,12 @@ def validate_semantic_proposal(before, after) -> None:
     title = str(after.title)
     non_main_role = "non-main" in role.casefold()
     non_main_marker = "[non-main]" in title.casefold()
-    nutrition_exemption = any(tag in exemptions for tag in (
-        "[nutrition-kcal]", "[nutrition-protein]", "[nutrition-fat]"
+    main_meal_exemption = any(tag in exemptions for tag in (
+        "[nutrition-kcal]", "[nutrition-protein]"
     ))
     contradictions = []
-    if non_main_role and nutrition_exemption:
-        contradictions.append("non-main role cannot rely on main-meal nutrition exemptions")
+    if non_main_role and main_meal_exemption:
+        contradictions.append("non-main role cannot rely on main-meal calorie or protein exemptions")
     if non_main_role and not non_main_marker:
         contradictions.append("non-main Role requires the [non-main] title marker")
     if non_main_marker and not non_main_role:

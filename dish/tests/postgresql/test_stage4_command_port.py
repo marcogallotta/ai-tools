@@ -2537,3 +2537,115 @@ Destination section: Sichuan — 12345
         assert current.body.startswith("### Planning brief\n")
         assert "Destination section: Sichuan — 12345" in current.body
         assert state.section_id == context["section_id"]
+
+
+# Exact fields from the independent Research/Verification R1 handoff (2026-11-24).
+_SIDE_HANDOFF = {'Role': 'non-main — side; normal 150 g cabbage portion plus dressing, not a complete meal.',
+ 'Portions': '1 non-main side for Marco, explicitly selected and approved; one batch, eaten in one '
+             'sitting.',
+ 'Exemptions': '[nutrition-fat] — R1 only, unchanged cold cabbage side for Marco, one portion of '
+               '150 g cabbage plus the exact dressing; total fat approved estimate 12 g, fixed '
+               'maximum 13.2 g; saturated fat approved estimate 3.5 g, fixed maximum 3.85 g; '
+               'actual Human — Marco Decision dated 2026-11-24 below. Caps are the standing 10% '
+               'allowance, not additional words attributed to Marco. No percentage-policy '
+               'exemption and no exemption for any linked main or other record.',
+ 'Decision': "Human — Marco: 'Keep this exact one-portion recipe. I approve12g total fat and3.5g "
+             "saturated fat for it.' Actual answer, 2026-11-24, supplied verbatim in input.md R1. "
+             "Applies only to R1's unchanged one-portion recipe. No additional reason or offered "
+             'alternatives were supplied; do not invent them. Origin is the supplied answer, not a '
+             'new approval obtained by this Research run.',
+ 'Quantities': '- 150 g cabbage, finely sliced\n'
+               '- 8 g olive oil\n'
+               '- 10 g grated cheese\n'
+               '- 10 ml lemon juice',
+ 'Method': '1. Weigh the cabbage, olive oil and grated cheese; measure the lemon juice. Finely '
+           "slice the cabbage with the owned chef's knife and board. Set out a mixing bowl and "
+           'whisk.\n'
+           '2. Whisk the olive oil, grated cheese and lemon juice together as the dressing.\n'
+           '3. Toss the cabbage thoroughly with all the dressing.\n'
+           '4. Rest ten minutes, then serve the whole portion cold, including all dressing. '
+           '(input.md, R1 supplied coherent source capture; equipment.md.)'}
+
+
+def test_non_main_fat_exemption_signing_and_submission(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        _add_destination_section(session, ids, context)
+        author_run, verifier_run = _next(ids), _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+        _register_run(session, generation_id=context["generation_id"], run_id=verifier_run,
+                      owner="verifier-owner", agent="codex")
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        research = TASK.replace("Portions: one sitting", f"Portions: {_SIDE_HANDOFF['Portions']}").replace(
+            "100 g test ingredient", _SIDE_HANDOFF["Quantities"]
+        ).replace("1. Cook it.", _SIDE_HANDOFF["Method"]).replace(
+            "Role: non-main — small side for comparison", f"Role: {_SIDE_HANDOFF['Role']}"
+        )
+        prepared = port.execute(_call("prepare", run_id=author_run, request_id=_next(ids), arguments={
+            "task_id": str(task_id), "operation_id": started.data["operation_id"],
+            "file_text": research, "agent": "claude", "model": "test-researcher",
+        }))
+        assert prepared.ok, (prepared.code, prepared.data)
+        _start_verification(port, ids, task_id=task_id, operation_id=started.data["operation_id"],
+                            run_id=verifier_run)
+        inspected = _inspect(port, ids, task_id=task_id, operation_id=started.data["operation_id"],
+                             run_id=verifier_run)
+        reviewed = session.get(models.ContentVersion, uuid.UUID(prepared.data["content_version_id"]))
+        candidate = (reviewed.title + "\n" + reviewed.body).replace(
+            "Exemptions: None", f"Exemptions: {_SIDE_HANDOFF['Exemptions']}"
+        ).replace("### Research basis", f"{_SIDE_HANDOFF['Decision']}\n### Research basis")
+        approved = port.execute(_call(
+            "approve", run_id=verifier_run, request_id=_next(ids),
+            owner="verifier-owner", principal="verification", arguments={
+                "task_id": str(task_id), "operation_id": started.data["operation_id"],
+                "agent": "codex", "model": "test-verifier", "correction": "small",
+                "file_text": candidate, "reviewed_identity": reviewed.content_identity,
+                "semantic_review_complete": True, "provenance_complete": True,
+                "governed_change_fields": ["Exemptions", "Decisions"],
+            },
+        ))
+        assert approved.ok, (approved.code, approved.data)
+        submitted = port.execute(_call("submit", run_id=author_run, request_id=_next(ids), arguments={
+            "task_id": str(task_id), "operation_id": started.data["operation_id"],
+        }))
+        assert submitted.ok, (submitted.code, submitted.data)
+        current = session.get(models.ContentVersion,
+                              port._current_content_version_id(context["generation_id"], task_id))
+        document = parse_canonical_document(
+            title=current.title, body=current.body, expected_status="ready"
+        ).document
+        assert document.planning_brief.values["Exemptions"] == _SIDE_HANDOFF["Exemptions"]
+        assert document.planning_brief.values["Role"] == _SIDE_HANDOFF["Role"]
+        assert f"Portions: {_SIDE_HANDOFF['Portions']}" in current.body
+        assert _SIDE_HANDOFF["Quantities"] in current.body
+        assert document.decisions[-1] == _SIDE_HANDOFF["Decision"]
+        signoff = session.get(wf.VerificationSignoff, uuid.UUID(approved.data["signoff_id"]))
+        assert signoff.inspection_id == uuid.UUID(inspected.data["inspection_id"])
+        assert signoff.signed_content_version_id == current.content_version_id
+        assert "Codex" in document.state.values["Verified by"]
+
+
+@pytest.mark.parametrize("tags", [
+    "[nutrition-kcal]", "[nutrition-protein]",
+    "[nutrition-fat] [nutrition-kcal]", "[nutrition-fat] [nutrition-protein]",
+])
+def test_non_main_main_meal_exemptions_fail_before_content_write(workflow_db, tags):
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "Exemptions: None", f"Exemptions: {tags} — proposed side exemption"
+        )
+        current_before = port._current_content_version_id(context["generation_id"], task_id)
+        counts_before = [session.scalar(select(func.count()).select_from(model)) for model in
+                         (models.ContentVersion, wf.VerificationSignoff)]
+        rejected = _prepare_change(port, ids, task_id, run_id, started.data["operation_id"], candidate)
+        assert not rejected.ok
+        assert rejected.code == "VALIDATION_FAILED"
+        assert "calorie or protein exemptions" in rejected.data["contradictions"][0]
+        assert port._current_content_version_id(context["generation_id"], task_id) == current_before
+        assert [session.scalar(select(func.count()).select_from(model)) for model in
+                (models.ContentVersion, wf.VerificationSignoff)] == counts_before
