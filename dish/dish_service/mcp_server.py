@@ -37,6 +37,7 @@ from starlette.responses import JSONResponse, RedirectResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dish_service.client import DishActionClient
+from dish_service.planner_read import build_planner_tool
 from dish_service.honest_store import git as _honest_git, snapshot as honest_snapshot
 from dish_service.planning_context import (
     PlanningContextError, PlanningReceiptStore, assemble_planning_context,
@@ -824,6 +825,7 @@ def create_app(adapter: Any, config: MCPAuthConfig):
                 for tool in TOOLS
             ],
             build_honest_tool(),
+            build_planner_tool(),
             HonestArchiveTool(),
             PlanningContextTool(adapter, HONEST_STORE, planning_store),
         ],

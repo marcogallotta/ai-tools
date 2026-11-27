@@ -238,6 +238,13 @@ only; it does not select an operation or authorize a workflow transition.
 
 ## Change routing
 
+`dish_planner_read` is an authenticated transport-local MCP read of the separate
+`cook_planner.plans` saved workspace. It is not a recipe workflow command or scheduling
+authority. It uses a dedicated SELECT-only login, a fixed single-owner plan, and returns the
+complete saved document with its database revision and timestamps. It never reads a roadmap
+as fallback or writes planner/recipe data. Tracks remain user-controlled columns.
+See [design and MCP end-to-end test plan](../planner-mcp.md).
+
 When adding a genuine backend command, update the shared command/application contract and whichever surfaces intentionally expose it. When changing only surface guidance or UX, it is legitimate to change only that surface if no backend semantic changes are required.
 
 ## Proving tests
