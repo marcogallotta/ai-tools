@@ -12,7 +12,6 @@ import secrets
 import socket
 import subprocess
 import sys
-import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -29,6 +28,7 @@ from mcp.server.auth.provider import AccessToken
 from psycopg.types.json import Jsonb
 
 from dish_service import mcp_server
+from tests.support.thread_teardown import join_thread, start_thread
 
 TOKEN = "isolated-planner-mcp-token"
 
@@ -119,8 +119,7 @@ def mcp_endpoint(planner_database, monkeypatch, tmp_path):
     )
     app = mcp_server.create_app(_NoBackendCalls(), config)
     server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="on"))
-    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
-    thread.start()
+    thread = start_thread(server.run, kwargs={"sockets": [listener]}, daemon=True)
     deadline = time.monotonic() + 10
     try:
         while not server.started:
@@ -130,9 +129,10 @@ def mcp_endpoint(planner_database, monkeypatch, tmp_path):
         yield url, admin
     finally:
         server.should_exit = True
-        thread.join(timeout=10)
-        listener.close()
-        assert not thread.is_alive(), "MCP test server did not stop"
+        try:
+            join_thread(thread, timeout=10)
+        finally:
+            listener.close()
 
 
 @asynccontextmanager
