@@ -94,6 +94,40 @@ accepted branch merely to make delivery succeed.
 
 ## Verify
 
+### Saved planner read
+
+`dish_planner_read` takes no arguments and returns the latest saved planner workspace,
+including the away board, Holding, bakes and preparations. It does not authorize calendar edits.
+Its database revision is distinct from the document's internal revision. It does not include
+unsaved browser changes or imply that Marco approved the workspace.
+
+Provision its dedicated SELECT-only login with `scripts/dish-planner-reader-setup`,
+using a private admin DSN file, `--expected-database`, and a new private `--output-env` file.
+Add that file as an additional `EnvironmentFile=` in the existing MCP user unit.
+Never reuse the planner's write-capable runtime credential. The reader can SELECT only
+`cook_planner.plans`; the application query always selects plan `main`.
+Missing configuration leaves other MCP tools available and returns `PLANNER_NOT_CONFIGURED`.
+See [design and test plan](../docs/planner-mcp.md).
+
+Provisioning refuses an existing output file or role rather than silently rotating credentials.
+If interrupted between writing the private file and committing the role, retain the file and
+check the exact role and connection before retrying. Do not assume the presence of the file
+proves provisioning completed.
+
+Stage reviewed committed source using `dish-prod-release stage`. On hosts where MCP has an
+immutable release override, update only that MCP override's WorkingDirectory and ExecStart
+to the staged release; retain its other environment, sandbox and Honest-store settings.
+Do not activate or roll back the independent Dish backend to deploy this MCP-only feature.
+Retain the previous override for rollback, reload the user manager, restart `dish-mcp.service`,
+and prove public authenticated initialize/list/call plus exact equality with the live planner
+API revision/document. This conformance probe is read-only. Refresh the existing conformance
+OAuth token using the production release runbook if necessary.
+
+After deployment, ask Marco to reload/refresh the Dish MCP app schema, then tell the other
+ChatGPT agent: “Use `dish_planner_read` to read my current saved schedule, including home/away,
+Holding, bakes and preparations. Review it only; do not move anything. Use this live saved
+workspace rather than a roadmap or an old export.”
+
 ```sh
 curl -i -X POST https://laptop.tail46f0b9.ts.net/dish/mcp
 curl -sS https://laptop.tail46f0b9.ts.net/.well-known/oauth-protected-resource/dish/mcp

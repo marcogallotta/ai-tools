@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Provision the fixed planner read login; credentials never appear in command arguments/output."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import secrets
+from pathlib import Path
+
+import psycopg
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--admin-dsn-file", type=Path, required=True)
+    parser.add_argument("--expected-database", required=True)
+    parser.add_argument("--output-env", type=Path, required=True)
+    args = parser.parse_args()
+    if args.output_env.exists():
+        parser.error("output already exists; retain the existing credential")
+    if args.admin_dsn_file.stat().st_mode & 0o077:
+        parser.error("admin DSN file must be private")
+    dsn = args.admin_dsn_file.read_text().strip()
+    connection_options = conninfo_to_dict(dsn)
+    password = secrets.token_urlsafe(40)
+    role = "cook_planner_mcp_reader"
+    with psycopg.connect(dsn, connect_timeout=3) as connection:
+        if connection.info.dbname != args.expected_database:
+            parser.error("connected database does not match expected database")
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
+            if cursor.fetchone():
+                parser.error("reader role already exists; do not rotate it implicitly")
+            cursor.execute(
+                sql.SQL(
+                    "CREATE ROLE {} LOGIN NOINHERIT NOSUPERUSER NOCREATEDB "
+                    "NOCREATEROLE NOREPLICATION PASSWORD {}"
+                ).format(sql.Identifier(role), sql.Literal(password))
+            )
+            cursor.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                sql.Identifier(args.expected_database), sql.Identifier(role),
+            ))
+            cursor.execute(sql.SQL("GRANT USAGE ON SCHEMA cook_planner TO {}").format(
+                sql.Identifier(role),
+            ))
+            cursor.execute(sql.SQL("GRANT SELECT ON cook_planner.plans TO {}").format(
+                sql.Identifier(role),
+            ))
+            cursor.execute(sql.SQL("ALTER ROLE {} SET default_transaction_read_only = on").format(
+                sql.Identifier(role),
+            ))
+        # Write the credential before committing; an output failure rolls the new role back.
+        connection_options.update(user=role, password=password)
+        reader_dsn = make_conninfo(**connection_options)
+        args.output_env.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(args.output_env, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write("DISH_MCP_PLANNER_DATABASE_URL=" + json.dumps(reader_dsn) + "\n")
+        except BaseException:
+            args.output_env.unlink(missing_ok=True)
+            raise
+        try:
+            connection.commit()
+        except BaseException:
+            args.output_env.unlink(missing_ok=True)
+            raise
+    print("Planner SELECT-only login provisioned; private MCP environment written.")
+
+
+if __name__ == "__main__":
+    main()
