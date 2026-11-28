@@ -159,8 +159,14 @@ def test_server_instructions_require_current_turn_dish_discovery():
     assert "earlier missing dish_query is not current availability evidence" in mcp_server.SERVER_INSTRUCTIONS
 
 
-def test_server_instructions_make_archive_the_multifile_default():
+def test_server_instructions_reuse_verified_context_before_multifile_bootstrap():
     instructions = mcp_server.SERVER_INSTRUCTIONS
+    assert "Reuse an existing verified Honest Pantry local tree and loaded protocols" in instructions
+    assert "Ordinary follow-ups or elapsed time alone require no repository fetch or commit check" in instructions
+    assert "Reuse known exact Dish identifiers and loaded records or feedback" in instructions
+    assert "stage-specific freshness, independence, and mutation readback requirements still apply" in instructions
+    assert "Without a usable verified local tree" in instructions
+    assert instructions.index("Reuse an existing verified") < instructions.index("dish_honest_archive first")
     assert "call dish_honest_archive first" in instructions
     assert "Do not request those files individually" in instructions
     assert "bounded single-file lookup" in instructions
